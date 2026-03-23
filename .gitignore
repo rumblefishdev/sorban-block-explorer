@@ -1,0 +1,42 @@
+# dependencies
+node_modules
+
+# build output
+dist
+tmp
+out-tsc
+coverage
+
+# nx
+.nx/installation
+.nx/cache
+.nx/workspace-data
+.nx/polygraph
+
+# environment
+.env
+.env.local
+.env.*.local
+
+# editors
+/.idea
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.claude/worktrees
+.claude/settings.local.json
+
+# logs
+npm-debug.log*
+yarn-error.log
+testem.log
+
+# system files
+.DS_Store
+Thumbs.db
+
+# generated timestamps
+vite.config.*.timestamp*
+vitest.config.*.timestamp*

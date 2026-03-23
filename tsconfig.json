@@ -1,0 +1,31 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compileOnSave": false,
+  "files": [],
+  "references": [
+    {
+      "path": "./apps/api"
+    },
+    {
+      "path": "./apps/indexer"
+    },
+    {
+      "path": "./apps/web"
+    },
+    {
+      "path": "./apps/workers"
+    },
+    {
+      "path": "./infra/aws-cdk"
+    },
+    {
+      "path": "./libs/domain"
+    },
+    {
+      "path": "./libs/shared"
+    },
+    {
+      "path": "./libs/ui"
+    }
+  ]
+}

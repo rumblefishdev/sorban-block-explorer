@@ -1,0 +1,45 @@
+{
+  "name": "@rumblefish/sorban-block-explorer",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "workspaces": [
+    "apps/*",
+    "libs/*",
+    "infra/*"
+  ],
+  "scripts": {
+    "build": "npx nx run-many -t build",
+    "format": "npx nx format:write --all",
+    "format:check": "npx nx format:check --all",
+    "graph": "npx nx graph",
+    "lint": "npx nx run-many -t lint",
+    "test": "npx nx run-many -t test",
+    "typecheck": "npx nx run-many -t typecheck"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.8.0",
+    "@nx/eslint": "22.6.1",
+    "@nx/eslint-plugin": "22.6.1",
+    "@nx/js": "22.6.1",
+    "@nx/vite": "22.6.1",
+    "@nx/vitest": "22.6.1",
+    "@nx/web": "22.6.1",
+    "@swc-node/register": "1.11.1",
+    "@swc/core": "1.15.8",
+    "@swc/helpers": "0.5.18",
+    "@types/node": "20.19.9",
+    "@vitest/coverage-v8": "4.0.9",
+    "@vitest/ui": "4.0.9",
+    "eslint": "~8.57.0",
+    "jiti": "2.4.2",
+    "jsonc-eslint-parser": "^2.1.0",
+    "nx": "22.6.1",
+    "prettier": "^2.6.2",
+    "tslib": "^2.3.0",
+    "typescript": "~5.9.2",
+    "typescript-eslint": "^8.40.0",
+    "vite": "^7.0.0",
+    "vitest": "4.0.9"
+  }
+}
