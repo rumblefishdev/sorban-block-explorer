@@ -17,7 +17,9 @@
     "test": "npx nx run-many -t test",
     "typecheck": "npx nx run-many -t typecheck",
     "format:staged": "node tools/scripts/format-staged.mjs",
-    "prepare": "husky"
+    "prepare": "husky",
+    "verify:staged": "node tools/scripts/run-affected-checks.mjs staged",
+    "verify:push": "node tools/scripts/run-affected-checks.mjs push"
   },
   "devDependencies": {
     "@eslint/js": "^9.8.0",
