@@ -54,6 +54,7 @@ REST API with polling-based updates for new transactions and events.
                │  /transactions/:hash        ── GET /transactions/:hash ─┤   │
                │  /ledgers                   ── GET /ledgers ────────────┤   │
                │  /ledgers/:seq              ── GET /ledgers/:seq ───────┤   │
+               │  /accounts/:id              ── GET /accounts/:id ───────┤   │
                │  /tokens                    ── GET /tokens ─────────────┤   │
                │  /tokens/:id                ── GET /tokens/:id ─────────┤   │
                │  /contracts/:id             ── GET /contracts/:id ──────┤   │
@@ -80,6 +81,7 @@ REST API with polling-based updates for new transactions and events.
 | `/transactions/:hash`    | Transaction     | `GET /transactions/:hash`                                                   |
 | `/ledgers`               | Ledgers         | `GET /ledgers`                                                              |
 | `/ledgers/:sequence`     | Ledger          | `GET /ledgers/:sequence`                                                    |
+| `/accounts/:accountId`   | Account         | `GET /accounts/:account_id`, `GET /accounts/:account_id/transactions`       |
 | `/tokens`                | Tokens          | `GET /tokens`                                                               |
 | `/tokens/:id`            | Token           | `GET /tokens/:id`, `GET /tokens/:id/transactions`                           |
 | `/contracts/:contractId` | Contract        | `GET /contracts/:contract_id`, `GET /contracts/:contract_id/interface`      |
@@ -147,6 +149,14 @@ Paginated table of all ledgers. Default sort: most recent first.
 - Ledger summary — sequence, hash, closed_at, protocol version, transaction count, base fee
 - Transactions in ledger — paginated table of all transactions in this ledger
 - Previous / next ledger navigation
+
+#### Account (`/accounts/:accountId`)
+
+Account detail view for a Stellar account.
+
+- Account summary — account ID (full, copyable), sequence number, first seen ledger, last seen ledger
+- Balances — native XLM balance and trustline/token balances
+- Recent transactions — paginated table of transactions involving this account
 
 #### Tokens (`/tokens`)
 
@@ -266,6 +276,7 @@ own PostgreSQL database, which is populated by the Galexie-based ingestion pipel
                                                       │  ├─ Network ─────────┤
                                                       │  ├─ Transactions ────┤
                                                       │  ├─ Ledgers ─────────┤
+                                                      │  ├─ Accounts ────────┤
                                                       │  ├─ Tokens ──────────┤
                                                       │  ├─ Contracts ───────┤
                                                       │  ├─ NFTs ────────────┤
@@ -343,6 +354,14 @@ and advanced representations):
 
 **`GET /ledgers/:sequence`** — Ledger detail including transaction count and linked
 transactions.
+
+#### Accounts
+
+**`GET /accounts/:account_id`** — Account detail: current balances, sequence number,
+and first/last seen ledger.
+
+**`GET /accounts/:account_id/transactions`** — Paginated transactions involving this
+account.
 
 #### Tokens
 
@@ -436,13 +455,15 @@ Caching operates at two levels:
 │  PROCESSING                                                     │ S3 PutObject│
 │  ┌──────────────────────────────────────────────────────┐       │             │
 │  │ Lambda — Ledger Processor (event-driven, per file)   │<──────┘             │
-│  │ Parses XDR → ledgers, txs, ops, events, contracts    │                     │
+│  │ Parses XDR → ledgers, txs, ops, accounts, events,    │                     │
+│  │ contracts                                             │                     │
 │  └──────────────────────────┬───────────────────────────┘                     │
 │                             │                                                 │
 │  ┌──────────────────────────▼───────────────────────────┐                     │
 │  │ RDS PostgreSQL (block explorer's own schema)         │                     │
-│  │ ledgers · transactions · operations · contracts      │                     │
-│  │ soroban_invocations · soroban_events · tokens · nfts │                     │
+│  │ ledgers · transactions · operations · accounts       │                     │
+│  │ contracts · soroban_invocations · events · tokens    │                     │
+│  │ nfts                                                 │                     │
 │  └──────────────────────────┬───────────────────────────┘                     │
 │                             │                                                 │
 │  API LAYER                  │                                                 │
@@ -498,22 +519,22 @@ expanding to multi-AZ when SLA requirements demand it.
 
 **Hosted by Rumble Fish (AWS sub-account):**
 
-| Component                       | Service                            | Role                                                                   |
-| ------------------------------- | ---------------------------------- | ---------------------------------------------------------------------- |
-| Galexie process                 | ECS Fargate (1 task, continuous)   | Streams live ledger data from Stellar network to S3                    |
-| Historical backfill task        | ECS Fargate (batch, one-time)      | Processes history archives to backfill from Soroban mainnet activation |
-| S3 bucket `stellar-ledger-data` | AWS S3                             | Receives `LedgerCloseMeta` XDR files; triggers Ledger Processor        |
-| Lambda — Ledger Processor       | AWS Lambda (S3 event-driven)       | Parses XDR; writes ledgers, txs, ops, events, contracts to RDS         |
-| Lambda — Event Interpreter      | AWS Lambda (EventBridge, 5 min)    | Post-processes recent events to generate human-readable summaries      |
-| Lambda — NestJS API handlers    | AWS Lambda (per API Gateway route) | Serves all public API requests                                         |
-| RDS PostgreSQL                  | AWS RDS (db.r6g.large, Single-AZ)  | Block explorer database                                                |
-| API Gateway                     | AWS API Gateway                    | REST API, rate limiting, API keys, response caching                    |
-| CloudFront CDN                  | AWS CloudFront                     | Serves React frontend                                                  |
-| S3 bucket `api-docs`            | AWS S3 + CloudFront                | OpenAPI spec + documentation portal                                    |
-| EventBridge Scheduler           | AWS EventBridge                    | Cron triggers for background workers                                   |
-| Secrets Manager                 | AWS Secrets Manager                | DB credentials                                                         |
-| CloudWatch + X-Ray              | AWS CloudWatch                     | Logs, metrics, alarms, distributed tracing                             |
-| CI/CD pipeline                  | GitHub Actions → AWS CDK           | Infrastructure-as-code deploy                                          |
+| Component                       | Service                            | Role                                                                     |
+| ------------------------------- | ---------------------------------- | ------------------------------------------------------------------------ |
+| Galexie process                 | ECS Fargate (1 task, continuous)   | Streams live ledger data from Stellar network to S3                      |
+| Historical backfill task        | ECS Fargate (batch, one-time)      | Processes history archives to backfill from Soroban mainnet activation   |
+| S3 bucket `stellar-ledger-data` | AWS S3                             | Receives `LedgerCloseMeta` XDR files; triggers Ledger Processor          |
+| Lambda — Ledger Processor       | AWS Lambda (S3 event-driven)       | Parses XDR; writes ledgers, txs, ops, accounts, events, contracts to RDS |
+| Lambda — Event Interpreter      | AWS Lambda (EventBridge, 5 min)    | Post-processes recent events to generate human-readable summaries        |
+| Lambda — NestJS API handlers    | AWS Lambda (per API Gateway route) | Serves all public API requests                                           |
+| RDS PostgreSQL                  | AWS RDS (db.r6g.large, Single-AZ)  | Block explorer database                                                  |
+| API Gateway                     | AWS API Gateway                    | REST API, rate limiting, API keys, response caching                      |
+| CloudFront CDN                  | AWS CloudFront                     | Serves React frontend                                                    |
+| S3 bucket `api-docs`            | AWS S3 + CloudFront                | OpenAPI spec + documentation portal                                      |
+| EventBridge Scheduler           | AWS EventBridge                    | Cron triggers for background workers                                     |
+| Secrets Manager                 | AWS Secrets Manager                | DB credentials                                                           |
+| CloudWatch + X-Ray              | AWS CloudWatch                     | Logs, metrics, alarms, distributed tracing                               |
+| CI/CD pipeline                  | GitHub Actions → AWS CDK           | Infrastructure-as-code deploy                                            |
 
 **External services consumed (read-only):**
 
@@ -619,9 +640,11 @@ Stellar Network (mainnet peers)
 │     .events): all contract events in one stream         │
 │  8. Extract contract deployments (new C-addresses,      │
 │     WASM hashes) from LedgerEntryChanges                │
-│  9. Detect token contracts (SEP-41), NFT contracts,     │
+│  9. Extract account state snapshots (balances, signers, │
+│     thresholds) from LedgerEntryChanges                 │
+│ 10. Detect token contracts (SEP-41), NFT contracts,     │
 │     liquidity pools from deployment events              │
-│ 10. Write all above to RDS PostgreSQL                   │
+│ 11. Write all above to RDS PostgreSQL                   │
 └─────────────────────────────────────────────────────────┘
                │
                ▼
@@ -733,7 +756,7 @@ XDR parsing happens in two places:
 **From `LedgerEntryChanges`:**
 
 - Contract deployments: `contractId`, `wasmHash`, `deployerAccount`
-- Account changes (used for token holder counts)
+- Account changes and account-state snapshots (balances, signers, thresholds)
 - Liquidity pool state changes
 
 ### 5.3 Soroban-Specific Handling
@@ -906,7 +929,21 @@ CREATE TABLE tokens (
 );
 ```
 
-### 6.9 Partitioning and Retention
+### 6.9 Accounts
+
+```sql
+CREATE TABLE accounts (
+    account_id        VARCHAR(56) PRIMARY KEY,
+    first_seen_ledger BIGINT REFERENCES ledgers(sequence),
+    last_seen_ledger  BIGINT REFERENCES ledgers(sequence),
+    sequence_number   BIGINT,
+    balances          JSONB NOT NULL DEFAULT '[]'::jsonb,
+    home_domain       VARCHAR(255),
+    INDEX idx_last_seen (last_seen_ledger DESC)
+);
+```
+
+### 6.10 Partitioning and Retention
 
 Tables `soroban_invocations` and `soroban_events` are partitioned by month using native
 PostgreSQL range partitioning. A cleanup Lambda (EventBridge daily) creates partitions
@@ -938,15 +975,15 @@ require it. Ledger and transaction tables are not partitioned and are kept indef
 
 #### C. Data Ingestion Pipeline
 
-| Task                                                               | Days   |
-| ------------------------------------------------------------------ | ------ |
-| Ledger Processor Lambda — XDR parse + DB write (ledgers, txs, ops) | 6      |
-| Ledger Processor — Soroban invocations + CAP-67 events extraction  | 5      |
-| Ledger Processor — contract deployments + token detection          | 4      |
-| Event Interpreter Lambda — human-readable summaries                | 5      |
-| Backfill validation — gap detection, idempotency checks            | 3      |
-| Ingestion lag monitoring + alerting                                | 2      |
-| **Subtotal**                                                       | **25** |
+| Task                                                                         | Days   |
+| ---------------------------------------------------------------------------- | ------ |
+| Ledger Processor Lambda — XDR parse + DB write (ledgers, txs, ops, accounts) | 6      |
+| Ledger Processor — Soroban invocations + CAP-67 events extraction            | 5      |
+| Ledger Processor — contract deployments + token detection                    | 4      |
+| Event Interpreter Lambda — human-readable summaries                          | 5      |
+| Backfill validation — gap detection, idempotency checks                      | 3      |
+| Ingestion lag monitoring + alerting                                          | 2      |
+| **Subtotal**                                                                 | **25** |
 
 #### D. Core API Endpoints (NestJS)
 
@@ -956,6 +993,7 @@ require it. Ledger and transaction tables are not partitioned and are kept indef
 | Network stats endpoint                                           | 1      |
 | Transactions endpoints (list + detail + operation tree)          | 9      |
 | Ledgers endpoints (list + detail)                                | 3      |
+| Accounts endpoints (detail + transactions/history)               | 4      |
 | Tokens endpoints (list + detail + transactions)                  | 5      |
 | Contracts endpoints (detail + interface + invocations + events)  | 9      |
 | NFTs endpoints (list + detail + transfers)                       | 5      |
@@ -965,7 +1003,7 @@ require it. Ledger and transaction tables are not partitioned and are kept indef
 | Cursor-based pagination                                          | 3      |
 | Rate limiting, API key auth, error handling, health checks       | 3      |
 | Caching layer (in-memory + CloudFront TTL configuration)         | 3      |
-| **Subtotal**                                                     | **58** |
+| **Subtotal**                                                     | **62** |
 
 #### E. Frontend Components + API Integration
 
@@ -979,6 +1017,7 @@ require it. Ledger and transaction tables are not partitioned and are kept indef
 | Transaction detail page — advanced mode (raw data, XDR)              | 4      |
 | Ledgers page (paginated table)                                       | 1      |
 | Ledger detail page                                                   | 2      |
+| Account detail page (summary + balances + history)                   | 3      |
 | Tokens page (list, filters)                                          | 2      |
 | Token detail page (summary + transactions)                           | 2      |
 | Contract detail page (summary + interface + invocations + events)    | 7      |
@@ -989,7 +1028,7 @@ require it. Ledger and transaction tables are not partitioned and are kept indef
 | Search results page                                                  | 6      |
 | Error states, loading skeletons, empty states                        | 3      |
 | Polling, freshness indicators, responsive layout                     | 2      |
-| **Subtotal**                                                         | **60** |
+| **Subtotal**                                                         | **63** |
 
 #### F. Testing
 
@@ -1010,10 +1049,10 @@ require it. Ledger and transaction tables are not partitioned and are kept indef
 | A. Design                                    | 35–40       |
 | B. AWS Architecture + Galexie Infrastructure | 32          |
 | C. Data Ingestion Pipeline                   | 25          |
-| D. Core API Endpoints                        | 58          |
-| E. Frontend Components + Integration         | 60          |
+| D. Core API Endpoints                        | 62          |
+| E. Frontend Components + Integration         | 63          |
 | F. Testing                                   | 42          |
-| **Total (incl. design)**                     | **252–257** |
+| **Total (incl. design)**                     | **259–264** |
 
 ### 7.3 Cost Estimation (AWS, monthly)
 
@@ -1052,8 +1091,8 @@ require it. Ledger and transaction tables are not partitioned and are kept indef
 
 Galexie ECS Fargate task running on mainnet, writing `LedgerCloseMeta` XDR files to S3
 every ~5–6 seconds. Lambda Ledger Processor triggered per file, parsing and writing
-ledgers, transactions, operations, Soroban invocations, and CAP-67 events to a dedicated
-RDS PostgreSQL database. Historical backfill from Soroban mainnet activation ledger
+ledgers, transactions, operations, accounts, Soroban invocations, and CAP-67 events to a
+dedicated RDS PostgreSQL database. Historical backfill from Soroban mainnet activation ledger
 (late 2023). NestJS API scaffolding with core modules. OpenAPI specification. AWS CDK
 infrastructure-as-code. CI/CD pipeline. CloudWatch dashboards and ingestion lag alarms.
 
