@@ -1,5 +1,5 @@
 {
-  "name": "@rumblefish/sorban-block-explorer-domain",
+  "name": "@rumblefish/soroban-block-explorer-domain",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,7 @@
   "exports": {
     "./package.json": "./package.json",
     ".": {
-      "sorban-block-explorer-source": "./src/index.ts",
+      "soroban-block-explorer-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"

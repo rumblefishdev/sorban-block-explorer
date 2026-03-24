@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "composite": true,
-    "customConditions": ["sorban-block-explorer-source"],
+    "customConditions": ["soroban-block-explorer-source"],
     "declarationMap": true,
     "emitDeclarationOnly": true,
     "importHelpers": true,

@@ -1,1 +1,1 @@
-export const projectName = 'sorban-block-explorer';
+export const projectName = 'soroban-block-explorer';

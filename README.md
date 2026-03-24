@@ -1,4 +1,4 @@
-# Sorban Block Explorer
+# Soroban Block Explorer
 
 Nx + TypeScript monorepo bootstrap for a Soroban-first Stellar block explorer.
 
