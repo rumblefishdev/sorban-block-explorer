@@ -7,6 +7,13 @@
 | **Who** | `lore/0-session/current-user.md` | Auto-generated from `LORE_SESSION_CURRENT_USER` env |
 | **What** | `lore/0-session/current-task.md` | Pick from `lore/0-session/next-tasks.md`, use MCP tool `lore_set-task` |
 
+## File Deletion Policy
+
+**Using `rm` is FORBIDDEN.** To delete files, move them to `.trash/` instead:
+```bash
+mv <file> .trash/
+```
+
 ## Task-Gated Development
 
 **Writing code without an active task is FORBIDDEN.**

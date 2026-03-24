@@ -1,4 +1,7 @@
 stkrolikiewicz:
   name: 'Stanisław Królikiewicz'
-  role: 'Your Role'
-  focus: 'What you work on'
+  role: 'developer'
+
+fmazur:
+  name: 'Filip Mazur'
+  role: 'developer'
