@@ -6,7 +6,8 @@ status: backlog
 related_adr: []
 related_tasks: []
 tags: [priority-medium, effort-small, layer-infra]
-links: []
+links:
+  - docs/architecture/infrastructure/infrastructure-overview.md
 history:
   - date: 2026-03-24
     status: backlog
@@ -135,6 +136,10 @@ All alarm thresholds are parameterized and configured via the environment config
 - [ ] Production: alarms trigger SNS for paging/PagerDuty
 - [ ] Staging: alarms trigger email/Slack only, non-paging
 - [ ] All thresholds are environment-configurable via task 0075
+- [ ] Alarm thresholds match architecture baseline: Galexie lag >60s, Processor error >1%, RDS CPU >70% sustained 5min, RDS storage <20%, API 5xx >0.5%
+- [ ] Staging defines the same five alarm categories as production, differing only in thresholds and notification targets
+- [ ] Production alarm thresholds documented as SLA-oriented baselines in CDK configuration
+- [ ] Staging alarm thresholds tuned for regression detection (not identical to production)
 
 ## Notes
 

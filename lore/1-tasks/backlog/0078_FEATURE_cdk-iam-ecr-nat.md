@@ -6,7 +6,8 @@ status: backlog
 related_adr: []
 related_tasks: ['0068']
 tags: [priority-high, effort-medium, layer-infra]
-links: []
+links:
+  - docs/architecture/infrastructure/infrastructure-overview.md
 history:
   - date: 2026-03-24
     status: backlog
@@ -133,6 +134,9 @@ Refine the S3 VPC endpoint policy (endpoint created in task 0068) to restrict ac
 - [ ] Private subnet route table routes 0.0.0.0/0 through NAT Gateway
 - [ ] NAT Gateway documentation notes Single NAT at launch, expandable per-AZ
 - [ ] S3 VPC endpoint policy restricts access to project buckets only
+- [ ] GitHub Actions OIDC identity provider resource defined in CDK
+- [ ] Separate IAM deploy roles for staging and production with repository and branch scope conditions
+- [ ] Secrets Manager IAM permissions scoped to specific secret ARNs per workload (not wildcard)
 
 ## Notes
 

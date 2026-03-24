@@ -6,7 +6,8 @@ status: backlog
 related_adr: []
 related_tasks: []
 tags: [priority-medium, effort-medium, layer-infra]
-links: []
+links:
+  - docs/architecture/infrastructure/infrastructure-overview.md
 history:
   - date: 2026-03-24
     status: backlog
@@ -121,6 +122,9 @@ For the staging environment:
 - [ ] Staging: CloudFront password protection is implemented via CloudFront Functions or Lambda@Edge
 - [ ] Production: no password protection on CloudFront distributions
 - [ ] HTTP to HTTPS redirect is enabled on all distributions
+- [ ] Staging web password stored in AWS Secrets Manager or SSM Parameter Store SecureString; not committed to repository
+- [ ] api-docs S3 bucket accessible only through CloudFront via OAI or OAC (no direct S3 URL access)
+- [ ] SPA build pipeline does not embed API keys, secrets, or credentials into the frontend bundle
 
 ## Notes
 

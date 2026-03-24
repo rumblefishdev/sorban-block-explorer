@@ -6,7 +6,8 @@ status: backlog
 related_adr: []
 related_tasks: ['0068']
 tags: [priority-high, effort-medium, layer-infra]
-links: []
+links:
+  - docs/architecture/infrastructure/infrastructure-overview.md
 history:
   - date: 2026-03-24
     status: backlog
@@ -131,6 +132,9 @@ For production:
 - [ ] Staging: SSE-S3 acceptable, TLS optional
 - [ ] Production: automated backups, PITR, deletion protection enabled
 - [ ] No read replica at launch (documented as future addition based on CPU threshold)
+- [ ] RDS definition structured so Single-AZ to Multi-AZ promotion requires only a configuration change
+- [ ] Staging and production use separate RDS instances (no shared database)
+- [ ] S3 lifecycle retention rationale documented in CDK code comments: supports XDR replay and incident validation
 
 ## Notes
 

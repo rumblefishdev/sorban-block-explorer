@@ -6,7 +6,8 @@ status: backlog
 related_adr: []
 related_tasks: ['0017', '0018', '0020']
 tags: [priority-medium, effort-medium, layer-database]
-links: []
+links:
+  - docs/architecture/database-schema/database-schema-overview.md
 history:
   - date: 2026-03-24
     status: backlog
@@ -150,6 +151,8 @@ Add CloudWatch alarms for:
 - [ ] Monitoring alerts when operations partition range is approaching exhaustion
 - [ ] No application code in apps/api or apps/indexer creates or drops partitions
 - [ ] Documentation exists for the manual partition pruning process
+- [ ] Core history tables (ledgers, transactions) are never subject to automated pruning
+- [ ] Documentation exists for the manual partition pruning process including operator review checklist
 
 ## Notes
 

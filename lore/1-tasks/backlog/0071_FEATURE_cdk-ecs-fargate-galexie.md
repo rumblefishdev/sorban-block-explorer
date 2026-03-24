@@ -6,7 +6,8 @@ status: backlog
 related_adr: []
 related_tasks: ['0068', '0001']
 tags: [priority-medium, effort-medium, layer-infra]
-links: []
+links:
+  - docs/architecture/infrastructure/infrastructure-overview.md
 history:
   - date: 2026-03-24
     status: backlog
@@ -144,6 +145,8 @@ Define IAM roles for ECS tasks (detailed permissions in task 0078):
 - [ ] S3 access routes through VPC endpoint, not NAT Gateway
 - [ ] Stellar network access routes through NAT Gateway
 - [ ] Task roles grant appropriate S3 and CloudWatch permissions
+- [ ] No secret values baked into Galexie container image; all secrets resolved at runtime via Secrets Manager or environment variables referencing secret ARNs
+- [ ] ECS tasks connect only to Stellar network peers and Stellar public history archives as external data sources; no other external API dependency
 
 ## Notes
 

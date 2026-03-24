@@ -6,7 +6,8 @@ status: backlog
 related_adr: []
 related_tasks: ['0060', '0018', '0003']
 tags: [priority-high, effort-large, layer-indexing]
-links: []
+links:
+  - docs/architecture/xdr-parsing/xdr-parsing-overview.md
 history:
   - date: 2026-03-24
     status: backlog
@@ -132,6 +133,7 @@ The specific event signatures depend on the NFT contract conventions documented 
 - [ ] NFT-related events are identified and emitted for consumption by task 0063
 - [ ] ON DELETE CASCADE from transactions properly cleans up soroban_events and soroban_invocations rows
 - [ ] Unit tests cover event extraction, invocation tree decoding (including nested calls), interface extraction, and NFT event identification
+- [ ] Transactions with Soroban invocations preserve both operation_tree JSONB AND result_meta_xdr
 
 ## Notes
 

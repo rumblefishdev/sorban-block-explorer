@@ -6,7 +6,8 @@ status: backlog
 related_adr: []
 related_tasks: ['0006']
 tags: [priority-high, effort-medium, layer-infra]
-links: []
+links:
+  - docs/architecture/infrastructure/infrastructure-overview.md
 history:
   - date: 2026-03-24
     status: backlog
@@ -119,6 +120,9 @@ Document the expansion path in CDK comments.
 - [ ] No security group allows unrestricted inbound from 0.0.0.0/0
 - [ ] CDK code is structured for Multi-AZ expansion without architectural changes
 - [ ] All networking resources are tagged consistently for cost tracking
+- [ ] Initial deployment in us-east-1a; VPC structured for Multi-AZ expansion without VPC replacement
+- [ ] No public internet path exists to reach RDS or ECS Fargate ingestion components directly
+- [ ] Multi-AZ expansion trigger documented in CDK code: expand when SLA requirement exceeds 99.9%
 
 ## Notes
 

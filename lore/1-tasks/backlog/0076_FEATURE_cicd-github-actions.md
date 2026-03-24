@@ -6,7 +6,8 @@ status: backlog
 related_adr: []
 related_tasks: ['0021']
 tags: [priority-high, effort-medium, layer-infra]
-links: []
+links:
+  - docs/architecture/infrastructure/infrastructure-overview.md
 history:
   - date: 2026-03-24
     status: backlog
@@ -151,6 +152,11 @@ Document the process for Stellar protocol upgrades:
 - [ ] Galexie container image is built and pushed to ECR with git SHA tag
 - [ ] Rollback is possible by re-running previous successful workflow
 - [ ] Nx Cloud cache integration is documented (optional)
+- [ ] GitHub Actions authenticates to AWS via OIDC role assumption (no long-lived AWS access keys in GitHub secrets)
+- [ ] Staging and production deployments assume separate AWS IAM roles with environment-scoped permissions
+- [ ] CI/CD AWS IAM roles follow least-privilege principle; each role can only deploy to its target environment
+- [ ] GitHub Actions workflows reference secret names only; no secret values embedded in workflow YAML files
+- [ ] Protocol upgrade path documented: update @stellar/stellar-sdk, run integration tests with pre/post-upgrade XDR fixtures, deploy via normal pipeline
 
 ## Notes
 

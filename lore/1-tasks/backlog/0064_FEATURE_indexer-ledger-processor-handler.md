@@ -6,7 +6,8 @@ status: backlog
 related_adr: []
 related_tasks: ['0060', '0061', '0062', '0063', '0065']
 tags: [priority-high, effort-medium, layer-indexing]
-links: []
+links:
+  - docs/architecture/indexing-pipeline/indexing-pipeline-overview.md
 history:
   - date: 2026-03-24
     status: backlog
@@ -112,6 +113,7 @@ Schema migrations must be applied before deploying new Lambda code. This is enfo
 - [ ] All database connections go through RDS Proxy
 - [ ] Handler completes within the target latency of <10 seconds for typical ledgers
 - [ ] Integration test covers the full pipeline from S3 event to database verification
+- [ ] End-to-end latency from S3 object creation to DB write is under 10 seconds under normal conditions
 
 ## Notes
 
