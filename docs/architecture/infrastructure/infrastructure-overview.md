@@ -492,7 +492,51 @@ The source design defines the delivery path as:
 Infrastructure rollout is therefore part of the product delivery model, not a manual-only
 operations process.
 
-### 9.3 Open-Source Redeployability
+### 9.3 Public-Repo Configuration Model
+
+Because the repository is public, infrastructure configuration must be split between
+non-secret config committed to git and secrets resolved outside the repository.
+
+Safe-to-commit infrastructure config includes:
+
+- environment names, AWS region, and account/stack identifiers
+- instance classes, cache sizes, retention periods, and scaling thresholds
+- public domain names and routing structure
+- feature flags and non-sensitive deployment toggles
+- secret references such as parameter names, secret names, or ARNs, but not secret values
+
+The repository should not contain:
+
+- database passwords, staging web passwords, API keys, webhook secrets, or private keys
+- `.env.prod`, `.env.staging`, or similar files containing real secret values
+- copied secret payloads inside CDK context files, TypeScript constants, or GitHub workflow
+  YAML
+
+Expected secure configuration model:
+
+- non-secret environment config lives in `infra/aws-cdk/config/*`
+- real secret values live in AWS Secrets Manager or SSM Parameter Store SecureString
+- CDK consumes secret references, not hard-coded secret values
+- runtime workloads (Lambda, ECS) read only the specific secrets they need through IAM
+- the staging web password is stored as a secret and referenced by the edge protection
+  mechanism rather than committed to the repository
+
+### 9.4 CI/CD Credentials and Deployment Access
+
+For a public repository, CI/CD authentication should avoid long-lived AWS credentials stored
+in GitHub secrets.
+
+Preferred model:
+
+- GitHub Actions uses OIDC to assume AWS roles at deploy time
+- staging and production use separate AWS roles and separate environment protections
+- IAM permissions remain least-privilege and environment-scoped
+- deployment workflows may know which secret to reference, but not embed the secret value
+
+This keeps the public repository redeployable without turning the repository itself into a
+secret distribution channel.
+
+### 9.5 Open-Source Redeployability
 
 The main design explicitly assumes the full stack can be redeployed by third parties.
 
@@ -502,7 +546,7 @@ That means the infrastructure design should remain:
 - AWS-account reproducible
 - free of hidden dependency on internal-only external services for core runtime behavior
 
-### 9.4 Current Workspace State
+### 9.6 Current Workspace State
 
 The repository currently documents the intended infrastructure shape and reserves
 `infra/aws-cdk` as the infrastructure boundary, but does not yet contain the final deployed

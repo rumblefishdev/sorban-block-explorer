@@ -6,7 +6,8 @@ status: backlog
 related_adr: []
 related_tasks: []
 tags: [priority-medium, effort-small, layer-infra]
-links: []
+links:
+  - docs/architecture/infrastructure/infrastructure-overview.md
 history:
   - date: 2026-03-24
     status: backlog

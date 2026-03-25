@@ -6,7 +6,8 @@ status: backlog
 related_adr: []
 related_tasks: ['0001', '0064', '0065']
 tags: [priority-medium, effort-medium, layer-indexing]
-links: []
+links:
+  - docs/architecture/indexing-pipeline/indexing-pipeline-overview.md
 history:
   - date: 2026-03-24
     status: backlog
@@ -104,6 +105,7 @@ Ensure backfill cannot corrupt live data:
 - [ ] Progress is logged with current ledger position
 - [ ] Task can be stopped and resumed from any ledger
 - [ ] Integration test verifies backfill output triggers Lambda and produces correct database state
+- [ ] Default backfill start: Soroban mainnet activation (~ledger 50,692,993), configurable via parameter
 
 ## Notes
 

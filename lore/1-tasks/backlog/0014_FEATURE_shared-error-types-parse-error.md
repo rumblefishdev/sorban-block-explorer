@@ -6,7 +6,8 @@ status: backlog
 related_adr: []
 related_tasks: ['0013', '0056', '0017']
 tags: [priority-medium, effort-small, layer-domain]
-links: []
+links:
+  - docs/architecture/xdr-parsing/xdr-parsing-overview.md
 history:
   - date: 2026-03-24
     status: backlog
@@ -146,6 +147,7 @@ Export all error types and handlers from `libs/shared`. Write unit tests verifyi
 - [ ] All error types and handlers exported from `libs/shared`
 - [ ] Unit tests verify each handler produces partial records without throwing
 - [ ] Types compile without errors
+- [ ] UnknownOperationType handler emits a structured log event suitable for CloudWatch alarm triggering
 
 ## Notes
 

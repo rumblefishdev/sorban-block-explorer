@@ -6,7 +6,9 @@ status: backlog
 related_adr: []
 related_tasks: ['0002', '0013', '0016']
 tags: [priority-high, effort-large, layer-indexing]
-links: []
+links:
+  - docs/architecture/indexing-pipeline/indexing-pipeline-overview.md
+  - docs/architecture/xdr-parsing/xdr-parsing-overview.md
 history:
   - date: 2026-03-24
     status: backlog
@@ -127,6 +129,9 @@ When `fromXDR()` throws during deserialization:
 - [ ] Malformed XDR triggers error logging with context, raw XDR storage, parse_error=true flag, and the transaction remains visible
 - [ ] Unit tests cover ledger header extraction, transaction extraction, hash computation, and error handling paths
 - [ ] Parser output is consumable by downstream tasks (0061, 0062, 0063) without re-parsing the LedgerCloseMeta
+- [ ] S3 object key pattern validated: stellar-ledger-data/ledgers/{seq_start}-{seq_end}.xdr.zstd
+- [ ] zstd decompression handles the documented file format
+- [ ] Verify whether txSetResultHash from LedgerHeader is needed; if so, add to ledger extraction
 
 ## Notes
 

@@ -6,7 +6,8 @@ status: backlog
 related_adr: []
 related_tasks: []
 tags: [priority-high, effort-medium, layer-infra]
-links: []
+links:
+  - docs/architecture/infrastructure/infrastructure-overview.md
 history:
   - date: 2026-03-24
     status: backlog
@@ -166,6 +167,17 @@ The CI/CD pipeline (task 0076) passes the appropriate profile for each deploymen
 - [ ] Profile selection works via CDK context or environment variable
 - [ ] Configuration module is consumed by all CDK stacks
 - [ ] Stack is redeployable to any AWS account by changing parameters only
+- [ ] Non-secret environment configuration files stored in infra/aws-cdk/config/ (committed to git)
+- [ ] No .env.prod, .env.staging, or similar secret-containing files in the repository; no secret values in CDK context files, TypeScript constants, or workflow YAML
+- [ ] CDK stacks consume only secret references (ARNs, parameter names); no hard-coded secret values in any CDK code
+- [ ] Staging stellar-ledger-data S3 lifecycle: minimum 7-day retention
+- [ ] Production stellar-ledger-data S3 lifecycle: minimum 30-day retention
+- [ ] Staging profile specifies shorter CloudWatch log retention and X-Ray trace retention than production
+- [ ] Staging profile specifies smaller API Gateway cache size and shorter cache TTLs compared to production
+- [ ] Staging profile supports optional IP allowlists and reduced DNS discoverability as additional access controls
+- [ ] Infrastructure self-contained within a single AWS sub-account with no cross-account resource dependencies for core runtime
+- [ ] Infrastructure redeployable to any AWS account by changing parameters only; no hidden dependency on internal-only services
+- [ ] Configuration enforces deployment into a dedicated AWS sub-account
 
 ## Notes
 

@@ -6,7 +6,8 @@ status: backlog
 related_adr: []
 related_tasks: ['0068', '0069']
 tags: [priority-high, effort-medium, layer-infra]
-links: []
+links:
+  - docs/architecture/infrastructure/infrastructure-overview.md
 history:
   - date: 2026-03-24
     status: backlog
@@ -132,6 +133,15 @@ Define the SQS Dead Letter Queue for the Ledger Processor:
 - [ ] SQS DLQ captures exhausted Ledger Processor retries
 - [ ] IAM execution roles reference task 0078 definitions
 - [ ] All environment variables are parameterized, no hard-coded values
+- [ ] All three Lambda functions configured with ARM64/Graviton2 runtime
+- [ ] API Lambda has provisioned concurrency configured (value from environment config task 0075)
+- [ ] API Gateway enforces HTTPS/TLS for all public traffic
+- [ ] Browser traffic is anonymous read-only; API keys not required for default usage
+- [ ] Single Ledger Processor Lambda processes both live Galexie and historical backfill XDR files (no separate pipeline)
+- [ ] No secret values embedded in Lambda deployment packages; secrets resolved at runtime via Secrets Manager
+- [ ] API Lambda handlers read only from RDS PostgreSQL; no runtime dependency on Horizon, Soroswap, Aquarius, Soroban RPC, or external explorer APIs
+- [ ] Failed XDR files remain in S3 after processing failure; DLQ messages contain bucket/key for manual replay
+- [ ] Production Lambda database connection strings enforce TLS
 
 ## Notes
 
