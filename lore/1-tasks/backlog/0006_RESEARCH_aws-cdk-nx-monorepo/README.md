@@ -11,7 +11,7 @@ links: []
 history:
   - date: 2026-03-24
     status: backlog
-    who: filip
+    who: fmazur
     note: 'Task created from architecture docs decomposition'
 ---
 

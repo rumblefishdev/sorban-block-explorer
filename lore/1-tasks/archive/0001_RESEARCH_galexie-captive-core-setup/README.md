@@ -13,15 +13,15 @@ links:
 history:
   - date: 2026-03-24
     status: backlog
-    who: filip
+    who: fmazur
     note: 'Task created from architecture docs decomposition'
   - date: 2026-03-25
     status: active
-    who: filip
+    who: fmazur
     note: 'Research started - investigating Galexie CLI, Captive Core, S3 output, ECS sizing'
   - date: 2026-03-25
     status: completed
-    who: filip
+    who: fmazur
     note: >
       Research complete. 4 notes, 30 archived sources, 9/9 acceptance criteria met.
       Key findings: official Docker image stellar/stellar-galexie, BoundedRange vs
