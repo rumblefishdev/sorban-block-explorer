@@ -8,37 +8,37 @@
 
 | Total  | 📋 Backlog | 🚧 Active | 🚫 Blocked | ✅ Done |
 | :----: | :--------: | :-------: | :--------: | :-----: |
-| **80** |     78     |     1     |     0      |    1    |
+| **81** |     77     |     2     |     0      |    2    |
 
-**Progress:** 1% complete · 1% in progress
+**Progress:** 2% complete · 2% in progress
 
 ## By Layer
 
 | Layer             | Total | Backlog | Active | Blocked | Done |
 | :---------------- | :---: | :-----: | :----: | :-----: | :--: |
-| 🔬 Research       |   8   |    8    |   0    |    0    |  0   |
+| 🔬 Research       |   8   |    7    |   0    |    0    |  1   |
 | 📦 Domain         |   6   |    6    |   0    |    0    |  0   |
 | 🗄️ Database       |   8   |    8    |   0    |    0    |  0   |
 | ⚙️ Backend API    |  16   |   16    |   0    |    0    |  0   |
 | 🔄 Indexing       |   8   |    8    |   0    |    0    |  0   |
 | 🖥️ Frontend       |  22   |   22    |   0    |    0    |  0   |
 | ☁️ Infrastructure |  10   |   10    |   0    |    0    |  0   |
-| 🔧 Tooling        |   2   |    0    |   1    |    0    |  1   |
+| 🔧 Tooling        |   3   |    0    |   2    |    0    |  1   |
 
 ## Tasks
 
 ### 🔬 Research
 
-| ID                                                                                | Title                                                                       |   Status   | Priority  | Assignee |   Type   |
-| :-------------------------------------------------------------------------------- | :-------------------------------------------------------------------------- | :--------: | :-------: | :------: | :------: |
-| [0001](1-tasks/backlog/0001_RESEARCH_galexie-captive-core-setup/README.md)        | Research: Galexie configuration, Captive Core setup, and output format      | 📋 backlog |  🔴 high  |    —     | RESEARCH |
-| [0002](1-tasks/backlog/0002_RESEARCH_ledgerclosemeta-xdr-parsing/README.md)       | Research: LedgerCloseMeta structure and @stellar/stellar-sdk XDR parsing    | 📋 backlog |  🔴 high  |    —     | RESEARCH |
-| [0003](1-tasks/backlog/0003_RESEARCH_soroban-wasm-interface-extraction/README.md) | Research: Soroban contract WASM interface extraction                        | 📋 backlog |  🔴 high  |    —     | RESEARCH |
-| [0004](1-tasks/backlog/0004_RESEARCH_nestjs-lambda-adapter/README.md)             | Research: NestJS on AWS Lambda (adapter, cold starts, connection lifecycle) | 📋 backlog |  🔴 high  |    —     | RESEARCH |
-| [0005](1-tasks/backlog/0005_RESEARCH_soroban-nft-patterns/README.md)              | Research: Soroban NFT ecosystem patterns and detection heuristics           | 📋 backlog | 🟡 medium |    —     | RESEARCH |
-| [0006](1-tasks/backlog/0006_RESEARCH_aws-cdk-nx-monorepo/README.md)               | Research: AWS CDK with Nx monorepo organization                             | 📋 backlog | 🟡 medium |    —     | RESEARCH |
-| [0007](1-tasks/backlog/0007_RESEARCH_drizzle-orm-postgres-partitioning/README.md) | Research: Drizzle ORM with PostgreSQL partitioning and advanced features    | 📋 backlog |  🔴 high  |    —     | RESEARCH |
-| [0008](1-tasks/backlog/0008_RESEARCH_event-interpreter-patterns/README.md)        | Research: Event Interpreter pattern matching and enrichment approach        | 📋 backlog | 🟡 medium |    —     | RESEARCH |
+| ID                                                                                | Title                                                                       |    Status    | Priority  | Assignee |   Type   |
+| :-------------------------------------------------------------------------------- | :-------------------------------------------------------------------------- | :----------: | :-------: | :------: | :------: |
+| [0001](1-tasks/archive/0001_RESEARCH_galexie-captive-core-setup/README.md)        | Research: Galexie configuration, Captive Core setup, and output format      | ✅ completed |  🔴 high  | `filip`  | RESEARCH |
+| [0002](1-tasks/backlog/0002_RESEARCH_ledgerclosemeta-xdr-parsing/README.md)       | Research: LedgerCloseMeta structure and @stellar/stellar-sdk XDR parsing    |  📋 backlog  |  🔴 high  |    —     | RESEARCH |
+| [0003](1-tasks/backlog/0003_RESEARCH_soroban-wasm-interface-extraction/README.md) | Research: Soroban contract WASM interface extraction                        |  📋 backlog  |  🔴 high  |    —     | RESEARCH |
+| [0004](1-tasks/backlog/0004_RESEARCH_nestjs-lambda-adapter/README.md)             | Research: NestJS on AWS Lambda (adapter, cold starts, connection lifecycle) |  📋 backlog  |  🔴 high  |    —     | RESEARCH |
+| [0005](1-tasks/backlog/0005_RESEARCH_soroban-nft-patterns/README.md)              | Research: Soroban NFT ecosystem patterns and detection heuristics           |  📋 backlog  | 🟡 medium |    —     | RESEARCH |
+| [0006](1-tasks/backlog/0006_RESEARCH_aws-cdk-nx-monorepo/README.md)               | Research: AWS CDK with Nx monorepo organization                             |  📋 backlog  | 🟡 medium |    —     | RESEARCH |
+| [0007](1-tasks/backlog/0007_RESEARCH_drizzle-orm-postgres-partitioning/README.md) | Research: Drizzle ORM with PostgreSQL partitioning and advanced features    |  📋 backlog  |  🔴 high  |    —     | RESEARCH |
+| [0008](1-tasks/backlog/0008_RESEARCH_event-interpreter-patterns/README.md)        | Research: Event Interpreter pattern matching and enrichment approach        |  📋 backlog  | 🟡 medium |    —     | RESEARCH |
 
 ### 📦 Domain
 
@@ -142,10 +142,11 @@
 
 ### 🔧 Tooling
 
-| ID                                                                  | Title                                                                 |    Status    | Priority |     Assignee     |  Type   |
-| :------------------------------------------------------------------ | :-------------------------------------------------------------------- | :----------: | :------: | :--------------: | :-----: |
-| [0079](1-tasks/archive/0079_FEATURE_pr-and-branch-skills.md)        | Create /branch and /pr Claude Code skills for lore-aware git workflow | ✅ completed | 🔴 high  | `stkrolikiewicz` | FEATURE |
-| [0080](1-tasks/active/0080_BUG_deploy-board-duplicate-artifacts.md) | Fix GitHub Pages deploy failing with duplicate artifacts              |  🚧 active   | 🔴 high  | `stkrolikiewicz` |   BUG   |
+| ID                                                                          | Title                                                                       |    Status    | Priority |     Assignee     |  Type   |
+| :-------------------------------------------------------------------------- | :-------------------------------------------------------------------------- | :----------: | :------: | :--------------: | :-----: |
+| [0079](1-tasks/archive/0079_FEATURE_pr-and-branch-skills.md)                | Create /branch and /pr Claude Code skills for lore-aware git workflow       | ✅ completed | 🔴 high  | `stkrolikiewicz` | FEATURE |
+| [0080](1-tasks/active/0080_BUG_deploy-board-duplicate-artifacts.md)         | Fix GitHub Pages deploy failing with duplicate artifacts                    |  🚧 active   | 🔴 high  | `stkrolikiewicz` |   BUG   |
+| [0081](1-tasks/active/0081_BUG_fix-skills-structure-and-deploy-workflow.md) | Fix skill directory structure and deploy-board workflow duplicate artifacts |  🚧 active   | 🔴 high  | `stkrolikiewicz` |   BUG   |
 
 ## Dependency Graph
 
@@ -286,6 +287,7 @@ graph LR
   class T0078 infra
   T0079["0079: Create /branch and /pr Claude Co..."]
   T0080["0080: Fix GitHub Pages deploy failing ..."]
+  T0081["0081: Fix skill directory structure an..."]
   T0058 --> T0001
   T0063 --> T0001
   T0005 --> T0002
@@ -396,6 +398,8 @@ graph LR
   T0021 --> T0076
   T0068 --> T0078
   T0079 --> T0080
+  T0079 --> T0081
+  T0080 --> T0081
 ```
 
 **Legend:** 🔬 Research · 📦 Domain · 🗄️ Database · ⚙️ Backend API · 🔄 Indexing · 🖥️ Frontend · ☁️ Infrastructure · 🔧 Tooling | 🔴 High · 🟡 Medium · ⚪ Low

@@ -52,6 +52,8 @@
       "Skill(lore-framework)",
       "Skill(lore-framework-tasks)",
       "Skill(lore-framework-git)",
+      "Skill(pr)",
+      "Skill(branch)",
       "Skill(playwright-cli)",
       "Bash(playwright-cli:*)",
       "Bash(aws s3 ls:*)",
