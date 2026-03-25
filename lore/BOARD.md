@@ -8,9 +8,9 @@
 
 | Total  | 📋 Backlog | 🚧 Active | 🚫 Blocked | ✅ Done |
 | :----: | :--------: | :-------: | :--------: | :-----: |
-| **79** |     78     |     0     |     0      |    1    |
+| **80** |     78     |     1     |     0      |    1    |
 
-**Progress:** 1% complete
+**Progress:** 1% complete · 1% in progress
 
 ## By Layer
 
@@ -23,7 +23,7 @@
 | 🔄 Indexing       |   8   |    8    |   0    |    0    |  0   |
 | 🖥️ Frontend       |  22   |   22    |   0    |    0    |  0   |
 | ☁️ Infrastructure |  10   |   10    |   0    |    0    |  0   |
-| 🔧 Tooling        |   1   |    0    |   0    |    0    |  1   |
+| 🔧 Tooling        |   2   |    0    |   1    |    0    |  1   |
 
 ## Tasks
 
@@ -142,9 +142,10 @@
 
 ### 🔧 Tooling
 
-| ID                                                           | Title                                                                 |    Status    | Priority |     Assignee     |  Type   |
-| :----------------------------------------------------------- | :-------------------------------------------------------------------- | :----------: | :------: | :--------------: | :-----: |
-| [0079](1-tasks/archive/0079_FEATURE_pr-and-branch-skills.md) | Create /branch and /pr Claude Code skills for lore-aware git workflow | ✅ completed | 🔴 high  | `stkrolikiewicz` | FEATURE |
+| ID                                                                  | Title                                                                 |    Status    | Priority |     Assignee     |  Type   |
+| :------------------------------------------------------------------ | :-------------------------------------------------------------------- | :----------: | :------: | :--------------: | :-----: |
+| [0079](1-tasks/archive/0079_FEATURE_pr-and-branch-skills.md)        | Create /branch and /pr Claude Code skills for lore-aware git workflow | ✅ completed | 🔴 high  | `stkrolikiewicz` | FEATURE |
+| [0080](1-tasks/active/0080_BUG_deploy-board-duplicate-artifacts.md) | Fix GitHub Pages deploy failing with duplicate artifacts              |  🚧 active   | 🔴 high  | `stkrolikiewicz` |   BUG   |
 
 ## Dependency Graph
 
@@ -283,6 +284,8 @@ graph LR
   class T0077 frontend
   T0078["0078: CDK: IAM roles, ECR repository, ..."]
   class T0078 infra
+  T0079["0079: Create /branch and /pr Claude Co..."]
+  T0080["0080: Fix GitHub Pages deploy failing ..."]
   T0058 --> T0001
   T0063 --> T0001
   T0005 --> T0002
@@ -392,6 +395,7 @@ graph LR
   T0001 --> T0071
   T0021 --> T0076
   T0068 --> T0078
+  T0079 --> T0080
 ```
 
 **Legend:** 🔬 Research · 📦 Domain · 🗄️ Database · ⚙️ Backend API · 🔄 Indexing · 🖥️ Frontend · ☁️ Infrastructure · 🔧 Tooling | 🔴 High · 🟡 Medium · ⚪ Low
