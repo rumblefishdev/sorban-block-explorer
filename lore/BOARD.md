@@ -8,9 +8,9 @@
 
 | Total  | 📋 Backlog | 🚧 Active | 🚫 Blocked | ✅ Done |
 | :----: | :--------: | :-------: | :--------: | :-----: |
-| **81** |     77     |     2     |     0      |    2    |
+| **81** |     77     |     1     |     0      |    3    |
 
-**Progress:** 2% complete · 2% in progress
+**Progress:** 4% complete · 1% in progress
 
 ## By Layer
 
@@ -23,7 +23,7 @@
 | 🔄 Indexing       |   8   |    8    |   0    |    0    |  0   |
 | 🖥️ Frontend       |  22   |   22    |   0    |    0    |  0   |
 | ☁️ Infrastructure |  10   |   10    |   0    |    0    |  0   |
-| 🔧 Tooling        |   3   |    0    |   2    |    0    |  1   |
+| 🔧 Tooling        |   3   |    0    |   1    |    0    |  2   |
 
 ## Tasks
 
@@ -31,7 +31,7 @@
 
 | ID                                                                                | Title                                                                       |    Status    | Priority  | Assignee |   Type   |
 | :-------------------------------------------------------------------------------- | :-------------------------------------------------------------------------- | :----------: | :-------: | :------: | :------: |
-| [0001](1-tasks/archive/0001_RESEARCH_galexie-captive-core-setup/README.md)        | Research: Galexie configuration, Captive Core setup, and output format      | ✅ completed |  🔴 high  | `filip`  | RESEARCH |
+| [0001](1-tasks/archive/0001_RESEARCH_galexie-captive-core-setup/README.md)        | Research: Galexie configuration, Captive Core setup, and output format      | ✅ completed |  🔴 high  | `fmazur` | RESEARCH |
 | [0002](1-tasks/backlog/0002_RESEARCH_ledgerclosemeta-xdr-parsing/README.md)       | Research: LedgerCloseMeta structure and @stellar/stellar-sdk XDR parsing    |  📋 backlog  |  🔴 high  |    —     | RESEARCH |
 | [0003](1-tasks/backlog/0003_RESEARCH_soroban-wasm-interface-extraction/README.md) | Research: Soroban contract WASM interface extraction                        |  📋 backlog  |  🔴 high  |    —     | RESEARCH |
 | [0004](1-tasks/backlog/0004_RESEARCH_nestjs-lambda-adapter/README.md)             | Research: NestJS on AWS Lambda (adapter, cold starts, connection lifecycle) |  📋 backlog  |  🔴 high  |    —     | RESEARCH |
@@ -145,7 +145,7 @@
 | ID                                                                          | Title                                                                       |    Status    | Priority |     Assignee     |  Type   |
 | :-------------------------------------------------------------------------- | :-------------------------------------------------------------------------- | :----------: | :------: | :--------------: | :-----: |
 | [0079](1-tasks/archive/0079_FEATURE_pr-and-branch-skills.md)                | Create /branch and /pr Claude Code skills for lore-aware git workflow       | ✅ completed | 🔴 high  | `stkrolikiewicz` | FEATURE |
-| [0080](1-tasks/active/0080_BUG_deploy-board-duplicate-artifacts.md)         | Fix GitHub Pages deploy failing with duplicate artifacts                    |  🚧 active   | 🔴 high  | `stkrolikiewicz` |   BUG   |
+| [0080](1-tasks/archive/0080_BUG_deploy-board-duplicate-artifacts.md)        | Fix GitHub Pages deploy failing with duplicate artifacts                    | ✅ completed | 🔴 high  | `stkrolikiewicz` |   BUG   |
 | [0081](1-tasks/active/0081_BUG_fix-skills-structure-and-deploy-workflow.md) | Fix skill directory structure and deploy-board workflow duplicate artifacts |  🚧 active   | 🔴 high  | `stkrolikiewicz` |   BUG   |
 
 ## Dependency Graph

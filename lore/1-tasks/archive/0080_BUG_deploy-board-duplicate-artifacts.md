@@ -2,7 +2,7 @@
 id: '0080'
 title: 'Fix GitHub Pages deploy failing with duplicate artifacts'
 type: BUG
-status: active
+status: completed
 related_adr: []
 related_tasks: ['0079']
 tags: [priority-high, effort-small, layer-tooling]
@@ -12,6 +12,10 @@ history:
     status: active
     who: stkrolikiewicz
     note: 'Deploy fails with: Multiple artifacts named github-pages were unexpectedly found'
+  - date: 2026-03-25
+    status: completed
+    who: stkrolikiewicz
+    note: 'Split into build and deploy jobs, deployed successfully'
 ---
 
 # Fix GitHub Pages deploy failing with duplicate artifacts
@@ -31,4 +35,4 @@ Split into separate `build` and `deploy` jobs. The deploy job depends on build, 
 ## Acceptance Criteria
 
 - [x] `deploy-board.yml` splits upload and deploy into separate jobs
-- [ ] Board deploys successfully to GitHub Pages after merge to develop
+- [x] Board deploys successfully to GitHub Pages after merge to develop
