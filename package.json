@@ -19,7 +19,8 @@
     "format:staged": "node tools/scripts/format-staged.mjs",
     "prepare": "husky",
     "verify:staged": "node tools/scripts/run-affected-checks.mjs staged",
-    "verify:push": "node tools/scripts/run-affected-checks.mjs push"
+    "verify:push": "node tools/scripts/run-affected-checks.mjs push",
+    "board": "node tools/scripts/generate-lore-board.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.8.0",

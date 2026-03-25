@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Soroban Block Explorer — Backlog Board</title>
+    <style>
+      :root {
+        --bg: #0d1117;
+        --surface: #161b22;
+        --border: #30363d;
+        --text: #e6edf3;
+        --text-muted: #8b949e;
+        --accent: #58a6ff;
+        --green: #3fb950;
+        --yellow: #d29922;
+        --red: #f85149;
+        --purple: #bc8cff;
+
+        --research: #0288d1;
+        --domain: #7b1fa2;
+        --database: #f57c00;
+        --backend: #388e3c;
+        --indexing: #c62828;
+        --frontend: #00695c;
+        --infra: #4e342e;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica,
+          Arial, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.5;
+      }
+
+      header {
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+
+      header h1 {
+        font-size: 20px;
+        font-weight: 600;
+      }
+
+      header h1 span {
+        color: var(--text-muted);
+        font-weight: 400;
+      }
+
+      .stats {
+        display: flex;
+        gap: 16px;
+        font-size: 13px;
+      }
+
+      .stat {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .stat .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+      }
+
+      .stat .count {
+        font-weight: 600;
+        font-size: 15px;
+      }
+
+      .controls {
+        padding: 12px 24px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+
+      .filter-group {
+        display: flex;
+        gap: 4px;
+        align-items: center;
+      }
+
+      .filter-separator {
+        width: 1px;
+        height: 20px;
+        background: var(--border);
+        margin: 0 8px;
+      }
+
+      .controls label {
+        font-size: 12px;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-right: 4px;
+      }
+
+      .filter-btn {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        color: var(--text-muted);
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-size: 12px;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+
+      .filter-btn:hover {
+        border-color: var(--text-muted);
+      }
+      .filter-btn.active {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent);
+      }
+
+      .filter-btn .badge {
+        display: inline-block;
+        background: rgba(255, 255, 255, 0.15);
+        padding: 0 5px;
+        border-radius: 10px;
+        margin-left: 4px;
+        font-size: 11px;
+      }
+
+      .search-input {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        color: var(--text);
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-size: 12px;
+        width: 200px;
+        margin-left: auto;
+      }
+
+      .search-input::placeholder {
+        color: var(--text-muted);
+      }
+      .search-input:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+
+      .view-toggle {
+        display: flex;
+        gap: 4px;
+        margin-left: 8px;
+      }
+
+      main {
+        padding: 24px;
+      }
+
+      /* Kanban view */
+      .kanban {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+        min-height: calc(100vh - 160px);
+      }
+
+      .column {
+        background: var(--surface);
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+        min-height: 200px;
+      }
+
+      .column-header {
+        padding: 12px 16px;
+        font-size: 13px;
+        font-weight: 600;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .column-header .count-badge {
+        background: var(--border);
+        padding: 1px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--text-muted);
+      }
+
+      .column-body {
+        padding: 8px;
+        overflow-y: auto;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .card {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 10px 12px;
+        cursor: default;
+        transition: border-color 0.15s;
+        border-left: 3px solid var(--border);
+      }
+
+      .card:hover {
+        border-color: var(--text-muted);
+      }
+
+      .card.layer-research {
+        border-left-color: var(--research);
+      }
+      .card.layer-domain {
+        border-left-color: var(--domain);
+      }
+      .card.layer-database {
+        border-left-color: var(--database);
+      }
+      .card.layer-backend {
+        border-left-color: var(--backend);
+      }
+      .card.layer-indexing {
+        border-left-color: var(--indexing);
+      }
+      .card.layer-frontend {
+        border-left-color: var(--frontend);
+      }
+      .card.layer-infra {
+        border-left-color: var(--infra);
+      }
+
+      .card-id {
+        font-size: 11px;
+        color: var(--text-muted);
+        font-family: monospace;
+      }
+
+      .card-title {
+        font-size: 13px;
+        font-weight: 500;
+        margin: 2px 0 6px;
+        line-height: 1.35;
+      }
+
+      .card-meta {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+
+      .tag {
+        font-size: 10px;
+        padding: 1px 6px;
+        border-radius: 4px;
+        border: 1px solid;
+      }
+
+      .tag-type {
+        border-color: var(--purple);
+        color: var(--purple);
+      }
+      .tag-priority-high {
+        border-color: var(--red);
+        color: var(--red);
+      }
+      .tag-priority-medium {
+        border-color: var(--yellow);
+        color: var(--yellow);
+      }
+      .tag-priority-low {
+        border-color: var(--text-muted);
+        color: var(--text-muted);
+      }
+      .tag-assignee {
+        border-color: var(--green);
+        color: var(--green);
+      }
+      .tag-layer {
+        font-size: 10px;
+        padding: 1px 6px;
+        border-radius: 4px;
+        color: #fff;
+        border: none;
+      }
+
+      /* Table view */
+      .table-view {
+        display: none;
+      }
+      .table-view table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+
+      .table-view th {
+        text-align: left;
+        padding: 8px 12px;
+        border-bottom: 2px solid var(--border);
+        color: var(--text-muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        cursor: pointer;
+        user-select: none;
+      }
+
+      .table-view th:hover {
+        color: var(--text);
+      }
+
+      .table-view td {
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--border);
+        vertical-align: top;
+      }
+
+      .table-view tr:hover td {
+        background: rgba(255, 255, 255, 0.02);
+      }
+
+      .layer-dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 6px;
+        vertical-align: middle;
+      }
+
+      .empty-state {
+        padding: 40px 16px;
+        text-align: center;
+        color: var(--text-muted);
+        font-size: 13px;
+      }
+
+      @media (max-width: 900px) {
+        .kanban {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Soroban Block Explorer <span>Backlog Board</span></h1>
+      <div class="stats" id="stats"></div>
+    </header>
+
+    <div class="controls">
+      <label>Layer</label>
+      <div class="filter-group" id="layer-filters"></div>
+      <div class="filter-separator"></div>
+      <label>Priority</label>
+      <div class="filter-group" id="priority-filters"></div>
+      <div class="filter-separator"></div>
+      <label>Assignee</label>
+      <div class="filter-group" id="assignee-filters"></div>
+      <input
+        type="text"
+        class="search-input"
+        id="search"
+        placeholder="Search tasks..."
+      />
+      <div class="view-toggle">
+        <button class="filter-btn active" data-view="kanban">Board</button>
+        <button class="filter-btn" data-view="table">Table</button>
+      </div>
+    </div>
+
+    <main>
+      <div class="kanban" id="kanban">
+        <div class="column" data-status="backlog">
+          <div class="column-header">
+            📋 Backlog <span class="count-badge" data-count="backlog">0</span>
+          </div>
+          <div class="column-body" id="col-backlog"></div>
+        </div>
+        <div class="column" data-status="active">
+          <div class="column-header">
+            🚧 Active <span class="count-badge" data-count="active">0</span>
+          </div>
+          <div class="column-body" id="col-active"></div>
+        </div>
+        <div class="column" data-status="blocked">
+          <div class="column-header">
+            🚫 Blocked <span class="count-badge" data-count="blocked">0</span>
+          </div>
+          <div class="column-body" id="col-blocked"></div>
+        </div>
+        <div class="column" data-status="archive">
+          <div class="column-header">
+            ✅ Done <span class="count-badge" data-count="archive">0</span>
+          </div>
+          <div class="column-body" id="col-archive"></div>
+        </div>
+      </div>
+      <div class="table-view" id="table-view">
+        <table>
+          <thead>
+            <tr>
+              <th data-sort="id">ID</th>
+              <th data-sort="title">Title</th>
+              <th data-sort="layer">Layer</th>
+              <th data-sort="priority">Priority</th>
+              <th data-sort="type">Type</th>
+              <th data-sort="status">Status</th>
+              <th data-sort="assignee">Assignee</th>
+            </tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+    </main>
+
+    <script>
+      const LAYER_LABELS = {
+        'layer-research': 'Research',
+        'layer-domain': 'Domain',
+        'layer-database': 'Database',
+        'layer-backend': 'Backend API',
+        'layer-indexing': 'Indexing',
+        'layer-frontend': 'Frontend',
+        'layer-infra': 'Infrastructure',
+      };
+      const LAYER_COLORS = {
+        'layer-research': '#0288d1',
+        'layer-domain': '#7b1fa2',
+        'layer-database': '#f57c00',
+        'layer-backend': '#388e3c',
+        'layer-indexing': '#c62828',
+        'layer-frontend': '#00695c',
+        'layer-infra': '#4e342e',
+      };
+      const PRIORITY_ORDER = { high: 0, medium: 1, low: 2 };
+
+      let DATA = [];
+      let filters = {
+        layers: new Set(),
+        priorities: new Set(),
+        assignees: new Set(),
+        search: '',
+      };
+      let currentView = 'kanban';
+      let sortCol = 'id',
+        sortDir = 1;
+
+      async function loadData() {
+        try {
+          const resp = await fetch('board.json');
+          const json = await resp.json();
+          DATA = json.tasks;
+        } catch {
+          // Fallback: try to load from embedded data
+          DATA = [];
+        }
+        init();
+      }
+
+      function init() {
+        renderFilters();
+        renderStats();
+        render();
+        document.getElementById('search').addEventListener('input', (e) => {
+          filters.search = e.target.value.toLowerCase();
+          render();
+        });
+        document.querySelectorAll('.view-toggle .filter-btn').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            currentView = btn.dataset.view;
+            document
+              .querySelectorAll('.view-toggle .filter-btn')
+              .forEach((b) => b.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById('kanban').style.display =
+              currentView === 'kanban' ? 'grid' : 'none';
+            document.getElementById('table-view').style.display =
+              currentView === 'table' ? 'block' : 'none';
+            render();
+          });
+        });
+        document.querySelectorAll('.table-view th[data-sort]').forEach((th) => {
+          th.addEventListener('click', () => {
+            if (sortCol === th.dataset.sort) sortDir *= -1;
+            else {
+              sortCol = th.dataset.sort;
+              sortDir = 1;
+            }
+            render();
+          });
+        });
+      }
+
+      function renderFilters() {
+        const layerDiv = document.getElementById('layer-filters');
+        const priDiv = document.getElementById('priority-filters');
+
+        const layerCounts = {};
+        const priCounts = {};
+        for (const t of DATA) {
+          layerCounts[t.layer] = (layerCounts[t.layer] || 0) + 1;
+          priCounts[t.priority] = (priCounts[t.priority] || 0) + 1;
+        }
+
+        for (const [key, label] of Object.entries(LAYER_LABELS)) {
+          if (!layerCounts[key]) continue;
+          const btn = document.createElement('button');
+          btn.className = 'filter-btn';
+          btn.innerHTML = `${label}<span class="badge">${layerCounts[key]}</span>`;
+          btn.addEventListener('click', () => {
+            if (filters.layers.has(key)) filters.layers.delete(key);
+            else filters.layers.add(key);
+            btn.classList.toggle('active');
+            render();
+          });
+          layerDiv.appendChild(btn);
+        }
+
+        for (const pri of ['high', 'medium', 'low']) {
+          if (!priCounts[pri]) continue;
+          const btn = document.createElement('button');
+          btn.className = 'filter-btn';
+          btn.innerHTML = `${pri}<span class="badge">${priCounts[pri]}</span>`;
+          btn.addEventListener('click', () => {
+            if (filters.priorities.has(pri)) filters.priorities.delete(pri);
+            else filters.priorities.add(pri);
+            btn.classList.toggle('active');
+            render();
+          });
+          priDiv.appendChild(btn);
+        }
+
+        // Assignee filters
+        const assigneeDiv = document.getElementById('assignee-filters');
+        const assigneeCounts = {};
+        let unassignedCount = 0;
+        for (const t of DATA) {
+          const a = getTaskAssignee(t);
+          if (a) assigneeCounts[a] = (assigneeCounts[a] || 0) + 1;
+          else unassignedCount++;
+        }
+
+        // "Unassigned" button
+        const unBtn = document.createElement('button');
+        unBtn.className = 'filter-btn';
+        unBtn.innerHTML = `unassigned<span class="badge">${unassignedCount}</span>`;
+        unBtn.addEventListener('click', () => {
+          if (filters.assignees.has('__unassigned__'))
+            filters.assignees.delete('__unassigned__');
+          else filters.assignees.add('__unassigned__');
+          unBtn.classList.toggle('active');
+          render();
+        });
+        assigneeDiv.appendChild(unBtn);
+
+        // Named assignees
+        for (const [name, count] of Object.entries(assigneeCounts).sort(
+          (a, b) => b[1] - a[1]
+        )) {
+          const btn = document.createElement('button');
+          btn.className = 'filter-btn';
+          btn.innerHTML = `@${name}<span class="badge">${count}</span>`;
+          btn.addEventListener('click', () => {
+            if (filters.assignees.has(name)) filters.assignees.delete(name);
+            else filters.assignees.add(name);
+            btn.classList.toggle('active');
+            render();
+          });
+          assigneeDiv.appendChild(btn);
+        }
+      }
+
+      function renderStats() {
+        const stats = document.getElementById('stats');
+        const counts = { backlog: 0, active: 0, blocked: 0, archive: 0 };
+        for (const t of DATA) counts[t.status] = (counts[t.status] || 0) + 1;
+        const total = DATA.length;
+        const pct = total > 0 ? Math.round((counts.archive / total) * 100) : 0;
+        stats.innerHTML = `
+    <div class="stat"><span class="count">${total}</span> total</div>
+    <div class="stat"><div class="dot" style="background:#8b949e"></div><span class="count">${counts.backlog}</span> backlog</div>
+    <div class="stat"><div class="dot" style="background:#58a6ff"></div><span class="count">${counts.active}</span> active</div>
+    <div class="stat"><div class="dot" style="background:#f85149"></div><span class="count">${counts.blocked}</span> blocked</div>
+    <div class="stat"><div class="dot" style="background:#3fb950"></div><span class="count">${counts.archive}</span> done</div>
+    <div class="stat">${pct}% complete</div>
+  `;
+      }
+
+      function getTaskAssignee(t) {
+        const history = Array.isArray(t.history) ? t.history : [];
+        const lastEntry = history[history.length - 1];
+        return lastEntry?.who || null;
+      }
+
+      function filtered() {
+        return DATA.filter((t) => {
+          if (filters.layers.size > 0 && !filters.layers.has(t.layer))
+            return false;
+          if (
+            filters.priorities.size > 0 &&
+            !filters.priorities.has(t.priority)
+          )
+            return false;
+          if (filters.assignees.size > 0) {
+            const a = getTaskAssignee(t);
+            const matchesNamed = a && filters.assignees.has(a);
+            const matchesUnassigned =
+              !a && filters.assignees.has('__unassigned__');
+            if (!matchesNamed && !matchesUnassigned) return false;
+          }
+          if (
+            filters.search &&
+            !t.title.toLowerCase().includes(filters.search) &&
+            !t.id.includes(filters.search)
+          )
+            return false;
+          return true;
+        });
+      }
+
+      function render() {
+        const tasks = filtered();
+        if (currentView === 'kanban') renderKanban(tasks);
+        else renderTable(tasks);
+      }
+
+      function createCard(t) {
+        const card = document.createElement('div');
+        card.className = `card ${t.layer}`;
+        const layerColor = LAYER_COLORS[t.layer] || '#666';
+        const layerLabel = LAYER_LABELS[t.layer] || t.layer;
+        const priBadge =
+          t.priority === 'high'
+            ? 'tag-priority-high'
+            : t.priority === 'low'
+            ? 'tag-priority-low'
+            : 'tag-priority-medium';
+        card.innerHTML = `
+    <div class="card-id">#${t.id}</div>
+    <div class="card-title">${t.title}</div>
+    <div class="card-meta">
+      <span class="tag-layer" style="background:${layerColor}">${layerLabel}</span>
+      <span class="tag ${priBadge}">${t.priority}</span>
+      <span class="tag tag-type">${t.type}</span>
+      ${
+        getTaskAssignee(t)
+          ? `<span class="tag tag-assignee">@${getTaskAssignee(t)}</span>`
+          : ''
+      }
+    </div>
+  `;
+        return card;
+      }
+
+      function renderKanban(tasks) {
+        for (const status of ['backlog', 'active', 'blocked', 'archive']) {
+          const col = document.getElementById(`col-${status}`);
+          col.innerHTML = '';
+          const statusTasks = tasks.filter((t) => t.status === status);
+          document.querySelector(`[data-count="${status}"]`).textContent =
+            statusTasks.length;
+          if (statusTasks.length === 0) {
+            col.innerHTML = '<div class="empty-state">No tasks</div>';
+          } else {
+            for (const t of statusTasks) col.appendChild(createCard(t));
+          }
+        }
+      }
+
+      function renderTable(tasks) {
+        const sorted = [...tasks].sort((a, b) => {
+          let va = a[sortCol] || '',
+            vb = b[sortCol] || '';
+          if (sortCol === 'id') {
+            va = parseInt(va, 10);
+            vb = parseInt(vb, 10);
+          }
+          if (sortCol === 'priority') {
+            va = PRIORITY_ORDER[va] ?? 1;
+            vb = PRIORITY_ORDER[vb] ?? 1;
+          }
+          if (va < vb) return -1 * sortDir;
+          if (va > vb) return 1 * sortDir;
+          return 0;
+        });
+        const tbody = document.getElementById('table-body');
+        tbody.innerHTML = sorted
+          .map((t) => {
+            const layerColor = LAYER_COLORS[t.layer] || '#666';
+            return `<tr>
+      <td style="font-family:monospace;color:var(--text-muted)">${t.id}</td>
+      <td>${t.title}</td>
+      <td><span class="layer-dot" style="background:${layerColor}"></span>${
+              LAYER_LABELS[t.layer] || ''
+            }</td>
+      <td><span class="tag tag-priority-${t.priority}">${t.priority}</span></td>
+      <td><span class="tag tag-type">${t.type}</span></td>
+      <td>${t.status}</td>
+      <td>${getTaskAssignee(t) ? `@${getTaskAssignee(t)}` : '—'}</td>
+    </tr>`;
+          })
+          .join('');
+      }
+
+      loadData();
+    </script>
+  </body>
+</html>
