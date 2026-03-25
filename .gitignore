@@ -47,6 +47,7 @@ lore/0-session/current-task.md
 lore/0-session/current-task.json
 lore/0-session/next-tasks.md
 lore/README.md
+lore/board.json
 
 .npmrc
 
