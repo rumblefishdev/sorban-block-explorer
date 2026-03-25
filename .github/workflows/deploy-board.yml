@@ -1,0 +1,43 @@
+name: Deploy Board to GitHub Pages
+
+on:
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Generate board data
+        run: npm run board
+
+      - name: Prepare Pages artifact
+        run: |
+          mkdir -p _site
+          cp lore/board.html _site/index.html
+          cp lore/board.json _site/board.json
+
+      - uses: actions/upload-pages-artifact@v3
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

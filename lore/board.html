@@ -24,6 +24,7 @@
         --indexing: #c62828;
         --frontend: #00695c;
         --infra: #4e342e;
+        --tooling: #616161;
       }
 
       * {
@@ -87,22 +88,55 @@
         padding: 12px 24px;
         border-bottom: 1px solid var(--border);
         display: flex;
-        gap: 8px;
+        gap: 12px;
         flex-wrap: wrap;
         align-items: center;
+      }
+
+      .filter-section {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+      }
+
+      .filter-section label {
+        font-size: 12px;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        white-space: nowrap;
+        flex-shrink: 0;
       }
 
       .filter-group {
         display: flex;
         gap: 4px;
         align-items: center;
+        overflow-x: auto;
+        scrollbar-width: thin;
+        scrollbar-color: var(--border) transparent;
+        padding-bottom: 2px;
+      }
+
+      .filter-group::-webkit-scrollbar {
+        height: 4px;
+      }
+
+      .filter-group::-webkit-scrollbar-track {
+        background: transparent;
+      }
+
+      .filter-group::-webkit-scrollbar-thumb {
+        background: var(--border);
+        border-radius: 2px;
       }
 
       .filter-separator {
         width: 1px;
         height: 20px;
         background: var(--border);
-        margin: 0 8px;
+        flex-shrink: 0;
       }
 
       .controls label {
@@ -122,6 +156,8 @@
         font-size: 12px;
         cursor: pointer;
         transition: all 0.15s;
+        white-space: nowrap;
+        flex-shrink: 0;
       }
 
       .filter-btn:hover {
@@ -251,6 +287,9 @@
       .card.layer-infra {
         border-left-color: var(--infra);
       }
+      .card.layer-tooling {
+        border-left-color: var(--tooling);
+      }
 
       .card-id {
         font-size: 11px;
@@ -373,14 +412,20 @@
     </header>
 
     <div class="controls">
-      <label>Layer</label>
-      <div class="filter-group" id="layer-filters"></div>
+      <div class="filter-section">
+        <label>Layer</label>
+        <div class="filter-group" id="layer-filters"></div>
+      </div>
       <div class="filter-separator"></div>
-      <label>Priority</label>
-      <div class="filter-group" id="priority-filters"></div>
+      <div class="filter-section">
+        <label>Priority</label>
+        <div class="filter-group" id="priority-filters"></div>
+      </div>
       <div class="filter-separator"></div>
-      <label>Assignee</label>
-      <div class="filter-group" id="assignee-filters"></div>
+      <div class="filter-section">
+        <label>Assignee</label>
+        <div class="filter-group" id="assignee-filters"></div>
+      </div>
       <input
         type="text"
         class="search-input"
@@ -447,6 +492,7 @@
         'layer-indexing': 'Indexing',
         'layer-frontend': 'Frontend',
         'layer-infra': 'Infrastructure',
+        'layer-tooling': 'Tooling',
       };
       const LAYER_COLORS = {
         'layer-research': '#0288d1',
@@ -456,6 +502,7 @@
         'layer-indexing': '#c62828',
         'layer-frontend': '#00695c',
         'layer-infra': '#4e342e',
+        'layer-tooling': '#616161',
       };
       const PRIORITY_ORDER = { high: 0, medium: 1, low: 2 };
 
@@ -612,6 +659,7 @@
       }
 
       function getTaskAssignee(t) {
+        if (t.status !== 'active' && t.status !== 'archive') return null;
         const history = Array.isArray(t.history) ? t.history : [];
         const lastEntry = history[history.length - 1];
         return lastEntry?.who || null;

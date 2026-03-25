@@ -29,6 +29,7 @@ const LAYER_LABELS = {
   'layer-indexing': 'Indexing',
   'layer-frontend': 'Frontend',
   'layer-infra': 'Infrastructure',
+  'layer-tooling': 'Tooling',
 };
 
 const LAYER_ORDER = Object.keys(LAYER_LABELS);
@@ -41,6 +42,7 @@ const LAYER_EMOJI = {
   'layer-indexing': '🔄',
   'layer-frontend': '🖥️',
   'layer-infra': '☁️',
+  'layer-tooling': '🔧',
 };
 
 const STATUS_EMOJI = {
@@ -60,10 +62,13 @@ function parseFrontmatter(content) {
   const meta = {};
   let currentKey = null;
   let currentList = null;
+  let currentObj = null;
 
   for (const line of lines) {
+    // Top-level key: value
     const kvMatch = line.match(/^(\w[\w_]*):\s*(.*)$/);
     if (kvMatch) {
+      currentObj = null;
       const [, key, rawValue] = kvMatch;
       const value = rawValue.trim().replace(/^['"](.*)['"]$/, '$1');
 
@@ -84,11 +89,37 @@ function parseFrontmatter(content) {
         currentKey = key;
         currentList = null;
       }
-    } else if (line.match(/^\s+-\s+(.*)$/)) {
-      const item = line
-        .match(/^\s+-\s+(.*)$/)[1]
-        .trim()
-        .replace(/^['"](.*)['"]$/, '$1');
+      continue;
+    }
+
+    // List item starting with "- key: value" (object in list)
+    const listObjMatch = line.match(/^\s+-\s+(\w[\w_]*):\s*(.*)$/);
+    if (listObjMatch) {
+      const [, k, rawV] = listObjMatch;
+      const v = rawV.trim().replace(/^['"](.*)['"]$/, '$1');
+      currentObj = { [k]: v };
+      if (currentList === null) {
+        currentList = [currentObj];
+        meta[currentKey] = currentList;
+      } else {
+        currentList.push(currentObj);
+      }
+      continue;
+    }
+
+    // Continuation key inside list object: "    key: value"
+    const contMatch = line.match(/^\s{4,}(\w[\w_]*):\s*(.*)$/);
+    if (contMatch && currentObj) {
+      const [, k, rawV] = contMatch;
+      currentObj[k] = rawV.trim().replace(/^['"](.*)['"]$/, '$1');
+      continue;
+    }
+
+    // Simple list item: "  - value"
+    const simpleListMatch = line.match(/^\s+-\s+(.*)$/);
+    if (simpleListMatch) {
+      const item = simpleListMatch[1].trim().replace(/^['"](.*)['"]$/, '$1');
+      currentObj = null;
       if (currentList === null) {
         currentList = [item];
         meta[currentKey] = currentList;
@@ -172,6 +203,7 @@ function getPriority(task) {
 }
 
 function getAssignee(task) {
+  if (task._dir !== 'active' && task._dir !== 'archive') return null;
   const history = Array.isArray(task.history) ? task.history : [];
   const lastEntry = history[history.length - 1];
   return lastEntry?.who || null;
@@ -241,77 +273,28 @@ function generateMarkdown(tasks) {
   }
   md += `\n`;
 
-  // Active tasks (kanban highlight)
-  if (activeCount > 0) {
-    md += `## 🚧 Active\n\n`;
-    md += `| ID | Title | Layer | Assignee | Since |\n`;
-    md += `| :--- | :--- | :--- | :--- | :--- |\n`;
-    for (const t of byStatus.active || []) {
-      const layer = LAYER_LABELS[getLayer(t)] || '';
-      const assignee = getAssignee(t) || '—';
-      const history = Array.isArray(t.history) ? t.history : [];
-      const since = history[history.length - 1]?.date || '—';
-      md += `| [${t.id}](${t._relpath}) | ${t.title} | ${layer} | \`${assignee}\` | ${since} |\n`;
-    }
-    md += `\n`;
-  }
-
-  // Blocked tasks
-  if (blockedCount > 0) {
-    md += `## 🚫 Blocked\n\n`;
-    md += `| ID | Title | Blocked By |\n`;
-    md += `| :--- | :--- | :--- |\n`;
-    for (const t of byStatus.blocked || []) {
-      const history = Array.isArray(t.history) ? t.history : [];
-      const lastEntry = history[history.length - 1];
-      const by = lastEntry?.by
-        ? lastEntry.by.map((b) => `\`${b}\``).join(', ')
-        : lastEntry?.note || '—';
-      md += `| [${t.id}](${t._relpath}) | ${t.title} | ${by} |\n`;
-    }
-    md += `\n`;
-  }
-
-  // Full backlog by layer
-  md += `## 📋 Backlog\n\n`;
+  // All tasks by layer
+  md += `## Tasks\n\n`;
 
   for (const layerKey of LAYER_ORDER) {
-    const layerTasks = (byLayer[layerKey] || []).filter(
-      (t) => t._dir === 'backlog'
-    );
+    const layerTasks = byLayer[layerKey] || [];
     if (layerTasks.length === 0) continue;
 
     const emoji = LAYER_EMOJI[layerKey] || '';
     const label = LAYER_LABELS[layerKey] || layerKey;
     md += `### ${emoji} ${label}\n\n`;
-    md += `| ID | Title | Priority | Type | Depends On |\n`;
-    md += `| :--- | :--- | :---: | :---: | :--- |\n`;
+    md += `| ID | Title | Status | Priority | Assignee | Type |\n`;
+    md += `| :--- | :--- | :---: | :---: | :---: | :---: |\n`;
 
     for (const t of layerTasks) {
       const priority = getPriority(t);
       const priorityBadge =
         priority === 'high' ? '🔴' : priority === 'low' ? '⚪' : '🟡';
-      const deps = Array.isArray(t.related_tasks)
-        ? t.related_tasks.map((d) => `\`${d}\``).join(', ')
-        : '—';
-      md += `| [${t.id}](${t._relpath}) | ${
-        t.title
-      } | ${priorityBadge} ${priority} | ${t.type} | ${deps || '—'} |\n`;
-    }
-    md += `\n`;
-  }
-
-  // Done
-  if (doneCount > 0) {
-    md += `## ✅ Completed\n\n`;
-    md += `| ID | Title | Completed |\n`;
-    md += `| :--- | :--- | :--- |\n`;
-    for (const t of byStatus.archive || []) {
-      const history = Array.isArray(t.history) ? t.history : [];
-      const lastEntry = history[history.length - 1];
-      md += `| [${t.id}](${t._relpath}) | ${t.title} | ${
-        lastEntry?.date || '—'
-      } |\n`;
+      const status = t.status || t._dir;
+      const statusEmoji = STATUS_EMOJI[status] || STATUS_EMOJI[t._dir] || '';
+      const assignee = getAssignee(t);
+      const assigneeStr = assignee ? `\`${assignee}\`` : '—';
+      md += `| [${t.id}](${t._relpath}) | ${t.title} | ${statusEmoji} ${status} | ${priorityBadge} ${priority} | ${assigneeStr} | ${t.type} |\n`;
     }
     md += `\n`;
   }
