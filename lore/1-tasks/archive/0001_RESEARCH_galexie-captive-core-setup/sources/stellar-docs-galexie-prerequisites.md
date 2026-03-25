@@ -1,0 +1,49 @@
+---
+url: 'https://developers.stellar.org/docs/data/indexers/build-your-own/galexie/admin_guide/prerequisites'
+title: 'Prerequisites | Stellar Docs'
+fetched_date: 2026-03-25
+task_id: '0001'
+---
+
+# Prerequisites
+
+## 1. Cloud Platform Account
+
+Galexie exports Stellar ledger metadata to Google Cloud Storage (GCS) or Amazon Simple Storage Service (S3). You will need the relevant account and credentials for the cloud storage service you choose to use.
+
+### Google Cloud Platform (GCP) Account for GCS
+
+- Permissions to create a new GCS bucket, or
+- Access to an existing bucket with read/write permissions.
+
+### Amazon Web Services (AWS) Account for S3
+
+- Permissions to create a new S3 bucket, or
+- Access to an existing bucket with read/write permissions.
+
+## 2. Container Runtime (Recommended)
+
+### Kubernetes
+
+- Kubernetes 1.19+
+
+### Running the Galexie Container on an Instance
+
+- Instance like AWS EC2 or GCP VM
+- Any host machine with an OCI compliant container runtime installed like Docker ([Docker installation guide](https://docs.docker.com/engine/install/)).
+
+> **NOTE:** While it is possible to natively install Galexie (without a container runtime), this requires manual dependency management and is recommended only for advanced users.
+
+## Hardware Requirements
+
+The minimum hardware requirements for running Galexie are:
+
+| Resource        | Minimum                      |
+| --------------- | ---------------------------- |
+| RAM             | 16 GB                        |
+| CPU             | 4 vCPUs                      |
+| Persistent Disk | 100 GB with at least 5K IOPS |
+
+### Full History Export
+
+Please see the [Full History Exporting](https://developers.stellar.org/docs/data/indexers/build-your-own/galexie/admin_guide/full-history-exporting) guide for additional hardware considerations when running a full history export.
