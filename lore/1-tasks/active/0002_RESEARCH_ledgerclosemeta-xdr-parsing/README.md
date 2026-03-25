@@ -2,16 +2,22 @@
 id: '0002'
 title: 'Research: LedgerCloseMeta structure and @stellar/stellar-sdk XDR parsing'
 type: RESEARCH
-status: backlog
+status: active
 related_adr: []
-related_tasks: ['0005', '0052', '0053', '0054', '0055']
+related_tasks: ['0001', '0005', '0052', '0053', '0054', '0055']
 tags: [priority-high, effort-medium, layer-research]
-links: []
+links:
+  - https://stellar.github.io/js-stellar-sdk/
+  - https://github.com/nicklvsa/xdr-reader
 history:
   - date: 2026-03-24
     status: backlog
     who: fmazur
     note: 'Task created from architecture docs decomposition'
+  - date: 2026-03-25
+    status: active
+    who: stkrolikiewicz
+    note: 'Research started - investigating LedgerCloseMeta XDR structure and @stellar/stellar-sdk parsing APIs'
 ---
 
 # Research: LedgerCloseMeta structure and @stellar/stellar-sdk XDR parsing
