@@ -1,0 +1,171 @@
+---
+url: 'https://developers.stellar.org/docs/data/indexers/build-your-own/galexie/admin_guide/full-history-exporting'
+title: 'Full History Exporting | Stellar Docs'
+fetched_date: 2026-03-25
+task_id: '0001'
+---
+
+# Full History Exporting
+
+This page outlines best practices for using Galexie to build a data lake with the complete history of ledger metadata.
+
+## Why Full History Export?
+
+Exporting the full history of Stellar ledger metadata provides a complete data lake of everything that has occurred on-chain. This makes it easy and fast to retrieve data at any point in the network's history.
+
+This enables:
+
+- **Analytics** - run historical trend analysis with `stellar-etl`
+- **Full History RPC** - data lake backend supplying ledger metadata to RPC instances to enable full history data access
+- **Real-Time Data** - access to real-time data on top of the full historical data access
+
+## Costs and Storage Requirements
+
+The estimates are based on GCP Compute Engine and Google Cloud Storage costs.
+
+| Cost Type                       | Estimate    |
+| ------------------------------- | ----------- |
+| Total Cost                      | ~$1,100 USD |
+| Compute Costs                   | ~$500 USD   |
+| GCS Class A Operations (writes) | ~$600 USD   |
+| Total Storage Size              | ~3 TB       |
+
+## Export Strategy
+
+The best way to export full history with Galexie is by running multiple individual instances of Galexie in parallel.
+
+- Single Galexie instance: approximately **150 days** to export full history
+- Parallel export with 40-50 Galexie instances: approximately **4-5 days**
+
+### Steps
+
+1. Make sure you have set up a storage system and have appropriate hardware available as defined in the Galexie [Prerequisites](https://developers.stellar.org/docs/data/indexers/build-your-own/galexie/admin_guide/prerequisites)
+2. Determine how many parallel instances of Galexie that you'd want to run
+3. Remember to pass non-overlapping ledger ranges to each of your Galexie instances
+
+> **Note:** Earlier ledgers in history are smaller and export faster than newer, more recent ledgers. This performance difference becomes apparent around ledger 30,000,000. Because of this performance difference, it is generally better to allocate more Galexie instances for more recent ledgers.
+
+### How this Looks in Practice
+
+Given 50,000,000 total ledgers and 50 instances:
+
+- 15 instances to process genesis to 29,999,999
+- 35 instances to process 30,000,000 to 50,000,000
+
+Each instance follows the same [Running Galexie](https://developers.stellar.org/docs/data/indexers/build-your-own/galexie/admin_guide/running) instructions:
+
+```bash
+galexie append --start <start_ledger> --end <end_ledger>
+```
+
+First instance:
+
+```bash
+galexie append --start 2 --end 1999999
+```
+
+Second instance:
+
+```bash
+galexie append --start 2000000 --end 3999999
+```
+
+And so on.
+
+## Methods for Running Multiple Galexie Instances
+
+### GCP Batch
+
+Within GCP you can use [Batch](https://cloud.google.com/batch/docs/get-started) that accepts a `job` JSON or YAML file that can parameterize the start and end ledger ranges for each Galexie instance.
+
+Example GCP Batch job YAML:
+
+```yaml
+job:
+  taskGroups:
+    - taskSpec:
+        computeResource:
+          cpuMilli: 2000
+          memoryMib: 8000
+        maxRetryCount: 1
+        container:
+          imageUri: 'stellar/stellar-galexie:23.0.0'
+          entrypoint: 'galexie'
+          commands: ['append', '--start', '${START}', '--end', '#{END}']
+        tasks:
+          # It is possible to use the GCP batch index instead of manually naming each task
+          - name: 'galexie-1'
+            environments:
+              START: '2'
+              END: '1999999'
+          - name: 'galexie-2'
+            environments:
+              START: '2000000'
+              END: '3999999'
+        # ...
+
+      requireHostsFile: true
+      requireTaskHostsFile: true
+  allocationPolicy:
+    instances:
+      - policy:
+          machineType: 'e2-standard-2'
+          disks:
+            - newDisk:
+                type: 'pd-standard'
+                sizeGb: 100
+              mountPoint: '/mnt/shared'
+```
+
+### GCP Compute Instances
+
+You can spin up multiple individual compute instances manually.
+
+Example container declaration (`container-declaration-0.yaml`):
+
+```yaml
+spec:
+  restartPolicy: Always
+  containers:
+    - name: galexie
+      image: stellar/stellar-galexie:23.0.0
+      command:
+        - galexie
+      args:
+        - append
+        - --start
+        - '2'
+        - --end
+        - '1999999'
+      securityContext:
+        privileged: true
+```
+
+Create the instance with `gcloud`:
+
+```bash
+gcloud compute instances create "galexie-0" \
+  --zone=us-central1-a \
+  --machine-type=e2-standard-2 \
+  --image-family=cos-stable \
+  --image-project=cos-cloud \
+  --boot-disk-size=100GB \
+  --boot-disk-type=pd-standard \
+  --boot-disk-device-name="galexie-0" \
+  --tags=http-server,https-server \
+  --scopes=https://www.googleapis.com/auth/cloud-platform \
+  --service-account=<service-account> \
+  --metadata-from-file=gce-container-declaration="container-declaration-0.yaml"
+```
+
+Repeat for as many parallel instances as desired.
+
+### Local Galexie Instances
+
+You can run multiple Galexie instances locally with a locally built Galexie executable:
+
+```bash
+./galexie append --start 2 --end 1999999 & \
+./galexie append --start 2000000 --end 3999999 & \
+./galexie append --start 4000000 --end 5999999 &
+```
