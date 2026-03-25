@@ -2,7 +2,7 @@
 id: '0003'
 title: 'Research: Soroban contract WASM interface extraction'
 type: RESEARCH
-status: backlog
+status: active
 related_adr: []
 related_tasks: ['0054']
 tags: [priority-high, effort-medium, layer-research]
@@ -12,6 +12,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created from architecture docs decomposition'
+  - date: 2026-03-25
+    status: active
+    who: fmazur
+    note: 'Moved to active for research work'
 ---
 
 # Research: Soroban contract WASM interface extraction
@@ -20,7 +24,7 @@ history:
 
 Investigate how to extract public function signatures (names, parameter types, return types) from Soroban contract WASM bytecode at deployment time, including SAC detection, contract type classification, and the tools/libraries available for this extraction. This research must determine the feasibility and performance impact of performing WASM analysis during the Ledger Processor ingestion path.
 
-## Status: Backlog
+## Status: Active
 
 ## Context
 
