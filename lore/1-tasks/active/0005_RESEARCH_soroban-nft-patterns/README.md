@@ -2,7 +2,8 @@
 id: '0005'
 title: 'Research: Soroban NFT ecosystem patterns and detection heuristics'
 type: RESEARCH
-status: backlog
+status: active
+assignee: fmazur
 related_adr: []
 related_tasks: ['0055', '0012']
 tags: [priority-medium, effort-medium, layer-research]
@@ -12,6 +13,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created from architecture docs decomposition'
+  - date: 2026-03-26
+    status: active
+    who: fmazur
+    note: 'Promoted to active'
 ---
 
 # Research: Soroban NFT ecosystem patterns and detection heuristics
@@ -20,7 +25,7 @@ history:
 
 Investigate the current state of NFT conventions on the Soroban network, including contract interface patterns, event signatures for mint/transfer/burn, metadata standards, and detection heuristics. This research must determine how the block explorer can identify, index, and display NFTs given that Soroban has no ERC-721 equivalent standard.
 
-## Status: Backlog
+## Status: Active
 
 ## Context
 
