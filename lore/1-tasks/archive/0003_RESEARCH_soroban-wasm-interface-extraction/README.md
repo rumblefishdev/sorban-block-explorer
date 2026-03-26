@@ -2,7 +2,7 @@
 id: '0003'
 title: 'Research: Soroban contract WASM interface extraction'
 type: RESEARCH
-status: active
+status: completed
 related_adr: []
 related_tasks: ['0054']
 tags: [priority-high, effort-medium, layer-research]
@@ -16,6 +16,15 @@ history:
     status: active
     who: fmazur
     note: 'Moved to active for research work'
+  - date: 2026-03-26
+    status: completed
+    who: fmazur
+    note: >
+      Research completed. 8/8 acceptance criteria met. 5 research notes,
+      22 archived sources, all verified (md5sum + content match).
+      Key findings: use @stellar/stellar-sdk Spec.fromWasm(), SAC detection
+      via CONTRACT_EXECUTABLE_STELLAR_ASSET, heuristic classification,
+      contractmetav0 for search_vector. No blockers for task 0054.
 ---
 
 # Research: Soroban contract WASM interface extraction
@@ -24,7 +33,7 @@ history:
 
 Investigate how to extract public function signatures (names, parameter types, return types) from Soroban contract WASM bytecode at deployment time, including SAC detection, contract type classification, and the tools/libraries available for this extraction. This research must determine the feasibility and performance impact of performing WASM analysis during the Ledger Processor ingestion path.
 
-## Status: Active
+## Status: Completed
 
 ## Context
 
@@ -63,14 +72,62 @@ The `soroban_contracts` table includes a `search_vector` column (tsvector GENERA
 
 ## Acceptance Criteria
 
-- [ ] Documented method for extracting contract spec from WASM bytecode, with recommended library/tool
-- [ ] TypeScript-compatible approach confirmed (must run in Node.js Lambda environment)
-- [ ] Interface data structure defined: function signatures with names, parameter types, return types
-- [ ] SAC detection strategy documented with reliability assessment
-- [ ] Contract type classification approach documented with heuristics for each type
-- [ ] Performance impact assessment for WASM parsing during ingestion
-- [ ] Recommended `metadata` JSONB structure for storing extracted interface
-- [ ] Test cases identified: at least one known mainnet contract per category if available
+- [x] Documented method for extracting contract spec from WASM bytecode, with recommended library/tool
+- [x] TypeScript-compatible approach confirmed (must run in Node.js Lambda environment)
+- [x] Interface data structure defined: function signatures with names, parameter types, return types
+- [x] SAC detection strategy documented with reliability assessment
+- [x] Contract type classification approach documented with heuristics for each type
+- [x] Performance impact assessment for WASM parsing during ingestion
+- [x] Recommended `metadata` JSONB structure for storing extracted interface
+- [x] Test cases identified: at least one known mainnet contract per category if available
+
+## Research Notes
+
+| Note                                                                              | Title                                                                         |
+| --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| [R-wasm-spec-extraction](notes/R-wasm-spec-extraction.md)                         | WASM parsing tools, SDK API, extraction pipeline, performance, contractmetav0 |
+| [R-sac-detection-and-classification](notes/R-sac-detection-and-classification.md) | SAC detection, SEP-41 interface, contract type heuristics                     |
+| [R-mainnet-test-cases](notes/R-mainnet-test-cases.md)                             | Known mainnet contracts per category with verified IDs                        |
+| [G-metadata-jsonb-structure](notes/G-metadata-jsonb-structure.md)                 | Recommended JSONB schema for `soroban_contracts.metadata`                     |
+| [S-research-synthesis](notes/S-research-synthesis.md)                             | Key findings, recommendations, risks, open questions                          |
+
+## Implementation Notes
+
+- 5 research notes produced (3x R-, 1x G-, 1x S-)
+- 22 sources archived in `sources/` -- 12 raw GitHub files (10 byte-identical, 2 cosmetic diff), 10 web pages (all key data points verified)
+- Sources include: SEP-0048, SEP-0041, 4 Stellar XDR definitions, 3 SDK source files, 7 Stellar docs pages, Blend/Soroswap/Aquarius/FxDAO/Litemint/Oracle references
+
+## Design Decisions
+
+### From Plan
+
+1. **Use `@stellar/stellar-sdk` for extraction**: Task spec asked to evaluate multiple tools. SDK's `contract.Spec.fromWasm()` handles the full pipeline with no additional dependencies.
+
+2. **SAC detection via `ContractExecutable` type**: Task asked whether to use deployer, WASM hash, or interface matching. `CONTRACT_EXECUTABLE_STELLAR_ASSET` is protocol-level, 100% reliable.
+
+### Emerged
+
+3. **Human-readable type strings over nested type objects**: Types like `Vec<address>` stored as strings, not deeply nested JSON. Simpler storage, smaller JSONB, frontend can parse if needed.
+
+4. **Heuristic classification with confidence scores**: Contract type classification is inherently fuzzy. Added `classification_confidence` field to signal reliability per type.
+
+5. **Two-path extraction logic**: SACs and WASM contracts require completely different extraction paths. SACs have no WASM bytecode -- interface is known from the protocol.
+
+6. **`contractmetav0` for `metadata.name`**: Not in original task scope. Discovered during research that this WASM section provides contract descriptions for `search_vector`. Added extraction approach.
+
+7. **`@aspect-build/wasm-parser` does not exist**: Task spec listed it as candidate -- verified it's not a real npm package.
+
+## Issues Encountered
+
+- **`parseWasmCustomSections` not in public API**: Exported from internal `utils.ts` but not re-exported from `@stellar/stellar-sdk/contract`. Implementation will need to either vendor it (~45 lines) or use internal import path.
+
+- **No NFT contract ID on mainnet**: Litemint has auction contracts but no publicly documented contract ID. NFT is the weakest test category. Recommended testnet deployment for testing.
+
+## Future Work
+
+- Implement extraction in Ledger Processor (task 0054)
+- Known contract registry for exact classification of popular contracts
+- Event-based classification to strengthen heuristic confidence at runtime
 
 ## Notes
 

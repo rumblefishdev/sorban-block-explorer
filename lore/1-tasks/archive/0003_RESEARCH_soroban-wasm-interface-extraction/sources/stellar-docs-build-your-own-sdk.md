@@ -1,0 +1,93 @@
+---
+url: 'https://developers.stellar.org/docs/tools/sdks/build-your-own'
+title: 'Build Your Own Contract SDK | Stellar Docs'
+fetched_date: 2026-03-26
+task_id: '0003'
+---
+
+# Build Your Own Contract SDK
+
+> This is for building an SDK for writing smart contracts.
+
+Soroban currently has one SDF-maintained SDK for writing contracts in Rust, which can be found [here](https://docs.rs/soroban-sdk). A community-maintained SDK is available for writing contracts in AssemblyScript, which can be found [here](https://github.com/Soneso/as-soroban-sdk).
+
+To build SDKs for other languages a few things need to be included in the SDK to provide contracts with the foundation they need to accept inputs, decode them, store data, call other contracts, etc.
+
+Below is a list of functionality a Soroban SDK needs to support those things, as well as some details on what an SDK can provide in regards to testing capabilities.
+
+## Functionality
+
+### Value Conversions
+
+- [Val](https://github.com/stellar/rs-soroban-env/blob/main/soroban-env-common/src/val.rs) encode/decode
+- [Object](https://github.com/stellar/rs-soroban-env/blob/main/soroban-env-common/src/object.rs) encode/decode
+- [Symbol](https://github.com/stellar/rs-soroban-env/blob/main/soroban-env-common/src/symbol.rs) encode/decode
+- [Option](https://github.com/stellar/rs-soroban-env/blob/main/soroban-env-common/src/option.rs) encode/decode
+- [Error](https://github.com/stellar/rs-soroban-env/blob/main/soroban-env-common/src/error.rs) encode/decode
+
+### Host Functions
+
+The host functions defined in [env.json](https://github.com/stellar/rs-soroban-env/blob/main/soroban-env-common/env.json) are functions callable from within the Wasm Guest environment. These need to be available to contracts to call, in some form, ideally wrapped so that contracts have a nicer interface.
+
+Host functions have friendly names in the file above, such as `get_ledger_version`, however in the Wasm they are only importable via short names, such as `x.4`. The letter proceeding the dot is the module, and the value after the dot is the function name. The mappings are available in env.rs.
+
+### SDK Types
+
+All the types in [soroban-sdk](https://docs.rs/soroban-sdk) should be supported. Notably:
+
+- [Map](https://github.com/stellar/rs-soroban-sdk/blob/main/soroban-sdk/src/map.rs)
+- [Vec](https://github.com/stellar/rs-soroban-sdk/blob/main/soroban-sdk/src/vec.rs)
+- [Bytes](https://github.com/stellar/rs-soroban-sdk/blob/main/soroban-sdk/src/bytes.rs)
+
+### User Defined Types
+
+Contracts should be able to create user defined types, such as structs, unions, or enums, and have them be transmitted to the host for storing and transmitted back for loading.
+
+SDKs do this by converting objects to and from a `Val`. In the [soroban-sdk](https://docs.rs/soroban-sdk) this is referred to as a [Val](https://github.com/stellar/rs-soroban-env/blob/main/soroban-env-common/src/val.rs).
+
+#### Structs
+
+Structs with named fields should be translated into a `Map` with keys as `Symbol`s and the values as the field value, i.e. `Map<Symbol, V>`.
+
+Structs with unnamed fields should be translated into a `Vec` with the values as the elements. i.e. `Vec<V>`.
+
+#### Unions
+
+Unions (or enums in some languages) with named variants and unit or tuple values should be translated into a `Vec` with the first element as a `Symbol` of the name of the variant, and zero or more additional elements representing a value stored with the variant.
+
+#### Enums
+
+Enums with integer values should be translated into a `u32`.
+
+### User Defined Errors
+
+Errors are `u32` values that are translated into a [Error](https://github.com/stellar/rs-soroban-env/blob/main/soroban-env-common/src/error.rs).
+
+### Environment Meta Generation
+
+Contracts must contain a Wasm custom section with name `contractenvmetav0` and containing a serialized [SCEnvMetaEntry](https://github.com/stellar/stellar-xdr/blob/next/Stellar-contract-env-meta.x). The interface version stored within should match the version of the host functions supported.
+
+To view the Environment Meta, please consider using Stellar Lab's Contract Explorer, or Stellar CLI's command `stellar contract info env-meta --contract-id <contract-id>`.
+
+### Contract Meta Generation
+
+Contracts can optionally include a custom Wasm section named `contractmetav0`, which contains a serialized [SCMetaEntry](https://github.com/stellar/stellar-xdr/blob/next/Stellar-contract-meta.x). This section is not used by the network itself, but allows contracts to embed arbitrary metadata, including contract name, version, author, supported interfaces, source repo, or home domain. Applications and tooling can read this metadata to provide richer developer experiences, better indexing, or enhanced contract discovery.
+
+To add metadata to Contract Meta, please use the Stellar CLI command `stellar contract build --meta <meta>`.
+
+To view the Contract Meta, please use the Stellar Lab's Contract Explorer, or the Stellar CLI command `stellar contract info meta --contract-id <contract-id>`.
+
+### Contract Spec Generation
+
+Contracts should contain a Wasm custom section with name `contractspecv0` and containing a serialized stream of [SCSpecEntry](https://github.com/stellar/stellar-xdr/blob/next/Stellar-contract-spec.x). There should be a `SCSpecEntry` for every function, struct, and union exported by the contract.
+
+To view the Contract Meta, please use the Stellar Lab's Contract Explorer, or the Stellar CLI command `stellar contract info interface --contract-id <contract-id>`.
+
+## Testing
+
+Any Soroban SDK ideally provides a test environment for executing contract functions in the context of a Soroban runtime environment. The [soroban-sdk](https://docs.rs/soroban-sdk) does this by embedding the Soroban environment Rust library, [soroban-env-host](https://github.com/stellar/rs-soroban-env).
+
+The test environment should include:
+
+- Invoking contract functions.
+- Integration testing across multiple contracts.
