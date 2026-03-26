@@ -3,7 +3,6 @@
   "installation": {
     "version": "22.6.1"
   },
-  "nxCloudId": "69c1417d97b0fcdd14e7059d",
   "namedInputs": {
     "default": ["{projectRoot}/**/*", "sharedGlobals"],
     "production": [
