@@ -1,17 +1,17 @@
 ---
-id: "0083"
-title: "Remove BOARD.md — lore folder as single source of truth"
+id: '0083'
+title: 'Remove BOARD.md — lore folder as single source of truth'
 type: FEATURE
 status: active
 priority: high
 layer: tooling
-assignee: "stkrolikiewicz"
+assignee: 'stkrolikiewicz'
 related_adr: []
-related_tasks: ["0082"]
-tags: ["phase-tooling", "effort-small", "priority-high"]
+related_tasks: ['0082']
+tags: ['phase-tooling', 'effort-small', 'priority-high']
 links: []
 history:
-  - date: "2026-03-26"
+  - date: '2026-03-26'
     status: backlog
     who: stkrolikiewicz
     note: >
@@ -30,6 +30,7 @@ Remove committed `lore/BOARD.md` from the repo. The lore task files (`lore/1-tas
 ## Context
 
 Currently `generate-lore-board.mjs` produces two outputs:
+
 1. `lore/BOARD.md` — markdown board, committed to repo
 2. `lore/board.json` — JSON data for HTML board, gitignored
 

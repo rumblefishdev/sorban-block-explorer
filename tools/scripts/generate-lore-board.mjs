@@ -33,7 +33,6 @@ const LAYER_LABELS = {
 
 const LAYER_ORDER = Object.keys(LAYER_LABELS);
 
-
 function parseFrontmatter(content) {
   const match = content.match(/^---\n([\s\S]*?)\n---/);
   if (!match) return null;
