@@ -2,7 +2,7 @@
 id: '0004'
 title: 'Research: NestJS on AWS Lambda (adapter, cold starts, connection lifecycle)'
 type: RESEARCH
-status: backlog
+status: completed
 related_adr: []
 related_tasks: ['0015', '0007']
 tags: [priority-high, effort-small, layer-research]
@@ -12,6 +12,19 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created from architecture docs decomposition'
+  - date: 2026-03-26
+    status: active
+    who: fmazur
+    note: 'Promoted to active — starting research'
+  - date: 2026-03-26
+    status: completed
+    who: fmazur
+    note: >
+      Research complete. 8 research notes + 1 synthesis, 17 verified sources.
+      All 8 acceptance criteria met. Key decisions: @codegenie/serverless-express,
+      Node.js 22 arm64, esbuild bundling, no provisioned concurrency at launch,
+      Drizzle + node-postgres Pool max:1, RDS Proxy with session_pinning_filters,
+      REST API (not HTTP API), node-cache 30-60s TTL for in-memory caching.
 ---
 
 # Research: NestJS on AWS Lambda (adapter, cold starts, connection lifecycle)
@@ -20,7 +33,7 @@ history:
 
 Evaluate the adapter options, cold start characteristics, and database connection lifecycle patterns for running the NestJS backend API on AWS Lambda behind API Gateway. This research must determine the optimal configuration for the 9-module NestJS application serving the block explorer REST API, including Drizzle ORM connection management and caching strategies.
 
-## Status: Backlog
+## Status: Completed
 
 ## Context
 
@@ -73,14 +86,59 @@ The backend architecture specifies in-memory Lambda caching for frequently acces
 
 ## Acceptance Criteria
 
-- [ ] Adapter recommendation with justification (cold start impact, compatibility, maintenance)
-- [ ] Cold start benchmarks on ARM/Graviton2 with representative NestJS module count
-- [ ] Provisioned concurrency recommendation for launch
-- [ ] Drizzle ORM connection lifecycle pattern documented for Lambda (create/reuse semantics)
-- [ ] RDS Proxy integration requirements documented
-- [ ] API Gateway mode recommendation (REST API vs HTTP API) with feature comparison
-- [ ] Response caching strategy documented (TTL tiers per endpoint category)
-- [ ] In-memory caching pattern documented for warm Lambda reuse
+- [x] Adapter recommendation with justification — see [R-lambda-adapter-selection.md](notes/R-lambda-adapter-selection.md)
+- [x] Cold start benchmarks on ARM/Graviton2 — see [R-cold-start-benchmarks-arm.md](notes/R-cold-start-benchmarks-arm.md)
+- [x] Provisioned concurrency recommendation for launch — see [R-provisioned-concurrency.md](notes/R-provisioned-concurrency.md)
+- [x] Drizzle ORM connection lifecycle pattern documented — see [R-drizzle-connection-lifecycle.md](notes/R-drizzle-connection-lifecycle.md)
+- [x] RDS Proxy integration requirements documented — see [R-rds-proxy-integration.md](notes/R-rds-proxy-integration.md)
+- [x] API Gateway mode recommendation (REST API vs HTTP API) — see [R-api-gateway-mode.md](notes/R-api-gateway-mode.md)
+- [x] Response caching strategy documented (TTL tiers) — see [R-response-caching-strategy.md](notes/R-response-caching-strategy.md)
+- [x] In-memory caching pattern documented — see [R-inmemory-caching-pattern.md](notes/R-inmemory-caching-pattern.md)
+
+## Implementation Notes
+
+Research-only task — no code changes. Deliverables:
+
+- **9 notes** in `notes/` (8 R-prefixed research + 1 S-prefixed synthesis)
+- **17 source files** in `sources/` (archived web content with verified URLs)
+- Every factual claim in notes has a `> Source:` reference to a source file
+- Source files with editorial additions are marked `[EDITORIAL]`
+- Final audit: 68/68 source references verified, 17/17 URLs accessible
+
+## Design Decisions
+
+### From Plan
+
+1. **`@codegenie/serverless-express` adapter**: Official NestJS recommendation, only viable option. No local socket overhead in v4.x, broad event source support.
+
+2. **Node.js 22 arm64 runtime**: 14% faster cold starts, 25-40% lower cost vs x86. Based on 183,750-invocation benchmark.
+
+3. **REST API over HTTP API**: Caching and WAF are REST API-only features. Both are hard requirements.
+
+4. **Drizzle + node-postgres (pg)**: Avoids connection pinning from postgres.js prepared statements in RDS Proxy.
+
+5. **Pool max:1 outside handler**: Lambda is single-concurrent; RDS Proxy handles real pooling across instances.
+
+### Emerged
+
+6. **No provisioned concurrency at launch**: Task asked to evaluate, research showed <0.5% cold start rate at moderate traffic + $54/month baseline cost makes it premature for unknown traffic patterns.
+
+7. **`node-cache` over `@nestjs/cache-manager`**: Simpler, lighter, explicit TTL control. cache-manager abstraction designed for Redis/Memcached swapping — unnecessary for in-memory only.
+
+8. **Two-tier caching architecture**: API Gateway cache (15-3600s) + Lambda in-memory cache (30-60s) layered. Not explicitly in the task but emerged as the natural strategy.
+
+9. **`session_pinning_filters = EXCLUDE_VARIABLE_SETS`**: Required on RDS Proxy to avoid pinning from benign PostgreSQL driver SET commands. Not mentioned in original task.
+
+10. **`NODE_EXTRA_CA_CERTS=/var/runtime/ca-cert.pem`**: Required for Node.js 20+ Lambda connecting to RDS via SSL. Discovered during research.
+
+11. **Cache invalidation strategy**: `unauthorizedCacheControlHeaderStrategy: FAIL_WITH_403` to prevent cache poisoning on public API. Not in original scope.
+
+## Issues Encountered
+
+- **Duplicate source files**: Two agents fetched the same URL (API Gateway caching docs) independently, creating duplicates. Resolved by merging to single file.
+- **Paywalled source**: `drizzle-orm-serverless-integration-medium.md` was behind Medium paywall. Replaced reference with AWS official docs that contain the same metric (`DatabaseConnectionsCurrentlySessionPinned`).
+- **NestJS docs SPA**: `docs.nestjs.com` renders client-side, WebFetch cannot extract content. URL is accessible (HTTP 200) but content unverifiable via automated fetch. Accepted as known NestJS documentation.
+- **Editorial content in sources**: Some source files contained synthesized Lambda-specific patterns not from the original URL. Fixed by adding `[EDITORIAL]` markers to affected sections.
 
 ## Notes
 
