@@ -166,6 +166,7 @@ function loadTasks() {
       const meta = parseFrontmatter(content);
       if (!meta || !meta.id) continue;
 
+      meta._description = extractDescription(content);
       meta._dir = statusDir;
       meta._path = stat.isDirectory()
         ? `lore/1-tasks/${statusDir}/${entry}/README.md`
@@ -363,6 +364,18 @@ function generateMarkdown(tasks) {
   return md;
 }
 
+function extractDescription(content) {
+  // Extract text between "## Summary" and the next "##" heading
+  const match = content.match(/## Summary\n\n([\s\S]*?)(?=\n## |\n---$)/);
+  if (match) return match[1].trim();
+  // Fallback: first paragraph after frontmatter
+  const body = content
+    .replace(/^---[\s\S]*?---\n*/, '')
+    .replace(/^#[^\n]*\n*/, '');
+  const para = body.match(/^([^\n#][\s\S]*?)(?=\n\n|\n#|$)/);
+  return para ? para[1].trim() : '';
+}
+
 function generateJSON(tasks) {
   return tasks.map((t) => ({
     id: t.id,
@@ -374,8 +387,10 @@ function generateJSON(tasks) {
     assignee: getAssignee(t),
     tags: t.tags || [],
     related_tasks: t.related_tasks || [],
+    related_adr: t.related_adr || [],
     path: t._path,
     history: t.history || [],
+    description: t._description || '',
   }));
 }
 

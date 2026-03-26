@@ -398,6 +398,170 @@
         font-size: 13px;
       }
 
+      /* Modal */
+      .modal-backdrop {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        z-index: 100;
+        justify-content: center;
+        align-items: center;
+      }
+      .modal-backdrop.open {
+        display: flex;
+      }
+      .modal {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        width: 90%;
+        max-width: 620px;
+        max-height: 85vh;
+        overflow-y: auto;
+        position: relative;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      }
+      .modal-close {
+        position: absolute;
+        top: 12px;
+        right: 14px;
+        background: none;
+        border: none;
+        color: var(--text-muted);
+        font-size: 20px;
+        cursor: pointer;
+        line-height: 1;
+        padding: 4px 8px;
+        border-radius: 4px;
+      }
+      .modal-close:hover {
+        background: var(--border);
+        color: var(--text);
+      }
+      .modal-header {
+        padding: 20px 24px 0;
+      }
+      .modal-id {
+        font-family: monospace;
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+      .modal-title {
+        font-size: 18px;
+        font-weight: 600;
+        margin: 4px 0 12px;
+        padding-right: 30px;
+      }
+      .modal-tags {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        padding: 0 24px 16px;
+      }
+      .modal-body {
+        padding: 0 24px 24px;
+      }
+      .modal-section {
+        margin-bottom: 16px;
+      }
+      .modal-section:last-child {
+        margin-bottom: 0;
+      }
+      .modal-section-title {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--text-muted);
+        margin-bottom: 6px;
+        font-weight: 600;
+      }
+      .modal-description {
+        font-size: 13px;
+        line-height: 1.6;
+        color: var(--text);
+      }
+      .modal-status-badge {
+        display: inline-block;
+        padding: 2px 10px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 500;
+      }
+      .modal-status-backlog {
+        background: rgba(139, 148, 158, 0.15);
+        color: var(--text-muted);
+      }
+      .modal-status-active {
+        background: rgba(88, 166, 255, 0.15);
+        color: var(--accent);
+      }
+      .modal-status-blocked {
+        background: rgba(248, 81, 73, 0.15);
+        color: var(--red);
+      }
+      .modal-status-archive {
+        background: rgba(63, 185, 80, 0.15);
+        color: var(--green);
+      }
+
+      .modal-related {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .modal-related-id {
+        font-family: monospace;
+        font-size: 12px;
+        padding: 2px 8px;
+        border-radius: 4px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        color: var(--accent);
+      }
+      .modal-history {
+        list-style: none;
+        padding: 0;
+      }
+      .modal-history li {
+        position: relative;
+        padding: 0 0 12px 16px;
+        font-size: 12px;
+        line-height: 1.5;
+        border-left: 2px solid var(--border);
+      }
+      .modal-history li:last-child {
+        border-left-color: transparent;
+        padding-bottom: 0;
+      }
+      .modal-history li::before {
+        content: '';
+        position: absolute;
+        left: -5px;
+        top: 4px;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--border);
+      }
+      .modal-history .history-date {
+        color: var(--text-muted);
+        font-family: monospace;
+      }
+      .modal-history .history-who {
+        color: var(--green);
+      }
+      .modal-history .history-note {
+        color: var(--text);
+      }
+
+      .card {
+        cursor: pointer;
+      }
+      .table-view tr {
+        cursor: pointer;
+      }
+
       @media (max-width: 900px) {
         .kanban {
           grid-template-columns: 1fr;
@@ -482,6 +646,18 @@
         </table>
       </div>
     </main>
+
+    <div class="modal-backdrop" id="modal-backdrop">
+      <div class="modal" id="modal">
+        <button class="modal-close" id="modal-close">&times;</button>
+        <div class="modal-header">
+          <div class="modal-id" id="modal-id"></div>
+          <div class="modal-title" id="modal-title"></div>
+        </div>
+        <div class="modal-tags" id="modal-tags"></div>
+        <div class="modal-body" id="modal-body"></div>
+      </div>
+    </div>
 
     <script>
       const LAYER_LABELS = {
@@ -700,6 +876,8 @@
       function createCard(t) {
         const card = document.createElement('div');
         card.className = `card ${t.layer}`;
+        card.dataset.taskId = t.id;
+        card.addEventListener('click', () => openModal(t.id));
         const layerColor = LAYER_COLORS[t.layer] || '#666';
         const layerLabel = LAYER_LABELS[t.layer] || t.layer;
         const priBadge =
@@ -760,7 +938,7 @@
         tbody.innerHTML = sorted
           .map((t) => {
             const layerColor = LAYER_COLORS[t.layer] || '#666';
-            return `<tr>
+            return `<tr data-task-id="${t.id}">
       <td style="font-family:monospace;color:var(--text-muted)">${t.id}</td>
       <td>${t.title}</td>
       <td><span class="layer-dot" style="background:${layerColor}"></span>${
@@ -773,7 +951,120 @@
     </tr>`;
           })
           .join('');
+        tbody.querySelectorAll('tr[data-task-id]').forEach((row) => {
+          row.addEventListener('click', () => openModal(row.dataset.taskId));
+        });
       }
+
+      // --- Modal ---
+      const backdrop = document.getElementById('modal-backdrop');
+      const modal = document.getElementById('modal');
+
+      function openModal(taskId) {
+        const t = DATA.find((d) => d.id === taskId);
+        if (!t) return;
+
+        document.getElementById('modal-id').textContent = `#${t.id}`;
+        document.getElementById('modal-title').textContent = t.title;
+
+        // Tags
+        const tagsEl = document.getElementById('modal-tags');
+        const layerColor = LAYER_COLORS[t.layer] || '#666';
+        const layerLabel = LAYER_LABELS[t.layer] || t.layer;
+        const priBadge =
+          t.priority === 'high'
+            ? 'tag-priority-high'
+            : t.priority === 'low'
+            ? 'tag-priority-low'
+            : 'tag-priority-medium';
+        let tagsHtml = `<span class="tag-layer" style="background:${layerColor}">${layerLabel}</span>`;
+        tagsHtml += `<span class="tag ${priBadge}">${t.priority}</span>`;
+        tagsHtml += `<span class="tag tag-type">${t.type}</span>`;
+        tagsHtml += `<span class="modal-status-badge modal-status-${t.status}">${t.status}</span>`;
+        const assignee = getTaskAssignee(t);
+        if (assignee)
+          tagsHtml += `<span class="tag tag-assignee">@${assignee}</span>`;
+        tagsEl.innerHTML = tagsHtml;
+
+        // Body sections
+        let body = '';
+
+        if (t.description) {
+          body += `<div class="modal-section">
+            <div class="modal-section-title">Description</div>
+            <div class="modal-description">${escapeHtml(t.description)}</div>
+          </div>`;
+        }
+
+        const related = Array.isArray(t.related_tasks)
+          ? t.related_tasks.filter(Boolean)
+          : [];
+        if (related.length > 0) {
+          body += `<div class="modal-section">
+            <div class="modal-section-title">Related Tasks</div>
+            <div class="modal-related">${related
+              .map((id) => `<span class="modal-related-id">#${id}</span>`)
+              .join('')}</div>
+          </div>`;
+        }
+
+        const adrs = Array.isArray(t.related_adr)
+          ? t.related_adr.filter(Boolean)
+          : [];
+        if (adrs.length > 0) {
+          body += `<div class="modal-section">
+            <div class="modal-section-title">Related ADRs</div>
+            <div class="modal-related">${adrs
+              .map((id) => `<span class="modal-related-id">ADR-${id}</span>`)
+              .join('')}</div>
+          </div>`;
+        }
+
+        const history = Array.isArray(t.history) ? t.history : [];
+        if (history.length > 0) {
+          const items = [...history]
+            .reverse()
+            .map(
+              (h) =>
+                `<li>
+              <span class="history-date">${h.date || '—'}</span>
+              <span class="history-who">@${h.who || '?'}</span>
+              → <strong>${h.status || ''}</strong>
+              <br><span class="history-note">${escapeHtml(h.note || '')}</span>
+            </li>`
+            )
+            .join('');
+          body += `<div class="modal-section">
+            <div class="modal-section-title">History</div>
+            <ul class="modal-history">${items}</ul>
+          </div>`;
+        }
+
+        document.getElementById('modal-body').innerHTML = body;
+        backdrop.classList.add('open');
+        document.body.style.overflow = 'hidden';
+      }
+
+      function closeModal() {
+        backdrop.classList.remove('open');
+        document.body.style.overflow = '';
+      }
+
+      function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+      }
+
+      document
+        .getElementById('modal-close')
+        .addEventListener('click', closeModal);
+      backdrop.addEventListener('click', (e) => {
+        if (e.target === backdrop) closeModal();
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeModal();
+      });
 
       loadData();
     </script>
