@@ -1,0 +1,12 @@
+[package]
+name = "explore-xdr"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+stellar-xdr = { version = "25", default-features = true, features = ["curr"] }
+zstd = "0.13"
+hex = "0.4"
+serde_json = { version = "1.0", features = ["preserve_order"] }
+base64 = "0.22"
+sha2 = "0.10"

@@ -54,3 +54,6 @@ lore/board.json
 
 .temp
 .trash
+
+# Rust build artifacts
+tools/scripts/explore-xdr-rs/target/
