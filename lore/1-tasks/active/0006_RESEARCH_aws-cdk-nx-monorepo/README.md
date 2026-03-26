@@ -2,7 +2,7 @@
 id: '0006'
 title: 'Research: AWS CDK with Nx monorepo organization'
 type: RESEARCH
-status: backlog
+status: active
 related_adr: []
 related_tasks:
   ['0060', '0061', '0062', '0063', '0064', '0065', '0066', '0067', '0068']
@@ -13,6 +13,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created from architecture docs decomposition'
+  - date: 2026-03-26
+    status: active
+    who: stkrolikiewicz
+    note: 'Research started'
 ---
 
 # Research: AWS CDK with Nx monorepo organization
