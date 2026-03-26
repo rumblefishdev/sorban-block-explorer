@@ -21,9 +21,9 @@ history:
 
 **Related:**
 
-- [Task 0002: LedgerCloseMeta XDR parsing research](../1-tasks/active/0002_RESEARCH_ledgerclosemeta-xdr-parsing/README.md)
-- [S-language-choice-ledger-processor.md](../1-tasks/active/0002_RESEARCH_ledgerclosemeta-xdr-parsing/notes/S-language-choice-ledger-processor.md)
-- [stellar-indexer reference](../1-tasks/active/0002_RESEARCH_ledgerclosemeta-xdr-parsing/sources/stellar-indexer-ledger-mod-rs.md)
+- [Task 0002: LedgerCloseMeta XDR parsing research](../1-tasks/archive/0002_RESEARCH_ledgerclosemeta-xdr-parsing/README.md)
+- [S-language-choice-ledger-processor.md](../1-tasks/archive/0002_RESEARCH_ledgerclosemeta-xdr-parsing/notes/S-language-choice-ledger-processor.md)
+- [stellar-indexer reference](../1-tasks/archive/0002_RESEARCH_ledgerclosemeta-xdr-parsing/sources/stellar-indexer-ledger-mod-rs.md)
 
 ---
 
@@ -33,8 +33,8 @@ The Ledger Processor Lambda is the core ingestion engine of the block explorer. 
 
 Task 0002 research revealed:
 
-1. **Protocol 25 introduced TransactionMetaV4** which relocates Soroban events from `sorobanMeta.events()` to top-level. The parser must dispatch on meta version (V3 vs V4).
-2. **TX set has two phases** — classic (V0) and parallel Soroban (V1). Both must be iterated.
+1. **TransactionMetaV4** (introduced Protocol 23, CAP-0067; active on mainnet Protocol 25) reorganizes events — fee events at top-level, per-operation events in `OperationMetaV2`, `soroban_meta` persists. The parser must dispatch on meta version (V3 vs V4).
+2. **TX set has two phases** (introduced Protocol 23, CAP-0063) — classic (V0) and parallel Soroban (V1). Both must be iterated.
 3. **XDR parsing is CPU-bound** — 76ms in Node.js vs estimated 5-10ms in native code for a heavy ledger (343 txs, 2.4MB).
 4. **The team already has a working Rust implementation** (`rumblefishdev/stellar-indexer`) that correctly handles V3/V4 events, ScVal-to-typed-JSON conversion, and envelope extraction.
 
@@ -180,8 +180,8 @@ The Ledger Processor has a single job: parse XDR → write to DB. It doesn't ser
 
 ## References
 
-- [Task 0002 research](../1-tasks/active/0002_RESEARCH_ledgerclosemeta-xdr-parsing/README.md)
-- [S-language-choice comparison](../1-tasks/active/0002_RESEARCH_ledgerclosemeta-xdr-parsing/notes/S-language-choice-ledger-processor.md)
+- [Task 0002 research](../1-tasks/archive/0002_RESEARCH_ledgerclosemeta-xdr-parsing/README.md)
+- [S-language-choice comparison](../1-tasks/archive/0002_RESEARCH_ledgerclosemeta-xdr-parsing/notes/S-language-choice-ledger-processor.md)
 - [stellar-xdr crate](https://github.com/stellar/rs-stellar-xdr)
 - [Protocol 25 upgrade guide](https://stellar.org/blog/developers/stellar-x-ray-protocol-25-upgrade-guide)
-- [stellar-indexer reference (Rust)](../1-tasks/active/0002_RESEARCH_ledgerclosemeta-xdr-parsing/sources/stellar-indexer-events-mod-rs.md)
+- [stellar-indexer reference (Rust)](../1-tasks/archive/0002_RESEARCH_ledgerclosemeta-xdr-parsing/sources/stellar-indexer-events-mod-rs.md)

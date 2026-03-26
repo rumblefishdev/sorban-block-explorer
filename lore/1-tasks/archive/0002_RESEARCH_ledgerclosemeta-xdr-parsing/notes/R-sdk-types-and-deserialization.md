@@ -22,16 +22,21 @@ history:
 
 ## Crate and Versions
 
-- **Crate:** [`stellar-xdr`](https://github.com/stellar/rs-stellar-xdr) v25
-- **Module:** `stellar_xdr::curr` (current protocol XDR definitions)
-- **Protocol:** 25 ("X-Ray") — current Stellar mainnet
-- **Reference impl:** [`rumblefishdev/stellar-indexer`](../sources/stellar-indexer-ledger-mod-rs.md) (Rust)
+- **Crate:** [`stellar-xdr`](https://github.com/stellar/rs-stellar-xdr)
+- **v25.0.1:** `stellar_xdr::curr` module — current code examples in this research
+- **v26.0.0** (released 2026-03-20): `curr` module removed — types at crate root (`stellar_xdr::*`)
+- **Protocol:** 25 ("X-Ray") — current Stellar mainnet (since 2026-01-22)
+- **Reference impl:** [`rumblefishdev/stellar-indexer`](../sources/stellar-indexer-ledger-mod-rs.md) (Rust, private repo)
 
 ```toml
+# For v25.x (used in this research):
 [dependencies]
 stellar-xdr = { version = "25", default-features = true, features = ["curr"] }
 zstd = "0.13"
 hex = "0.4"
+
+# For v26.x (latest — import from stellar_xdr::* directly, no curr module):
+# stellar-xdr = { version = "26", default-features = true }
 ```
 
 The crate is auto-generated from stellar-core's XDR definitions. XDR union types are Rust enums — `match` is exhaustive and compiler-enforced.
@@ -86,7 +91,7 @@ pub struct LedgerCloseMetaV2 {
     pub scp_info: Vec<ScpHistoryEntry>,
     pub total_byte_size_of_live_soroban_state: i64,
     pub evicted_keys: Vec<LedgerKey>,
-    pub ext: ExtensionPoint,
+    pub ext: LedgerCloseMetaExt,
 }
 ```
 
@@ -116,7 +121,7 @@ let ledger_hash = hex::encode(Sha256::digest(&header_xdr));
 
 ## Transaction Envelope Extraction (TX Set)
 
-Protocol 25 has **two-phase TX set**. From [stellar-indexer](../sources/stellar-indexer-ledger-mod-rs.md):
+Two-phase TX set (introduced **Protocol 23**, CAP-0063; active on mainnet Protocol 25). From [stellar-indexer](../sources/stellar-indexer-ledger-mod-rs.md):
 
 ```rust
 use stellar_xdr::curr::{TransactionPhase, TxSetComponent};
@@ -200,22 +205,28 @@ let result_name: &str = proc.result.result.result.name();
 
 ## TransactionMeta Versions (CRITICAL)
 
-Protocol 25 introduced **TransactionMetaV4**. Events relocated:
+**TransactionMetaV4** introduced in **Protocol 23** (CAP-0067). Active on mainnet (Protocol 25). Events reorganized:
 
 ```rust
 match &proc.tx_apply_processing {
     TransactionMeta::V3(v3) => {
         if let Some(ref soroban) = v3.soroban_meta {
-            // Events here
+            // Soroban contract events here
             for ev in soroban.events.iter() { /* ... */ }
         }
     }
     TransactionMeta::V4(v4) => {
-        // Events at top-level (with stage info)
+        // Top-level: fee charge/refund events (TransactionEvent with stage)
         for te in v4.events.iter() { /* te.event, te.stage */ }
-        // Per-operation events
+        // Per-operation events (OperationMetaV2) — contract events here
         for op_meta in v4.operations.iter() {
             for ev in op_meta.events.iter() { /* ... */ }
+        }
+        // Diagnostic events
+        for de in v4.diagnostic_events.iter() { /* de.event */ }
+        // soroban_meta still present (SorobanTransactionMetaV2)
+        if let Some(ref soroban) = v4.soroban_meta {
+            // return_value, ext — but NOT events (events moved to top-level/per-op)
         }
     }
     _ => {}
