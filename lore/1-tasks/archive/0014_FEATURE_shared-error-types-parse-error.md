@@ -2,7 +2,7 @@
 id: '0014'
 title: 'Shared error types and parse_error handling'
 type: FEATURE
-status: active
+status: completed
 related_adr: []
 related_tasks: ['0013', '0056', '0017']
 tags: [priority-medium, effort-small, layer-domain]
@@ -17,6 +17,13 @@ history:
     status: active
     who: FilipDz
     note: 'Activated task'
+  - date: 2026-03-27
+    status: done
+    who: FilipDz
+    note: >
+      All error types implemented (XdrParseError, UnknownOperationTypeError, ScValDecodeError,
+      ContractMetadataError) with base ExplorerParseError. Handler utilities follow "log, store raw,
+      mark" pattern. All exported from libs/shared. Unit tests passing.
 ---
 
 # Shared error types and parse_error handling
@@ -25,9 +32,9 @@ history:
 
 Define shared error types and the parse_error handling strategy for the block explorer. These types live in `libs/shared` and establish the error taxonomy for XDR parsing failures, unknown operation types, ScVal decode errors, and contract metadata extraction failures. The core principle is: "log, store raw, mark parse_error, keep visible." Never drop data silently.
 
-## Status: Backlog
+## Status: Completed
 
-**Current state:** Not started. Closely related to the XDR parsing library (task 0013).
+**Current state:** Fully implemented. All error types and handlers in `libs/shared/src/errors.ts` and `libs/shared/src/error-handlers.ts`.
 
 ## Context
 
@@ -142,16 +149,16 @@ Export all error types and handlers from `libs/shared`. Write unit tests verifyi
 
 ## Acceptance Criteria
 
-- [ ] `XdrParseError` type defined with raw XDR storage and transaction context
-- [ ] `UnknownOperationType` type defined with raw type identifier and XDR
-- [ ] `ScValDecodeError` type defined with raw ScVal, field context, and parent identifier
-- [ ] `ContractMetadataError` type defined with contract ID and WASM hash
-- [ ] Error handler utilities implement "log, store raw, mark" pattern for each error type
-- [ ] No error handler silently drops data -- partial records are always produced
-- [ ] All error types and handlers exported from `libs/shared`
-- [ ] Unit tests verify each handler produces partial records without throwing
-- [ ] Types compile without errors
-- [ ] UnknownOperationType handler emits a structured log event suitable for CloudWatch alarm triggering
+- [x] `XdrParseError` type defined with raw XDR storage and transaction context
+- [x] `UnknownOperationType` type defined with raw type identifier and XDR
+- [x] `ScValDecodeError` type defined with raw ScVal, field context, and parent identifier
+- [x] `ContractMetadataError` type defined with contract ID and WASM hash
+- [x] Error handler utilities implement "log, store raw, mark" pattern for each error type
+- [x] No error handler silently drops data -- partial records are always produced
+- [x] All error types and handlers exported from `libs/shared`
+- [x] Unit tests verify each handler produces partial records without throwing
+- [x] Types compile without errors
+- [x] UnknownOperationType handler emits a structured log event suitable for CloudWatch alarm triggering
 
 ## Notes
 
