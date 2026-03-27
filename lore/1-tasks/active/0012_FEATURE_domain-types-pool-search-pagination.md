@@ -2,7 +2,7 @@
 id: '0012'
 title: 'Domain types: liquidity pool, search, pagination, network stats models'
 type: FEATURE
-status: backlog
+status: active
 related_adr: []
 related_tasks: ['0012']
 tags: [priority-high, effort-small, layer-domain]
@@ -12,6 +12,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-27
+    status: active
+    who: fmazur
+    note: 'Task activated'
 ---
 
 # Domain types: liquidity pool, search, pagination, network stats models
@@ -20,9 +24,9 @@ history:
 
 Define the shared TypeScript domain types for liquidity pools, pool snapshots, chart data, network statistics, and search request/response models. These types live in `libs/domain` and are consumed by both `apps/api` and `apps/indexer`. They mirror the PostgreSQL schema for pool tables and the API response contracts for search and network endpoints.
 
-## Status: Backlog
+## Status: Active
 
-**Current state:** Not started. Depends on DB schema task 0012.
+**Current state:** Activated, ready for implementation.
 
 ## Context
 
