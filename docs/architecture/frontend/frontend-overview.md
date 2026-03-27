@@ -41,8 +41,9 @@ The current Nx workspace already reserves the frontend boundary as:
 - `libs/domain` - shared explorer concepts that may be reused by both frontend and backend
 - `libs/shared` - generic non-domain utilities used across the workspace
 
-This document describes the intended production architecture for that boundary. It is not
-a description of the current implementation state, which is still skeletal.
+The frontend bootstrap (React 19, Vite, MUI, React Router, TanStack Query) is in place.
+This document describes the intended production architecture for that boundary. Page
+components, routing, theming, and data fetching layers are implemented in dedicated tasks.
 
 If any statement in this file conflicts with
 [`technical-design-general-overview.md`](../technical-design-general-overview.md), the
@@ -630,9 +631,8 @@ UI failures, slow routes, and degraded search or detail views.
 
 ### 10.3 Delivery Notes
 
-This document intentionally specifies the target product design more deeply than the
-current codebase. The workspace currently provides the structural frontend boundary
-(`apps/web`, `libs/ui`) but not the final React implementation yet.
-
-That is expected. This document should be used as the detailed reference for future
-frontend implementation planning.
+This document specifies the target product design more deeply than the current codebase.
+The frontend bootstrap (React 19, Vite, MUI, React Router, TanStack Query) is complete,
+but page components, routing configuration, theming, and data fetching layers are
+implemented in dedicated follow-up tasks. This document should be used as the detailed
+reference for that ongoing frontend implementation work.

@@ -14,7 +14,7 @@ export default [
     ],
   },
   {
-    files: ['**/*.ts', '**/*.js'],
+    files: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
     rules: {
       '@nx/enforce-module-boundaries': [
         'error',
@@ -62,9 +62,11 @@ export default [
   {
     files: [
       '**/*.ts',
+      '**/*.tsx',
       '**/*.cts',
       '**/*.mts',
       '**/*.js',
+      '**/*.jsx',
       '**/*.cjs',
       '**/*.mjs',
     ],
