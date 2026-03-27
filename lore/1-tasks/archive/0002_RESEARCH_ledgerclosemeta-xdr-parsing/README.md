@@ -25,9 +25,25 @@ history:
     who: stkrolikiewicz
     note: >
       Research complete. 5 notes (4 R-, 1 S-), 8 archived sources, 8/8 AC met.
-      Key findings: Protocol 25 TransactionMetaV4 relocates events, dual-phase TX set,
-      invocation tree from auth not meta, ScVal typed JSON format from stellar-indexer.
-      Proposed ADR-0002: Rust for Ledger Processor Lambda.
+      Key findings: TransactionMetaV4 (Protocol 23, CAP-0067) reorganizes events,
+      dual-phase TX set (Protocol 23, CAP-0063), invocation tree from auth not meta,
+      ScVal typed JSON format from stellar-indexer. Proposed ADR-0002: Rust for Ledger Processor Lambda.
+  - date: 2026-03-26
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Post-completion audit. Fixed: Protocol attribution (V4/dual-phase from P23 not P25),
+      v4.events clarified as fee events (not relocated Soroban events), stellar-xdr v26.0.0
+      noted, SAC event signatures completed (7 types per CAP-0046-06/SEP-0041/CAP-0067),
+      field mapping expanded to 12/12 tables, ADR-0002 links fixed to archive path,
+      LedgerCloseMetaV2.ext type corrected to LedgerCloseMetaExt.
+  - date: 2026-03-26
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Audit revision finalized for PR. README, note set, and ADR-0002 were aligned on
+      Protocol 23 attribution, V4 event layout, invocation tree source, and full 12-table
+      field mapping coverage.
 ---
 
 # Research: LedgerCloseMeta structure and @stellar/stellar-sdk XDR parsing
@@ -36,7 +52,7 @@ history:
 
 Investigate the internal structure of LedgerCloseMeta XDR and the concrete APIs needed to extract all explorer data fields. Primary focus on **Rust** (`stellar_xdr::curr` crate) for the Ledger Processor Lambda, with secondary coverage of `@stellar/stellar-sdk` TypeScript for the NestJS API on-demand decode path. Produces a field-by-field extraction mapping for every database table.
 
-## Status: Active
+## Status: Completed
 
 ## Research Notes
 
@@ -50,22 +66,23 @@ Investigate the internal structure of LedgerCloseMeta XDR and the concrete APIs 
 
 ## Key Findings
 
-- **Rust-first implementation:** Ledger Processor uses `stellar_xdr::curr` crate (v25) — canonical XDR types auto-generated from stellar-core. Exhaustive `match` on enums prevents silent breakage on protocol upgrades.
-- **Protocol 25 (TransactionMetaV4):** Events relocated from `soroban_meta.events` to top-level `v4.events`. Rust `match` on `TransactionMeta::V3` vs `V4` is compile-time safe.
-- **TX set dual phases:** `TransactionPhase::V0` (classic) + `V1` (parallel Soroban execution). Both iterated in `for_each_envelope()`.
-- **TX hash computation:** `env.hash(network_id)` — built-in on `TransactionEnvelope` in Rust. No manual payload construction.
+- **Rust-first implementation:** Ledger Processor uses `stellar_xdr` crate — canonical XDR types auto-generated from stellar-core. Exhaustive `match` on enums prevents silent breakage on protocol upgrades. Current crate: v25.0.1 (Protocol 25); v26.0.0 also available (removes `curr` module, types at crate root).
+- **TransactionMetaV4 (introduced Protocol 23, CAP-0067):** Events reorganized — fee events at top-level `v4.events`, per-operation events in `OperationMetaV2`, `soroban_meta` still present as `SorobanTransactionMetaV2`. Rust `match` on `TransactionMeta::V3` vs `V4` is compile-time safe. Current mainnet (Protocol 25) uses V4.
+- **TX set dual phases (introduced Protocol 23, CAP-0063):** `TransactionPhase::V0` (classic) + `V1` (parallel Soroban execution). Both iterated in `for_each_envelope()`.
+- **TX hash computation:** `env.hash(network_id)` — built-in on `TransactionEnvelope` in Rust. Parameter is `[u8; 32]`, returns `Result<[u8; 32], Error>`. No manual payload construction.
 - **ScVal typed JSON:** `{ "type": "u128", "value": "123" }` format from `stellar-indexer` — preserves type info for JSONB/GIN indexes.
 - **Performance:** Rust estimated ~5-10ms per heavy ledger (vs 76ms Node.js). ~500x Lambda headroom.
-- **Invocation tree:** from `InvokeHostFunctionOp.auth[].root_invocation` with recursive `sub_invocations`.
-- **Reference implementation:** `rumblefishdev/stellar-indexer` (Rust) — working V3/V4 event handling, ScVal conversion, envelope extraction. Source files copied to `sources/`.
+- **Invocation tree:** from `InvokeHostFunctionOp.auth[].root_invocation` in the transaction envelope (confirmed: `SorobanTransactionMeta` contains only events/returnValue/diagnosticEvents, no auth fields). Recursive `sub_invocations`.
+- **Reference implementation:** `rumblefishdev/stellar-indexer` (Rust, private repo) — working V3/V4 event handling, ScVal conversion, envelope extraction. Source files copied to `sources/`.
 
 ## Corrections to Architecture Docs
 
-1. **TransactionMeta version:** Architecture docs assume V3 only. Protocol 25 uses V4 which relocates events. Parser must dispatch on `meta.switch()` value (3 or 4).
-2. **TX set phases:** Architecture docs describe a single TX set. Protocol 25 has two phases — classic and parallel Soroban execution.
-3. **`rumblefishdev/stellar-indexer`:** Internal Rust reference implementation, available locally at `../stellar-indexer`. Key source files copied to `sources/` directory.
-4. **Invocation tree source:** Architecture docs say invocation tree comes from `result_meta_xdr`. In reality, it comes from `InvokeHostFunctionOp.auth[].rootInvocation` in the **transaction envelope**, not the meta. The `result_meta_xdr` contains events and LedgerEntryChanges, but not the invocation hierarchy.
-5. **Language choice:** Architecture docs assume TypeScript/Node.js for Ledger Processor. Research reveals Rust and Go are also viable — see S-language-choice-ledger-processor.md for comparison. This decision should be formalized as an ADR.
+1. **TransactionMeta version:** Architecture docs assume V3 only. TransactionMetaV4 was introduced in **Protocol 23** (CAP-0067), not Protocol 25. Current mainnet (Protocol 25) uses V4. Events are reorganized: fee events at top-level `v4.events`, per-operation events in `OperationMetaV2`, `soroban_meta` persists as `SorobanTransactionMetaV2`. Parser must dispatch on meta version (V3 vs V4).
+2. **TX set phases:** Architecture docs describe a single TX set. **Protocol 23** (CAP-0063) introduced two-phase TX sets — classic (V0) and parallel Soroban execution (V1). Current on mainnet.
+3. **`rumblefishdev/stellar-indexer`:** Internal Rust reference implementation (private repo), available locally at `../stellar-indexer`. Key source files copied to `sources/` directory.
+4. **Invocation tree source:** Architecture docs say invocation tree comes from `result_meta_xdr`. In reality, it comes from `InvokeHostFunctionOp.auth[].rootInvocation` in the **transaction envelope**, not the meta. Confirmed: `SorobanTransactionMeta` contains only events, returnValue, diagnosticEvents, and ext — no auth or invocation fields.
+5. **Language choice:** Architecture docs assume TypeScript/Node.js for Ledger Processor. Research reveals Rust and Go are also viable — see S-language-choice-ledger-processor.md for comparison. ADR-0002 proposed (Rust recommended).
+6. **`stellar-xdr` crate v26.0.0:** Released 2026-03-20. Removes `curr` module — types exported at crate root (`stellar_xdr::*` instead of `stellar_xdr::curr::*`). Code examples in this research use v25.x (`stellar_xdr::curr`). Migration to v26 requires updating import paths.
 
 ## Research Questions → Answer Location
 
@@ -87,9 +104,11 @@ The block explorer treats LedgerCloseMeta as its sole canonical chain input. Eve
 
 ### Two Parsing Paths
 
+> **Note:** This section preserves the original architecture doc assumptions. See [Corrections to Architecture Docs](#corrections-to-architecture-docs) for discovered inaccuracies (V4 meta, invocation tree source, language choice).
+
 There are two places where XDR parsing happens in the system:
 
-1. **Ingestion-time parsing (primary)** -- The Ledger Processor Lambda fully deserializes every ledger's LedgerCloseMeta using `@stellar/stellar-sdk` XDR types. This is the default path that writes structured explorer records once, avoiding repeated reparsing.
+1. **Ingestion-time parsing (primary)** -- The Ledger Processor Lambda fully deserializes every ledger's LedgerCloseMeta. Research recommends Rust with `stellar_xdr::curr` crate (see ADR-0002). This is the default path that writes structured explorer records once, avoiding repeated reparsing.
 
 2. **API-time parsing (secondary)** -- The NestJS API retains a narrow, on-demand decode role for advanced transaction views and validation/debug paths that need fields not part of the standard stored read model. This path should remain narrow and must not become the primary materialization layer.
 
@@ -119,7 +138,7 @@ From LedgerEntryChanges, the parser extracts derived state for explorer entities
 
 ### Invocation Tree
 
-Complex Soroban transactions may contain nested contract-to-contract calls. The parser must decode the full invocation hierarchy from `result_meta_xdr` and store it in `transactions.operation_tree` as JSONB. The raw `result_meta_xdr` is preserved alongside the decoded tree for advanced decode/debug use.
+Complex Soroban transactions may contain nested contract-to-contract calls. The parser must decode the full invocation hierarchy from `InvokeHostFunctionOp.auth[].rootInvocation` in the **transaction envelope** (not `result_meta_xdr` — see Correction #4) and store it in `transactions.operation_tree` as JSONB. The raw `result_meta_xdr` is preserved alongside the decoded tree for advanced decode/debug use.
 
 ### ScVal Decoded Types
 
@@ -164,7 +183,7 @@ The return value of `invokeHostFunction` and event topics/data are XDR ScVal val
 ### Emerged
 
 3. **Rust as recommended Ledger Processor language**: Research revealed `stellar-indexer` Rust implementation and stronger XDR type safety. Proposed ADR-0002.
-4. **TransactionMetaV4 discovery**: Architecture docs assumed V3 only. Protocol 25 (mainnet) uses V4 with relocated events. Critical for parser correctness.
+4. **TransactionMetaV4 discovery**: Architecture docs assumed V3 only. V4 introduced in Protocol 23 (CAP-0067), active on mainnet (Protocol 25). Events reorganized (fee events top-level, per-op events in OperationMetaV2, soroban_meta persists). Critical for parser correctness.
 5. **Typed JSON format for ScVal JSONB**: Adopted `{ "type": "u128", "value": "123" }` pattern from `stellar-indexer` instead of flat `scValToNative()` output. Better for GIN indexes and frontend rendering.
 6. **Invocation tree source correction**: Architecture docs said tree comes from `result_meta_xdr`. Actually from `InvokeHostFunctionOp.auth[].rootInvocation` in the envelope.
 
@@ -183,6 +202,9 @@ The return value of `invokeHostFunction` and event topics/data are XDR ScVal val
 
 ## Notes
 
-- The database schema has approximately 10 JSONB columns across all tables. Understanding which ScVal shapes map to which JSONB structures is critical for consistent storage.
+- The database schema has 12 tables. R-field-mapping covers all 12: 8 populated directly from XDR, 4 derived/enrichment (event_interpretations, tokens, nfts, liquidity_pool_snapshots).
+- The schema has approximately 10 JSONB columns across all tables. Understanding which ScVal shapes map to which JSONB structures is critical for consistent storage.
 - GIN indexes exist on `operations.details` and `soroban_events.topics` JSONB columns, so the structure of decoded JSONB must be query-friendly.
 - The `transactions.operation_tree` JSONB column stores the full invocation hierarchy -- its shape must support the frontend tree renderer.
+- NFT detection is heuristic-based (no Stellar CAP standard for NFTs). Implementation should support configurable event pattern matchers.
+- `tokens` table unifies 3 asset types (classic, SAC, soroban) — each has different XDR source paths documented in R-field-mapping.

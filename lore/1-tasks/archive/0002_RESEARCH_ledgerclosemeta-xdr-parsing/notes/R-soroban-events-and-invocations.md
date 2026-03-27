@@ -79,7 +79,12 @@ pub fn events_from_tx_meta(meta: &TransactionMeta) -> Vec<&ContractEvent> {
 }
 ```
 
-**V4 key difference:** Events have a `stage` field (`TransactionEventStage`) and live at top-level, not nested in `soroban_meta`. V4 also has per-operation events in `op_meta.events`.
+**V4 key differences (introduced Protocol 23, CAP-0067):**
+
+- Top-level `v4.events` contains **fee charge/refund events** (`TransactionEvent` with `stage` field), NOT Soroban contract events
+- Per-operation events in `OperationMetaV2` (`op_meta.events`) — **this is where contract events live in V4**
+- `v4.diagnostic_events` at top-level for debug events
+- `v4.soroban_meta` still present as `SorobanTransactionMetaV2` (return value, ext) but events moved out
 
 ## ContractEvent → DB Fields
 
@@ -262,10 +267,26 @@ if let TransactionMeta::V3(v3) = meta {
         let rv = scval_to_typed_json_value(&soroban.return_value);
     }
 }
-// V4 — soroban_meta may be None
+// V4 — soroban_meta is SorobanTransactionMetaV2, may be None
 if let TransactionMeta::V4(v4) = meta {
     if let Some(ref soroban) = v4.soroban_meta {
         let rv = scval_to_typed_json_value(&soroban.return_value);
     }
 }
 ```
+
+## SAC Event Signatures (CAP-0046-06 / SEP-0041)
+
+Complete list of Stellar Asset Contract event topic symbols. Used for `event_interpretations` table population.
+
+| Event            | First Topic (`Symbol`) | Additional Topics                      | Data                                     |
+| ---------------- | ---------------------- | -------------------------------------- | ---------------------------------------- |
+| `transfer`       | `"transfer"`           | `Address(from)`, `Address(to)`         | `I128(amount)`                           |
+| `mint`           | `"mint"`               | `Address(admin)`, `Address(to)`        | `I128(amount)`                           |
+| `burn`           | `"burn"`               | `Address(from)`                        | `I128(amount)`                           |
+| `clawback`       | `"clawback"`           | `Address(admin)`, `Address(from)`      | `I128(amount)`                           |
+| `approve`        | `"approve"`            | `Address(from)`, `Address(spender)`    | `I128(amount)`, `U32(live_until_ledger)` |
+| `set_admin`      | `"set_admin"`          | `Address(admin)`, `Address(new_admin)` | —                                        |
+| `set_authorized` | `"set_authorized"`     | `Address(admin)`, `Address(id)`        | `U32(authorize_flag)`                    |
+
+**Note:** CAP-0067 (Protocol 23) changed SAC event format — admin topics removed from mint/clawback/set_authorized. SAC now emits `mint`/`burn` instead of `transfer` when the issuer is involved. Implementation must handle both pre- and post-CAP-0067 formats for historical data.

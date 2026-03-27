@@ -1,7 +1,7 @@
 ---
 title: 'Decision needed: Rust vs Go vs TypeScript for Ledger Processor'
 type: synthesis
-status: developing
+status: mature
 spawned_from: null
 spawns: []
 tags: [language-choice, ledger-processor, architecture]
@@ -14,6 +14,10 @@ history:
     status: developing
     who: stkrolikiewicz
     note: 'Comparison based on research findings and stellar-indexer reference'
+  - date: 2026-03-26
+    status: mature
+    who: stkrolikiewicz
+    note: 'ADR-0002 proposed based on this analysis. Rust recommended.'
 ---
 
 # Decision needed: Rust vs Go vs TypeScript for Ledger Processor
@@ -77,4 +81,4 @@ However, the `stellar-indexer` Rust codebase is valuable as a **reference implem
 
 ## Status
 
-**Developing** — needs team discussion and ADR. This note provides data for the decision but does not make a recommendation without team input.
+**Mature** — analysis complete. ADR-0002 proposed Rust based on this comparison. Awaiting team acceptance of the ADR.

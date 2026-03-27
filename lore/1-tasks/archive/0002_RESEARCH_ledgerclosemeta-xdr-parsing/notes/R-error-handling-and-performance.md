@@ -126,10 +126,11 @@ This should emit a CloudWatch alarm (see task 0014 AC) to trigger SDK update.
 
 ### Crate Version Compatibility
 
-| Crate Version     | XDR Protocol | Notes                              |
-| ----------------- | ------------ | ---------------------------------- |
-| `stellar-xdr` v25 | Protocol 25  | Current mainnet, TransactionMetaV4 |
-| `stellar-xdr` v23 | Protocol 23  | TransactionMetaV4 introduced       |
+| Crate Version     | XDR Protocol | Notes                                                        |
+| ----------------- | ------------ | ------------------------------------------------------------ |
+| `stellar-xdr` v26 | Protocol 26  | Latest (2026-03-20). `curr` module removed, types at root    |
+| `stellar-xdr` v25 | Protocol 25  | Current mainnet. Used in this research (`stellar_xdr::curr`) |
+| `stellar-xdr` v23 | Protocol 23  | TransactionMetaV4 introduced (CAP-0067)                      |
 
 The crate version tracks the XDR schema version. Protocol upgrades require:
 
