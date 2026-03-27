@@ -2,7 +2,8 @@
 id: '0010'
 title: 'Domain types: Soroban models (contract, invocation, event)'
 type: FEATURE
-status: backlog
+status: active
+assignee: fmazur
 related_adr: []
 related_tasks: ['0010']
 tags: [priority-high, effort-small, layer-domain]
@@ -12,6 +13,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-27
+    status: active
+    who: fmazur
+    note: 'Activated task'
 ---
 
 # Domain types: Soroban models (contract, invocation, event)
