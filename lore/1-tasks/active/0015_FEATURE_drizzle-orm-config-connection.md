@@ -2,7 +2,7 @@
 id: '0015'
 title: 'Drizzle ORM configuration and connection setup'
 type: FEATURE
-status: backlog
+status: active
 related_adr: []
 related_tasks: ['0004', '0007']
 tags: [priority-high, effort-medium, layer-database]
@@ -12,6 +12,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-27
+    status: active
+    who: stkrolikiewicz
+    note: 'Promoted to active'
 ---
 
 # Drizzle ORM configuration and connection setup
