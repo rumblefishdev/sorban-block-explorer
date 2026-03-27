@@ -76,17 +76,17 @@ MonitoringStack (CloudWatch, alarms, X-Ray, EventBridge)
 
 CDK handles cross-stack references via CloudFormation exports. Key references:
 
-| From            | To            | What                                            |
-| --------------- | ------------- | ----------------------------------------------- |
-| ComputeStack    | StorageStack  | ECR repository (for Galexie Docker image)       |
-| StorageStack    | NetworkStack  | VPC, private subnets, security groups           |
-| ComputeStack    | NetworkStack  | VPC, subnets, SGs                               |
-| ComputeStack    | StorageStack  | RDS Proxy endpoint, S3 bucket ARNs, secret ARNs |
-| DeliveryStack   | ComputeStack  | API Lambda function ARN                         |
-| DeliveryStack   | StorageStack  | api-docs S3 bucket, frontend S3 bucket          |
-| MonitoringStack | ComputeStack  | Lambda function names                           |
-| MonitoringStack | StorageStack  | RDS instance ID                                 |
-| MonitoringStack | DeliveryStack | API Gateway ID                                  |
+| From            | To            | What                                                       |
+| --------------- | ------------- | ---------------------------------------------------------- |
+| ComputeStack    | —             | ECR repository (owned by ComputeStack, no cross-stack ref) |
+| StorageStack    | NetworkStack  | VPC, private subnets, security groups                      |
+| ComputeStack    | NetworkStack  | VPC, subnets, SGs                                          |
+| ComputeStack    | StorageStack  | RDS Proxy endpoint, S3 bucket ARNs, secret ARNs            |
+| DeliveryStack   | ComputeStack  | API Lambda function ARN                                    |
+| DeliveryStack   | StorageStack  | api-docs S3 bucket, frontend S3 bucket                     |
+| MonitoringStack | ComputeStack  | Lambda function names                                      |
+| MonitoringStack | StorageStack  | RDS instance ID                                            |
+| MonitoringStack | DeliveryStack | API Gateway ID                                             |
 
 ## Stack vs Construct Decision
 

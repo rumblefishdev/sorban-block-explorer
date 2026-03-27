@@ -19,9 +19,9 @@ history:
 
 ### 1. Stack decomposition: 6 layer-based stacks
 
-**Decision:** NetworkStack → StorageStack → ComputeStack → DeliveryStack → MonitoringStack → CiStack
+**Decision:** NetworkStack → StorageStack → ComputeStack → DeliveryStack → MonitoringStack → CiStack (layering / dependency flow)
 
-**Why:** Matches deployment ordering, separates stateful (Storage) from stateless (Compute), avoids both single-stack bottleneck and over-granular per-service stacks. Team of 2 doesn't need more than 6 stacks.
+**Why:** Arrow order expresses architectural layering and dependencies (network → data → compute → delivery → monitoring), while CiStack is infrastructural and must be deployed first to create the OIDC provider/roles. This separation still cleanly splits stateful (Storage) from stateless (Compute), and avoids both a single-stack bottleneck and over-granular per-service stacks. Team of 2 doesn't need more than 6 stacks.
 
 **Stateful/stateless split:** StorageStack has termination protection. ComputeStack can be freely destroyed/recreated.
 
@@ -66,9 +66,9 @@ history:
 
 ### 8. Staging password protection: CloudFront Function with Basic Auth
 
-**Decision:** CloudFront Function (not Lambda@Edge) for staging Basic Auth. Credentials injected at synth time from Secrets Manager reference.
+**Decision:** CloudFront Function (not Lambda@Edge) for staging Basic Auth. Basic Auth secret is managed in Secrets Manager and provided to the function without resolving the secret value at synth time (e.g., via a deploy-time custom resource or by storing/injecting only a pre-hashed credential).
 
-**Why:** CloudFront Functions are ~6x cheaper than Lambda@Edge, sub-ms latency, sufficient for Basic Auth. Staging-only mechanism doesn't justify Lambda@Edge complexity.
+**Why:** CloudFront Functions are ~6x cheaper than Lambda@Edge, sub-ms latency, sufficient for Basic Auth. Staging-only mechanism doesn't justify Lambda@Edge complexity. Resolving Secrets Manager references at synth time would embed secret material into the synthesized template or deployed function code and must be avoided; any custom pattern that does so should be treated as a deliberate tradeoff with clear leak-risk acceptance.
 
 ### 9. Provisioned concurrency: API Lambda only in production
 

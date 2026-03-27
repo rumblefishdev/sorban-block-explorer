@@ -92,7 +92,7 @@ Use `stackSelectorPatterns` with glob patterns to filter which stacks to diff. T
 - name: Diff
   uses: corymhall/cdk-diff-action@v2
   with:
-    StackSelectorPatterns: |
+    stackSelectorPatterns: |
       !Stage1/*
       !Stage2/*
     githubToken: ${{ secrets.GITHUB_TOKEN }}
