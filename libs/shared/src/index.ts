@@ -23,3 +23,30 @@ export {
   handleScValDecodeError,
   handleContractMetadataError,
 } from './error-handlers.js';
+
+// --- XDR parsing utilities ---
+export {
+  decodeScVal,
+  computeTransactionHash,
+  extractMemo,
+  decodeEventTopics,
+  decodeContractEvent,
+  extractContractDeployments,
+  extractAccountStates,
+  extractLiquidityPoolStates,
+  decodeInvocationTree,
+  extractContractInterface,
+  extractContractInterfaceFromEntries,
+} from './xdr/index.js';
+
+export type {
+  DecodedScVal,
+  ExtractedMemo,
+  DecodedEventType,
+  DecodedContractEvent,
+  ExtractedContractDeployment,
+  ExtractedAccountState,
+  ExtractedLiquidityPoolState,
+  InvocationNode,
+  ContractFunction,
+} from './xdr/index.js';

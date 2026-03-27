@@ -2,7 +2,7 @@
 id: '0013'
 title: 'Shared XDR/ScVal parsing utilities library'
 type: FEATURE
-status: active
+status: completed
 related_adr: []
 related_tasks: ['0002', '0052', '0053', '0054', '0055', '0027']
 tags: [priority-high, effort-medium, layer-domain]
@@ -16,6 +16,14 @@ history:
     status: active
     who: FilipDz
     note: 'Activated task'
+  - date: 2026-03-27
+    status: completed
+    who: FilipDz
+    note: >
+      Implemented all 9 steps. 7 modules in libs/shared/src/xdr/, 60 tests.
+      Key decisions: invocation tree decoded from envelope auth entries
+      (not meta), strkey for all IDs, added extractContractInterfaceFromEntries
+      for testability without real WASM binaries.
 ---
 
 # Shared XDR/ScVal parsing utilities library
@@ -24,9 +32,9 @@ history:
 
 Implement a shared XDR and ScVal parsing utilities library at `libs/shared/src/xdr/`. This library provides the core decode and extraction functions used by both `apps/indexer` (ingestion-time parsing) and `apps/api` (on-demand advanced view decode). It wraps `@stellar/stellar-sdk` XDR types and produces the structured JSONB payloads stored in PostgreSQL.
 
-## Status: Backlog
+## Status: Completed
 
-**Current state:** Not started. Foundation for all ingestion and API decode paths.
+**Current state:** All modules implemented and tested. 60 tests passing.
 
 ## Context
 
@@ -123,19 +131,55 @@ Export all functions from the barrel file. Write unit tests for each decoder wit
 
 ## Acceptance Criteria
 
-- [ ] Library located at `libs/shared/src/xdr/` with barrel exports
-- [ ] ScVal-to-JSON decoder handles integer, string, address, bytes, map, list types
-- [ ] ScVal output uses discriminated union or tagged JSON format
-- [ ] LedgerEntryChanges extractors produce contract deployment, account state, and pool state records
-- [ ] Invocation tree decoder produces nested hierarchy from result_meta_xdr
-- [ ] Contract interface extractor produces ContractFunction[] from WASM
-- [ ] Transaction hash computation produces 64-char hex from envelope XDR
-- [ ] Memo extraction handles all Stellar memo types
-- [ ] Event topic decoder produces decoded ScVal array
-- [ ] All functions shared between `apps/indexer` and `apps/api`
-- [ ] Uses `@stellar/stellar-sdk` XDR types exclusively
-- [ ] Unit tests cover each decoder with representative inputs
-- [ ] Types compile without errors
+- [x] Library located at `libs/shared/src/xdr/` with barrel exports
+- [x] ScVal-to-JSON decoder handles integer, string, address, bytes, map, list types
+- [x] ScVal output uses discriminated union or tagged JSON format
+- [x] LedgerEntryChanges extractors produce contract deployment, account state, and pool state records
+- [x] Invocation tree decoder produces nested hierarchy from envelope auth entries
+- [x] Contract interface extractor produces ContractFunction[] from WASM
+- [x] Transaction hash computation produces 64-char hex from envelope XDR
+- [x] Memo extraction handles all Stellar memo types
+- [x] Event topic decoder produces decoded ScVal array
+- [x] All functions shared between `apps/indexer` and `apps/api`
+- [x] Uses `@stellar/stellar-sdk` XDR types exclusively
+- [x] Unit tests cover each decoder with representative inputs (60 tests)
+- [x] Types compile without errors
+
+## Implementation Notes
+
+7 modules in `libs/shared/src/xdr/`:
+
+- `scval-decoder.ts` — DecodedScVal discriminated union, all 21 ScVal types
+- `transaction-utils.ts` — hash computation + memo extraction (v0/v1/feeBump)
+- `event-decoder.ts` — topic decoder + full ContractEvent decoder
+- `ledger-entry-extractors.ts` — contract deployments, account state, pool state
+- `invocation-decoder.ts` — recursive auth invocation tree from envelope
+- `contract-interface.ts` — WASM → ContractFunction[] via SDK Spec
+- `index.ts` — barrel exports
+
+## Design Decisions
+
+### From Plan
+
+1. **DecodedScVal as discriminated union on `type` field**: Enables exhaustive switch and type-safe consumers.
+2. **All addresses in strkey format**: Contract IDs as `C...`, accounts as `G...` via StrKey encoding.
+
+### Emerged
+
+3. **Invocation tree from envelope, not meta**: Spec suggested `result_meta_xdr` but the auth invocation hierarchy lives in the envelope's `SorobanAuthorizationEntry`. Changed function signature to accept `envelopeXdr`.
+4. **`extractContractInterfaceFromEntries` added**: `extractContractInterface` needs real WASM. Added a second entry point accepting `ScSpecEntry[]` for testability and cases where spec entries are already available.
+5. **`deployerAccount` always null**: Deployer info isn't in LedgerEntryChanges — it lives in operation meta. Field kept for interface compatibility; consumers populate it from operation context.
+6. **`decodeContractEvent` bonus function**: Spec only asked for topic decoding but a full event decoder was cheap to add and useful for the indexer.
+
+## Issues Encountered
+
+- **SDK `Opaque[]` type mismatches**: `ContractId`, `PoolId`, `Hash` are typed as `Opaque[]` but are `Buffer` at runtime. Required `as unknown as Buffer` casts in multiple places.
+- **`formatAsset` issuer encoding bug**: Initial implementation used `'G' + hex` which produces invalid addresses. Fixed to use `StrKey.encodeEd25519PublicKey()`.
+
+## Future Work
+
+- Add `balances` field to `ExtractedAccountState` (spec mentions it, deferred — indexer may populate from trustlines instead)
+- Centralize `as unknown as Buffer` casts into a shared helper if SDK typing doesn't improve
 
 ## Notes
 
