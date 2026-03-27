@@ -25,7 +25,7 @@ history:
 
 ## Coverage
 
-This mapping covers all **12 tables** from the [database schema overview](../../../../docs/architecture/database-schema/database-schema-overview.md). Tables 1–6, 9, and 10 are populated directly from LedgerCloseMeta XDR fields (including `LedgerEntryChanges`), while tables 7, 8, 11, and 12 are derived/enrichment tables populated from combinations of XDR data and event interpretation logic.
+This mapping covers all **12 tables** from the [database schema overview](../../../../docs/architecture/database-schema/database-schema-overview.md). Tables 1–6, 9, and 10 have their rows sourced directly from LedgerCloseMeta XDR fields (including `LedgerEntryChanges`), though individual columns in those tables may still be computed or enriched. Tables 7, 8, 11, and 12 are derived/enrichment tables whose rows are populated from combinations of XDR data and event interpretation logic.
 
 ## Table 1: ledgers
 

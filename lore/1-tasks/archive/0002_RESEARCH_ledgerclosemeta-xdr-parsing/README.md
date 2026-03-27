@@ -202,7 +202,7 @@ The return value of `invokeHostFunction` and event topics/data are XDR ScVal val
 
 ## Notes
 
-- The database schema has 12 tables. Per `R-field-mapping-tables.md`, tables 1–6, 9, and 10 are populated directly from XDR (including `LedgerEntryChanges`), and tables 7, 8, 11, 12 are derived/enrichment (event_interpretations, tokens, nfts, liquidity_pool_snapshots).
+- The database schema has 12 tables. Per `R-field-mapping-tables.md`, the base rows/identities for tables 1–6, 9, and 10 are sourced directly from XDR (including `LedgerEntryChanges`), though some columns within those tables are computed/enriched (e.g., TVL in `liquidity_pools`). Tables 7, 8, 11, and 12 are fully derived/enrichment tables (event_interpretations, tokens, nfts, liquidity_pool_snapshots).
 - The schema has approximately 10 JSONB columns across all tables. Understanding which ScVal shapes map to which JSONB structures is critical for consistent storage.
 - GIN indexes exist on `operations.details` and `soroban_events.topics` JSONB columns, so the structure of decoded JSONB must be query-friendly.
 - The `transactions.operation_tree` JSONB column stores the full invocation hierarchy -- its shape must support the frontend tree renderer.
