@@ -23,8 +23,8 @@ Generates a new migration directory with an empty SQL file.
 
 ```
 drizzle/
-  20242409125510_init_sql/
-  20242409135510_delicate_seed-users/
+  20240309125510_init_sql/
+  20240309135510_delicate_seed-users/
 ```
 
 ### Example SQL Migration

@@ -7,6 +7,8 @@ task_id: '0007'
 
 # Full-Text Search with Generated Columns in Drizzle ORM
 
+**Note:** Code snippets below are partial excerpts from Drizzle docs. Imports (`customType`, `SQL`, `sql`, `index`, `posts`, `db`) are omitted for brevity — see full examples in [R-gin-tsvector-check-jsonb.md](../notes/R-gin-tsvector-check-jsonb.md).
+
 ## Custom Type Definition
 
 ```typescript

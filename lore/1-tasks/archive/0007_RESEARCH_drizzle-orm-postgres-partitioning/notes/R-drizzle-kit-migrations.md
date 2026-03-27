@@ -1,7 +1,12 @@
 ---
+title: Drizzle Kit Migration Workflow
 type: research
 status: mature
 spawned_from: '0007'
+spawns: []
+tags: [drizzle, migrations, drizzle-kit]
+links: []
+history: []
 ---
 
 # Drizzle Kit Migration Workflow
@@ -45,10 +50,10 @@ Creates empty `.sql` file for hand-written SQL. Runs in order with other migrati
 
 Limited to expressions within Drizzle-managed constructs:
 
-- Default values: `default(sql\`...\`)`
-- Check constraints: `check(sql\`...\`)`
-- Index expressions: `index().on(sql\`...\`)`
-- Generated columns: `.generatedAlwaysAs(sql\`...\`)`
+- Default values: `` default(sql`...`) ``
+- Check constraints: `` check(sql`...`) ``
+- Index expressions: `` index().on(sql`...`) ``
+- Generated columns: `` .generatedAlwaysAs(sql`...`) ``
 
 **Cannot** define structural DDL like `PARTITION BY RANGE` in schema.
 
