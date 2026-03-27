@@ -2,7 +2,7 @@
 id: '0011'
 title: 'Domain types: token, account, NFT models'
 type: FEATURE
-status: backlog
+status: active
 related_adr: []
 related_tasks: ['0011', '0012']
 tags: [priority-high, effort-small, layer-domain]
@@ -12,6 +12,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-27
+    status: active
+    who: fmazur
+    note: 'Task activated'
 ---
 
 # Domain types: token, account, NFT models
@@ -20,9 +24,9 @@ history:
 
 Define the shared TypeScript domain types for tokens, accounts, and NFTs. These types live in `libs/domain` and are consumed by both `apps/api` and `apps/indexer`. They mirror the PostgreSQL schema for the derived explorer entities and the API response contracts.
 
-## Status: Backlog
+## Status: Active
 
-**Current state:** Not started. Depends on DB schema tasks 0011 and 0012.
+**Current state:** Activated, ready for implementation.
 
 ## Context
 
