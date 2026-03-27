@@ -1,13 +1,3 @@
-export interface LedgerPointer {
-  sequence: number;
-  closedAt: string;
-}
-
-export interface TransactionPointer {
-  hash: string;
-  ledgerSequence: number;
-}
-
 // --- Shared type primitives ---
 
 export type JsonValue =
@@ -26,6 +16,129 @@ export type BigIntString = string;
 
 /** String representation of a PostgreSQL NUMERIC / DECIMAL value. */
 export type NumericString = string;
+
+// --- Ledger domain types ---
+
+export interface Ledger {
+  sequence: BigIntString;
+  hash: string;
+  closedAt: string;
+  protocolVersion: number;
+  transactionCount: number;
+  baseFee: BigIntString;
+}
+
+export type LedgerPointer = Pick<Ledger, 'sequence' | 'closedAt'>;
+
+export type LedgerSummary = Ledger;
+
+export interface LedgerDetail extends LedgerSummary {
+  transactions: readonly TransactionSummary[];
+}
+
+// --- Transaction domain types ---
+
+export interface Transaction {
+  id: BigIntString;
+  hash: string;
+  ledgerSequence: BigIntString;
+  sourceAccount: string;
+  feeCharged: BigIntString;
+  successful: boolean;
+  resultCode: string | null;
+  envelopeXdr: string;
+  resultXdr: string;
+  resultMetaXdr: string | null;
+  memoType: string | null;
+  memo: string | null;
+  createdAt: string;
+  parseError: boolean;
+  operationTree: JsonValue | null;
+}
+
+export type TransactionPointer = Pick<Transaction, 'hash' | 'ledgerSequence'>;
+
+export interface TransactionSummary {
+  hash: string;
+  ledgerSequence: BigIntString;
+  sourceAccount: string;
+  operationType: OperationType;
+  successful: boolean;
+  feeCharged: BigIntString;
+  createdAt: string;
+}
+
+export interface TransactionDetail extends TransactionSummary {
+  resultCode: string | null;
+  envelopeXdr: string;
+  resultXdr: string;
+  resultMetaXdr: string | null;
+  memoType: string | null;
+  memo: string | null;
+  parseError: boolean;
+  operationTree: JsonValue | null;
+  operations: readonly Operation[];
+  events: readonly SorobanEvent[];
+}
+
+// --- Operation domain types ---
+
+export type OperationType =
+  | 'CREATE_ACCOUNT'
+  | 'PAYMENT'
+  | 'PATH_PAYMENT_STRICT_RECEIVE'
+  | 'PATH_PAYMENT_STRICT_SEND'
+  | 'MANAGE_SELL_OFFER'
+  | 'MANAGE_BUY_OFFER'
+  | 'CREATE_PASSIVE_SELL_OFFER'
+  | 'SET_OPTIONS'
+  | 'CHANGE_TRUST'
+  | 'ALLOW_TRUST'
+  | 'ACCOUNT_MERGE'
+  | 'INFLATION'
+  | 'MANAGE_DATA'
+  | 'BUMP_SEQUENCE'
+  | 'CREATE_CLAIMABLE_BALANCE'
+  | 'CLAIM_CLAIMABLE_BALANCE'
+  | 'BEGIN_SPONSORING_FUTURE_RESERVES'
+  | 'END_SPONSORING_FUTURE_RESERVES'
+  | 'REVOKE_SPONSORSHIP'
+  | 'CLAWBACK'
+  | 'CLAWBACK_CLAIMABLE_BALANCE'
+  | 'SET_TRUST_LINE_FLAGS'
+  | 'LIQUIDITY_POOL_DEPOSIT'
+  | 'LIQUIDITY_POOL_WITHDRAW'
+  | 'INVOKE_HOST_FUNCTION'
+  | 'EXTEND_FOOTPRINT_TTL'
+  | 'RESTORE_FOOTPRINT'
+  | (string & {});
+
+export interface InvokeHostFunctionDetails {
+  contractId: string;
+  functionName: string;
+  functionArgs: readonly ScVal[];
+  returnValue: ScVal | null;
+}
+
+export interface Operation {
+  id: BigIntString;
+  transactionId: BigIntString;
+  type: OperationType;
+  details: Readonly<Record<string, JsonValue>>;
+}
+
+// --- Pagination types ---
+
+export interface PaginationRequest {
+  cursor: string | null;
+  limit: number;
+}
+
+export interface PaginatedResponse<T> {
+  data: readonly T[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
 
 // --- Soroban domain types ---
 
