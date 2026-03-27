@@ -37,15 +37,23 @@ export const posts = pgTable(
 ## Multi-column Search with Weights
 
 ```typescript
-// Inside pgTable callback, e.g. (table) => [...]
-(table) =>
-  index('search_index').using(
-    'gin',
-    sql`(
+export const posts = pgTable(
+  'posts',
+  {
+    id: serial('id').primaryKey(),
+    title: text('title').notNull(),
+    description: text('description'),
+  },
+  (table) => [
+    index('search_index').using(
+      'gin',
+      sql`(
   setweight(to_tsvector('english', ${table.title}), 'A') ||
   setweight(to_tsvector('english', ${table.description}), 'B')
 )`
-  );
+    ),
+  ]
+);
 ```
 
 ## Query Functions
