@@ -2,7 +2,7 @@
 id: '0014'
 title: 'Shared error types and parse_error handling'
 type: FEATURE
-status: backlog
+status: active
 related_adr: []
 related_tasks: ['0013', '0056', '0017']
 tags: [priority-medium, effort-small, layer-domain]
@@ -13,6 +13,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-27
+    status: active
+    who: FilipDz
+    note: 'Activated task'
 ---
 
 # Shared error types and parse_error handling
