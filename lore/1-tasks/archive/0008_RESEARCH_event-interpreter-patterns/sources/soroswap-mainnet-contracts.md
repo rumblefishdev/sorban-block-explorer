@@ -1,0 +1,21 @@
+# Soroswap Mainnet Contract Addresses
+
+**Source:** https://github.com/soroswap/core/blob/main/public/mainnet.contracts.json
+**Fetched:** 2026-03-27
+
+---
+
+```json
+{
+  "ids": {
+    "factory": "CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2",
+    "router": "CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH"
+  },
+  "hashes": {
+    "pair": "18051456816b66f12e773a56f77c5794fac1b1fb7ab6e22d4fad5a412770f73e",
+    "factory": "5db738b05d9148128a240b0e2c1cb935c2805192bf98a579421aacda364c8dae",
+    "router": "4c3db3ebd2d6a2ab23de1f622eaabb39501539b4611b68622ec4e47f76c4ba07",
+    "token": "93c5e22d071a330e789bc6a62409a87a0c05966273977e22fcabfc57e834f548"
+  }
+}
+```

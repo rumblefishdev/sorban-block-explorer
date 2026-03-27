@@ -1,0 +1,302 @@
+# SEP-41: Token Interface Standard
+
+**Source:** https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0041.md
+**Fetched:** 2026-03-27
+
+---
+
+## Preamble
+
+```
+SEP: 0041
+Title: Soroban Token Interface
+Authors: Jonathan Jove <@jonjove>, Siddharth Suresh <@sisuresh>, Simon Chow <@chowbao>, Leigh McCulloch <@leighmcculloch>
+Status: Draft
+Created: 2023-09-22
+Updated: 2025-08-28
+Version 0.4.1
+Discussion: https://discord.com/channels/897514728459468821/1159937045322547250, https://github.com/stellar/stellar-protocol/discussions/1584
+```
+
+## Simple Summary
+
+This proposal defines a standard contract interface for tokens. The interface
+is a subset of the Stellar Asset contract, and compatible with its descriptive
+and token interfaces defined in [CAP-46-6].
+
+## Motivation
+
+A fungible asset is a fundamental concept on blockchains. Fungible assets can
+conceptually be divided into two pieces: standard functionality enabling push
+and pull transfers, and varying functionality around asset administration. Most
+blockchain ecosystems have very little innovation in the space of fungible
+assets, with developers often relying on open source implementations such as
+OpenZeppelin.
+
+[CAP-46-6] defines a Stellar Asset contract that implements a combination of
+that standard functionality, as well as functions to support behaviors that are
+specialized to Stellar assets.
+
+Tokens could implement the interface that the Stellar Asset contract defines,
+but it contains functions that support behaviors that are specialized to
+Stellar assets.
+
+An interface is needed that is less opinionated than the interface of the
+Stellar Asset contract. Tokens that implement this interface would support at
+least the standard functionality of tokens, without needing to support the
+specialized behaviors of Stellar Assets.
+
+An interface is needed that is a subset of the Stellar Asset contract, such
+that the Stellar Asset contract would implement the interface. Tokens that
+implement the interface and the Stellar Asset contract would be usable with
+contracts that support the standard interface, and would be largely
+indistinguishable.
+
+## Specification
+
+### Interface
+
+```rust
+pub trait TokenInterface {
+    /// Returns the allowance for `spender` to transfer from `from`.
+    ///
+    /// # Arguments
+    ///
+    /// - `from` - The address holding the balance of tokens to be drawn from.
+    /// - `spender` - The address spending the tokens held by `from`.
+    fn allowance(env: Env, from: Address, spender: Address) -> i128;
+
+    /// Set the allowance by `amount` for `spender` to transfer/burn from
+    /// `from`.
+    ///
+    /// # Arguments
+    ///
+    /// - `from` - The address holding the balance of tokens to be drawn from.
+    /// - `spender` - The address being authorized to spend the tokens held by
+    /// `from`.
+    /// - `amount` - The tokens to be made available to `spender`.
+    /// - `live_until_ledger` - The ledger number where this allowance expires.
+    /// Cannot be less than the current ledger number unless the amount is being
+    /// set to 0.  An expired entry (where live_until_ledger < the current
+    /// ledger number) should be treated as a 0 amount allowance.
+    ///
+    /// # Events
+    ///
+    /// Emits an event with topics `["approve", from: Address,
+    /// spender: Address], data = [amount: i128, live_until_ledger: u32]`
+    ///
+    /// Emits an event with:
+    /// - topics - `["approve", from: Address, spender: Address]`
+    /// - data - `[amount: i128, live_until_ledger: u32]`
+    fn approve(env: Env, from: Address, spender: Address, amount: i128, live_until_ledger: u32);
+
+    /// Returns the balance of `id`.
+    ///
+    /// # Arguments
+    ///
+    /// - `id` - The address for which a balance is being queried. If the
+    /// address has no existing balance, returns 0.
+    fn balance(env: Env, id: Address) -> i128;
+
+    /// Transfer `amount` from `from` to `to`.
+    ///
+    /// # Arguments
+    ///
+    /// - `from` - The address holding the balance of tokens which will be
+    /// withdrawn from.
+    /// - `to` - The address which will receive the transferred tokens. A MuxedAddress or Address.
+    /// - `amount` - The amount of tokens to be transferred.
+    ///
+    /// # Events
+    ///
+    /// Emits an event with:
+    /// - topics - `["transfer", from: Address, to: Address]`
+    /// - data - `amount: i128` or `{ amount: i128, to_muxed_id: Option<u64 | String | BytesN<32>> }`
+    /// If the transfer involves a muxed address the address and muxed details
+    /// are separated in the event.
+    fn transfer(env: Env, from: Address, to: MuxedAddress, amount: i128);
+
+    /// Transfer `amount` from `from` to `to`, consuming the allowance of
+    /// `spender`. Authorized by spender (`spender.require_auth()`).
+    ///
+    /// # Arguments
+    ///
+    /// - `spender` - The address authorizing the transfer, and having its
+    /// allowance consumed during the transfer.
+    /// - `from` - The address holding the balance of tokens which will be
+    /// withdrawn from.
+    /// - `to` - The address which will receive the transferred tokens.
+    /// - `amount` - The amount of tokens to be transferred.
+    ///
+    /// # Events
+    ///
+    /// Emits an event with:
+    /// - topics - `["transfer", from: Address, to: Address]`
+    /// - data - `amount: i128`
+    fn transfer_from(env: Env, spender: Address, from: Address, to: Address, amount: i128);
+
+    /// Burn `amount` from `from`.
+    ///
+    /// # Arguments
+    ///
+    /// - `from` - The address holding the balance of tokens which will be
+    /// burned from.
+    /// - `amount` - The amount of tokens to be burned.
+    ///
+    /// # Events
+    ///
+    /// Emits an event with:
+    /// - topics - `["burn", from: Address]`
+    /// - data - `amount: i128`
+    fn burn(env: Env, from: Address, amount: i128);
+
+    /// Burn `amount` from `from`, consuming the allowance of `spender`.
+    ///
+    /// # Arguments
+    ///
+    /// - `spender` - The address authorizing the burn, and having its allowance
+    /// consumed during the burn.
+    /// - `from` - The address holding the balance of tokens which will be
+    /// burned from.
+    /// - `amount` - The amount of tokens to be burned.
+    ///
+    /// # Events
+    ///
+    /// Emits an event with:
+    /// - topics - `["burn", from: Address]`
+    /// - data - `amount: i128`
+    fn burn_from(env: Env, spender: Address, from: Address, amount: i128);
+
+    /// Returns the number of decimals used to represent amounts of this token.
+    fn decimals(env: Env) -> u32;
+
+    /// Returns the name for this token.
+    fn name(env: Env) -> String;
+
+    /// Returns the symbol for this token.
+    fn symbol(env: Env) -> String;
+}
+```
+
+### Events
+
+#### Approve Event
+
+The `approve` event is emitted when the allowance is set.
+
+The event has topics:
+
+- `Symbol` with value `"approve"`
+- `Address` the address holding the balance of tokens to be drawn from.
+- `Address` the address spending the tokens held by `from`.
+
+The event has data:
+
+- `i128` the amount allowed to be spent.
+- `u32` the expiration ledger.
+
+#### Transfer Event
+
+The `transfer` event is emitted when an amount is transferred from one address
+to another.
+
+The event has topics:
+
+- `Symbol` with value `"transfer"`
+- `Address` the address holding the balance of tokens that was drawn from.
+- `Address` the address that received the tokens.
+
+The event has data:
+
+- `i128` the amount transferred.
+- or `map` containing entries with `Symbol` keys, and values defined as
+  - `amount: i128` the amount minted.
+  - `to_muxed_id: Option<u64 | String | BytesN<32>>` void, or entry absent, if
+    no muxed ID, or the u64 muxed ID, or for historical legacy reasons, the
+    string or bytes memo for Stellar assets.
+  - Other entries allowed as defined by the implementation.
+
+#### Burn Event
+
+The `burn` event is emitted when an amount is burned from one address.
+
+The event has topics:
+
+- `Symbol` with value `"burn"`
+- `Address` the address holding the balance of tokens that was burned.
+
+The event has data:
+
+- `i128` the amount burned.
+
+#### Mint Event
+
+The `mint` event is emitted when an amount of the token is minted.
+
+A `mint` increases total supply and the balance of the `to` address by the
+amount minted.
+
+The event has topics:
+
+- `Symbol` with value `"mint"`
+- `Address` the address to hold the newly minted tokens.
+
+The event has data:
+
+- `i128` the amount minted.
+- or `map` containing entries with `Symbol` keys, and values defined as
+  - `amount: i128` the amount minted.
+  - `to_muxed_id: Option<u64 | String | BytesN<32>>` void, or entry absent, if
+    no muxed ID, or the u64 muxed ID, or for historical legacy reasons, the
+    string or bytes memo for Stellar assets.
+  - Other entries allowed as defined by the implementation.
+
+#### Clawback Event
+
+The `clawback` event is emitted when an amount of the token is clawed back.
+
+A clawback is a type of burn: it reduces both the holder's balance and the
+total supply by the amount clawed back. The `clawback` event itself indicates
+the burn. No separate `burn` or `transfer` event is emitted alongside the
+`clawback` event.
+
+The event has topics:
+
+- `Symbol` with value `"clawback"`
+- `Address` The address holding the balance from which the clawback will take
+  tokens.
+
+The event has data:
+
+- `i128` the amount clawed back.
+
+### Mint and Clawback Event Flexibility
+
+This SEP has purposely not added `mint()`, `init_asset()`, nor `clawback()`
+functions to give contracts more flexibility to implement and name these
+functions as they see fit. The contract is free to define how they want to
+`mint`/`clawback` a new custom token. The only requirement is for `mint` and
+`clawback` events to be emitted during minting and clawback actions.
+
+While implementations have this flexibility in how mint and clawback are
+initiated, a mint action that emits a mint event must increase total supply,
+and a clawback action that emits a clawback event must reduce total supply.
+
+## Changelog
+
+- `v0.1.0` - Initial draft based on [CAP-46-6].
+- `v0.2.0` - Remove `spendable_balance`.
+- `v0.3.0` - Add `mint` and `clawback` event
+- `v0.4.0` - Add muxed support to transfer, and mint.
+- `v0.4.1` - Clarify that clawback burns tokens reducing total supply and that
+  no separate burn or transfer event is emitted alongside the clawback event.
+
+## Implementations
+
+- The [Rust soroban-sdk] contains a copy of the interface verbatim, and a
+  generated client for use in contracts.
+- The Soroban Env contains a native implementation of the interface that is a
+  presentation layer on top of Stellar Assets.
+
+[Rust soroban-sdk]: https://github.com/stellar/rs-soroban-sdk
+[CAP-46-6]: ../core/cap-0046-06.md

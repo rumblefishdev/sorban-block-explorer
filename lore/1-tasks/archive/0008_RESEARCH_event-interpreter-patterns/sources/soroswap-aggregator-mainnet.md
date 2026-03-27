@@ -1,0 +1,25 @@
+# Soroswap Aggregator: Mainnet Contract Addresses
+
+**Source:** https://github.com/soroswap/aggregator/blob/main/public/mainnet.contracts.json
+**Fetched:** 2026-03-27
+
+---
+
+```json
+{
+  "ids": {
+    "deployer": "CALUZAZZ6FHENZJBQLSTPBZBZOZMACRIHMAEGSCGJYRC35RA5ZDXTKP2",
+    "soroswap_adapter": "CC6KQUATUBCIFZRDJL5X5PHCYGOHLPHKZQPUOTZTQTASGU5AUQ6DS7SC",
+    "aggregator": "CAYP3UWLJM7ZPTUKL6R6BFGTRWLZ46LRKOXTERI2K6BIJAWGYY62TXTO",
+    "phoenix_adapter": "CCEBUGFV3D73OMV7MUXXA43AREY53MUHVD5SMUM7YZODNGY4NZBA2TSC",
+    "aqua_adapter": "CDHDUKHFZB6FORHEBZCNYI3GGVNVOLEITSGI7OKU4UIQND5QG75KGSRR"
+  },
+  "hashes": {
+    "deployer": "845414782b49c2ba195940707a54e85c53d7ecd541185afd3bf86e07a4f10694",
+    "soroswap_adapter": "e2c5b7018a4d7d5c5b4194c5b421b10986831c98fbc0e8d37f2e0ab9804e1094",
+    "aggregator": "5e0bff5a29e2473b5289fe96aeb59b48ac335e5e87c46632b53be1f662447d2c",
+    "phoenix_adapter": "ab68de681b2bfb8da36bd8a1a9796094b26f64b8cdb1bb1a2374ee3a0a01c82b",
+    "aqua_adapter": "e26face3a94b11b73c61e25ceca1bb7c2d489e586f3ccbc7d99424a7157c8d29"
+  }
+}
+```
