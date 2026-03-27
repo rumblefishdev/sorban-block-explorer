@@ -57,16 +57,17 @@ export function handleXdrParseError(
   err: Error,
   context: ParseErrorContext & { decodeStep: string; rawXdr: string }
 ): XdrParseErrorResult {
+  const { rawXdr, decodeStep, ...baseContext } = context;
   const error: XdrParseError = {
     errorType: 'XdrParseError',
     message: err.message,
     stack: err.stack,
-    context,
+    context: baseContext,
     timestamp: now(),
-    rawXdr: context.rawXdr,
-    decodeStep: context.decodeStep,
+    rawXdr,
+    decodeStep,
   };
-  logError(error);
+  logError(error, { decodeStep });
   return { parseError: true, error };
 }
 
@@ -93,17 +94,18 @@ export function handleScValDecodeError(
   rawValue: string,
   context: ParseErrorContext & { parentId: string }
 ): ScValDecodeErrorResult {
+  const { parentId, ...baseContext } = context;
   const error: ScValDecodeError = {
     errorType: 'ScValDecodeError',
     message: err.message,
     stack: err.stack,
-    context,
+    context: baseContext,
     timestamp: now(),
     rawValue,
     fieldContext,
-    parentId: context.parentId,
+    parentId,
   };
-  logError(error);
+  logError(error, { fieldContext, parentId });
   return { unparsed: true, rawValue, error };
 }
 
@@ -115,16 +117,17 @@ export function handleContractMetadataError(
     extractionStep: string;
   }
 ): ContractMetadataErrorResult {
+  const { contractId, wasmHash, extractionStep, ...baseContext } = context;
   const error: ContractMetadataError = {
     errorType: 'ContractMetadataError',
     message: err.message,
     stack: err.stack,
-    context,
+    context: baseContext,
     timestamp: now(),
-    contractId: context.contractId,
-    wasmHash: context.wasmHash,
-    extractionStep: context.extractionStep,
+    contractId,
+    wasmHash,
+    extractionStep,
   };
-  logError(error);
+  logError(error, { contractId, wasmHash, extractionStep });
   return { metadataMissing: true, error };
 }

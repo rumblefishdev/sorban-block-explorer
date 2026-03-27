@@ -61,6 +61,8 @@ describe('handleXdrParseError', () => {
     expect(log['level']).toBe('error');
     expect(log['event']).toBe('XdrParseError');
     expect(log['transactionHash']).toBe('tx1');
+    expect(log['decodeStep']).toBe('fromXDR');
+    expect(log['rawXdr']).toBeUndefined();
   });
 
   it('does not throw', () => {
@@ -136,6 +138,8 @@ describe('handleScValDecodeError', () => {
     expect(log['level']).toBe('error');
     expect(log['event']).toBe('ScValDecodeError');
     expect(log['contractId']).toBe('C1');
+    expect(log['parentId']).toBe('inv-1');
+    expect(log['rawValue']).toBeUndefined();
   });
 
   it('does not throw', () => {
