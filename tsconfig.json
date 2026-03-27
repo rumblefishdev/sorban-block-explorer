@@ -19,6 +19,9 @@
       "path": "./infra/aws-cdk"
     },
     {
+      "path": "./libs/database"
+    },
+    {
       "path": "./libs/domain"
     },
     {

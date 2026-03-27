@@ -39,11 +39,16 @@ export default [
               ],
             },
             {
+              sourceTag: 'scope:database',
+              onlyDependOnLibsWithTags: ['scope:shared', 'scope:domain'],
+            },
+            {
               sourceTag: 'type:app',
               onlyDependOnLibsWithTags: [
                 'scope:shared',
                 'scope:domain',
                 'scope:ui',
+                'scope:database',
               ],
             },
             {
