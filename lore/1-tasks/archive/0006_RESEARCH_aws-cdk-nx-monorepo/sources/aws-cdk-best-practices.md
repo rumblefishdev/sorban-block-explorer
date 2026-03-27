@@ -105,7 +105,7 @@ The AWS CDK includes a mechanism called _context providers_ to record a snapshot
 Use the `grants` property and convenience methods to create IAM roles that grant access to one resource by another using minimally scoped permissions. Example:
 
 ```typescript
-amzn - s3 - demo - bucket.grants.read(myLambda);
+bucket.grantRead(myLambda);
 ```
 
 This single line adds a policy to the Lambda function's role with minimal required permissions.

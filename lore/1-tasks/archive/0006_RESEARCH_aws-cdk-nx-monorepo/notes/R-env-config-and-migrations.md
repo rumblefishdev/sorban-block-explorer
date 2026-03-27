@@ -213,8 +213,9 @@ Staging web password:
 
 ```typescript
 if (config.frontendPasswordProtected && config.stagingPasswordSecretArn) {
-  // CloudFront Function reads password from Secrets Manager
-  // or use Lambda@Edge with Secrets Manager access
+  // Recommended: fetch password from Secrets Manager at deploy time and inject it
+  // into CloudFront Function / distribution config, or use Lambda@Edge / CloudFront
+  // Function with Secrets Manager access for runtime retrieval (avoid synth-time embedding)
 }
 ```
 
@@ -250,9 +251,15 @@ const migrationProvider = new cr.Provider(this, 'MigrationProvider', {
 
 // Hash of migration directory — triggers re-execution only when migrations change
 const migrationsDir = path.join(__dirname, '../../../../drizzle/migrations');
-const migrationHash = crypto
-  .createHash('md5')
-  .update(fs.readdirSync(migrationsDir).join(','))
+const migrationFiles = fs.readdirSync(migrationsDir).sort();
+const migrationHash = migrationFiles
+  .reduce((hash, file) => {
+    const filePath = path.join(migrationsDir, file);
+    const contents = fs.readFileSync(filePath);
+    hash.update(file);
+    hash.update(contents);
+    return hash;
+  }, crypto.createHash('sha256'))
   .digest('hex');
 
 // Custom Resource — runs BEFORE dependent resources
@@ -409,8 +416,8 @@ const authFunction = new cloudfront.Function(this, 'BasicAuth', {
 });
 ```
 
-**Password source:** The base64-encoded credentials are injected at synth time from `config.stagingPassword` (which references a Secrets Manager ARN). The CloudFront Function itself is deployed with the resolved credential — it does NOT call Secrets Manager at runtime (CloudFront Functions can't make network calls).
+**Password source:** CloudFront Functions cannot make network calls (including to Secrets Manager) at runtime. The base64-encoded credentials must be injected at deploy time. **Security tradeoff:** resolving a Secrets Manager value at synth time embeds it into the synthesized CloudFormation template and deployed function code (leak risk). Safer alternatives include: (1) a deploy-time Custom Resource that fetches the secret and writes it into the function code, (2) storing only a pre-hashed credential, or (3) using Lambda@Edge for runtime secret retrieval.
 
-**Alternative considered:** Lambda@Edge with Secrets Manager lookup — runtime resolution, more secure but adds 50-100ms latency per request and costs 3x more. Rejected for a staging-only protection mechanism.
+**Alternative considered:** Lambda@Edge with Secrets Manager lookup — runtime resolution, more secure but adds 50-100ms latency per request and costs 3x more. Rejected for a staging-only protection mechanism, but should be reconsidered if secret exposure in templates is unacceptable.
 
 **Optional controls:** IP allowlists via WAF WebACL rules for additional staging access restriction (configurable via `EnvironmentConfig`).

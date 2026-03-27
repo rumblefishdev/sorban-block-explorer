@@ -14,6 +14,9 @@ export type ScVal = JsonValue;
 /** String representation of a PostgreSQL BIGINT/BIGSERIAL value. */
 export type BigIntString = string;
 
+/** String representation of a PostgreSQL NUMERIC / DECIMAL value. */
+export type NumericString = string;
+
 // --- Ledger domain types ---
 
 export interface Ledger {
@@ -196,4 +199,63 @@ export interface EventInterpretation {
   interpretationType: InterpretationType;
   humanReadable: string;
   structuredData: Readonly<Record<string, JsonValue>>;
+}
+
+// --- Token, Account, NFT domain types ---
+
+export type AssetType = 'classic' | 'sac' | 'soroban';
+
+/**
+ * Explorer token — unifies classic Stellar assets and Soroban-native tokens.
+ *
+ * Identity varies by asset type:
+ * - classic: `assetCode` + `issuerAddress` (UNIQUE constraint)
+ * - sac/soroban: `contractId` (UNIQUE constraint, FK → soroban_contracts)
+ */
+export interface Token {
+  id: number;
+  assetType: AssetType;
+  assetCode: string | null;
+  issuerAddress: string | null;
+  contractId: string | null;
+  name: string | null;
+  totalSupply: NumericString | null;
+  /** DDL: INT DEFAULT 0. Semantically non-nullable — always initialized to 0. */
+  holderCount: number;
+  metadata: JsonValue | null;
+}
+
+/**
+ * Explorer account — derived-state entity with ledger-sequence watermarks.
+ *
+ * `firstSeenLedger` / `lastSeenLedger` (FK → ledgers.sequence) enforce
+ * monotonic updates: older batches cannot overwrite newer state.
+ */
+export interface Account {
+  accountId: string;
+  firstSeenLedger: BigIntString;
+  lastSeenLedger: BigIntString;
+  sequenceNumber: BigIntString | null;
+  balances: readonly JsonValue[];
+  homeDomain: string | null;
+}
+
+/**
+ * Explorer NFT — token scoped by contract.
+ *
+ * UNIQUE(contractId, tokenId). Transfer history is derived from stored
+ * Soroban events, not a separate table. Many fields are nullable because
+ * NFT contract conventions are not standardized.
+ */
+export interface NFT {
+  id: BigIntString;
+  contractId: string;
+  tokenId: string;
+  collectionName: string | null;
+  ownerAccount: string | null;
+  name: string | null;
+  mediaUrl: string | null;
+  metadata: JsonValue | null;
+  mintedAtLedger: BigIntString | null;
+  lastSeenLedger: BigIntString | null;
 }

@@ -103,7 +103,7 @@ bundling: {
 
 ```typescript
 bundling: {
-  profile: 'dev';
+  profile: 'dev',
 }
 ```
 

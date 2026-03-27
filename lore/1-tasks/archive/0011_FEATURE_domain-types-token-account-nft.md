@@ -2,7 +2,7 @@
 id: '0011'
 title: 'Domain types: token, account, NFT models'
 type: FEATURE
-status: active
+status: completed
 related_adr: []
 related_tasks: ['0011', '0012']
 tags: [priority-high, effort-small, layer-domain]
@@ -16,6 +16,12 @@ history:
     status: active
     who: fmazur
     note: 'Task activated'
+  - date: 2026-03-27
+    status: completed
+    who: fmazur
+    note: >
+      Implemented AssetType, Token, Account, Nft interfaces + NumericString
+      alias. All fields DDL-aligned, verified against Stellar/Soroban docs.
 ---
 
 # Domain types: token, account, NFT models
@@ -24,9 +30,9 @@ history:
 
 Define the shared TypeScript domain types for tokens, accounts, and NFTs. These types live in `libs/domain` and are consumed by both `apps/api` and `apps/indexer`. They mirror the PostgreSQL schema for the derived explorer entities and the API response contracts.
 
-## Status: Active
+## Status: Completed
 
-**Current state:** Activated, ready for implementation.
+**Current state:** Implemented and verified.
 
 ## Context
 
@@ -114,13 +120,39 @@ Export all types from `libs/domain` barrel file. Verify compilation and field al
 
 ## Acceptance Criteria
 
-- [ ] `AssetType` union type defined: 'classic' | 'sac' | 'soroban'
-- [ ] `Token` type defined with all DDL fields, both UNIQUE constraints documented
-- [ ] `Account` type defined with all DDL fields, balances as JSONB array, watermark pattern noted
-- [ ] `NFT` type defined with all DDL fields, UNIQUE(contractId, tokenId) documented
-- [ ] All types exported from `libs/domain` barrel
-- [ ] Types compile without errors
-- [ ] Field names, nullability, and types match the DDL
+- [x] `AssetType` union type defined: 'classic' | 'sac' | 'soroban'
+- [x] `Token` type defined with all DDL fields, both UNIQUE constraints documented
+- [x] `Account` type defined with all DDL fields, balances as JSONB array, watermark pattern noted
+- [x] `NFT` type defined with all DDL fields, UNIQUE(contractId, tokenId) documented
+- [x] All types exported from `libs/domain` barrel
+- [x] Types compile without errors
+- [x] Field names, nullability, and types match the DDL
+
+## Implementation Notes
+
+Added to `libs/domain/src/index.ts`:
+
+- `NumericString` type alias (shared primitives section, alongside `BigIntString`)
+- `AssetType` union type
+- `Token` interface (9 fields)
+- `Account` interface (6 fields)
+- `Nft` interface (10 fields)
+
+All types exported from barrel, compilation verified with `nx build`.
+
+## Design Decisions
+
+### From Plan
+
+1. **Strict DDL nullability alignment**: every field's `| null` matches DDL nullable/NOT NULL exactly.
+2. **Reuse existing primitives**: `BigIntString` for BIGINT FKs, `JsonValue` for JSONB columns.
+
+### Emerged
+
+3. **`NumericString` alias for NUMERIC(28,7)**: DDL `totalSupply` is `NUMERIC(28,7)` — not a BIGINT, so `BigIntString` would be semantically wrong. Created a new alias following the same pattern.
+4. **`balances: readonly JsonValue[]` instead of `JsonValue`**: DDL has `DEFAULT '[]'` — always an array. Narrowed from `JsonValue` to `readonly JsonValue[]` to reflect the actual contract. Full typed balance interface deferred (separate scope).
+5. **`Token.id: number` (not `BigIntString`)**: DDL is `SERIAL` (4-byte int, max ~2.1B), not `BIGSERIAL`. Fits safely in JS `Number.MAX_SAFE_INTEGER`. Using `BigIntString` would be overengineering.
+6. **JSDoc on interfaces**: Documented UNIQUE constraints, FK references, watermark pattern, and identity model (classic vs soroban) directly on interfaces — task acceptance criteria required this.
 
 ## Notes
 

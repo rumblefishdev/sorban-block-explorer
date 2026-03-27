@@ -1,7 +1,12 @@
 ---
+title: 'Drizzle ORM: GIN Indexes, tsvector, CHECK, JSONB'
 type: research
 status: mature
 spawned_from: '0007'
+spawns: []
+tags: [drizzle, gin, tsvector, jsonb, check-constraints]
+links: []
+history: []
 ---
 
 # Drizzle ORM: GIN Indexes, tsvector, CHECK, JSONB
@@ -21,6 +26,7 @@ export const events = pgTable(
   (t) => [
     index('idx_topics_gin').using('gin', t.topics),
     // With operator class:
+    // Note: 'name' column not defined in this example — in practice, target an existing text column
     index('idx_name_trgm').using('gin', t.name.op('gin_trgm_ops')),
   ]
 );

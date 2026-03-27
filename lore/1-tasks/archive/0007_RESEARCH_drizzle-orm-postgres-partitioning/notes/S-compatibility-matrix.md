@@ -1,7 +1,12 @@
 ---
+title: 'Drizzle ORM + PostgreSQL Advanced Features: Compatibility Matrix'
 type: synthesis
 status: mature
 spawned_from: '0007'
+spawns: []
+tags: [drizzle, postgresql, compatibility]
+links: []
+history: []
 ---
 
 # Drizzle ORM + PostgreSQL Advanced Features: Compatibility Matrix
@@ -30,7 +35,8 @@ spawned_from: '0007'
 | Feature                          | Min drizzle-orm                     | Min drizzle-kit                                                                         | Min PostgreSQL |
 | -------------------------------- | ----------------------------------- | --------------------------------------------------------------------------------------- | -------------- |
 | `PARTITION BY RANGE`             | N/A (not supported)                 | N/A (custom SQL)                                                                        | 10             |
-| FK on partitioned tables         | any                                 | N/A (custom SQL)                                                                        | 12             |
+| FK FROM partitioned tables       | any                                 | N/A (custom SQL)                                                                        | 11             |
+| FK TO partitioned tables         | any                                 | N/A (custom SQL)                                                                        | 12             |
 | `GENERATED ALWAYS AS ... STORED` | 0.32.0                              | 0.32.0                                                                                  | 12             |
 | `tsvector` (customType)          | any                                 | any                                                                                     | 9.6            |
 | GIN indexes                      | any                                 | 0.28.6 (full index field support)                                                       | 9.6            |
@@ -40,7 +46,7 @@ spawned_from: '0007'
 
 **Current latest versions (March 2026):** drizzle-orm 0.45.1, drizzle-kit 0.31.10 (+ v1.0.0-beta.19 in beta channel).
 
-**Our minimum versions:** drizzle-orm >= 0.32.0, drizzle-kit >= 0.28.6, PostgreSQL >= 12.
+**Our minimum versions:** drizzle-orm >= 0.32.0, drizzle-kit >= 0.28.6, PostgreSQL >= 11 (>= 12 only if FKs referencing partitioned parents are needed).
 
 **Note on v1.0.0-beta:** In beta.12+, `generatedAlwaysAs()` no longer accepts raw string literals — only `sql` template expressions and callbacks. Our examples use `sql` templates, so they are compatible with both stable and beta.
 
@@ -75,7 +81,7 @@ migrate()                     # Apply at deploy
 
 - drizzle-orm >= 0.32.0 (generated columns)
 - drizzle-kit >= 0.28.6 (full index field support including GIN operator classes)
-- PostgreSQL >= 12 (FK on partitioned tables)
+- PostgreSQL >= 11 (FKs from partitioned tables; PostgreSQL 12+ only needed for FKs to partitioned parents)
 
 ## Impact on Implementation Tasks
 

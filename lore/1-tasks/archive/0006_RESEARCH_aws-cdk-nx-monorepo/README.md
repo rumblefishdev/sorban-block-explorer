@@ -39,7 +39,7 @@ history:
 
 Investigate how to organize AWS CDK infrastructure within the Nx monorepo, including stack decomposition, asset bundling from Nx app build outputs, environment configuration patterns, schema migration strategies, and GitHub Actions integration. This research must produce a CDK project structure that manages all infrastructure components while remaining open-source redeployable.
 
-## Status: Active
+## Status: Completed
 
 ## Research Notes
 
@@ -61,8 +61,8 @@ Investigate how to organize AWS CDK infrastructure within the Nx monorepo, inclu
 - **OIDC construct:** `aws-cdk-github-oidc` library in CiStack.
 - **ECR + SQS DLQ:** ECR for Galexie Docker images and SQS DLQ for failed Ledger Processor invocations, both in ComputeStack.
 - **Provisioned concurrency:** Only API Lambda in production (start with 5). Rust Processor doesn't need it (100ms cold start).
-- **Staging password:** CloudFront Function with Basic Auth (not Lambda@Edge). Credentials from Secrets Manager at synth time.
-- **Cross-compilation:** `cargo-lambda` with Docker in CI, Zig locally. `cargo-lambda-action` for GitHub Actions.
+- **Staging password:** CloudFront Function with Basic Auth (not Lambda@Edge). Credentials stored in Secrets Manager and injected at deploy time (or as pre-hashed values), avoiding synth-time secret resolution in synthesized templates.
+- **Cross-compilation:** `cargo-lambda` with Docker in CI, Zig locally; install `cargo-lambda` via `pip3` or use its Docker image directly in GitHub Actions (no dedicated `cargo-lambda-action`).
 - **`cdk.context.json`:** Must be committed for deterministic synthesis.
 
 ## Context
