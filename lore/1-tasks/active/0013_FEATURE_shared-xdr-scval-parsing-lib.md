@@ -2,7 +2,7 @@
 id: '0013'
 title: 'Shared XDR/ScVal parsing utilities library'
 type: FEATURE
-status: backlog
+status: active
 related_adr: []
 related_tasks: ['0002', '0052', '0053', '0054', '0055', '0027']
 tags: [priority-high, effort-medium, layer-domain]
@@ -12,6 +12,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-27
+    status: active
+    who: FilipDz
+    note: 'Activated task'
 ---
 
 # Shared XDR/ScVal parsing utilities library
