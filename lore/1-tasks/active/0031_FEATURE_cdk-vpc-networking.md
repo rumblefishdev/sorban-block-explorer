@@ -2,7 +2,7 @@
 id: '0031'
 title: 'CDK: VPC, subnets, security groups, VPC endpoints'
 type: FEATURE
-status: backlog
+status: active
 related_adr: []
 related_tasks: ['0006']
 tags: [priority-high, effort-medium, layer-infra]
@@ -14,6 +14,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-30
+    status: active
+    who: fmazur
+    note: 'Activated task for implementation'
 ---
 
 # CDK: VPC, subnets, security groups, VPC endpoints
@@ -22,9 +26,9 @@ history:
 
 Define the foundational AWS networking infrastructure using CDK: a VPC with public/private subnet split, security groups for inter-component access, and a VPC endpoint for S3. The network is designed for single-AZ launch in us-east-1a with a clear path to Multi-AZ expansion. All compute (Lambda, ECS Fargate) and storage (RDS) components depend on this networking layer.
 
-## Status: Backlog
+## Status: Active
 
-**Current state:** Not started. Research task 0006 (AWS CDK + Nx monorepo) provides foundational knowledge for the CDK setup.
+**Current state:** Activated for implementation. Research task 0006 (AWS CDK + Nx monorepo) provides foundational knowledge for the CDK setup.
 
 ## Context
 

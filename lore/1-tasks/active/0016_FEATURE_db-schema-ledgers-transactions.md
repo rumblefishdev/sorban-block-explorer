@@ -2,7 +2,7 @@
 id: '0016'
 title: 'DB schema: ledgers and transactions tables'
 type: FEATURE
-status: backlog
+status: active
 related_adr: []
 related_tasks: ['0015', '0009']
 tags: [priority-high, effort-medium, layer-database]
@@ -13,6 +13,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-30
+    status: active
+    who: stkrolikiewicz
+    note: 'Promoted to active'
 ---
 
 # DB schema: ledgers and transactions tables

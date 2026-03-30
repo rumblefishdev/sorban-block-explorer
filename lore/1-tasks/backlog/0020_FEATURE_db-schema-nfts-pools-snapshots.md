@@ -4,7 +4,7 @@ title: 'DB schema: NFTs, liquidity pools, and pool snapshots tables'
 type: FEATURE
 status: backlog
 related_adr: []
-related_tasks: ['0012']
+related_tasks: ['0012', '0015']
 tags: [priority-medium, effort-medium, layer-database]
 milestone: 1
 links: []

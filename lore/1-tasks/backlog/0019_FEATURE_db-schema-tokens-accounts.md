@@ -4,7 +4,7 @@ title: 'DB schema: tokens and accounts tables'
 type: FEATURE
 status: backlog
 related_adr: []
-related_tasks: ['0011']
+related_tasks: ['0011', '0015']
 tags: [priority-medium, effort-small, layer-database]
 milestone: 1
 links: []

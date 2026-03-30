@@ -20,7 +20,10 @@
     "prepare": "husky",
     "verify:staged": "node tools/scripts/run-affected-checks.mjs staged",
     "verify:push": "node tools/scripts/run-affected-checks.mjs push",
-    "board": "node tools/scripts/generate-lore-board.mjs"
+    "board": "node tools/scripts/generate-lore-board.mjs",
+    "db:generate": "npx drizzle-kit generate --config=libs/database/drizzle.config.ts",
+    "db:migrate": "npx drizzle-kit migrate --config=libs/database/drizzle.config.ts",
+    "db:studio": "npx drizzle-kit studio --config=libs/database/drizzle.config.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.8.0",
