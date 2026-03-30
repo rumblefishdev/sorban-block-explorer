@@ -28,7 +28,6 @@ CREATE TABLE "transactions" (
 );
 --> statement-breakpoint
 ALTER TABLE "transactions" ADD CONSTRAINT "transactions_ledger_sequence_ledgers_sequence_fk" FOREIGN KEY ("ledger_sequence") REFERENCES "public"."ledgers"("sequence") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "idx_ledgers_closed_at" ON "ledgers" USING btree ("closed_at" DESC NULLS LAST);--> statement-breakpoint
-CREATE INDEX "idx_transactions_hash" ON "transactions" USING btree ("hash");--> statement-breakpoint
-CREATE INDEX "idx_transactions_source" ON "transactions" USING btree ("source_account","created_at" DESC NULLS LAST);--> statement-breakpoint
-CREATE INDEX "idx_transactions_ledger" ON "transactions" USING btree ("ledger_sequence");
+CREATE INDEX "idx_closed_at" ON "ledgers" USING btree ("closed_at" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "idx_source" ON "transactions" USING btree ("source_account","created_at" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "idx_ledger" ON "transactions" USING btree ("ledger_sequence");

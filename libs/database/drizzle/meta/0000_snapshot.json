@@ -1,5 +1,5 @@
 {
-  "id": "b935ff7a-018a-4de5-b731-bf31b8ec4aa0",
+  "id": "a9fdf43b-fe0f-4244-8d7e-ece332dffef6",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -46,8 +46,8 @@
         }
       },
       "indexes": {
-        "idx_ledgers_closed_at": {
-          "name": "idx_ledgers_closed_at",
+        "idx_closed_at": {
+          "name": "idx_closed_at",
           "columns": [
             {
               "expression": "closed_at",
@@ -172,23 +172,8 @@
         }
       },
       "indexes": {
-        "idx_transactions_hash": {
-          "name": "idx_transactions_hash",
-          "columns": [
-            {
-              "expression": "hash",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "idx_transactions_source": {
-          "name": "idx_transactions_source",
+        "idx_source": {
+          "name": "idx_source",
           "columns": [
             {
               "expression": "source_account",
@@ -208,8 +193,8 @@
           "method": "btree",
           "with": {}
         },
-        "idx_transactions_ledger": {
-          "name": "idx_transactions_ledger",
+        "idx_ledger": {
+          "name": "idx_ledger",
           "columns": [
             {
               "expression": "ledger_sequence",

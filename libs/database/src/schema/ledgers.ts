@@ -17,5 +17,5 @@ export const ledgers = pgTable(
     transactionCount: integer('transaction_count').notNull(),
     baseFee: bigint('base_fee', { mode: 'bigint' }).notNull(),
   },
-  (table) => [index('idx_ledgers_closed_at').on(table.closedAt.desc())]
+  (table) => [index('idx_closed_at').on(table.closedAt.desc())]
 );

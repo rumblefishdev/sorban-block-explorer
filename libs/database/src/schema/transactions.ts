@@ -34,12 +34,8 @@ export const transactions = pgTable(
     operationTree: jsonb('operation_tree'),
   },
   (table) => [
-    index('idx_transactions_hash').on(table.hash),
-    index('idx_transactions_source').on(
-      table.sourceAccount,
-      table.createdAt.desc()
-    ),
-    index('idx_transactions_ledger').on(table.ledgerSequence),
+    index('idx_source').on(table.sourceAccount, table.createdAt.desc()),
+    index('idx_ledger').on(table.ledgerSequence),
   ]
 );
 
