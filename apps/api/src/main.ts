@@ -3,7 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import type { Handler } from 'aws-lambda';
 import { AppModule } from './app.module.js';
 
-let server: Handler;
+let server: Handler | undefined;
 
 async function bootstrap(): Promise<Handler> {
   const { configure } = await import('@codegenie/serverless-express');

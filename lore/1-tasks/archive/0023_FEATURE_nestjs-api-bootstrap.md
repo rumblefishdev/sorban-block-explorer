@@ -21,10 +21,14 @@ history:
     status: completed
     who: FilipDz
     note: >
-      All 10 acceptance criteria met. 16 new source files in apps/api/src/.
-      Lambda handler via @codegenie/serverless-express, 9 stub feature modules,
-      DatabaseModule with Drizzle+pg Pool max:1, global exception filter,
-      health endpoint, workspace imports verified via workspace-imports.ts.
+      10/10 acceptance criteria met. Bootstrap NestJS API on Lambda:
+      serverless-express handler with cached bootstrap, AppModule with 9 feature
+      module stubs, DatabaseModule (Drizzle + pg Pool max:1, RDS Proxy ready,
+      SSL cert validation in prod), global /v1 prefix, global exception filter
+      with error envelope and safe message normalization, health endpoint,
+      workspace imports from libs/domain and libs/shared verified.
+      PR review fixes: rejectUnauthorized:true, DB_PORT Number coercion,
+      explicit type checks in exception filter message extraction.
 ---
 
 # NestJS API bootstrap: Lambda adapter, app.module, env config
@@ -104,6 +108,6 @@ Dependencies added: `@nestjs/core`, `@nestjs/common`, `@nestjs/config`, `@nestjs
 
 ## Future Work
 
-- RDS CA bundle for production SSL (currently `rejectUnauthorized: false`)
+- RDS CA bundle for production SSL (production uses `rejectUnauthorized: true` via DatabaseModule)
 - Smoke tests for GlobalExceptionFilter and HealthController
 - esbuild bundling for Lambda deployment (per research task 0004 recommendation)
