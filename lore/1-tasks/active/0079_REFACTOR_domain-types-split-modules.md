@@ -2,7 +2,7 @@
 id: '0079'
 title: 'Split domain types into per-concern modules'
 type: REFACTOR
-status: backlog
+status: active
 related_adr: ['TBD']
 related_tasks: ['0009', '0012']
 tags: [priority-medium, effort-small, layer-domain]
@@ -14,6 +14,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-30
+    status: active
+    who: fmazur
+    note: 'Activated task for implementation'
 ---
 
 # Split domain types into per-concern modules
@@ -22,7 +26,7 @@ history:
 
 Refactor `libs/domain/src/index.ts` (~370 lines, ~15 type groups) from a single monolithic file into per-concern modules under `libs/domain/src/lib/`. The barrel `index.ts` will re-export everything so that external consumers are unaffected.
 
-## Status: Backlog
+## Status: Active
 
 **Current state:** Not started. No blockers — purely internal refactoring with no API surface change.
 
