@@ -158,12 +158,15 @@ Type-safe via Drizzle schema generics. Per-entity services extend and add custom
 
 **Location:** `apps/api/src/common/base-crud.controller.ts`
 
-Generic abstract NestJS controller with standard endpoints:
+Generic abstract NestJS controller with full CRUD endpoints (all enabled by default, opt-out via `exclude` config):
 
 - `GET /` — list with cursor pagination (delegates to `service.getList`)
 - `GET /:id` — detail (delegates to `service.getOne`)
+- `POST /` — create (delegates to `service.create`)
+- `PATCH /:id` — update (delegates to `service.update`)
+- `DELETE /:id` — delete (delegates to `service.delete`)
 
-Uses validation pipes from Step 4. Per-entity controllers extend and add custom endpoints.
+Per-entity controllers extend and configure via `exclude` to disable unneeded endpoints (e.g., most explorer modules exclude write operations). Uses validation pipes from Step 4.
 
 ### Step 7: Tests
 
@@ -183,7 +186,7 @@ Uses validation pipes from Step 4. Per-entity controllers extend and add custom 
 - [ ] `has_more` correctly determined by fetching limit+1
 - [ ] Filter parser handles all documented filter[key] patterns
 - [ ] `BaseCrudService<T>` provides getOne, getList, create, update, delete
-- [ ] `BaseCrudController<T>` provides standard NestJS GET endpoints
+- [ ] `BaseCrudController<T>` provides full CRUD endpoints with opt-out `exclude` config
 - [ ] Type safety via Drizzle `InferSelectModel<T>` / `InferInsertModel<T>`
 - [ ] Reusable across collection endpoints (BaseCrudService for 0046-0052, pagination utilities for 0045-0053)
 - [ ] Unit tests for cursor and filter utilities
@@ -196,4 +199,4 @@ Uses validation pipes from Step 4. Per-entity controllers extend and add custom 
 - The cursor structure is an internal implementation detail and must never be documented as a public contract.
 - Filter keys vary per endpoint; the parser must be configurable per module.
 - Search module (0053) uses cursor pagination but not BaseCrudService — it has cross-entity query patterns.
-- `delete` included in base but entity modules may choose not to expose it (block explorer is read-heavy).
+- All CRUD endpoints enabled by default; entity modules use `exclude` to disable write operations (block explorer is read-heavy).
