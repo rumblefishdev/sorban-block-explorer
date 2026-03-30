@@ -6,6 +6,7 @@ dist
 tmp
 out-tsc
 coverage
+*.tsbuildinfo
 
 # nx
 .nx/installation
