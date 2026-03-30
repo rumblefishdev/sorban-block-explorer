@@ -2,7 +2,7 @@
 id: '0023'
 title: 'NestJS API bootstrap: Lambda adapter, app.module, env config'
 type: FEATURE
-status: backlog
+status: active
 related_adr: []
 related_tasks: ['0004', '0015']
 tags: [layer-backend, nestjs, lambda, bootstrap]
@@ -13,6 +13,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-30
+    status: active
+    who: FilipDz
+    note: 'Promoted to active'
 ---
 
 # NestJS API bootstrap: Lambda adapter, app.module, env config
