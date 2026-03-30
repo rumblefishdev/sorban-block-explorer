@@ -5,8 +5,9 @@ type: RESEARCH
 status: completed
 related_adr: []
 related_tasks:
-  ['0060', '0061', '0062', '0063', '0064', '0065', '0066', '0067', '0068']
+  ['0024', '0025', '0026', '0027', '0029', '0028', '0030', '0056', '0031']
 tags: [priority-medium, effort-medium, layer-research]
+milestone: 1
 links:
   - https://docs.aws.amazon.com/cdk/v2/guide/best-practices.html
   - https://docs.aws.amazon.com/cdk/v2/guide/stacks.html
@@ -163,7 +164,7 @@ The main design explicitly assumes the full stack can be redeployed by third par
 6. **CloudFront Function over Lambda@Edge for staging password:** Task asked "how should staging password protection be implemented". Chose CF Function (6x cheaper, sub-ms) over Lambda@Edge.
 7. **`cargo-lambda/cargo-lambda-action` does not exist (404):** Discovered during verification. Replaced with `pip3 install cargo-lambda` + `dtolnay/rust-toolchain`.
 8. **ECR repository in ComputeStack:** Task didn't mention ECR. Added because Galexie needs Docker image registry.
-9. **SQS DLQ in ComputeStack:** Task didn't mention DLQ. Added per backlog task 0070 requirement.
+9. **SQS DLQ in ComputeStack:** Task didn't mention DLQ. Added per backlog task 0033 requirement.
 10. **ACM certificates in DeliveryStack:** Not in task scope but required for CloudFront/API Gateway HTTPS.
 11. **`cdk.context.json` must be committed:** Not in task requirements. Added because non-deterministic synthesis is a real risk.
 

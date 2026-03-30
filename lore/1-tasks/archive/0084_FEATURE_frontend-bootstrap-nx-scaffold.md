@@ -4,8 +4,9 @@ title: 'Frontend bootstrap: scaffold apps/web and libs/ui with core dependencies
 type: FEATURE
 status: completed
 related_adr: []
-related_tasks: ['0039', '0046', '0047', '0077']
+related_tasks: ['0059', '0066', '0067', '0058']
 tags: [priority-high, effort-small, layer-frontend-shared]
+milestone: 1
 links: []
 history:
   - date: 2026-03-27
@@ -37,7 +38,7 @@ Scaffold the frontend application (`apps/web`) and shared UI library (`libs/ui`)
 
 ## Context
 
-Existing frontend tasks (0039, 0046, 0047, 0077) all create files inside `apps/web/` and `libs/ui/`, but no task existed to scaffold these projects or install the required dependencies. Without this bootstrap step, none of the frontend tasks could begin.
+Existing frontend tasks (0059, 0066, 0067, 0058) all create files inside `apps/web/` and `libs/ui/`, but no task existed to scaffold these projects or install the required dependencies. Without this bootstrap step, none of the frontend tasks could begin.
 
 ## Acceptance Criteria
 
@@ -119,5 +120,5 @@ Existing frontend tasks (0039, 0046, 0047, 0077) all create files inside `apps/w
 
 ## Notes
 
-- This task MUST be completed before tasks 0039, 0046, 0047, and 0077 can start.
+- This task MUST be completed before tasks 0059, 0066, 0067, and 0058 can start.
 - Do not add routing, theme, or providers in this task — keep it minimal. Those are covered by dedicated tasks.

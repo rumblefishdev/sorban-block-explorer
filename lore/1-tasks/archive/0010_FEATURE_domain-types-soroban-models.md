@@ -5,8 +5,9 @@ type: FEATURE
 status: completed
 assignee: fmazur
 related_adr: []
-related_tasks: ['0010']
+related_tasks: []
 tags: [priority-high, effort-small, layer-domain]
+milestone: 1
 links: []
 history:
   - date: 2026-03-24

@@ -6,6 +6,7 @@ status: active
 related_adr: []
 related_tasks: ['0004', '0007']
 tags: [priority-high, effort-medium, layer-database]
+milestone: 1
 links: []
 history:
   - date: 2026-03-24

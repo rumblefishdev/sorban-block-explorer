@@ -6,6 +6,7 @@ status: backlog
 related_adr: []
 related_tasks: ['0011']
 tags: [priority-medium, effort-small, layer-database]
+milestone: 1
 links: []
 history:
   - date: 2026-03-24

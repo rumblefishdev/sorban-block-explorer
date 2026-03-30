@@ -6,6 +6,7 @@ status: backlog
 related_adr: []
 related_tasks: ['0004', '0015']
 tags: [layer-backend, nestjs, lambda, bootstrap]
+milestone: 1
 links: []
 history:
   - date: 2026-03-24
@@ -152,6 +153,6 @@ Verify that `libs/domain` and `libs/shared` are importable from the `apps/api` a
 
 ## Notes
 
-- This task is the foundation for all backend API tasks (0024-0038).
+- This task is the foundation for all backend API tasks (0043-0057).
 - The 9 feature modules can initially be empty NestJS modules with no endpoints; each will be fleshed out by its own task.
 - API Gateway and WAF configuration are infrastructure concerns handled separately.

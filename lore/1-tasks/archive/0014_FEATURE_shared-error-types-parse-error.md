@@ -4,8 +4,9 @@ title: 'Shared error types and parse_error handling'
 type: FEATURE
 status: completed
 related_adr: []
-related_tasks: ['0013', '0056', '0017']
+related_tasks: ['0013']
 tags: [priority-medium, effort-small, layer-domain]
+milestone: 1
 links:
   - docs/architecture/xdr-parsing/xdr-parsing-overview.md
 history:

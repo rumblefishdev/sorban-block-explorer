@@ -6,6 +6,7 @@ status: completed
 related_adr: []
 related_tasks: ['0008']
 tags: [priority-high, effort-small, layer-domain]
+milestone: 1
 links: []
 history:
   - date: 2026-03-24
@@ -30,7 +31,7 @@ history:
 
 ## Summary
 
-Define the shared TypeScript domain types for ledgers, transactions, operations, pagination, and API response shapes. These types live in `libs/domain` and are consumed by both `apps/api` and `apps/indexer`. They mirror the PostgreSQL schema defined in task 0008 and the API response contracts from the backend overview.
+Define the shared TypeScript domain types for ledgers, transactions, operations, pagination, and API response shapes. These types live in `libs/domain` and are consumed by both `apps/api` and `apps/indexer`. They mirror the PostgreSQL schema defined in tasks 0016-0020 and the API response contracts from the backend overview.
 
 ## Status: Completed
 

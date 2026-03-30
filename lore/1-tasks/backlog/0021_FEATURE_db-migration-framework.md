@@ -4,8 +4,9 @@ title: 'Database migration framework'
 type: FEATURE
 status: backlog
 related_adr: []
-related_tasks: ['0015', '0068']
+related_tasks: ['0015', '0031']
 tags: [priority-high, effort-medium, layer-database]
+milestone: 1
 links: []
 history:
   - date: 2026-03-24
@@ -125,4 +126,4 @@ Document and implement the rollback approach:
 - This task depends on the Drizzle ORM configuration from task 0015 being in place.
 - The specific CDK integration mechanism (custom resource vs. CodeBuild step) should be decided during implementation based on CDK best practices and the existing pipeline structure.
 - Migration ordering is critical: all schema tasks (0016-0020) produce Drizzle schema definitions, but the migration framework must be ready to generate and apply their migrations.
-- Task 0068 (referenced in related_tasks) covers broader CDK infrastructure. The migration integration should align with that infrastructure design.
+- Task 0031 (referenced in related_tasks) covers broader CDK infrastructure. The migration integration should align with that infrastructure design.

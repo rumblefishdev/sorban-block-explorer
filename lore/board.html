@@ -345,6 +345,11 @@
         color: #fff;
         border: none;
       }
+      .tag-milestone {
+        border-color: var(--accent);
+        color: var(--accent);
+        font-weight: 600;
+      }
 
       /* Table view */
       .table-view {
@@ -890,6 +895,11 @@
     <div class="card-id">#${t.id}</div>
     <div class="card-title">${t.title}</div>
     <div class="card-meta">
+      ${
+        t.milestone
+          ? `<span class="tag tag-milestone">M${t.milestone}</span>`
+          : ''
+      }
       <span class="tag-layer" style="background:${layerColor}">${layerLabel}</span>
       <span class="tag ${priBadge}">${t.priority}</span>
       <span class="tag tag-type">${t.type}</span>
