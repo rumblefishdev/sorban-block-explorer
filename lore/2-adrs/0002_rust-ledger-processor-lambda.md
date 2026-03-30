@@ -1,9 +1,9 @@
 ---
 id: '0002'
 title: 'Use Rust for the Ledger Processor Lambda'
-status: proposed
+status: accepted
 deciders: [stkrolikiewicz, fmazur]
-related_tasks: ['0002', '0060', '0061', '0062', '0063', '0064']
+related_tasks: ['0002', '0024', '0025', '0026', '0027', '0029']
 related_adrs: []
 tags: [language-choice, ledger-processor, rust]
 links:
@@ -15,6 +15,10 @@ history:
     status: proposed
     who: stkrolikiewicz
     note: 'ADR proposed based on task 0002 research findings and stellar-indexer reference'
+  - date: 2026-03-30
+    status: accepted
+    who: fmazur
+    note: 'Accepted. XDR parsing tasks (0024-0027) scoped to Rust-only per this ADR.'
 ---
 
 # ADR 0002: Use Rust for the Ledger Processor Lambda

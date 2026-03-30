@@ -4,8 +4,9 @@ title: 'Research: Galexie configuration, Captive Core setup, and output format'
 type: RESEARCH
 status: completed
 related_adr: []
-related_tasks: ['0058', '0063']
+related_tasks: ['0024', '0034']
 tags: [priority-high, effort-medium, layer-research]
+milestone: 1
 links:
   - https://github.com/stellar/stellar-galexie
   - https://developers.stellar.org/docs/data/indexers/build-your-own/galexie

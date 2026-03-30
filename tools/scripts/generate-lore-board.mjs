@@ -158,6 +158,9 @@ function loadTasks() {
   }
 
   tasks.sort((a, b) => {
+    const ma = parseInt(a.milestone, 10) || 99;
+    const mb = parseInt(b.milestone, 10) || 99;
+    if (ma !== mb) return ma - mb;
     const na = parseInt(a.id, 10);
     const nb = parseInt(b.id, 10);
     return na - nb;
@@ -207,6 +210,7 @@ function generateJSON(tasks) {
     title: t.title,
     type: t.type,
     status: t._dir,
+    milestone: parseInt(t.milestone, 10) || null,
     layer: getLayer(t),
     priority: getPriority(t),
     assignee: getAssignee(t),

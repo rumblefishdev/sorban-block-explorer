@@ -143,18 +143,20 @@ const processor = new lambda.Function(this, 'LedgerProcessor', {
 **Pros:** Full control over build. Nx can manage the Rust build target. No dependency on `@cdklabs/aws-lambda-rust`.
 **Cons:** Must set up cross-compilation for ARM64 Lambda manually. More CI config.
 
-#### Recommendation: Option B (pre-built binary)
+#### Recommendation: Option A (`cargo-lambda-cdk`)
+
+Updated 2026-03-27 based on team experience: `cargo-lambda-cdk` is proven and handles cross-compilation, bundling, and packaging automatically. The Docker fallback eliminates manual cross-compilation setup. Pre-built binary (Option B) adds unnecessary CI complexity for marginal control benefit.
 
 Reasons:
 
-1. `@cdklabs/aws-lambda-rust` is v0.0.10 — too early for production
-2. Nx should manage ALL builds, including Rust — consistent build graph
-3. Pre-built binary is simpler to debug and cache in CI
-4. CI can use `cargo lambda build --release --arm64` in a Docker container
+1. `cargo-lambda-cdk` handles ARM64 cross-compilation transparently (Docker or Zig)
+2. Single CDK construct replaces manual `Code.fromAsset()` + CI build steps
+3. Supports local bundling (cargo-lambda installed) with Docker fallback
+4. Already listed in recommended CDK dependencies
 
-### Nx Rust Build Target
+### Nx Rust Build Target (optional — for local dev/CI caching)
 
-Add a build target for the Rust Lambda in `apps/indexer-rs/project.json`:
+> With `cargo-lambda-cdk`, the Rust build happens during `cdk synth` via the `RustFunction` construct. An Nx build target is optional but useful for local iteration and CI caching.
 
 ```json
 {
@@ -170,8 +172,6 @@ Add a build target for the Rust Lambda in `apps/indexer-rs/project.json`:
   }
 }
 ```
-
-CDK `synth` depends on this via Nx `dependsOn`.
 
 ### Frontend (React SPA)
 
@@ -190,17 +190,19 @@ new s3deploy.BucketDeployment(this, 'DeployFrontend', {
 
 ## Summary: Build Flow
 
+> Updated 2026-03-27: Rust Lambda now uses `cargo-lambda-cdk` (`RustFunction` construct) which builds during `cdk synth`. Node.js Lambdas and frontend are still Nx-managed pre-built artifacts.
+
 ```
 nx build api          → apps/api/dist/          → CDK Code.fromAsset()
 nx build workers      → apps/workers/dist/      → CDK Code.fromAsset()
 nx build web          → apps/web/dist/          → CDK BucketDeployment
-nx build indexer-rs   → apps/indexer-rs/target/  → CDK Code.fromAsset() (Rust binary)
+(cdk synth)           → cargo-lambda-cdk        → RustFunction builds Rust binary during synth
 nx build aws-cdk      → infra/aws-cdk/dist/     → CDK TypeScript compiled
 nx synth aws-cdk      → cdk.out/                → CloudFormation templates
 nx deploy aws-cdk     → CloudFormation deploy   → AWS resources
 ```
 
-All builds are Nx-managed. CDK only references pre-built artifacts.
+Node.js and frontend builds are Nx-managed. Rust Lambda build is handled by `cargo-lambda-cdk` during CDK synth.
 
 ## Rust Cross-Compilation for Lambda
 

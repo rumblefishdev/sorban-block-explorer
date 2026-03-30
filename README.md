@@ -44,12 +44,15 @@ docs/
 
 ## Current Status
 
-This is an initialization commit. The workspace contains:
+The workspace contains:
 
 - root Nx / TypeScript / ESLint / Prettier bootstrap
-- minimal package-based project skeletons for the core bounded contexts
-- starter architecture docs aligned with the reviewed technical design
+- `apps/web` — React 19 + Vite SPA with MUI, React Router, and TanStack Query
+- `libs/ui` — shared React component library (Vite lib mode)
+- `libs/domain` — domain types for all explorer entities
+- `libs/shared` — cross-cutting error types and handlers
+- `apps/api`, `apps/indexer`, `apps/workers`, `infra/aws-cdk` — project skeletons
+- architecture docs aligned with the reviewed technical design
 
-Application framework plugins such as React, NestJS, and AWS-specific runtime code are not
-added yet. They should be introduced as dedicated follow-up steps so the workspace history
-stays clean and each architectural decision is explicit.
+Backend framework plugins (NestJS) and AWS-specific runtime code are not added yet.
+They will be introduced as dedicated follow-up steps.
