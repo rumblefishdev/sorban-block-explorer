@@ -5,7 +5,7 @@ type: FEATURE
 status: backlog
 related_adr: []
 related_tasks: ['0023', '0015']
-tags: [priority-low, effort-small, layer-infra, ai-agents]
+tags: [priority-low, effort-medium, layer-infra, ai-agents, e2e, playwright]
 milestone: 3
 links: []
 history:
@@ -19,7 +19,7 @@ history:
 
 ## Summary
 
-Extend `docker-compose.yml` with `web` and `api` services so AI agents (Claude Code, CI bots) can spin up the entire stack with `docker compose up -d` and run e2e tests against it. Currently only PostgreSQL is containerized; web and API require `nx serve` which is impractical for stateless agent sessions.
+Extend `docker-compose.yml` with `web` and `api` services so AI agents (Claude Code, CI bots) can spin up the entire stack with `docker compose up -d`, then run Playwright e2e tests against it. Currently only PostgreSQL is containerized; web and API require `nx serve` which is impractical for stateless agent sessions.
 
 ## Status: Backlog
 
@@ -37,6 +37,7 @@ AI agents operate in stateless sessions and cannot easily manage long-running `n
 ### Current State
 
 `docker-compose.yml` has only:
+
 - `postgres` service (PostgreSQL 16 Alpine)
 
 ### Needed Services
@@ -58,6 +59,26 @@ Add `web` service with Vite dev server or nginx serving built assets. Configure 
 
 Use docker compose profiles so `docker compose up` still only starts Postgres (dev default), and `docker compose --profile full up` starts everything.
 
+### Step 4: Playwright Setup
+
+Add Playwright as e2e test framework:
+
+- Install `@playwright/test` and configure in `apps/web-e2e/` (or `e2e/`)
+- Configure `baseURL` to point at docker compose web service (`http://localhost:4200`)
+- Add `webServer` config that runs `docker compose --profile full up -d` and waits for health checks
+- Seed script for test data (minimal ledger + transaction rows in Postgres)
+- Basic smoke tests: homepage loads, network stats displayed, navigation works
+
+### Step 5: AI Agent Workflow
+
+Create a single-command workflow for agents:
+
+```bash
+docker compose --profile full up -d --wait && npx playwright test && docker compose down
+```
+
+Document in `CLAUDE.md` or a `scripts/e2e.sh` wrapper.
+
 ## Acceptance Criteria
 
 - [ ] `docker compose --profile full up -d` starts postgres + api + web
@@ -65,10 +86,15 @@ Use docker compose profiles so `docker compose up` still only starts Postgres (d
 - [ ] API service connects to postgres and responds on `/v1/network/stats`
 - [ ] Web service serves the frontend and proxies API calls
 - [ ] `docker compose down` cleanly tears down all services
-- [ ] Works in CI (GitHub Actions) and in Claude Code agent sessions
+- [ ] Playwright installed and configured with `baseURL` pointing to docker compose
+- [ ] Seed script populates minimal test data in Postgres
+- [ ] Basic smoke tests pass: homepage loads, network stats endpoint responds
+- [ ] Single-command e2e workflow works in CI and Claude Code agent sessions
 
 ## Notes
 
 - Use docker compose profiles to avoid breaking existing dev workflow.
 - This is low priority — only needed when AI agent e2e testing becomes a requirement.
 - Production deployment uses CDK/Lambda/S3, not docker-compose.
+- Playwright over Cypress: lighter, faster, better CI support, native `--wait-for-selector`.
+- Seed data should be minimal — just enough for smoke tests, not a full dataset.
