@@ -7,6 +7,7 @@ related_adr: []
 related_tasks:
   ['0060', '0061', '0062', '0063', '0064', '0065', '0066', '0067', '0068']
 tags: [priority-medium, effort-medium, layer-research]
+milestone: 1
 links:
   - https://docs.aws.amazon.com/cdk/v2/guide/best-practices.html
   - https://docs.aws.amazon.com/cdk/v2/guide/stacks.html

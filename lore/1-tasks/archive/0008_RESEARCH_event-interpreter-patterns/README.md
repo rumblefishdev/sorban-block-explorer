@@ -5,8 +5,9 @@ type: RESEARCH
 status: completed
 assignee: fmazur
 related_adr: []
-related_tasks: ['0059']
+related_tasks: ['0087']
 tags: [priority-medium, effort-medium, layer-research]
+milestone: 1
 links: []
 history:
   - date: 2026-03-24

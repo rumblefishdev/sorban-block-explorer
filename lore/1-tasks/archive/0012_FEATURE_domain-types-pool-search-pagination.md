@@ -6,6 +6,7 @@ status: completed
 related_adr: []
 related_tasks: ['0012']
 tags: [priority-high, effort-small, layer-domain]
+milestone: 1
 links: []
 history:
   - date: 2026-03-24

@@ -56,44 +56,35 @@ purpose is to feed the explorer's own storage and read paths.
 
 ## 3. Parsing Strategy
 
-### 3.1 Two Parsing Paths
+### 3.1 Single Parsing Path — Rust at Ingestion Time
 
-The source design defines two places where XDR parsing happens:
+> Per ADR 0004: Rust-only XDR parsing — all decode happens at ingestion time. No TS on-demand decode in the API.
 
-- **Ledger Processor Lambda (ingestion time)** as the primary parsing path
-- **NestJS API (request time)** as a secondary, on-demand decode path for advanced views
-
-This split is intentional.
-
-### 3.2 Ingestion-Time Parsing Is the Default
+All XDR parsing happens exclusively in the Rust Ledger Processor Lambda at ingestion time.
+The NestJS API is pure CRUD — it reads pre-materialized data from PostgreSQL.
 
 Every ledger's `LedgerCloseMeta` is fully deserialized in the Ledger Processor Lambda using
-`@stellar/stellar-sdk` XDR types.
+`rs-stellar-xdr` (Rust).
 
-This is the default path because it lets the system:
+This is the sole parsing path because it lets the system:
 
 - write structured explorer records once instead of reparsing the same payload repeatedly
 - store normalized transaction, operation, invocation, and event data in PostgreSQL
 - keep normal frontend views independent from raw XDR decoding
 - centralize protocol-specific interpretation in one pipeline stage
+- maintain a single parser in a single language — no dual-language sync on protocol upgrades
 
 Normal explorer behavior should assume that required structured data has already been
 materialized during ingestion.
 
-### 3.3 API-Time Parsing Is Narrow and On-Demand
+### 3.2 Raw XDR Passthrough for Advanced Views
 
-The backend also retains a limited decode role.
+Raw XDR payloads (`envelope_xdr`, `result_xdr`, `result_meta_xdr`) are stored verbatim in
+the database. The API returns them as opaque base64 strings for the advanced transaction
+view — no server-side decode. Client-side decode is the user's responsibility.
 
-At request time, the API can decode stored raw payloads using `@stellar/stellar-sdk` when a
-transaction advanced view or a validation/debug path needs fields that are not part of the
-standard stored read model.
-
-The API-side decode path should remain narrow:
-
-- it should not become the primary way normal transaction data is produced
-- it should not shift decode responsibility to the frontend
-- it should mainly serve advanced inspection, troubleshooting, and validation of stored
-  structured output such as `operation_tree`
+If a field is missing from the materialized read model, the Rust parser is updated and data
+is re-ingested from the stored raw XDR. Nothing is lost.
 
 ### 3.4 Frontend Parsing Boundary
 
@@ -271,9 +262,9 @@ The advanced transaction experience depends on raw payload retention.
 
 The source design currently assumes:
 
-- `envelope_xdr` and `result_xdr` are returned to the frontend for advanced inspection
-- `result_meta_xdr` remains stored for decode/debug and validation use
-- the API may decode stored raw artifacts on demand when advanced sections require it
+- `envelope_xdr` and `result_xdr` are returned to the frontend as opaque base64 strings for advanced inspection
+- `result_meta_xdr` remains stored for potential re-ingestion if Rust parser is updated
+- the API does not decode raw XDR server-side — raw payloads are passthrough only (per ADR 0004)
 
 That contract should remain stable unless the main design document is updated first.
 
@@ -317,10 +308,10 @@ The parsing design assumes protocol upgrades are:
 
 Responsibility should remain split clearly:
 
-- ingestion owns canonical decode and materialization
+- ingestion (Rust) owns canonical decode and materialization — single parser, single language
 - the database schema owns persistence of raw and structured decode outputs
-- the backend owns request-time normalization and narrow on-demand decode for advanced cases
-- the frontend consumes pre-decoded data and does not own normal XDR parsing
+- the backend (NestJS) owns request-time normalization and raw XDR passthrough — no server-side decode (per ADR 0004)
+- the frontend consumes pre-materialized data and does not own normal XDR parsing
 
 ### 8.2 Current Workspace State
 

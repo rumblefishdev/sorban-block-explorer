@@ -140,11 +140,10 @@ The backend serves data from the block explorer's own database, adding:
 - **Search** - unified search across transaction hashes, account IDs, contract IDs, token
   identifiers, NFT identifiers, pool IDs, and indexed metadata using PostgreSQL full-text
   indexes
-- **Raw XDR on demand** - the `envelope_xdr`, `result_xdr`, and `result_meta_xdr` fields
-  are stored verbatim for advanced inspection; the backend returns the first two in the
-  advanced transaction view, decodes the raw payloads on request using
-  `@stellar/stellar-sdk`, and can serve a stored `operation_tree` for transaction-detail
-  debugging sections
+- **Raw XDR passthrough** — the `envelope_xdr`, `result_xdr`, and `result_meta_xdr` fields
+  are stored verbatim; the backend returns `envelope_xdr` and `result_xdr` as opaque base64
+  strings in the advanced transaction view. No server-side decode — the API serves
+  pre-materialized data from the Rust ingestion pipeline (per ADR 0004)
 
 ### 4.2 What the Backend Must Not Do
 
@@ -192,7 +191,7 @@ In addition to resource modules, the backend will need shared internal capabilit
 - cursor-based pagination helpers
 - response serialization and error mapping
 - search-query classification and exact-match resolution
-- XDR decode helpers for advanced transaction sections
+- raw XDR passthrough for advanced transaction sections (no server-side decode)
 - caching and freshness metadata
 
 These are backend concerns even when their outputs are consumed by frontend pages.

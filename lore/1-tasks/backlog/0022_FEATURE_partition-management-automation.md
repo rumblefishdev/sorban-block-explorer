@@ -6,6 +6,7 @@ status: backlog
 related_adr: []
 related_tasks: ['0017', '0018', '0020']
 tags: [priority-medium, effort-medium, layer-database]
+milestone: 1
 links:
   - docs/architecture/database-schema/database-schema-overview.md
 history:

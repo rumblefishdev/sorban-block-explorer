@@ -4,8 +4,9 @@ title: 'Frontend bootstrap: scaffold apps/web and libs/ui with core dependencies
 type: FEATURE
 status: completed
 related_adr: []
-related_tasks: ['0039', '0046', '0047', '0077']
+related_tasks: ['0059', '0066', '0067', '0058']
 tags: [priority-high, effort-small, layer-frontend-shared]
+milestone: 1
 links: []
 history:
   - date: 2026-03-27

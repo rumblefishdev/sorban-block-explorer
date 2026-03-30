@@ -4,8 +4,9 @@ title: 'Research: LedgerCloseMeta structure and @stellar/stellar-sdk XDR parsing
 type: RESEARCH
 status: completed
 related_adr: ['0002']
-related_tasks: ['0001', '0005', '0052', '0053', '0054', '0055']
+related_tasks: ['0001', '0005', '0072', '0073', '0074', '0075']
 tags: [priority-high, effort-medium, layer-research]
+milestone: 1
 links:
   - https://stellar.github.io/js-stellar-sdk/
   - https://github.com/stellar/js-stellar-sdk

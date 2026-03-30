@@ -4,8 +4,9 @@ title: 'Database migration framework'
 type: FEATURE
 status: backlog
 related_adr: []
-related_tasks: ['0015', '0068']
+related_tasks: ['0015', '0031']
 tags: [priority-high, effort-medium, layer-database]
+milestone: 1
 links: []
 history:
   - date: 2026-03-24

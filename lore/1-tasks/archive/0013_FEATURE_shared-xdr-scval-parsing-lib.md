@@ -4,8 +4,9 @@ title: 'Shared XDR/ScVal parsing utilities library'
 type: FEATURE
 status: completed
 related_adr: []
-related_tasks: ['0002', '0052', '0053', '0054', '0055', '0027']
+related_tasks: ['0002', '0072', '0073', '0074', '0075', '0046']
 tags: [priority-high, effort-medium, layer-domain]
+milestone: 1
 links: []
 history:
   - date: 2026-03-24

@@ -4,8 +4,9 @@ title: 'Research: Soroban contract WASM interface extraction'
 type: RESEARCH
 status: completed
 related_adr: []
-related_tasks: ['0054']
+related_tasks: ['0074']
 tags: [priority-high, effort-medium, layer-research]
+milestone: 1
 links: []
 history:
   - date: 2026-03-24

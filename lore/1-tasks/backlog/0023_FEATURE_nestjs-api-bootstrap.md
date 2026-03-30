@@ -6,6 +6,7 @@ status: backlog
 related_adr: []
 related_tasks: ['0004', '0015']
 tags: [layer-backend, nestjs, lambda, bootstrap]
+milestone: 1
 links: []
 history:
   - date: 2026-03-24

@@ -6,6 +6,7 @@ status: completed
 related_adr: ['TBD']
 related_tasks: ['0009', '0012']
 tags: [priority-medium, effort-small, layer-domain]
+milestone: 1
 links:
   - libs/domain/src/index.ts
   - libs/domain/README.md
