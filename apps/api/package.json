@@ -3,19 +3,29 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "main": "./dist/index.js",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/main.js",
+  "module": "./dist/main.js",
+  "types": "./dist/main.d.ts",
   "exports": {
     "./package.json": "./package.json",
     ".": {
-      "soroban-block-explorer-source": "./src/index.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "default": "./dist/index.js"
+      "soroban-block-explorer-source": "./src/main.ts",
+      "types": "./dist/main.d.ts",
+      "import": "./dist/main.js",
+      "default": "./dist/main.js"
     }
   },
   "dependencies": {
+    "@nestjs/core": "*",
+    "@nestjs/common": "*",
+    "@nestjs/config": "*",
+    "@nestjs/platform-express": "*",
+    "@codegenie/serverless-express": "*",
+    "reflect-metadata": "*",
+    "rxjs": "*",
+    "express": "*",
+    "pg": "*",
+    "drizzle-orm": "*",
     "tslib": "^2.3.0"
   },
   "nx": {
