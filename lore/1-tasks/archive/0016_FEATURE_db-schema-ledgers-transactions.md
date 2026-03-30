@@ -2,7 +2,7 @@
 id: '0016'
 title: 'DB schema: ledgers and transactions tables'
 type: FEATURE
-status: active
+status: completed
 related_adr: []
 related_tasks: ['0015', '0009']
 tags: [priority-high, effort-medium, layer-database]
@@ -17,6 +17,16 @@ history:
     status: active
     who: stkrolikiewicz
     note: 'Promoted to active'
+  - date: 2026-03-30
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Drizzle schema for ledgers (6 cols, 1 index) and transactions
+      (15 cols, 2 indexes, FK). Migration 0000_create_ledgers_transactions.sql.
+      PR #39. Key decisions: mode bigint, table-prefixed index names
+      aligned to spec, duplicate idx_hash removed (UNIQUE covers it),
+      ledger_sequence NOT NULL enforced, migration naming convention
+      NNNN_descriptive_name.sql established.
 ---
 
 # DB schema: ledgers and transactions tables
