@@ -18,6 +18,10 @@ history:
     status: mature
     who: stkrolikiewicz
     note: 'ADR-0002 proposed based on this analysis. Rust recommended.'
+  - date: 2026-03-30
+    status: mature
+    who: stkrolikiewicz
+    note: 'Annotated with ADR-0002/0004 outcomes. Preliminary assessment was pre-decision; Rust was chosen.'
 ---
 
 # Decision needed: Rust vs Go vs TypeScript for Ledger Processor
@@ -72,6 +76,8 @@ The **monorepo cohesion** argument strongly favors TypeScript: shared types, sha
 
 However, the `stellar-indexer` Rust codebase is valuable as a **reference implementation** regardless of language choice — its V3/V4 event handling patterns and ScVal typed JSON format should be adopted in the TypeScript implementation.
 
+> **[Historical — superseded by ADR-0002 and ADR-0004]** This preliminary assessment was written before ADR decisions. The team chose Rust for XDR type safety (compile-time exhaustive `match`) and the existing `stellar-indexer` reference implementation, accepting the cross-language boundary cost. ADR-0004 further eliminated the TS on-demand decode path entirely — the NestJS API is pure CRUD with no XDR dependencies.
+
 ## Open Questions
 
 1. Is there a Go or Rust Lambda runtime constraint that affects the decision?
@@ -81,4 +87,4 @@ However, the `stellar-indexer` Rust codebase is valuable as a **reference implem
 
 ## Status
 
-**Mature** — analysis complete. ADR-0002 proposed Rust based on this comparison. Awaiting team acceptance of the ADR.
+**Mature** — analysis complete. ADR-0002 **accepted** (2026-03-26). ADR-0004 further established Rust-only XDR parsing, eliminating the TS on-demand decode path.

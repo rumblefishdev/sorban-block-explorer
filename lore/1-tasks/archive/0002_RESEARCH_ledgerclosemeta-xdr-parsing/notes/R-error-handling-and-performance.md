@@ -153,7 +153,7 @@ match meta {
 // If V5 is added in a new crate version → compile error here
 ```
 
-Contrast with JS SDK: `meta.switch()` returns raw `4` with `undefined` name. A new version would silently fall through without warning.
+Contrast with JS SDK: `meta.switch()` returns raw `4` with `undefined` name. A new version would silently fall through without warning. *(This behavior motivated ADR-0002.)*
 
 ## Raw Payload Retention Strategy
 
@@ -167,7 +167,7 @@ Contrast with JS SDK: `meta.switch()` returns raw `4` with `undefined` name. A n
 
 - Direct use in Horizon-compatible API responses
 - Browser JS SDK accepts base64 for on-demand decode
-- No encoding layer needed in the NestJS API
+- NestJS API returns base64 as-is (pure CRUD, no server-side decode per ADR-0004)
 
 Size estimates from mainnet:
 

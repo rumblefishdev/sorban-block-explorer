@@ -43,7 +43,7 @@ The system deliberately stores both raw XDR and structured data. Raw XDR (envelo
 
 ### API-Time XDR Decode Boundary
 
-Narrow, on-demand XDR decode in NestJS for advanced transaction views is NOT part of this task. That capability belongs to the backend API layer. This task covers ingestion-time parsing only.
+Per ADR 0004, the NestJS API performs no XDR parsing — it is pure CRUD over the materialized read model. Raw XDR is returned as opaque base64. This task covers the sole XDR parsing path (Rust, ingestion-time).
 
 ### Source Code Location
 
@@ -62,7 +62,7 @@ Implement the S3 object retrieval and zstd decompression pipeline. Input is an S
 
 ### Step 2: LedgerCloseMeta Deserialization
 
-Parse the decompressed XDR bytes into a LedgerCloseMeta object using `@stellar/stellar-sdk` XDR types. Handle both LedgerCloseMetaV0 and LedgerCloseMetaV1 (and future versions) as the SDK supports them.
+Parse the decompressed XDR bytes into a LedgerCloseMeta object using the `stellar-xdr` Rust crate (per ADR 0004). Handle LedgerCloseMetaV0, V1, and V2 via exhaustive `match` on the enum — compile-time safety ensures new versions are not silently ignored.
 
 ### Step 3: Ledger Header Extraction
 
@@ -123,7 +123,7 @@ When `fromXDR()` throws during deserialization:
 ## Acceptance Criteria
 
 - [ ] S3 object download and zstd decompression produces valid XDR bytes
-- [ ] LedgerCloseMeta is deserialized using @stellar/stellar-sdk
+- [ ] LedgerCloseMeta is deserialized using the `stellar-xdr` Rust crate
 - [ ] Ledger header fields (sequence, hash, closeTime, protocolVersion, baseFee, txSetResultHash, transaction_count) are correctly extracted and mapped to the ledgers table
 - [ ] Transaction fields (hash, sourceAccount, feeCharged, successful, resultCode, memo_type, memo) are correctly extracted per transaction
 - [ ] Transaction hash is computed as SHA-256 of envelope XDR bytes
@@ -140,6 +140,6 @@ When `fromXDR()` throws during deserialization:
 ## Notes
 
 - The operations table is partitioned by transaction_id, so the surrogate id assigned here must be available before operation insertion (task 0025).
-- Protocol upgrades that change LedgerCloseMeta structure are handled by updating @stellar/stellar-sdk. These are infrequent and announced in advance.
+- Protocol upgrades that change LedgerCloseMeta structure are handled by updating the `stellar-xdr` Rust crate. Exhaustive `match` ensures new enum variants cause compile errors, not silent failures. Upgrades are infrequent and announced in advance.
 - This parser must be deterministic: the same LedgerCloseMeta input must always produce the same output rows, supporting idempotent replay (task 0028).
 - The parser does NOT write to derived-state tables (accounts, tokens, nfts, pools). Those are handled by task 0027.

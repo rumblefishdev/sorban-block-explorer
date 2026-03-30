@@ -119,7 +119,7 @@ Schema migrations must be applied before deploying new Lambda code. This is enfo
 ## Notes
 
 - The handler must be stateless between invocations. All state is in the database.
-- Protocol upgrades require updating @stellar/stellar-sdk. These are infrequent and announced in advance. The handler does not need runtime protocol detection beyond what the SDK provides.
+- Protocol upgrades require updating the `stellar-xdr` Rust crate (per ADR 0004). Exhaustive `match` on XDR enums ensures new variants cause compile errors. Upgrades are infrequent and announced in advance.
 - The S3 event may contain multiple records (multiple files). Each should be processed independently. If one fails, others should still succeed.
 - Connection pooling via RDS Proxy is critical under burst Lambda execution. The handler should not hold connections longer than necessary.
 - The ordering of parser stages matters: operations (0025) need transaction surrogate ids from 0024, invocations/events (0026) need transaction ids, and entry changes (0027) need the full parsed context.
