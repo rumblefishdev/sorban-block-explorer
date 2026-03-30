@@ -154,7 +154,7 @@ The return value of `invokeHostFunction` and event topics/data are XDR ScVal val
 ### Error Handling
 
 - **Malformed XDR**: If Rust `from_xdr()` returns `Err` during ingestion, the Ledger Processor logs the error with transaction context, stores raw XDR verbatim, marks the transaction record with `parse_error`, and keeps it visible with all non-XDR fields still available.
-- **Unknown operation types**: New protocol versions may introduce unsupported operation types. Rust exhaustive `match` catches these at compile time; at runtime, a catch-all arm renders them as "unknown" in explorer responses, raw XDR shown in advanced view, and an operational alarm raised so the crate can be updated.
+- **Unknown operation types**: New protocol versions may introduce additional `OperationBody` variants in `stellar-xdr`. Default approach: fully exhaustive `match` (no wildcard arm) so bumping the crate causes a compile-time error until every new variant is explicitly handled. In select forward-compatibility call sites, an explicit `_` arm maps unexpected variants to "unknown", logs an operational alarm, and surfaces raw XDR in advanced views until the crate and decoding logic are updated.
 - **Protocol upgrades**: Handled by updating the `stellar-xdr` Rust crate version (see [R-error-handling-and-performance.md](notes/R-error-handling-and-performance.md#protocol-upgrade-handling)). Protocol upgrades are infrequent and announced in advance.
 
 ## Research Questions
