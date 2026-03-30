@@ -56,5 +56,10 @@ lore/board.json
 .temp
 .trash
 
+# CDK
+cdk.out
+# Context cache contains AWS account ID — each deployer generates their own
+cdk.context.json
+
 # Rust build artifacts
 tools/scripts/explore-xdr-rs/target/

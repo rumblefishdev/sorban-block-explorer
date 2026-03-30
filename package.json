@@ -20,7 +20,11 @@
     "prepare": "husky",
     "verify:staged": "node tools/scripts/run-affected-checks.mjs staged",
     "verify:push": "node tools/scripts/run-affected-checks.mjs push",
-    "board": "node tools/scripts/generate-lore-board.mjs"
+    "board": "node tools/scripts/generate-lore-board.mjs",
+    "infra:bootstrap": "npx nx bootstrap @rumblefish/soroban-block-explorer-aws-cdk",
+    "infra:diff": "npx nx diff @rumblefish/soroban-block-explorer-aws-cdk",
+    "infra:synth": "npx nx synth @rumblefish/soroban-block-explorer-aws-cdk",
+    "infra:deploy": "npx nx deploy @rumblefish/soroban-block-explorer-aws-cdk"
   },
   "devDependencies": {
     "@eslint/js": "^9.8.0",

@@ -56,3 +56,36 @@ The workspace contains:
 
 Backend framework plugins (NestJS) and AWS-specific runtime code are not added yet.
 They will be introduced as dedicated follow-up steps.
+
+## Infrastructure
+
+AWS infrastructure is managed with CDK (TypeScript) in `infra/aws-cdk/`.
+
+### Prerequisites
+
+- AWS CLI configured with a named profile:
+  ```bash
+  aws configure --profile soroban-explorer
+  ```
+- Set the profile in your shell:
+  ```bash
+  export AWS_PROFILE=soroban-explorer
+  ```
+
+### First-time setup
+
+Bootstrap CDK on the AWS account (once per account + region):
+
+```bash
+npm run infra:bootstrap
+```
+
+### Commands
+
+```bash
+npm run infra:diff    -- --context env=staging     # Preview changes
+npm run infra:deploy  -- --context env=staging     # Deploy to AWS
+npm run infra:synth   -- --context env=staging     # Generate CloudFormation template
+```
+
+Replace `staging` with `production` for production deployments.

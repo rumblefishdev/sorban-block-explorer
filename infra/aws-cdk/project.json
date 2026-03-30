@@ -1,0 +1,43 @@
+{
+  "name": "@rumblefish/soroban-block-explorer-aws-cdk",
+  "targets": {
+    "cdk": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "infra/aws-cdk",
+        "command": "npx cdk"
+      }
+    },
+    "synth": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["build"],
+      "options": {
+        "cwd": "infra/aws-cdk",
+        "command": "npx cdk synth"
+      }
+    },
+    "diff": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["build"],
+      "options": {
+        "cwd": "infra/aws-cdk",
+        "command": "npx cdk diff"
+      }
+    },
+    "deploy": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["build"],
+      "options": {
+        "cwd": "infra/aws-cdk",
+        "command": "npx cdk deploy --all --require-approval broadening"
+      }
+    },
+    "bootstrap": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "infra/aws-cdk",
+        "command": "npx cdk bootstrap"
+      }
+    }
+  }
+}
