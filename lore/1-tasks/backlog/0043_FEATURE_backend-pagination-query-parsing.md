@@ -27,7 +27,7 @@ Implement reusable cursor-based pagination helpers, query/filter parsing utiliti
 
 ## Status: Backlog
 
-**Current state:** Not started. Depends on task 0023 (NestJS API bootstrap).
+**Current state:** Not started. Depends on task 0023 (NestJS API bootstrap) and task 0015 (Drizzle ORM connection factory).
 
 ## Context
 
