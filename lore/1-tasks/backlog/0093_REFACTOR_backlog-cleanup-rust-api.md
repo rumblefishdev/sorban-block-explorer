@@ -43,12 +43,28 @@ Tasks 0043-0055 (pagination, validation, backend modules, caching, OpenAPI) were
 - 0033 (CDK Lambda/API Gateway) — update to reference Rust API binary via cargo-lambda-cdk (not Node.js Lambda)
 - Remove NestJS-specific CDK constructs (nestjs-lambda.ts)
 
-### Step 4: Decide libs/database fate
+### Step 4: Update DB schema tasks — Drizzle → sqlx plain SQL
 
-Based on 0092 research:
+Research 0092 decided: **sqlx migrations (plain SQL), drop Drizzle Kit.** Task 0017 already updated as reference. Update these:
 
-- If Rust ORM has good migrations → remove Drizzle, update 0016-0020 schema tasks
-- If not → keep Drizzle Kit as migration tooling alongside Rust query layer
+| Task                              | Change                                                                                                                                        |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| **0018** (Soroban tables)         | Replace "Drizzle schema" steps → "plain SQL migration". Remove `.ts` schema step. Add: run via `psql`.                                        |
+| **0019** (tokens, accounts)       | Same as 0018.                                                                                                                                 |
+| **0020** (NFTs, pools, snapshots) | Same as 0018.                                                                                                                                 |
+| **0021** (migration framework)    | **Supersede** — Drizzle Kit framework replaced by sqlx. Rewrite as: sqlx-cli setup, `sqlx::migrate!()` in binary, CI `sqlx migrate run` step. |
+| **0022** (partition management)   | No change — already PG-native, no Drizzle dependency.                                                                                         |
+
+Per task, apply these edits:
+
+- "Drizzle ORM schema definition" → "Plain SQL migration file"
+- "Drizzle Kit generate" → "Write SQL in `crates/db/migrations/`"
+- Remove all `.ts` schema file steps
+- Add `related_adr: ['0005']` and `related_tasks: ['0092']`
+- Add note: "Run via `psql` or `sqlx migrate run`, not Drizzle Kit"
+- Target format: plain `.sql` file in `crates/db/migrations/` (after 0094 creates workspace). Pre-0094 migrations go to `libs/database/drizzle/` as transitional location.
+
+**`libs/database/` fate:** Stays until task 0094 migrates SQL files to `crates/db/migrations/`. Then archive (Drizzle TS schema files = dead code, frontend uses `libs/api-types` for types).
 
 ### Step 5: Update docs/architecture
 
