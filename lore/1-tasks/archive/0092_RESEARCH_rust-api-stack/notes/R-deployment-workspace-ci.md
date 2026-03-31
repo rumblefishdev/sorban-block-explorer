@@ -24,8 +24,8 @@ soroban-block-explorer/
 │   ├── db/                 # Library: sqlx pool, queries, migrations
 │   └── domain/             # Library: shared types, errors, config
 ├── web/                    # React frontend (move from apps/web/)
-├── infra/aws-cdk/          # CDK stacks (unchanged)
-├── libs/                   # TS libs for frontend (domain, shared, ui)
+├── infra/                  # CDK stacks (flatten from infra/aws-cdk/)
+├── libs/                   # TS libs for frontend (domain, shared, ui, api-types)
 ├── nx.json                 # Nx config (TS only)
 └── package.json            # npm workspace root
 ```
