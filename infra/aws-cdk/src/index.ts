@@ -1,4 +1,6 @@
-export const infrastructurePackage = {
-  name: 'aws-cdk',
-  responsibility: 'Define AWS infrastructure for the explorer platform.',
-} as const;
+// Config
+export type { EnvironmentConfig } from './lib/types.js';
+
+// Stacks
+export { NetworkStack } from './lib/stacks/network-stack.js';
+export type { NetworkStackProps } from './lib/stacks/network-stack.js';

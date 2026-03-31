@@ -2,7 +2,7 @@
 id: '0032'
 title: 'CDK: RDS PostgreSQL, RDS Proxy, S3 buckets, Secrets Manager'
 type: FEATURE
-status: backlog
+status: active
 related_adr: []
 related_tasks: ['0006', '0031']
 tags: [priority-high, effort-medium, layer-infra]
@@ -14,6 +14,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-31
+    status: active
+    who: fmazur
+    note: 'Activated task for implementation'
 ---
 
 # CDK: RDS PostgreSQL, RDS Proxy, S3 buckets, Secrets Manager

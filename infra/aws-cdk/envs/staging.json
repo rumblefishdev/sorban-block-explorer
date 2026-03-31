@@ -1,0 +1,7 @@
+{
+  "envName": "staging",
+  "awsRegion": "us-east-1",
+  "vpcCidr": "10.0.0.0/16",
+  "availabilityZones": ["us-east-1a"],
+  "natType": "gateway"
+}

@@ -23,7 +23,14 @@
     "board": "node tools/scripts/generate-lore-board.mjs",
     "db:generate": "npx drizzle-kit generate --config=libs/database/drizzle.config.ts",
     "db:migrate": "npx drizzle-kit migrate --config=libs/database/drizzle.config.ts",
-    "db:studio": "npx drizzle-kit studio --config=libs/database/drizzle.config.ts"
+    "db:studio": "npx drizzle-kit studio --config=libs/database/drizzle.config.ts",
+    "infra:bootstrap": "make -C infra/aws-cdk bootstrap",
+    "infra:diff:staging": "make -C infra/aws-cdk diff-staging",
+    "infra:diff:production": "make -C infra/aws-cdk diff-production",
+    "infra:deploy:staging": "make -C infra/aws-cdk deploy-staging",
+    "infra:deploy:production": "make -C infra/aws-cdk deploy-production",
+    "infra:synth:staging": "make -C infra/aws-cdk synth-staging",
+    "infra:synth:production": "make -C infra/aws-cdk synth-production"
   },
   "devDependencies": {
     "@eslint/js": "^9.8.0",
