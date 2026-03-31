@@ -3,5 +3,12 @@
   "awsRegion": "us-east-1",
   "vpcCidr": "10.0.0.0/16",
   "availabilityZones": ["us-east-1a"],
-  "natType": "gateway"
+  "natType": "gateway",
+
+  "dbInstanceClass": "t4g.micro",
+  "dbAllocatedStorage": 20,
+  "dbMultiAz": false,
+  "dbDeletionProtection": false,
+  "dbBackupRetentionDays": 7,
+  "kmsEncryption": false
 }

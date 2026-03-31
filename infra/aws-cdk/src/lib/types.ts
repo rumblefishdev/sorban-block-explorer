@@ -12,4 +12,12 @@ export interface EnvironmentConfig {
   readonly vpcCidr: string;
   readonly availabilityZones: readonly string[];
   readonly natType: 'gateway' | 'instance';
+
+  // Storage (consumed by StorageStack)
+  readonly dbInstanceClass: string;
+  readonly dbAllocatedStorage: number;
+  readonly dbMultiAz: boolean;
+  readonly dbDeletionProtection: boolean;
+  readonly dbBackupRetentionDays: number;
+  readonly kmsEncryption: boolean;
 }

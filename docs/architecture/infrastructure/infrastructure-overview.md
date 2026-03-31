@@ -263,10 +263,10 @@ That split should remain stable even if the network layout expands later.
 - caches static assets and documentation assets; API responses are not assumed to traverse
   CloudFront in the initial topology
 
-**S3 bucket `api-docs`**
+**Swagger UI**
 
-- hosts the OpenAPI specification and documentation portal
-- is fronted through CloudFront according to the source design
+- served directly from the API (NestJS `/docs` endpoint)
+- no separate S3 bucket or CloudFront distribution needed
 
 ### 5.5 Operational Components
 
@@ -332,7 +332,7 @@ Publicly exposed surfaces are:
 - CloudFront-hosted frontend delivery
 - API Gateway-hosted REST API
 - public DNS routing via Route 53
-- documentation portal hosting through S3 + CloudFront
+- API documentation served from NestJS `/docs` endpoint
 
 Those public surfaces should be protected by AWS WAF and API throttling. API keys, if
 issued, are for trusted automation or partner use cases and are never required by the

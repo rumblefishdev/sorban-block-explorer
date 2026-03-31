@@ -19,7 +19,7 @@ history:
 
 ## Summary
 
-Integrate `@nestjs/swagger` to auto-generate an OpenAPI specification from NestJS decorators. The spec documents all 20+ endpoints including query parameters, response schemas, error envelopes, filter parameters, pagination format, and cache-control behavior. The spec is published to an S3 bucket and served through CloudFront.
+Integrate `@nestjs/swagger` to auto-generate an OpenAPI specification from NestJS decorators. The spec documents all 20+ endpoints including query parameters, response schemas, error envelopes, filter parameters, pagination format, and cache-control behavior. Swagger UI is served directly from the API (NestJS `/docs` endpoint).
 
 ## Status: Backlog
 
@@ -33,7 +33,7 @@ A comprehensive OpenAPI specification serves both as interactive documentation f
 
 **OpenAPI generation:** `@nestjs/swagger` decorators on controllers, DTOs, and response types.
 
-**Publication target:** S3 bucket `api-docs`, served through CloudFront.
+**Publication target:** Swagger UI served directly from the API (NestJS `/docs` endpoint). No separate S3 + CloudFront setup.
 
 ### Documented Endpoints (20+ total)
 
@@ -88,7 +88,7 @@ GET /api-docs-json     -> OpenAPI spec as JSON
 - Error envelope documented as reusable schema component
 - Pagination envelope documented as reusable schema component
 - Swagger UI available in development for interactive testing
-- Published spec hosted on S3 + CloudFront for public access
+- Swagger UI and spec JSON served directly from the API
 
 ### Caching
 
@@ -124,7 +124,7 @@ Configure Swagger UI at `/api-docs` in development for interactive API explorati
 
 ### Step 6: Spec Export and Publication
 
-Set up spec export as JSON. Configure deployment to S3 bucket `api-docs` served through CloudFront.
+Set up spec export as JSON. Swagger UI served from the API directly.
 
 ### Step 7: CI Validation
 
@@ -142,11 +142,11 @@ Add a CI step that generates the spec and validates completeness (all endpoints 
 - [ ] Cache-control behavior noted in endpoint descriptions
 - [ ] Swagger UI available in development at `/api-docs`
 - [ ] OpenAPI spec exportable as JSON
-- [ ] Publication to S3 + CloudFront configured
+- [ ] Swagger UI and spec JSON served directly from the API
 - [ ] Spec generated from code (not manually maintained)
 
 ## Notes
 
 - This task is best completed after all feature module tasks (0045-0054) are implemented, since it annotates existing controllers and DTOs.
 - The spec doubles as a testing contract: frontend developers can mock API responses from the spec.
-- CloudFront/S3 infrastructure for spec hosting is defined in CDK task 0035.
+- Swagger UI served from the API directly — no separate infrastructure needed.

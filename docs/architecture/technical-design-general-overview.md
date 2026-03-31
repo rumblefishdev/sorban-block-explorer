@@ -537,7 +537,7 @@ expanding to multi-AZ when SLA requirements demand it.
 | API Gateway                     | AWS API Gateway                    | REST API, throttling, request validation, response caching             |
 | AWS WAF                         | AWS WAF                            | Managed rules and abuse protection for public ingress                  |
 | CloudFront CDN                  | AWS CloudFront                     | Serves React frontend                                                  |
-| S3 bucket `api-docs`            | AWS S3 + CloudFront                | OpenAPI spec + documentation portal                                    |
+| Swagger UI                      | NestJS `/docs` endpoint            | OpenAPI spec + interactive documentation                               |
 | EventBridge Scheduler           | AWS EventBridge                    | Cron triggers for background workers                                   |
 | Secrets Manager                 | AWS Secrets Manager                | DB credentials, non-browser integration keys                           |
 | CloudWatch + X-Ray              | AWS CloudWatch                     | Logs, metrics, alarms, distributed tracing                             |
@@ -570,7 +570,7 @@ browsing.
 | Gateway       | AWS API Gateway                  | Request routing, throttling, validation, response caching |
 | Edge Security | AWS WAF                          | Managed rules, IP reputation, abuse protection            |
 | Database      | RDS PostgreSQL 16                | Block explorer schema with native range partitioning      |
-| CDN           | CloudFront                       | Static asset delivery for frontend and docs               |
+| CDN           | CloudFront                       | Static asset delivery for frontend                        |
 | DNS           | Route 53                         | Domain management                                         |
 | Monitoring    | CloudWatch + X-Ray               | Logging, distributed tracing, alarms                      |
 | Secrets       | Secrets Manager                  | Database credentials, non-browser integration keys        |
@@ -1174,7 +1174,7 @@ partitioned and are kept indefinitely.
 | Lambda — API handlers      | 800K invocations, 512 MB ARM         | ~$5             |
 | Lambda — Ingestion workers | ~500K invocations (Ledger Processor) | ~$10            |
 | CloudFront                 | 10 GB transfer                       | ~$5             |
-| S3                         | Ledger files (transient) + API docs  | ~$5             |
+| S3                         | Ledger files (transient)             | ~$5             |
 | NAT Gateway                | 1x, ~100 GB data                     | ~$40            |
 | CloudWatch + X-Ray         | Logs, metrics, tracing               | ~$20            |
 | Secrets Manager + Route 53 | Credentials + DNS                    | ~$10            |

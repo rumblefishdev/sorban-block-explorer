@@ -45,7 +45,7 @@ Configure Swagger UI at `/api-docs` in development/staging environments. Ensure 
 
 ### Step 4: Spec export as JSON
 
-Set up `SwaggerModule.createDocument()` export as JSON at `/api-docs-json`. Configure S3 publication pipeline for the generated spec file.
+Set up `SwaggerModule.createDocument()` export as JSON at `/api-docs-json`.
 
 ## Acceptance Criteria
 
@@ -54,7 +54,7 @@ Set up `SwaggerModule.createDocument()` export as JSON at `/api-docs-json`. Conf
 - [ ] Reusable schema components defined (error envelope, pagination envelope)
 - [ ] Swagger UI available at `/api-docs` in dev/staging
 - [ ] OpenAPI spec exportable as JSON at `/api-docs-json`
-- [ ] S3 publication pipeline for spec file configured
+- [ ] Swagger UI and spec JSON served directly from the API (no S3 publication pipeline)
 
 ## Notes
 

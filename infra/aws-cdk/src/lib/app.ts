@@ -2,6 +2,8 @@ import * as cdk from 'aws-cdk-lib';
 
 import type { EnvironmentConfig } from './types.js';
 import { NetworkStack } from './stacks/network-stack.js';
+import { RdsStack } from './stacks/rds-stack.js';
+import { LedgerBucketStack } from './stacks/ledger-bucket-stack.js';
 
 export function createApp(config: EnvironmentConfig): void {
   const app = new cdk.App();
@@ -13,9 +15,17 @@ export function createApp(config: EnvironmentConfig): void {
 
   const prefix = `Explorer-${config.envName}`;
 
-  new NetworkStack(app, `${prefix}-Network`, { env, config });
+  const network = new NetworkStack(app, `${prefix}-Network`, { env, config });
 
-  // Future stacks will be added here by their respective tasks.
+  new RdsStack(app, `${prefix}-Rds`, {
+    env,
+    config,
+    vpc: network.vpc,
+    lambdaSecurityGroup: network.lambdaSecurityGroup,
+    ecsSecurityGroup: network.ecsSecurityGroup,
+  });
+
+  new LedgerBucketStack(app, `${prefix}-LedgerBucket`, { env, config });
 
   app.synth();
 }
