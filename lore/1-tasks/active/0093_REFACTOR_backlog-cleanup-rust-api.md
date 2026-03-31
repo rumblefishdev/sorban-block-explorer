@@ -2,7 +2,7 @@
 id: '0093'
 title: 'Backlog cleanup: cancel NestJS tasks, update CDK and indexer tasks for Rust API'
 type: REFACTOR
-status: backlog
+status: active
 related_adr: ['0005']
 related_tasks: ['0092']
 tags: [priority-high, effort-small, layer-meta]
@@ -13,6 +13,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Task created. Depends on 0092 (research) for ORM/migration decisions before finalizing cleanup.'
+  - date: 2026-03-31
+    status: active
+    who: stkrolikiewicz
+    note: 'Activated — 0092 research complete, decisions made. Ready to clean up backlog.'
 ---
 
 # Backlog cleanup: cancel NestJS tasks, update CDK and indexer tasks for Rust API
