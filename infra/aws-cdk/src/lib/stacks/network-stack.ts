@@ -17,7 +17,8 @@ export interface NetworkStackProps extends cdk.StackProps {
  * security groups for compute components, and an S3 Gateway VPC endpoint.
  *
  * RDS security group lives in RdsStack to avoid cross-stack cyclic
- * references. Lambda/ECS egress to RDS is also configured there.
+ * references. Lambda/ECS egress to RDS on port 5432 uses VPC CIDR
+ * (configured here) instead of SG-to-SG reference.
  *
  * Multi-AZ expansion: add AZ entries to `config.availabilityZones`.
  * CDK provisions new subnets and NAT Gateways automatically.

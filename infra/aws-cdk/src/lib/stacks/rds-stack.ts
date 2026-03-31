@@ -27,7 +27,7 @@ export interface RdsStackProps extends cdk.StackProps {
  * No read replica at launch. Add one when CPU exceeds monitoring threshold.
  */
 export class RdsStack extends cdk.Stack {
-  readonly dbProxy: rds.IDatabaseProxy;
+  readonly dbProxy?: rds.IDatabaseProxy;
   readonly dbInstance: rds.IDatabaseInstance;
   readonly dbSecret: secretsmanager.ISecret;
   readonly rdsSecurityGroup: ec2.ISecurityGroup;
@@ -56,6 +56,12 @@ export class RdsStack extends cdk.Stack {
       ecsSecurityGroup,
       ec2.Port.tcp(POSTGRESQL_PORT),
       'Allow ECS to RDS on PostgreSQL port'
+    );
+    // Self-referencing: Proxy and rotation Lambda (same SG) need to reach RDS
+    rdsSg.addIngressRule(
+      rdsSg,
+      ec2.Port.tcp(POSTGRESQL_PORT),
+      'Allow Proxy/rotation Lambda to RDS (self-reference)'
     );
     this.rdsSecurityGroup = rdsSg;
 
@@ -121,18 +127,26 @@ export class RdsStack extends cdk.Stack {
     this.dbInstance = dbInstance;
 
     // ---------------------
-    // RDS Proxy
+    // RDS Proxy (optional per config)
     // ---------------------
-    const proxy = new rds.DatabaseProxy(this, 'Proxy', {
-      proxyTarget: rds.ProxyTarget.fromInstance(dbInstance),
-      secrets: [dbSecret],
-      vpc,
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-      securityGroups: [rdsSg],
-      requireTLS: true,
-      dbProxyName: `${prefix}-soroban-explorer`,
-    });
-    this.dbProxy = proxy;
+    // Required for Lambda burst traffic (backfill). Can be disabled
+    // to save ~$20/mo when not needed.
+    if (config.dbProxy) {
+      const proxy = new rds.DatabaseProxy(this, 'Proxy', {
+        proxyTarget: rds.ProxyTarget.fromInstance(dbInstance),
+        secrets: [dbSecret],
+        vpc,
+        vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+        securityGroups: [rdsSg],
+        requireTLS: true,
+        dbProxyName: `${prefix}-soroban-explorer`,
+      });
+      this.dbProxy = proxy;
+
+      new cdk.CfnOutput(this, 'DbProxyEndpoint', {
+        value: proxy.endpoint,
+      });
+    }
 
     // ---------------------
     // Secret rotation (production: 30-day cycle)
@@ -160,9 +174,6 @@ export class RdsStack extends cdk.Stack {
     // ---------------------
     new cdk.CfnOutput(this, 'DbEndpoint', {
       value: dbInstance.instanceEndpoint.hostname,
-    });
-    new cdk.CfnOutput(this, 'DbProxyEndpoint', {
-      value: proxy.endpoint,
     });
     new cdk.CfnOutput(this, 'DbSecretArn', {
       value: dbSecret.secretArn,

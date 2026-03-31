@@ -13,11 +13,12 @@ export interface EnvironmentConfig {
   readonly availabilityZones: readonly string[];
   readonly natType: 'gateway' | 'instance';
 
-  // Storage (consumed by StorageStack)
+  // Storage (consumed by RdsStack, LedgerBucketStack)
   readonly dbInstanceClass: string;
   readonly dbAllocatedStorage: number;
   readonly dbMultiAz: boolean;
   readonly dbDeletionProtection: boolean;
   readonly dbBackupRetentionDays: number;
+  readonly dbProxy: boolean;
   readonly kmsEncryption: boolean;
 }

@@ -20,7 +20,7 @@ history:
 
 ## Summary
 
-Define the public delivery layer using CDK: CloudFront distribution for the React SPA, WAF WebACL with managed rules and abuse controls, Route 53 hosted zone with DNS aliases, and ACM TLS certificates. API Gateway traffic does NOT route through CloudFront. CloudFront is for static content only. Swagger UI is served directly from the API (NestJS `/docs` endpoint). Staging uses password protection via CloudFront Functions.
+Define the public delivery layer using CDK: CloudFront distribution for the React SPA, WAF WebACL with managed rules and abuse controls, Route 53 hosted zone with DNS aliases, and ACM TLS certificates. API Gateway traffic does NOT route through CloudFront. CloudFront is for static content only. Swagger UI is served directly from the API (NestJS `/api-docs` endpoint). Staging uses password protection via CloudFront Functions.
 
 ## Status: Backlog
 
@@ -113,4 +113,4 @@ For the staging environment:
 - CloudFront invalidation will be needed on each SPA deployment. This can be triggered in the CI/CD pipeline (task 0039).
 - The staging password protection pattern (CloudFront Functions basic auth) is lightweight and does not require Lambda@Edge if the logic is simple enough.
 - All domain names and hosted zone IDs must be parameterized for redeployability across different AWS accounts and domains.
-- Swagger UI is served from the API directly (NestJS `/docs` endpoint) — no separate CloudFront distribution or S3 bucket needed for API docs.
+- Swagger UI is served from the API directly (NestJS `/api-docs` endpoint) — no separate CloudFront distribution or S3 bucket needed for API docs.

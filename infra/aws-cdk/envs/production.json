@@ -5,10 +5,11 @@
   "availabilityZones": ["us-east-1a"],
   "natType": "gateway",
 
-  "dbInstanceClass": "r6g.large",
-  "dbAllocatedStorage": 100,
+  "dbInstanceClass": "t4g.micro",
+  "dbAllocatedStorage": 20,
   "dbMultiAz": false,
   "dbDeletionProtection": true,
   "dbBackupRetentionDays": 30,
+  "dbProxy": true,
   "kmsEncryption": true
 }

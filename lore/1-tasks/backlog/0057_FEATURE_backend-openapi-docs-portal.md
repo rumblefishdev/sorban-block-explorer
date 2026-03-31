@@ -19,7 +19,7 @@ history:
 
 ## Summary
 
-Integrate `@nestjs/swagger` to auto-generate an OpenAPI specification from NestJS decorators. The spec documents all 20+ endpoints including query parameters, response schemas, error envelopes, filter parameters, pagination format, and cache-control behavior. Swagger UI is served directly from the API (NestJS `/docs` endpoint).
+Integrate `@nestjs/swagger` to auto-generate an OpenAPI specification from NestJS decorators. The spec documents all 20+ endpoints including query parameters, response schemas, error envelopes, filter parameters, pagination format, and cache-control behavior. Swagger UI is served directly from the API (NestJS `/api-docs` endpoint).
 
 ## Status: Backlog
 
@@ -33,7 +33,7 @@ A comprehensive OpenAPI specification serves both as interactive documentation f
 
 **OpenAPI generation:** `@nestjs/swagger` decorators on controllers, DTOs, and response types.
 
-**Publication target:** Swagger UI served directly from the API (NestJS `/docs` endpoint). No separate S3 + CloudFront setup.
+**Publication target:** Swagger UI served directly from the API (NestJS `/api-docs` endpoint). No separate S3 + CloudFront setup.
 
 ### Documented Endpoints (20+ total)
 

@@ -10,5 +10,6 @@
   "dbMultiAz": false,
   "dbDeletionProtection": false,
   "dbBackupRetentionDays": 7,
+  "dbProxy": true,
   "kmsEncryption": false
 }

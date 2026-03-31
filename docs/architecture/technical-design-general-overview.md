@@ -537,7 +537,7 @@ expanding to multi-AZ when SLA requirements demand it.
 | API Gateway                     | AWS API Gateway                    | REST API, throttling, request validation, response caching             |
 | AWS WAF                         | AWS WAF                            | Managed rules and abuse protection for public ingress                  |
 | CloudFront CDN                  | AWS CloudFront                     | Serves React frontend                                                  |
-| Swagger UI                      | NestJS `/docs` endpoint            | OpenAPI spec + interactive documentation                               |
+| Swagger UI                      | NestJS `/api-docs` endpoint        | OpenAPI spec + interactive documentation                               |
 | EventBridge Scheduler           | AWS EventBridge                    | Cron triggers for background workers                                   |
 | Secrets Manager                 | AWS Secrets Manager                | DB credentials, non-browser integration keys                           |
 | CloudWatch + X-Ray              | AWS CloudWatch                     | Logs, metrics, alarms, distributed tracing                             |
@@ -732,9 +732,9 @@ last exported ledger sequence and resumes from there. No manual intervention req
 by Lambda automatically. For permanent failures, the file remains in S3 and can be
 replayed by re-triggering the Lambda with the S3 key.
 
-**Replay artifact retention:** the `stellar-ledger-data` bucket is transient, but not
-ephemeral-to-zero. Production retains ledger artifacts for a minimum of 30 days to support
-replay and post-incident validation; staging may use a shorter window, but not less than 7
+**Replay artifact retention:** the `stellar-ledger-data` bucket retains files indefinitely
+(ADR 0006). No automatic deletion. This supports replay and post-incident validation at any
+point. Lifecycle rules can be added later if storage costs grow. Previously planned as 30 days production / 7
 days. Lifecycle expiration happens only after that minimum replay window.
 
 **Idempotency and ordering:** ledger sequence is the canonical ordering key. Processing is
@@ -1165,20 +1165,20 @@ partitioned and are kept indefinitely.
 
 #### Low Traffic (1M requests/month)
 
-| Service                    | Configuration                        | Monthly Cost    |
-| -------------------------- | ------------------------------------ | --------------- |
-| ECS Fargate — Galexie      | 1 vCPU / 2 GB RAM, continuous        | ~$36            |
-| RDS PostgreSQL             | db.r6g.large, Single-AZ              | ~$175           |
-| RDS Storage                | 1 TB gp3 (full chain data from 2023) | ~$115           |
-| API Gateway                | 1M requests + 0.5 GB cache           | ~$4             |
-| Lambda — API handlers      | 800K invocations, 512 MB ARM         | ~$5             |
-| Lambda — Ingestion workers | ~500K invocations (Ledger Processor) | ~$10            |
-| CloudFront                 | 10 GB transfer                       | ~$5             |
-| S3                         | Ledger files (transient)             | ~$5             |
-| NAT Gateway                | 1x, ~100 GB data                     | ~$40            |
-| CloudWatch + X-Ray         | Logs, metrics, tracing               | ~$20            |
-| Secrets Manager + Route 53 | Credentials + DNS                    | ~$10            |
-| **Total**                  |                                      | **~$425/month** |
+| Service                    | Configuration                                        | Monthly Cost    |
+| -------------------------- | ---------------------------------------------------- | --------------- |
+| ECS Fargate — Galexie      | 1 vCPU / 2 GB RAM, continuous                        | ~$36            |
+| RDS PostgreSQL             | db.r6g.large, Single-AZ                              | ~$175           |
+| RDS Storage                | 1 TB gp3 (full chain data from 2023)                 | ~$115           |
+| API Gateway                | 1M requests + 0.5 GB cache                           | ~$4             |
+| Lambda — API handlers      | 800K invocations, 512 MB ARM                         | ~$5             |
+| Lambda — Ingestion workers | ~500K invocations (Ledger Processor)                 | ~$10            |
+| CloudFront                 | 10 GB transfer                                       | ~$5             |
+| S3                         | Ledger XDR files (no auto-deletion, grows over time) | ~$5+            |
+| NAT Gateway                | 1x, ~100 GB data                                     | ~$40            |
+| CloudWatch + X-Ray         | Logs, metrics, tracing                               | ~$20            |
+| Secrets Manager + Route 53 | Credentials + DNS                                    | ~$10            |
+| **Total**                  |                                                      | **~$425/month** |
 
 #### Scaling Path to High Traffic (10M requests/month)
 
