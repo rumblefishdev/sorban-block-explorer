@@ -1,5 +1,5 @@
 -- Migration: create operations table (task 0017)
--- Plain SQL — run via psql, not Drizzle Kit (Drizzle does not support PARTITION BY)
+-- Plain SQL — Drizzle schema DSL has no PARTITION BY support; run via psql or sqlx migrate
 
 CREATE TABLE operations (
     id                  BIGSERIAL,

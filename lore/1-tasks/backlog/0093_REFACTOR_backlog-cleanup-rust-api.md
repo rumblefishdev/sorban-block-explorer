@@ -64,7 +64,7 @@ Per task, apply these edits:
 - Add note: "Run via `psql` or `sqlx migrate run`, not Drizzle Kit"
 - Target format: plain `.sql` file in `crates/db/migrations/` (after 0094 creates workspace). Pre-0094 migrations go to `libs/database/drizzle/` as transitional location.
 
-**libs/database/ fate:** Stays until task 0094 migrates SQL files to `crates/db/migrations/`. Then archive (Drizzle TS schema files = dead code, frontend uses `libs/api-types` for types).
+**`libs/database/` fate:** Stays until task 0094 migrates SQL files to `crates/db/migrations/`. Then archive (Drizzle TS schema files = dead code, frontend uses `libs/api-types` for types).
 
 ### Step 5: Update docs/architecture
 

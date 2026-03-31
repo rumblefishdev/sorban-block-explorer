@@ -99,7 +99,7 @@ Initial partition: `operations_p0` for transaction IDs 0–10M.
 
 ## Issues Encountered
 
-- **Drizzle Kit cannot run this migration** — `PARTITION BY` is not supported in Drizzle Kit's SQL parser. Must use `psql` directly. Documented in task and notes.
+- **Drizzle schema DSL lacks PARTITION BY** — Drizzle Kit can run raw SQL files, but the `pgTable()` DSL has no partitioning support. Since we're transitioning to sqlx (research 0092), we write plain SQL and run via `psql` rather than using Drizzle Kit's migration runner.
 
 - **No Drizzle journal update** — the `drizzle/meta/_journal.json` is not updated for this migration since we don't use Drizzle Kit to run it. Not a problem since migration tooling is transitioning to sqlx.
 
