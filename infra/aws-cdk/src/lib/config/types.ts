@@ -11,4 +11,5 @@ export interface EnvironmentConfig {
   // Network (consumed by NetworkStack)
   readonly vpcCidr: string;
   readonly availabilityZones: readonly string[];
+  readonly natType: 'gateway' | 'instance';
 }

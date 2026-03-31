@@ -35,16 +35,27 @@ export class NetworkStack extends cdk.Stack {
     // ---------------------
     // VPC
     // ---------------------
-    // Single-AZ at launch (us-east-1a). One NAT Gateway in the public subnet
-    // provides outbound internet for the private subnet.
+    // Single-AZ at launch (us-east-1a). NAT provides outbound internet
+    // for the private subnet.
+    //
+    // Staging uses a t3.micro NAT instance (~$3.50/mo vs $32/mo for NAT Gateway).
+    // Production uses a managed NAT Gateway for throughput and availability.
     //
     // Multi-AZ expansion trigger: when SLA requirement exceeds 99.9%.
     // To expand: add AZ entries to config. CDK creates new subnets, route tables,
-    // and NAT Gateways (one per AZ) automatically. No VPC replacement needed.
+    // and NAT resources (one per AZ) automatically. No VPC replacement needed.
+    const natProvider =
+      config.natType === 'instance'
+        ? ec2.NatProvider.instanceV2({
+            instanceType: new ec2.InstanceType('t3.micro'),
+          })
+        : ec2.NatProvider.gateway();
+
     const vpc = new ec2.Vpc(this, 'Vpc', {
       ipAddresses: ec2.IpAddresses.cidr(config.vpcCidr),
       availabilityZones: [...config.availabilityZones],
       natGateways: config.availabilityZones.length,
+      natGatewayProvider: natProvider,
       restrictDefaultSecurityGroup: true,
       subnetConfiguration: [
         {

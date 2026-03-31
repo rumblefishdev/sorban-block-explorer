@@ -7,4 +7,5 @@ export const stagingConfig: EnvironmentConfig = {
   // 10.0.0.0/16 — 65k IPs, room for Multi-AZ expansion
   vpcCidr: '10.0.0.0/16',
   availabilityZones: ['us-east-1a'],
+  natType: 'instance',
 };
