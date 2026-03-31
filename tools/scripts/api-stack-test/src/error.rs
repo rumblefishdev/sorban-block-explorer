@@ -1,6 +1,16 @@
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use serde::Serialize;
+use utoipa::ToSchema;
+
+/// Error response body returned by all error status codes.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ErrorBody {
+    /// Human-readable error message.
+    #[schema(example = "ledger 999 not found")]
+    pub error: String,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -24,6 +34,6 @@ impl IntoResponse for AppError {
                 (StatusCode::INTERNAL_SERVER_ERROR, "database error".into())
             }
         };
-        (status, Json(serde_json::json!({ "error": message }))).into_response()
+        (status, Json(ErrorBody { error: message })).into_response()
     }
 }

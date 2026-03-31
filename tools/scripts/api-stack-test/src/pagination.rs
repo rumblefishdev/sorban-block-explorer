@@ -6,7 +6,7 @@ use utoipa::{IntoParams, ToSchema};
 #[into_params(parameter_in = Query)]
 pub struct PaginationParams {
     /// Opaque base64-encoded cursor from a previous response. Omit for first page.
-    #[param(example = "eyJhZnRlcl9pZCI6MTAwfQ")]
+    #[param(example = "eyJiZWZvcmVfc2VxdWVuY2UiOjEwMH0")]
     pub cursor: Option<String>,
 
     /// Maximum number of items to return (default 20).
@@ -31,7 +31,7 @@ pub struct PaginatedResponse<T: ToSchema> {
     pub data: Vec<T>,
 
     /// Opaque cursor for the next page. Null if this is the last page.
-    #[schema(example = "eyJhZnRlcl9pZCI6MjAwfQ", nullable)]
+    #[schema(example = "eyJiZWZvcmVfc2VxdWVuY2UiOjIwMH0", nullable)]
     pub next_cursor: Option<String>,
 
     /// Whether more results exist beyond this page.

@@ -52,7 +52,7 @@ pub struct Ledger {
     params(PaginationParams),
     responses(
         (status = 200, description = "Paginated list of ledgers", body = inline(PaginatedLedgers)),
-        (status = 400, description = "Invalid cursor"),
+        (status = 400, description = "Invalid cursor", body = crate::error::ErrorBody),
     )
 )]
 pub async fn list_ledgers(
@@ -99,7 +99,7 @@ pub async fn list_ledgers(
     params(("sequence" = i64, Path, description = "Ledger sequence number")),
     responses(
         (status = 200, description = "Ledger found", body = Ledger),
-        (status = 404, description = "Ledger not found"),
+        (status = 404, description = "Ledger not found", body = crate::error::ErrorBody),
     )
 )]
 pub async fn get_ledger(

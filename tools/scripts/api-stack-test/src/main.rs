@@ -39,6 +39,7 @@ pub struct AppState {
     components(schemas(
         ledgers::Ledger,
         pagination::PaginatedResponse::<ledgers::Ledger>,
+        error::ErrorBody,
     )),
     tags(
         (name = "Ledgers", description = "Ledger endpoints"),

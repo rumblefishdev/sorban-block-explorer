@@ -88,7 +88,7 @@ export default {
 {
   "targets": {
     "extract-openapi": {
-      "command": "cargo run -p extract-openapi > libs/api-types/src/openapi.json"
+      "command": "cargo run -p api --bin extract_openapi > libs/api-types/src/openapi.json"
     },
     "generate": {
       "command": "npx openapi-ts",
