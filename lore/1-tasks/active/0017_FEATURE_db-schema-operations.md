@@ -3,8 +3,8 @@ id: '0017'
 title: 'DB schema: operations table with transaction_id partitioning'
 type: FEATURE
 status: active
-related_adr: []
-related_tasks: ['0016', '0009']
+related_adr: ['0005']
+related_tasks: ['0016', '0009', '0092']
 tags: [priority-high, effort-small, layer-database]
 milestone: 1
 links: []
@@ -17,17 +17,23 @@ history:
     status: active
     who: stkrolikiewicz
     note: 'Promoted to active'
+  - date: 2026-03-31
+    status: active
+    who: stkrolikiewicz
+    note: 'Updated: plain SQL migration instead of Drizzle (per research 0092 — sqlx migrations, drop Drizzle Kit)'
 ---
 
 # DB schema: operations table with transaction_id partitioning
 
 ## Summary
 
-Implement the Drizzle ORM schema definition and SQL DDL for the `operations` table. This table stores per-operation structure for transaction analysis and is partitioned by `transaction_id` range -- notably NOT time-based partitioning.
+Create the SQL migration for the `operations` table. This table stores per-operation structure for transaction analysis and is partitioned by `transaction_id` range.
 
-## Status: Backlog
+> **Migration approach changed:** Research 0092 decided on sqlx migrations (plain SQL). This task creates a plain SQL migration file alongside the existing Drizzle migration from task 0016. Task 0094 will move all migrations to `crates/db/migrations/`.
 
-**Current state:** Not started.
+## Status: Active
+
+**Current state:** Ready to implement.
 
 ## Context
 
@@ -37,84 +43,115 @@ Operations are child records of transactions. Each transaction may contain one o
 
 ```sql
 CREATE TABLE operations (
-    id              BIGSERIAL PRIMARY KEY,
-    transaction_id  BIGINT REFERENCES transactions(id) ON DELETE CASCADE,
-    type            VARCHAR(50) NOT NULL,
-    details         JSONB NOT NULL,
-    INDEX idx_tx (transaction_id),
-    INDEX idx_details (details) USING GIN
+    id                  BIGSERIAL,
+    transaction_id      BIGINT NOT NULL,
+    application_order   SMALLINT NOT NULL,
+    source_account      VARCHAR(56) NOT NULL,
+    type                VARCHAR(50) NOT NULL,
+    details             JSONB NOT NULL,
+    PRIMARY KEY (id, transaction_id),
+    FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE CASCADE
 ) PARTITION BY RANGE (transaction_id);
+
+CREATE INDEX idx_operations_tx ON operations (transaction_id);
+CREATE INDEX idx_operations_source ON operations (source_account);
+CREATE INDEX idx_operations_details ON operations USING GIN (details);
+
+-- Initial partition for transaction IDs 0 to 10,000,000
+CREATE TABLE operations_p0 PARTITION OF operations
+    FOR VALUES FROM (0) TO (10000000);
 ```
+
+Note: Primary key must include the partition key (`transaction_id`) — PostgreSQL requirement for partitioned tables.
+
+**Columns added vs original spec (research-informed):**
+
+- `application_order SMALLINT` — operation index within transaction (0, 1, 2...). Required to reconstruct operation ordering in explorer UI.
+- `source_account VARCHAR(56)` — operation-level source account (defaults to tx source, can be overridden per-op). Enables "show operations by account X" without JOIN + JSONB scan.
+- `idx_operations_source` — index for account-centric queries.
 
 ### Design Notes
 
-- **PARTITION BY RANGE (transaction_id)** -- This is range-based partitioning on the transaction surrogate ID, NOT time-based. This keeps transaction children co-located with their parent's ID range, which aligns with the ingestion write pattern and cascade cleanup behavior.
-- **ON DELETE CASCADE** from transactions -- deleting a transaction automatically removes all its operations. This maintains referential integrity without requiring application-level cleanup.
-- **GIN index on details** -- the `details` JSONB column has a GIN index to support queries against the variable-shaped operation payloads.
+- **PARTITION BY RANGE (transaction_id)** — range-based partitioning on transaction surrogate ID, NOT time-based. Keeps transaction children co-located with their parent's ID range.
+- **ON DELETE CASCADE** from transactions — deleting a transaction automatically removes all its operations.
+- **GIN index on details** — supports JSONB containment queries (`@>`) against variable-shaped operation payloads.
+- **Composite primary key** — `(id, transaction_id)` required because PostgreSQL partitioned tables need the partition key in the primary key.
 
 ### INVOKE_HOST_FUNCTION details JSONB Structure
 
-For Soroban `invoke_host_function` operations, the `details` JSONB column contains a decoded structure:
+For Soroban `invoke_host_function` operations, the `details` JSONB column contains:
 
 ```json
 {
   "contractId": "string",
   "functionName": "string",
-  "functionArgs": ["unknown[]  -- decoded ScVal values"],
-  "returnValue": "unknown  -- decoded ScVal value"
+  "functionArgs": ["decoded ScVal values"],
+  "returnValue": "decoded ScVal value"
 }
 ```
 
-- `contractId`: the Soroban contract address being invoked
-- `functionName`: the name of the contract function called
-- `functionArgs`: array of decoded ScVal arguments (shape varies per contract function)
-- `returnValue`: the decoded ScVal return value (shape varies per contract function)
-
-Other operation types will have different `details` shapes corresponding to their specific fields.
+Other operation types have different `details` shapes corresponding to their specific fields.
 
 ### Partition Strategy
 
-- Partitions are created based on `transaction_id` ranges, NOT monthly time windows.
-- Partition boundaries are determined by monitoring transaction ID growth.
-- Partitions must be created ahead of time -- application code MUST NOT create or drop partitions ad hoc.
+- Partitions created based on `transaction_id` ranges, NOT monthly time windows.
+- Partition boundaries determined by monitoring transaction ID growth.
+- Partitions must be created ahead of time — application code MUST NOT create or drop partitions ad hoc.
 - See task 0022 for partition management automation details.
 
 ## Implementation Plan
 
-### Step 1: Drizzle schema definition
+### Step 1: Write SQL migration
 
-Define the operations table using Drizzle ORM schema builder. Include all columns, the BIGSERIAL primary key, FK to transactions(id) with ON DELETE CASCADE, and both indexes.
+Create `libs/database/drizzle/0001_create_operations.sql` with plain SQL DDL (`;` separated, NOT Drizzle `--> statement-breakpoint` format). This sits alongside the existing 0016 migration. Task 0094 will later move all migrations to `crates/db/migrations/` with sqlx naming convention.
 
-### Step 2: Partition configuration
+**Run via `psql`, not Drizzle Kit** — Drizzle Kit does not support `PARTITION BY` syntax.
 
-Configure the table as PARTITION BY RANGE (transaction_id) in the DDL. Create initial partition(s) for the expected starting transaction_id range.
+### Step 2: Validate on fresh PostgreSQL
 
-### Step 3: Generate migration
+```bash
+docker compose up -d postgres
+# Apply 0016 first (ledgers + transactions)
+psql $DATABASE_URL -f libs/database/drizzle/0000_create_ledgers_transactions.sql
+# Apply 0017 (operations)
+psql $DATABASE_URL -f libs/database/drizzle/0001_create_operations.sql
+```
 
-Use Drizzle Kit to generate the migration. Verify the generated DDL includes the partitioning clause and CASCADE behavior.
+### Step 3: Validate partitioning
+
+Insert rows within partition range, verify PG routes to `operations_p0`. Insert outside range — should error (no partition exists).
 
 ### Step 4: Validate cascade behavior
 
-Test that deleting a transaction row cascades to remove its operation rows.
+Insert a transaction + operations. Delete the transaction. Verify operations are gone.
 
 ### Step 5: Validate GIN index
 
-Test that the GIN index on details supports containment queries (@>) against the JSONB column.
+Test JSONB containment queries (`@>`) against the `details` column.
 
 ## Acceptance Criteria
 
-- [ ] Drizzle schema for operations table matches the DDL specification
+- [ ] SQL migration creates operations table matching the DDL specification
 - [ ] Table is defined with PARTITION BY RANGE (transaction_id)
+- [ ] Primary key includes partition key: (id, transaction_id)
+- [ ] `application_order` SMALLINT column exists (operation index within tx)
+- [ ] `source_account` VARCHAR(56) column exists with index
 - [ ] FK to transactions(id) with ON DELETE CASCADE is enforced
 - [ ] GIN index on details column is created
 - [ ] Index on transaction_id is created
-- [ ] At least one initial partition exists for the starting transaction_id range
+- [ ] Index on source_account is created
+- [ ] At least one initial partition exists (operations_p0)
 - [ ] Cascade delete from transactions to operations works correctly
-- [ ] JSONB containment queries work against the GIN index
-- [ ] Migration applies cleanly to a fresh PostgreSQL instance
+- [ ] JSONB containment queries (`@>`) work against the GIN index
+- [ ] Migration applies cleanly to a fresh PostgreSQL instance (docker-compose)
 
 ## Notes
 
-- Drizzle ORM has limited native support for PostgreSQL partitioned tables. The migration may need raw SQL supplements for the PARTITION BY clause and partition creation.
-- Partition management automation is covered in task 0022. This task only needs to create the partitioned table definition and an initial partition.
-- The transaction_id-based partitioning is intentionally different from the time-based partitioning used by soroban_invocations, soroban_events, and liquidity_pool_snapshots.
+- **No Drizzle ORM schema** — per research 0092, we use plain SQL migrations. No `.ts` schema file needed.
+- **Run via `psql`** — Drizzle Kit does not support `PARTITION BY`. Apply manually or via script.
+- Migration file goes to `libs/database/drizzle/` for now (alongside 0016). Task 0094 migrates everything to `crates/db/migrations/`.
+- Partition management automation is covered in task 0022.
+- The transaction_id-based partitioning is intentionally different from time-based partitioning planned for other tables.
+- Initial partition range 0-10M is a starting point. More partitions added by task 0022 based on transaction ID growth.
+- FK ON DELETE CASCADE on partitioned tables works in PG 12+. Constraint propagates automatically to new partitions.
+- **Tasks 0018-0021 also reference Drizzle** — they will be updated in task 0093 (backlog cleanup). This task only updates 0017.
