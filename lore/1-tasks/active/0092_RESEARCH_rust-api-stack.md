@@ -2,7 +2,7 @@
 id: '0092'
 title: 'Research: Rust API stack — framework, ORM, Lambda deployment'
 type: RESEARCH
-status: backlog
+status: active
 related_adr: ['0005']
 related_tasks: ['0002', '0023']
 tags: [priority-high, effort-medium, layer-backend, rust]
@@ -17,6 +17,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Task created after team decision to move entire backend to Rust (ADR 0005)'
+  - date: 2026-03-31
+    status: active
+    who: stkrolikiewicz
+    note: 'Activated for research'
 ---
 
 # Research: Rust API stack — framework, ORM, Lambda deployment
@@ -25,9 +29,9 @@ history:
 
 Evaluate and recommend the Rust technology stack for the block explorer REST API Lambda. Covers three areas: web framework, database access, and Lambda deployment patterns. CTO suggested axum and actix-web as starting points for framework research. Diesel is excluded from ORM evaluation (team decision).
 
-## Status: Backlog
+## Status: Active
 
-**Current state:** Not started. Blocks all Rust API implementation tasks.
+**Current state:** Research starting. Blocks all Rust API implementation tasks.
 
 ## Context
 
