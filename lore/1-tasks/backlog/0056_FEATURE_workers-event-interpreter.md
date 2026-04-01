@@ -120,7 +120,7 @@ The interpreter must be idempotent:
 
 ## Notes
 
-- The Event Interpreter is deployed as a separate Lambda in `apps/workers`, not in `crates/indexer`. This separation keeps enrichment logic decoupled from core ingestion.
+- The Event Interpreter is deployed as a separate Lambda in `crates/workers`, not in `crates/indexer`. This separation keeps enrichment logic decoupled from core ingestion.
 - EventBridge trigger configuration and retry/DLQ setup are defined in CDK task 0037.
 - New event patterns can be added incrementally without changing the core pipeline. The interpretation_type column and structured_data JSONB are designed for extensibility.
 - The 5-minute cadence means interpretations are not real-time. They appear shortly after events are ingested. This is acceptable for the explorer's enrichment layer.

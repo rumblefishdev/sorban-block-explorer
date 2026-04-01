@@ -90,7 +90,7 @@ GET /api-docs-json     -> OpenAPI spec as JSON
 ### Behavioral Requirements
 
 - Spec auto-generated from axum decorators (not manually maintained)
-- All DTOs annotated with `@ApiProperty()` decorators
+- All request/response types derive `ToSchema` with field-level `#[schema(...)]` annotations
 - Error envelope documented as reusable schema component
 - Pagination envelope documented as reusable schema component
 - utoipa-swagger-ui available in development for interactive testing
@@ -104,7 +104,7 @@ GET /api-docs-json     -> OpenAPI spec as JSON
 ### Error Handling
 
 - Spec generation errors should fail the build, not silently produce incomplete docs.
-- Missing decorators should be caught during CI validation.
+- Missing `ToSchema`/`#[utoipa::path]` annotations should be caught during CI validation.
 
 ## Implementation Plan
 
@@ -112,13 +112,13 @@ GET /api-docs-json     -> OpenAPI spec as JSON
 
 Install and configure `utoipa` in the API application. Set up OpenApi derive macro with API title, description, version, and base URL.
 
-### Step 2: DTO Annotation
+### Step 2: Schema Annotation
 
-Annotate all request/response DTOs across all modules with `@ApiProperty()` decorators including types, descriptions, examples, and required/optional flags.
+Derive `ToSchema` on all request/response types across all modules with `#[schema(example = ...)]`, descriptions (doc comments), and nullable annotations.
 
-### Step 3: Controller Annotation
+### Step 3: Handler Annotation
 
-Add `@ApiOperation()`, `@ApiQuery()`, `@ApiParam()`, `@ApiResponse()`, and `@ApiTags()` decorators to all handler functions.
+Add `#[utoipa::path(...)]` annotations to all handler functions with `tag`, `params`, `responses` (status codes + body types), and `summary`/`description`.
 
 ### Step 4: Reusable Schema Components
 

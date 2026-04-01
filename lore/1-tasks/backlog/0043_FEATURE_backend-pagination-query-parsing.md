@@ -142,7 +142,7 @@ Implement a filter parsing utility that extracts `filter[key]` query parameters,
 
 ### Step 4: axum extractors with validation
 
-**Location:** `crates/api/src/common/pipes/`
+**Location:** `crates/api/src/common/extractors.rs`
 
 Create axum extractors with validation for `limit` and `cursor` parameters with proper error mapping to 400 responses.
 

@@ -23,7 +23,7 @@ history:
     note: >
       37 files changed. 33 backlog tasks updated, 1 canceled (0091).
       ADR 0005 accepted. 6 docs/architecture files + README updated.
-      Wiki snapshot created. Zero NestJS/Drizzle refs remaining in active content.
+      Wiki snapshot created. NestJS/Drizzle refs removed from docs and backlog implementation plans (history notes retained for traceability).
 ---
 
 # Backlog cleanup: cancel NestJS tasks, update CDK and indexer tasks for Rust API

@@ -452,8 +452,8 @@ It should also remain operationally simple:
 
 ## 10. Workspace Placement and Delivery Notes
 
-The workspace currently provides the structural backend boundary (`crates/api`) but not the
-final Rust/axum runtime implementation yet. That is consistent with the repository README and
+The target workspace will provide the structural backend boundary (`crates/api`, per tasks 0094/0095) but the
+Rust/axum runtime implementation is not yet in place. That is consistent with the repository README and
 current bootstrap status.
 
 Expected code placement:
