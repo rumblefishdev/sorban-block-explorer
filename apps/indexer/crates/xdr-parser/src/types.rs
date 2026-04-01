@@ -53,16 +53,24 @@ pub struct ExtractedTransaction {
 }
 
 /// Extracted operation data, maps to the `operations` table.
+///
+/// **Note:** field names do not directly mirror DB column names for this struct:
+/// - `transaction_hash` → resolved to `transaction_id` (BIGSERIAL) by the persistence layer
+/// - `operation_index` → `application_order` (Rust keyword `type` forces `op_type` similarly)
+/// - `op_type` → `type` (`type` is a Rust keyword)
+/// - `source_account: None` → persistence layer must substitute the transaction source account
+///   (DB column is `NOT NULL`; `None` means no per-operation override)
 #[derive(Debug, Clone)]
 pub struct ExtractedOperation {
     /// Parent transaction hash, hex-encoded (64 chars). Used to resolve the
     /// surrogate `transaction_id` FK at persistence time.
     pub transaction_hash: String,
-    /// Zero-based index of this operation within the transaction.
+    /// Zero-based index of this operation within the transaction (maps to `application_order`).
     pub operation_index: u32,
-    /// Operation type string (e.g., "INVOKE_HOST_FUNCTION", "PAYMENT").
+    /// Operation type string (e.g., "INVOKE_HOST_FUNCTION", "PAYMENT"). Maps to `type` column.
     pub op_type: String,
-    /// Source account override, if different from the transaction source.
+    /// Per-operation source account override. `None` if the operation inherits the transaction
+    /// source. Persistence layer must resolve `None` to the transaction source (column is NOT NULL).
     pub source_account: Option<String>,
     /// Type-specific details as a JSON value, stored as JSONB in PostgreSQL.
     pub details: serde_json::Value,
