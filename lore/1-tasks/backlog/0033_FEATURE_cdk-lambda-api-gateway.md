@@ -3,8 +3,8 @@ id: '0033'
 title: 'CDK: Lambda functions + API Gateway'
 type: FEATURE
 status: backlog
-related_adr: []
-related_tasks: ['0006', '0031', '0032']
+related_adr: ['0005']
+related_tasks: ['0006', '0031', '0032', '0092']
 tags: [priority-high, effort-medium, layer-infra]
 milestone: 1
 links:
@@ -14,13 +14,17 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-31
+    status: backlog
+    who: stkrolikiewicz
+    note: 'Updated per ADR 0005: Node.js Lambda → Rust Lambda (cargo-lambda-cdk RustFunction)'
 ---
 
 # CDK: Lambda functions + API Gateway
 
 ## Summary
 
-Define the three Lambda functions (API, Ledger Processor, Event Interpreter) and API Gateway using CDK. All Lambdas run on Node.js ARM64/Graviton2. The API Lambda has provisioned concurrency and is triggered by API Gateway. The Ledger Processor is triggered by S3 PutObject with a DLQ. The Event Interpreter is triggered by EventBridge (configured in task 0037). API Gateway provides REST API delivery with throttling, validation, and response caching.
+Define the three Lambda functions (API, Ledger Processor, Event Interpreter) and API Gateway using CDK. All Lambdas run as Rust binaries on ARM64/Graviton2 via cargo-lambda-cdk RustFunction. The API Lambda has provisioned concurrency and is triggered by API Gateway. The Ledger Processor is triggered by S3 PutObject with a DLQ. The Event Interpreter is triggered by EventBridge (configured in task 0037). API Gateway provides REST API delivery with throttling, validation, and response caching.
 
 ## Status: Backlog
 
@@ -30,7 +34,7 @@ Define the three Lambda functions (API, Ledger Processor, Event Interpreter) and
 
 The block explorer uses three Lambda functions for its compute layer:
 
-1. **API Lambda (NestJS)**: Serves all public REST endpoints. Triggered by API Gateway. Provisioned concurrency to minimize cold starts for user-facing requests.
+1. **API Lambda (Rust/axum)**: Serves all public REST endpoints. Triggered by API Gateway. Provisioned concurrency to minimize cold starts for user-facing requests.
 2. **Ledger Processor Lambda**: Parses XDR files and writes explorer data. Triggered by S3 PutObject events. Auto-retried on failure with a DLQ for exhausted retries.
 3. **Event Interpreter Lambda**: Enriches stored events with human-readable interpretations. Triggered by EventBridge (task 0037).
 
@@ -44,14 +48,14 @@ All three run on ARM64 (Graviton2) for cost efficiency and are VPC-attached in t
 
 ### Step 1: API Lambda Definition
 
-Define the NestJS API Lambda:
+Define the Rust API Lambda:
 
-- Runtime: Node.js (latest LTS) on ARM64/Graviton2
-- Handler: NestJS Lambda adapter entry point
+- Runtime: Rust (cargo-lambda) on ARM64/Graviton2
+- Handler: Rust Lambda handler (axum via lambda_http)
 - VPC: private subnet (task 0031)
 - Security group: Lambda SG (task 0031)
 - Provisioned concurrency: environment-specific (higher for production, lower for staging)
-- Memory: sized for NestJS overhead + query processing
+- Memory: sized for Rust binary overhead + query processing
 - Timeout: appropriate for API response times (e.g., 30 seconds)
 - Environment variables: RDS Proxy endpoint, Secrets Manager ARN, environment name
 - IAM execution role: RDS Proxy via Secrets Manager, CloudWatch Logs, X-Ray (defined in task 0040)
@@ -60,7 +64,7 @@ Define the NestJS API Lambda:
 
 Define the Ledger Processor Lambda:
 
-- Runtime: Node.js (latest LTS) on ARM64/Graviton2
+- Runtime: Rust (cargo-lambda) on ARM64/Graviton2
 - Trigger: S3 PutObject event (configured on stellar-ledger-data bucket in task 0032)
 - VPC: private subnet
 - Security group: Lambda SG
@@ -75,7 +79,7 @@ Define the Ledger Processor Lambda:
 
 Define the Event Interpreter Lambda:
 
-- Runtime: Node.js (latest LTS) on ARM64/Graviton2
+- Runtime: Rust (cargo-lambda) on ARM64/Graviton2
 - Trigger: EventBridge rate(5 minutes) (configured in task 0037)
 - VPC: private subnet
 - Security group: Lambda SG
@@ -121,7 +125,7 @@ Define the SQS Dead Letter Queue for the Ledger Processor:
 
 ## Acceptance Criteria
 
-- [ ] API Lambda is defined with Node.js ARM64/Graviton2, provisioned concurrency, VPC attachment
+- [ ] API Lambda is defined with Rust ARM64/Graviton2 (cargo-lambda-cdk RustFunction), provisioned concurrency, VPC attachment
 - [ ] Ledger Processor Lambda is defined with S3 trigger, auto-retry, and SQS DLQ
 - [ ] Event Interpreter Lambda is defined with appropriate timeout for batch processing
 - [ ] All three Lambdas are VPC-attached in the private subnet

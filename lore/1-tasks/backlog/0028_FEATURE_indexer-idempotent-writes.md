@@ -3,8 +3,8 @@ id: '0028'
 title: 'Indexer: idempotent write logic and ledger-sequence watermarks'
 type: FEATURE
 status: backlog
-related_adr: []
-related_tasks: ['0029']
+related_adr: ['0005']
+related_tasks: ['0029', '0092']
 tags: [priority-high, effort-medium, layer-indexing]
 milestone: 1
 links: []
@@ -13,6 +13,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-31
+    status: backlog
+    who: stkrolikiewicz
+    note: 'Updated per ADR 0005: apps/indexer/ → crates/indexer/'
 ---
 
 # Indexer: idempotent write logic and ledger-sequence watermarks
@@ -37,7 +41,7 @@ The idempotent write layer solves both scenarios through two complementary mecha
 
 ### Source Code Location
 
-- `apps/indexer/src/persistence/`
+- `crates/indexer/src/persistence/`
 
 ## Implementation Plan
 

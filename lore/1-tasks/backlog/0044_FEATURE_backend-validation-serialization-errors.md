@@ -3,8 +3,8 @@ id: '0044'
 title: 'Backend: request validation, response serialization, error mapping'
 type: FEATURE
 status: backlog
-related_adr: []
-related_tasks: ['0023', '0014']
+related_adr: ['0005']
+related_tasks: ['0023', '0014', '0092']
 tags: [layer-backend, validation, serialization, error-handling]
 milestone: 2
 links: []
@@ -13,17 +13,23 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-31
+    status: backlog
+    who: stkrolikiewicz
+    note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
 ---
 
 # Backend: request validation, response serialization, error mapping
 
 ## Summary
 
-Implement the cross-cutting request validation, response serialization, and error mapping layer for the API. This includes input validation pipes, response shaping rules, error-to-HTTP mapping, parse_error handling for degraded transactions, unknown operation type handling, and graceful degradation when ingestion is behind.
+Implement the cross-cutting request validation, response serialization, and error mapping layer for the API. This includes input validation extractors, response shaping rules, error-to-HTTP mapping, parse_error handling for degraded transactions, unknown operation type handling, and graceful degradation when ingestion is behind.
+
+> **Stack:** axum 0.8 + utoipa 5.4 + sqlx 0.8 (per ADR 0005). Code in crates/api/.
 
 ## Status: Backlog
 
-**Current state:** Not started. Depends on task 0023 (NestJS API bootstrap).
+**Current state:** Not started. Depends on task 0023 (API bootstrap).
 
 ## Context
 
@@ -31,7 +37,7 @@ The API must present consistent, frontend-friendly responses while handling edge
 
 ### API Specification
 
-**Location:** `apps/api/src/common/validation/`, `apps/api/src/common/errors/`
+**Location:** `crates/api/src/common/validation/`, `crates/api/src/common/errors/`
 
 ### Response Shaping Rules
 
@@ -140,7 +146,7 @@ Resource not found:
 
 ### Step 1: Input Validation Pipes
 
-Create NestJS validation pipes for common parameter patterns: path params (hash, account_id, contract_id, sequence), query params (limit, cursor), and filter params. Map validation failures to 400 responses with descriptive messages.
+Create axum extractors with validation for common parameter patterns: path params (hash, account_id, contract_id, sequence), query params (limit, cursor), and filter params. Map validation failures to 400 responses with descriptive messages.
 
 ### Step 2: Global Exception Filter
 
@@ -148,7 +154,7 @@ Implement (or extend from 0023) the global exception filter that catches all unh
 
 ### Step 3: Response Serialization Interceptor
 
-Create a NestJS interceptor or serialization layer that applies response shaping rules: flatten nested fields, ensure stable identifiers are present, strip raw payloads from non-advanced responses.
+Create a axum middleware or serialization layer that applies response shaping rules: flatten nested fields, ensure stable identifiers are present, strip raw payloads from non-advanced responses.
 
 ### Step 4: parse_error Handling
 
@@ -164,7 +170,7 @@ Ensure no endpoint throws errors solely because ingestion is behind. Verify that
 
 ## Acceptance Criteria
 
-- [ ] Input validation pipes for all common parameter types
+- [ ] Input validation extractors for all common parameter types
 - [ ] Consistent error envelope `{ error: { code, message } }` on all error responses
 - [ ] 400 for validation failures, 404 for missing resources, 500 for internal errors
 - [ ] Response shaping: flatten nested data, attach human-readable labels, stable identifiers

@@ -3,8 +3,8 @@ id: '0039'
 title: 'CI/CD pipeline: GitHub Actions workflows'
 type: FEATURE
 status: backlog
-related_adr: ['0004']
-related_tasks: ['0006', '0021']
+related_adr: ['0004', '0005']
+related_tasks: ['0006', '0021', '0092']
 tags: [priority-high, effort-medium, layer-infra]
 milestone: 1
 links:
@@ -14,6 +14,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-31
+    status: backlog
+    who: stkrolikiewicz
+    note: 'Updated per ADR 0005: added Rust CI job (dtolnay/rust-toolchain, cargo-lambda, SQLX_OFFLINE)'
 ---
 
 # CI/CD pipeline: GitHub Actions workflows
@@ -54,6 +58,25 @@ Define the continuous integration workflow triggered on pull requests and pushes
 **Nx Cloud cache:** If Nx Cloud is configured, CI builds benefit from remote caching. This is optional but recommended for large teams.
 
 **Status checks:** All three affected commands must pass before merge is allowed.
+
+### Step 1b: Rust CI Job
+
+Define a parallel CI job for the Rust backend/indexer crates:
+
+**Setup:**
+
+1. Install Rust toolchain via `dtolnay/rust-toolchain` (stable, with `clippy` and `rustfmt` components)
+2. Install `cargo-lambda` for Lambda build support
+3. Set `SQLX_OFFLINE=true` so builds succeed without a live database
+
+**Build steps:**
+
+1. `cargo fmt --check` -- verify formatting
+2. `cargo clippy --all-targets -- -D warnings` -- lint all crates
+3. `cargo test` -- run unit tests
+4. `cargo lambda build --release --arm64` -- build Lambda-deployable binaries
+
+**Caching:** Use `Swatinem/rust-cache` for Cargo registry and target directory caching.
 
 ### Step 2: Deployment Ordering Enforcement
 
@@ -143,6 +166,7 @@ Document the process for Stellar protocol upgrades:
 ## Acceptance Criteria
 
 - [ ] CI workflow runs lint, test, and build using Nx affected commands
+- [ ] Rust CI job runs cargo fmt, clippy, test, and cargo lambda build with SQLX_OFFLINE=true
 - [ ] CI must pass before merge to main is allowed
 - [ ] Staging auto-deploys on merge to main after CI passes
 - [ ] Production requires manual approval via GitHub Environments

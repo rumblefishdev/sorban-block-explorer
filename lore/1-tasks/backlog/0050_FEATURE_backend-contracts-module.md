@@ -3,8 +3,8 @@ id: '0050'
 title: 'Backend: Contracts module (detail, interface, invocations, events)'
 type: FEATURE
 status: backlog
-related_adr: []
-related_tasks: ['0023', '0043']
+related_adr: ['0005']
+related_tasks: ['0023', '0043', '0092']
 tags: [layer-backend, contracts, soroban]
 milestone: 2
 links: []
@@ -13,6 +13,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-31
+    status: backlog
+    who: stkrolikiewicz
+    note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
 ---
 
 # Backend: Contracts module (detail, interface, invocations, events)
@@ -20,6 +24,8 @@ history:
 ## Summary
 
 Implement the Contracts module providing contract detail, public interface (function signatures), paginated invocation history, and paginated event history. This is the most Soroban-specific part of the API and the main place where indexed contract metadata and decoded usage history are exposed.
+
+> **Stack:** axum 0.8 + utoipa 5.4 + sqlx 0.8 (per ADR 0005). Code in crates/api/.
 
 ## Status: Backlog
 
@@ -31,7 +37,7 @@ Soroban contracts are first-class explorer entities. The contracts module expose
 
 ### API Specification
 
-**Location:** `apps/api/src/contracts/`
+**Location:** `crates/api/src/contracts/`
 
 ---
 
@@ -276,9 +282,9 @@ Lambda in-memory cache: 30-60s TTL for contract metadata of frequently accessed 
 
 ## Implementation Plan
 
-### Step 1: Module Scaffolding
+### Step 1: Route + handler setup
 
-Create `apps/api/src/contracts/` with module, controller, service, and DTOs.
+Create `crates/api/src/contracts/` with module, controller, service, and request/response types (ToSchema).
 
 ### Step 2: Contract Detail Endpoint
 

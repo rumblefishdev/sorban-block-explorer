@@ -3,8 +3,8 @@ id: '0020'
 title: 'DB schema: NFTs, liquidity pools, and pool snapshots tables'
 type: FEATURE
 status: backlog
-related_adr: []
-related_tasks: ['0012', '0015']
+related_adr: ['0005']
+related_tasks: ['0012', '0015', '0092']
 tags: [priority-medium, effort-medium, layer-database]
 milestone: 1
 links: []
@@ -13,13 +13,17 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-31
+    status: backlog
+    who: stkrolikiewicz
+    note: 'Updated per ADR 0005 + research 0092: plain SQL migrations instead of Drizzle ORM'
 ---
 
 # DB schema: NFTs, liquidity pools, and pool snapshots tables
 
 ## Summary
 
-Implement the Drizzle ORM schema definitions and SQL DDL for three tables: `nfts`, `liquidity_pools`, and `liquidity_pool_snapshots`. These represent derived explorer entities for NFT display, pool state, and time-series pool analytics.
+Implement the SQL DDL for three tables: `nfts`, `liquidity_pools`, and `liquidity_pool_snapshots`. These represent derived explorer entities for NFT display, pool state, and time-series pool analytics.
 
 ## Status: Backlog
 
@@ -117,21 +121,23 @@ CREATE TABLE liquidity_pool_snapshots (
 
 ## Implementation Plan
 
-### Step 1: Drizzle schema for nfts
+> **Migration approach:** Plain SQL (per ADR 0005). Run via psql or sqlx migrate run.
+
+### Step 1: SQL DDL for nfts
 
 Define the table with all columns, FK to soroban_contracts, two FKs to ledgers, UNIQUE constraint on (contract_id, token_id), and both indexes.
 
-### Step 2: Drizzle schema for liquidity_pools
+### Step 2: SQL DDL for liquidity_pools
 
 Define the table with all columns, two FKs to ledgers, JSONB columns for assets and reserves, NUMERIC columns, and the last_updated_ledger DESC index.
 
-### Step 3: Drizzle schema for liquidity_pool_snapshots
+### Step 3: SQL DDL for liquidity_pool_snapshots
 
 Define the partitioned table with FK CASCADE to liquidity_pools, all NUMERIC columns, JSONB reserves, and the composite index. Configure PARTITION BY RANGE (created_at).
 
 ### Step 4: Generate migrations
 
-Use Drizzle Kit to generate migration files. Supplement with raw SQL for partitioning if needed.
+Write plain SQL migration files. Apply via `psql` or `sqlx migrate run`. Include partitioning clauses directly in the SQL.
 
 ### Step 5: Create initial monthly partitions for snapshots
 
@@ -147,9 +153,9 @@ Test that (contract_id, token_id) uniqueness is enforced -- duplicate pairs are 
 
 ## Acceptance Criteria
 
-- [ ] Drizzle schema for nfts matches DDL with all FKs and UNIQUE constraint
-- [ ] Drizzle schema for liquidity_pools matches DDL with JSONB and NUMERIC columns
-- [ ] Drizzle schema for liquidity_pool_snapshots matches DDL with monthly partitioning
+- [ ] SQL DDL for nfts matches DDL with all FKs and UNIQUE constraint
+- [ ] SQL DDL for liquidity_pools matches DDL with JSONB and NUMERIC columns
+- [ ] SQL DDL for liquidity_pool_snapshots matches DDL with monthly partitioning
 - [ ] FK CASCADE from snapshots to pools works correctly
 - [ ] UNIQUE(contract_id, token_id) is enforced on nfts
 - [ ] All indexes are created correctly

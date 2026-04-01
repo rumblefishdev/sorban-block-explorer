@@ -54,7 +54,7 @@ The workspace contains:
 - `apps/api`, `apps/indexer`, `apps/workers`, `infra/aws-cdk` — project skeletons
 - architecture docs aligned with the reviewed technical design
 
-Backend framework plugins (NestJS) and AWS-specific runtime code are not added yet.
+Backend: Rust (axum + utoipa + sqlx), deployed as Lambda via cargo-lambda (per ADR 0005).
 They will be introduced as dedicated follow-up steps.
 
 ## Infrastructure

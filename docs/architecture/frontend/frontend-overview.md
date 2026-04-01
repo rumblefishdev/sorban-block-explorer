@@ -83,7 +83,7 @@ The frontend is not responsible for:
 ## 3. Context and Responsibilities
 
 The frontend sits at the edge of the system and communicates exclusively with the custom
-NestJS REST API. It never reads from the blockchain directly.
+REST API (axum). It never reads from the blockchain directly.
 
 Responsibility boundaries:
 

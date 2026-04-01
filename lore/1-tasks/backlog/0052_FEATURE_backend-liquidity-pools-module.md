@@ -3,8 +3,8 @@ id: '0052'
 title: 'Backend: Liquidity Pools module (list + detail + transactions + chart)'
 type: FEATURE
 status: backlog
-related_adr: []
-related_tasks: ['0023', '0043']
+related_adr: ['0005']
+related_tasks: ['0023', '0043', '0092']
 tags: [layer-backend, liquidity-pools, charts]
 milestone: 2
 links: []
@@ -13,6 +13,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-31
+    status: backlog
+    who: stkrolikiewicz
+    note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
 ---
 
 # Backend: Liquidity Pools module (list + detail + transactions + chart)
@@ -20,6 +24,8 @@ history:
 ## Summary
 
 Implement the Liquidity Pools module providing pool listing with asset/TVL filters, pool detail, pool transaction history (deposits, withdrawals, trades), and time-series chart data. The module must separate pool current-state queries (liquidity_pools table) from chart queries (liquidity_pool_snapshots table).
+
+> **Stack:** axum 0.8 + utoipa 5.4 + sqlx 0.8 (per ADR 0005). Code in crates/api/.
 
 ## Status: Backlog
 
@@ -31,7 +37,7 @@ Liquidity pools combine current-state reads with historical aggregate reads. The
 
 ### API Specification
 
-**Location:** `apps/api/src/liquidity-pools/`
+**Location:** `crates/api/src/liquidity-pools/`
 
 ---
 
@@ -264,9 +270,9 @@ Liquidity pools combine current-state reads with historical aggregate reads. The
 
 ## Implementation Plan
 
-### Step 1: Module Scaffolding
+### Step 1: Route + handler setup
 
-Create `apps/api/src/liquidity-pools/` with module, controller, service, and DTOs.
+Create `crates/api/src/liquidity-pools/` with module, controller, service, and request/response types (ToSchema).
 
 ### Step 2: List Endpoint
 

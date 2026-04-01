@@ -25,9 +25,9 @@ history:
 
 Systematically update the backlog after ADR 0005 (Rust-only backend). Cancel or supersede NestJS-specific tasks, update CDK tasks to reference Rust API Lambda, and align remaining backend tasks with the Rust stack chosen in research task 0092.
 
-## Status: Backlog
+## Status: Active
 
-**Current state:** Not started. Partially blocked by 0092 — need to know Rust ORM choice before deciding fate of Drizzle/libs/database tasks.
+**Current state:** In progress. Research 0092 complete — stack decided (axum + utoipa + sqlx). ADR 0005 accepted.
 
 ## Implementation Plan
 

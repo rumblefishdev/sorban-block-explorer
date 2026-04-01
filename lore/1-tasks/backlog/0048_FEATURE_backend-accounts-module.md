@@ -3,8 +3,8 @@ id: '0048'
 title: 'Backend: Accounts module (detail + balances + transactions)'
 type: FEATURE
 status: backlog
-related_adr: []
-related_tasks: ['0023', '0043']
+related_adr: ['0005']
+related_tasks: ['0023', '0043', '0092']
 tags: [layer-backend, accounts]
 milestone: 2
 links: []
@@ -13,6 +13,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-31
+    status: backlog
+    who: stkrolikiewicz
+    note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
 ---
 
 # Backend: Accounts module (detail + balances + transactions)
@@ -20,6 +24,8 @@ history:
 ## Summary
 
 Implement the Accounts module providing account detail (summary + balances) and account-related transaction history. The account scope is intentionally limited to summary, balances, and transactions only. Do NOT add operations, effects, or offers unless the architecture is explicitly updated.
+
+> **Stack:** axum 0.8 + utoipa 5.4 + sqlx 0.8 (per ADR 0005). Code in crates/api/.
 
 ## Status: Backlog
 
@@ -31,7 +37,7 @@ Accounts are a core explorer entity but with intentionally limited scope in the 
 
 ### API Specification
 
-**Location:** `apps/api/src/accounts/`
+**Location:** `crates/api/src/accounts/`
 
 ---
 
@@ -159,9 +165,9 @@ Accounts are a core explorer entity but with intentionally limited scope in the 
 
 ## Implementation Plan
 
-### Step 1: Module Scaffolding
+### Step 1: Route + handler setup
 
-Create `apps/api/src/accounts/` with module, controller, service, and DTOs.
+Create `crates/api/src/accounts/` with module, controller, service, and request/response types (ToSchema).
 
 ### Step 2: Account Detail Endpoint
 

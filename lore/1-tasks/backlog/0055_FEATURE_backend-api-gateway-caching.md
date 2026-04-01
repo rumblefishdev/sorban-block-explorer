@@ -3,8 +3,8 @@ id: '0055'
 title: 'Backend: API Gateway response caching and cache-control headers'
 type: FEATURE
 status: backlog
-related_adr: []
-related_tasks: ['0023']
+related_adr: ['0005']
+related_tasks: ['0023', '0092']
 tags: [layer-backend, caching, api-gateway, performance]
 milestone: 2
 links: []
@@ -13,6 +13,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-31
+    status: backlog
+    who: stkrolikiewicz
+    note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
 ---
 
 # Backend: API Gateway response caching and cache-control headers
@@ -21,9 +25,11 @@ history:
 
 Define and implement the per-endpoint Cache-Control header strategy for API Gateway response caching. This includes long TTLs for immutable resources (finalized transactions, closed ledgers), short TTLs for frequently changing data (lists, network stats), medium TTLs for slowly changing data (contract metadata), and no cache for variable-parameter endpoints (search).
 
+> **Stack:** axum 0.8 + utoipa 5.4 + sqlx 0.8 (per ADR 0005). Code in crates/api/.
+
 ## Status: Backlog
 
-**Current state:** Not started. Depends on task 0023 (NestJS API bootstrap).
+**Current state:** Not started. Depends on task 0023 (API bootstrap).
 
 ## Context
 
@@ -31,7 +37,7 @@ Caching at the API Gateway level is the primary response caching mechanism. Clou
 
 ### API Specification
 
-**Location:** Cache-Control headers set in NestJS controllers/interceptors. API Gateway stage-level caching configuration.
+**Location:** Cache-Control headers set in axum handlers/middleware. API Gateway stage-level caching configuration.
 
 ### Per-Endpoint Cache Mapping
 
@@ -113,7 +119,7 @@ Content-Type: application/json
 - CloudFront NOT used for API in initial topology
 - Caching at API Gateway stage level only
 - Cache keys include full path + all query parameters
-- NestJS sets appropriate Cache-Control headers per endpoint
+- axum sets appropriate Cache-Control headers per endpoint
 - API Gateway respects Cache-Control headers for its stage cache
 - Immutable resource detection: closed ledgers (not the latest), finalized transactions
 
@@ -126,7 +132,7 @@ Content-Type: application/json
 
 ### Step 1: Cache-Control Interceptor
 
-Create a NestJS interceptor or decorator system that sets Cache-Control headers based on endpoint configuration. Each controller method specifies its cache tier (long, short, medium, none).
+Create a axum middleware or decorator system that sets Cache-Control headers based on endpoint configuration. Each handler function specifies its cache tier (long, short, medium, none).
 
 ### Step 2: Immutable Resource Detection
 
@@ -142,7 +148,7 @@ Ensure error responses (4xx, 5xx) include `Cache-Control: no-store` or omit cach
 
 ### Step 5: API Gateway Configuration Documentation
 
-Document the API Gateway stage-level cache configuration needed to respect the Cache-Control headers set by NestJS.
+Document the API Gateway stage-level cache configuration needed to respect the Cache-Control headers set by axum.
 
 ## Acceptance Criteria
 
@@ -160,5 +166,5 @@ Document the API Gateway stage-level cache configuration needed to respect the C
 ## Notes
 
 - The distinction between "latest ledger" (short TTL) and "historical ledger" (long TTL) requires the backend to know the current highest ledger.
-- API Gateway cache configuration is an infrastructure concern but the NestJS headers drive the behavior.
+- API Gateway cache configuration is an infrastructure concern but the axum headers drive the behavior.
 - API Gateway infrastructure is defined in CDK task 0033.

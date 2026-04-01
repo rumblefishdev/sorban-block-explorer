@@ -3,8 +3,8 @@ id: '0045'
 title: 'Backend: Network module (GET /network/stats)'
 type: FEATURE
 status: backlog
-related_adr: []
-related_tasks: ['0023']
+related_adr: ['0005']
+related_tasks: ['0023', '0092']
 tags: [layer-backend, network, stats]
 milestone: 2
 links: []
@@ -13,6 +13,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-31
+    status: backlog
+    who: stkrolikiewicz
+    note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
 ---
 
 # Backend: Network module (GET /network/stats)
@@ -21,9 +25,11 @@ history:
 
 Implement the Network module providing the `GET /network/stats` endpoint. This is a small, fast, cacheable endpoint that serves top-level explorer summary data including ledger sequence, TPS, total accounts, total contracts, and ingestion freshness indicators.
 
+> **Stack:** axum 0.8 + utoipa 5.4 + sqlx 0.8 (per ADR 0005). Code in crates/api/.
+
 ## Status: Backlog
 
-**Current state:** Not started. Depends on task 0023 (NestJS API bootstrap).
+**Current state:** Not started. Depends on task 0023 (API bootstrap).
 
 ## Context
 
@@ -100,9 +106,9 @@ The network stats endpoint is the primary source of top-level explorer summary i
 
 ## Implementation Plan
 
-### Step 1: Network Module Scaffolding
+### Step 1: Network Route + handler setup
 
-Create `apps/api/src/network/` with NestJS module, controller, and service. Register in AppModule.
+Create `crates/api/src/network/` with axum route module with handlers and query module. Register in AppModule.
 
 ### Step 2: Stats Query Implementation
 

@@ -132,7 +132,7 @@ Public user traffic should follow a simple path:
 - the frontend is served through CloudFront as a static React application
 - the frontend calls the public REST API through API Gateway
 - public browser traffic is anonymous read-only and does not carry API keys
-- API Gateway invokes Lambda-based NestJS handlers
+- API Gateway invokes Lambda-based Rust/axum handlers
 - handlers read from RDS PostgreSQL only
 
 No public client should connect directly to the database or to ingestion components.
@@ -238,7 +238,7 @@ That split should remain stable even if the network layout expands later.
 
 ### 5.4 API and Delivery Components
 
-**Lambda — NestJS API handlers**
+**Lambda — Rust/axum API handlers**
 
 - serve all public REST endpoints
 - read from RDS PostgreSQL only
@@ -265,7 +265,7 @@ That split should remain stable even if the network layout expands later.
 
 **Swagger UI**
 
-- served directly from the API (NestJS `/api-docs` endpoint)
+- served directly from the API (utoipa-swagger-ui `/api-docs` endpoint)
 - no separate S3 bucket or CloudFront distribution needed
 
 ### 5.5 Operational Components
@@ -332,7 +332,7 @@ Publicly exposed surfaces are:
 - CloudFront-hosted frontend delivery
 - API Gateway-hosted REST API
 - public DNS routing via Route 53
-- API documentation served from NestJS `/api-docs` endpoint
+- API documentation served from utoipa-swagger-ui `/api-docs` endpoint
 
 Those public surfaces should be protected by AWS WAF and API throttling. API keys, if
 issued, are for trusted automation or partner use cases and are never required by the

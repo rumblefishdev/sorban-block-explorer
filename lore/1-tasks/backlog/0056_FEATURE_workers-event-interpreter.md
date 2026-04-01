@@ -3,8 +3,8 @@ id: '0056'
 title: 'Workers: Event Interpreter Lambda'
 type: FEATURE
 status: backlog
-related_adr: []
-related_tasks: ['0008', '0018']
+related_adr: ['0005']
+related_tasks: ['0008', '0018', '0092']
 tags: [priority-medium, effort-medium, layer-indexing]
 milestone: 2
 links: []
@@ -13,6 +13,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-31
+    status: backlog
+    who: stkrolikiewicz
+    note: 'Updated per ADR 0005: crates/workers/ → Rust crate (crates/workers/)'
 ---
 
 # Workers: Event Interpreter Lambda
@@ -33,12 +37,12 @@ Key architectural boundaries:
 
 - **Completely independent from the Ledger Processor**: does not share code paths, triggers, or data flow with the ingestion pipeline
 - **Reads from DB, not S3/XDR**: queries the soroban_events table for recently stored events
-- **Deployed separately**: lives in `apps/workers`, not `apps/indexer`
+- **Deployed separately**: lives in `apps/workers`, not `crates/indexer`
 - **Runs on timer, not ledger trigger**: EventBridge rate(5 minutes), not S3 event
 
 ### Source Code Location
 
-- `apps/workers/src/event-interpreter/`
+- `crates/workers/src/event-interpreter/`
 
 ## Implementation Plan
 
@@ -116,7 +120,7 @@ The interpreter must be idempotent:
 
 ## Notes
 
-- The Event Interpreter is deployed as a separate Lambda in `apps/workers`, not in `apps/indexer`. This separation keeps enrichment logic decoupled from core ingestion.
+- The Event Interpreter is deployed as a separate Lambda in `apps/workers`, not in `crates/indexer`. This separation keeps enrichment logic decoupled from core ingestion.
 - EventBridge trigger configuration and retry/DLQ setup are defined in CDK task 0037.
 - New event patterns can be added incrementally without changing the core pipeline. The interpretation_type column and structured_data JSONB are designed for extensibility.
 - The 5-minute cadence means interpretations are not real-time. They appear shortly after events are ingested. This is acceptable for the explorer's enrichment layer.

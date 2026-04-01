@@ -35,7 +35,7 @@ what is needed to explain backend behavior.
 
 The current Nx workspace already reserves the backend boundary as:
 
-- `apps/api` - application entrypoint for the public REST API
+- `crates/api` - application entrypoint for the public REST API (Rust/axum)
 - `libs/domain` - shared explorer-domain types that may be reused by backend and frontend
 - `libs/shared` - generic cross-cutting utilities with no explorer-domain vocabulary
 
@@ -67,7 +67,7 @@ proxy.
 
 ### 3.1 Runtime Model
 
-The backend is a NestJS application running on AWS Lambda behind API Gateway. It is a
+The backend is a Rust application (axum + sqlx) running on AWS Lambda behind API Gateway. It is a
 REST API. The backend does not perform chain indexing; it reads from the block explorer's
 own PostgreSQL database, which is populated by the Galexie-based ingestion pipeline.
 
@@ -78,9 +78,9 @@ non-browser consumers.
 
 ```
 ┌──────────┐    HTTPS    ┌─────────────┐              ┌──────────────────────┐
-│  Client  │────────────>│ API Gateway │─────────────>│  Lambda (NestJS)     │
+│  Client  │────────────>│ API Gateway │─────────────>│  Lambda (Rust/axum)  │
 └──────────┘             └─────────────┘              │                      │
-                                                      │  NestJS Modules:     │
+                                                      │  axum Modules:       │
                                                       │  ├─ Network ─────────┤
                                                       │  ├─ Transactions ────┤
                                                       │  ├─ Ledgers ─────────┤
@@ -104,7 +104,7 @@ non-browser consumers.
 The typical request path is:
 
 1. client calls a public REST endpoint through API Gateway
-2. API Gateway routes the request to the NestJS Lambda handler
+2. API Gateway routes the request to the Rust/axum Lambda handler
 3. the relevant module validates input and queries the explorer database
 4. backend-level normalization and enrichment are applied where needed
 5. the response is returned in a frontend-friendly form
@@ -113,9 +113,11 @@ The typical request path is:
 
 The backend implementation direction implied by the current design is:
 
-- **NestJS** for modular API composition and transport-layer structure
-- **TypeScript** for typed application code and shared contracts with workspace libraries
-- **AWS Lambda** for serverless compute and on-demand scaling
+- **axum** for modular API composition and transport-layer structure (per ADR 0005)
+- **Rust** for typed application code with compile-time safety
+- **sqlx** for compile-time checked database queries (per ADR 0005)
+- **utoipa** for OpenAPI spec generation (per ADR 0005)
+- **AWS Lambda** for serverless compute and on-demand scaling (via cargo-lambda)
 - **API Gateway** for public HTTP ingress, throttling, request validation, and response
   caching
 - **AWS WAF** for managed-rule abuse protection on public ingress
@@ -123,7 +125,7 @@ The backend implementation direction implied by the current design is:
 - **No XDR dependencies** — API serves pre-materialized data; raw XDR is passthrough only (per ADR 0004)
 
 This document assumes the backend follows the implementation direction already
-reflected in the general overview, including NestJS and Drizzle ORM, while keeping the API
+reflected in the general overview, including axum, sqlx, and utoipa (per ADR 0005), while keeping the API
 behavior here as the primary contract to preserve.
 
 ## 4. Responsibilities and Boundaries
@@ -168,7 +170,7 @@ Responsibility split across the workspace should remain clear:
 
 ## 5. Module Design
 
-The backend is best structured as resource-oriented NestJS modules matching the public API
+The backend is best structured as resource-oriented axum route modules matching the public API
 surface.
 
 ### 5.1 Primary Modules
@@ -431,7 +433,7 @@ inconsistent results or duplicated logic across screens.
 - **Ingestion lag** - if the Galexie pipeline falls behind, the API continues serving
   data from the database with a freshness indicator showing the highest indexed ledger
   sequence. A CloudWatch alarm fires at >60 s lag.
-- **Lambda cold starts** - mitigated via ARM/Graviton2 runtime and provisioned concurrency
+- **Lambda cold starts** - mitigated via Rust's fast startup on ARM/Graviton2 and provisioned concurrency
   at higher traffic tiers.
 - **Database connection pooling** - RDS Proxy manages connection pools to prevent
   exhaustion under burst traffic.
@@ -450,13 +452,13 @@ It should also remain operationally simple:
 
 ## 10. Workspace Placement and Delivery Notes
 
-The workspace currently provides the structural backend boundary (`apps/api`) but not the
-final NestJS runtime implementation yet. That is consistent with the repository README and
+The workspace currently provides the structural backend boundary (`crates/api`) but not the
+final Rust/axum runtime implementation yet. That is consistent with the repository README and
 current bootstrap status.
 
 Expected code placement:
 
-- `apps/api` for application bootstrap, route wiring, NestJS modules, and runtime integrations
+- `crates/api` for application bootstrap, route wiring, axum modules, and runtime integrations
 - `libs/domain` for reusable explorer-domain types and value objects shared with other apps
 - `libs/shared` for generic helpers that are not specific to explorer business concepts
 

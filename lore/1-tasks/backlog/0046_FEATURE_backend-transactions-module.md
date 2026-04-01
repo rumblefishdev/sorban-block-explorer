@@ -3,8 +3,8 @@ id: '0046'
 title: 'Backend: Transactions module (list + detail + filters)'
 type: FEATURE
 status: backlog
-related_adr: []
-related_tasks: ['0023', '0043', '0044']
+related_adr: ['0005']
+related_tasks: ['0023', '0043', '0044', '0092']
 tags: [layer-backend, transactions, filters, xdr]
 milestone: 2
 links: []
@@ -13,6 +13,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-31
+    status: backlog
+    who: stkrolikiewicz
+    note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
 ---
 
 # Backend: Transactions module (list + detail + filters)
@@ -21,17 +25,19 @@ history:
 
 Implement the Transactions module providing paginated transaction listing with filters and dual-mode transaction detail (normal and advanced views). This is the central activity-browsing module of the explorer API, handling the most complex response shaping including operation trees, events, and raw XDR for advanced inspection.
 
+> **Stack:** axum 0.8 + utoipa 5.4 + sqlx 0.8 (per ADR 0005). Code in crates/api/.
+
 ## Status: Backlog
 
 **Current state:** Not started. Depends on tasks 0023 (bootstrap), 0043 (pagination), 0044 (validation/serialization).
 
 ## Context
 
-Transactions are the primary explorer entity for activity browsing. The list endpoint supports table-style browsing with slim DTOs. The detail endpoint supports both human-readable summaries and advanced/debugging views over the same resource, controlled by a query parameter.
+Transactions are the primary explorer entity for activity browsing. The list endpoint supports table-style browsing with slim response types. The detail endpoint supports both human-readable summaries and advanced/debugging views over the same resource, controlled by a query parameter.
 
 ### API Specification
 
-**Location:** `apps/api/src/transactions/`
+**Location:** `crates/api/src/transactions/`
 
 ---
 
@@ -75,7 +81,7 @@ Transactions are the primary explorer entity for activity browsing. The list end
 }
 ```
 
-**List item fields (slim DTO):**
+**List item fields (slim response type):**
 
 | Field             | Type           | Description                              |
 | ----------------- | -------------- | ---------------------------------------- |
@@ -202,7 +208,7 @@ Transactions are the primary explorer entity for activity browsing. The list end
 
 ### Behavioral Requirements
 
-- List responses optimized for table-style browsing (slim DTOs)
+- List responses optimized for table-style browsing (slim response types)
 - Detail supports both human-readable and advanced views via `?view=advanced`
 - Same endpoint, same resource -- two representations
 - Filters applied at DB query level before pagination
@@ -225,13 +231,13 @@ Transactions are the primary explorer entity for activity browsing. The list end
 
 ## Implementation Plan
 
-### Step 1: Module Scaffolding
+### Step 1: Route + handler setup
 
-Create `apps/api/src/transactions/` with module, controller, service, and DTOs.
+Create `crates/api/src/transactions/` with module, controller, service, and request/response types (ToSchema).
 
 ### Step 2: List Endpoint
 
-Implement `GET /transactions` with cursor pagination, filter parsing, and slim DTO response.
+Implement `GET /transactions` with cursor pagination, filter parsing, and slim response type response.
 
 ### Step 3: Detail Endpoint (Normal View)
 
@@ -251,7 +257,7 @@ Implement source_account, contract_id, and operation_type filters at the DB quer
 
 ## Acceptance Criteria
 
-- [ ] `GET /v1/transactions` returns paginated list with slim DTOs
+- [ ] `GET /v1/transactions` returns paginated list with slim response types
 - [ ] `GET /v1/transactions/:hash` returns full detail (normal view)
 - [ ] `GET /v1/transactions/:hash?view=advanced` includes envelope_xdr, result_xdr, raw params
 - [ ] result_meta_xdr never returned to frontend

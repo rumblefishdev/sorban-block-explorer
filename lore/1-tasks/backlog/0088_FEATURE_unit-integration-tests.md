@@ -3,8 +3,8 @@ id: '0088'
 title: 'Unit and integration tests: XDR parsing, API endpoints, event interpretation'
 type: FEATURE
 status: backlog
-related_adr: []
-related_tasks: []
+related_adr: ['0005']
+related_tasks: ['0092']
 tags: [priority-high, effort-large, layer-testing]
 milestone: 3
 links:
@@ -14,6 +14,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created — D3 scope coverage (task 0085)'
+  - date: 2026-03-31
+    status: backlog
+    who: stkrolikiewicz
+    note: 'Updated per ADR 0005: NestJS test patterns → cargo test + tokio::test'
 ---
 
 # Unit and integration tests: XDR parsing, API endpoints, event interpretation
@@ -38,11 +42,11 @@ Test XDR deserialization for LedgerCloseMeta, operations, soroban events/invocat
 
 ### Step 2: Unit tests — API endpoints (8 days)
 
-Test all NestJS controller/service layers: request validation, response shape, pagination, error envelopes, filter parameters. Mock database layer.
+Test all axum handler/query module layers using `cargo test` and `tokio::test`: request validation, response shape, pagination, error envelopes, filter parameters. Mock database layer with sqlx test fixtures.
 
 ### Step 3: Integration tests — end-to-end (5 days)
 
-Test ingestion → API → response pipeline with real database. Ingest known testnet ledgers, query API endpoints, verify data consistency.
+Test ingestion → API → response pipeline with real database using `tokio::test` and `sqlx::test`. Ingest known testnet ledgers, query API endpoints, verify data consistency.
 
 ## Acceptance Criteria
 
