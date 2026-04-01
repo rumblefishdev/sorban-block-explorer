@@ -2,7 +2,7 @@
 id: '0024'
 title: 'XDR parsing: LedgerCloseMeta deserialization, ledger and transaction extraction'
 type: FEATURE
-status: active
+status: completed
 related_adr: ['0004']
 related_tasks: ['0001', '0002', '0016']
 tags: [priority-high, effort-large, layer-indexing, rust]
@@ -23,6 +23,14 @@ history:
     status: active
     who: FilipDz
     note: 'Promoted to active'
+  - date: 2026-03-31
+    status: completed
+    who: FilipDz
+    note: >
+      Rust xdr-parser crate at apps/indexer/crates/xdr-parser/.
+      8 source files, 10 unit tests. V0/V1/V2 LedgerCloseMeta,
+      fee-bump source correct, nullable result_meta_xdr, i64 timestamps.
+      Codex review: 9 fixes applied.
 ---
 
 # XDR parsing: LedgerCloseMeta deserialization, ledger and transaction extraction
@@ -31,9 +39,9 @@ history:
 
 Implement the primary XDR parsing entry point in the Ledger Processor that deserializes LedgerCloseMeta payloads, extracts ledger header fields and transaction-level structured data, retains raw XDR artifacts, and persists both ledger and transaction rows to PostgreSQL. This is the foundational parsing task upon which all downstream extraction (operations, events, invocations, entry changes) depends.
 
-## Status: Backlog
+## Status: Completed
 
-**Current state:** Not started. Architecture docs and database schema design are complete. Research task 0002 (LedgerCloseMeta XDR parsing) provides foundational knowledge.
+**Current state:** Implemented. Rust library crate at `apps/indexer/crates/xdr-parser/`.
 
 ## Context
 
@@ -126,20 +134,20 @@ When `from_xdr()` returns `Err` during deserialization:
 
 ## Acceptance Criteria
 
-- [ ] S3 object download and zstd decompression produces valid XDR bytes
-- [ ] LedgerCloseMeta is deserialized using the `stellar-xdr` Rust crate
-- [ ] Ledger header fields (sequence, hash, closeTime, protocolVersion, baseFee, txSetResultHash, transaction_count) are correctly extracted and mapped to the ledgers table
-- [ ] Transaction fields (hash, sourceAccount, feeCharged, successful, resultCode, memo_type, memo) are correctly extracted per transaction
-- [ ] Transaction hash is computed as SHA-256 of envelope XDR bytes
-- [ ] Raw XDR fields (envelope_xdr NOT NULL, result_xdr NOT NULL, result_meta_xdr nullable) are retained per transaction
-- [ ] transactions.created_at is derived from the parent ledger closeTime
-- [ ] Transactions use BIGSERIAL surrogate id for child FK references
-- [ ] Malformed XDR triggers error logging with context, raw XDR storage, parse_error=true flag, and the transaction remains visible
-- [ ] Unit tests cover ledger header extraction, transaction extraction, hash computation, and error handling paths
-- [ ] Parser output is consumable by downstream tasks (0025, 0026, 0027) without re-parsing the LedgerCloseMeta
-- [ ] S3 object key pattern validated: stellar-ledger-data/ledgers/{seq_start}-{seq_end}.xdr.zstd
-- [ ] zstd decompression handles the documented file format
-- [ ] Verify whether txSetResultHash from LedgerHeader is needed; if so, add to ledger extraction
+- [x] S3 object download and zstd decompression produces valid XDR bytes
+- [x] LedgerCloseMeta is deserialized using the `stellar-xdr` Rust crate
+- [x] Ledger header fields (sequence, hash, closeTime, protocolVersion, baseFee, txSetResultHash, transaction_count) are correctly extracted and mapped to the ledgers table
+- [x] Transaction fields (hash, sourceAccount, feeCharged, successful, resultCode, memo_type, memo) are correctly extracted per transaction
+- [x] Transaction hash is computed as SHA-256 of envelope XDR bytes
+- [x] Raw XDR fields (envelope_xdr NOT NULL, result_xdr NOT NULL, result_meta_xdr nullable) are retained per transaction
+- [x] transactions.created_at is derived from the parent ledger closeTime
+- [ ] Transactions use BIGSERIAL surrogate id for child FK references (deferred — DB persistence is task 0029)
+- [x] Malformed XDR triggers error logging with context, raw XDR storage, parse_error=true flag, and the transaction remains visible
+- [x] Unit tests cover ledger header extraction, transaction extraction, hash computation, and error handling paths
+- [x] Parser output is consumable by downstream tasks (0025, 0026, 0027) without re-parsing the LedgerCloseMeta
+- [x] S3 object key pattern validated: stellar-ledger-data/ledgers/{seq_start}-{seq_end}.xdr.zstd
+- [x] zstd decompression handles the documented file format
+- [x] Verify whether txSetResultHash from LedgerHeader is needed; if so, add to ledger extraction
 
 ## Notes
 

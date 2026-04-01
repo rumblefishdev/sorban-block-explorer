@@ -2,7 +2,7 @@
 id: '0025'
 title: 'XDR parsing: operation extraction and INVOKE_HOST_FUNCTION details'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0004']
 related_tasks: ['0002', '0024', '0017']
 tags: [priority-high, effort-medium, layer-indexing, rust]
@@ -13,6 +13,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-31
+    status: active
+    who: FilipDz
+    note: 'Promoted to active'
   - date: 2026-03-30
     status: backlog
     who: fmazur
