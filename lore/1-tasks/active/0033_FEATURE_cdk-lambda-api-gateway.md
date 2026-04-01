@@ -117,8 +117,9 @@ Create `stacks/compute-stack.ts` with two Lambdas and a DLQ.
 - Security group: Lambda SG (from NetworkStack)
 - Memory: from config (default 256 MB)
 - Timeout: from config (default 30s)
-- Environment variables: `DATABASE_URL` (RDS Proxy endpoint), `SECRET_ARN` (Secrets Manager), `ENV_NAME`
+- Environment variables: `RDS_PROXY_ENDPOINT` (hostname), `SECRET_ARN` (Secrets Manager ARN), `ENV_NAME`
 - IAM: `dbSecret.grantRead(apiLambda)`
+- Tags: `Project`, `Environment`, `ManagedBy` (consistent with other stacks)
 
 No provisioned concurrency — Rust cold starts are ~20-40ms (research 0092).
 
@@ -130,9 +131,9 @@ No provisioned concurrency — Rust cold starts are ~20-40ms (research 0092).
 - Security group: Lambda SG
 - Memory: from config (default 512 MB)
 - Timeout: from config (default 60s)
-- Environment variables: `DATABASE_URL`, `SECRET_ARN`, `BUCKET_NAME`
+- Environment variables: `RDS_PROXY_ENDPOINT`, `SECRET_ARN`, `BUCKET_NAME`, `ENV_NAME`
 - S3 trigger: `bucket.addEventNotification(OBJECT_CREATED, new LambdaDestination(processorLambda))`
-- Async invocation: `maxRetryAttempts: 2`, `onFailure: SqsDestination(dlq)`
+- Async invocation config via `EventInvokeConfig`: `retryAttempts: 2`, `onFailure: new SqsDestination(dlq)`
 - IAM: `bucket.grantRead(processorLambda)`, `dbSecret.grantRead(processorLambda)`
 
 **SQS DLQ:**
@@ -145,7 +146,8 @@ No provisioned concurrency — Rust cold starts are ~20-40ms (research 0092).
 ### Step 5: Stack wiring in app.ts
 
 - Wire ComputeStack: `vpc`, `lambdaSg` from NetworkStack; `dbProxy`, `dbSecret` from RdsStack; `bucket` from LedgerBucketStack
-- Export API Lambda function ARN for task 0097 (API Gateway integration)
+- CfnOutputs: `ApiLambdaArn`, `ProcessorLambdaArn`, `DlqUrl`
+- Export API Lambda function for task 0097 (API Gateway integration)
 
 ## Acceptance Criteria
 
@@ -163,8 +165,10 @@ No provisioned concurrency — Rust cold starts are ~20-40ms (research 0092).
 - [ ] ComputeStack wired in app.ts with cross-stack references
 - [ ] LedgerBucketStack bucket reference passed to ComputeStack (fix existing wiring)
 - [ ] API Lambda ARN exported for API Gateway integration (task 0097)
+- [ ] CfnOutputs for ApiLambdaArn, ProcessorLambdaArn, DlqUrl
 - [ ] `cargo-lambda-cdk` added to package.json dependencies
 - [ ] IAM via CDK `grant*()` methods (auto-generated execution roles)
+- [ ] Tags (Project, Environment, ManagedBy) consistent with other stacks
 
 ## Notes
 
@@ -173,3 +177,4 @@ No provisioned concurrency — Rust cold starts are ~20-40ms (research 0092).
 - The DLQ is critical for operational visibility. A non-empty DLQ means ledgers are not being processed. CloudWatch alarm in task 0036.
 - Lambda ARM64/Graviton2 provides ~20% cost savings over x86_64.
 - `RustFunction` uses `manifestPath` pointing to repo root (where `Cargo.toml` workspace lives) and `binaryName` to select the crate.
+- Lambda env vars use `RDS_PROXY_ENDPOINT` (hostname only) + `SECRET_ARN` — not a full `DATABASE_URL` connection string. Lambda resolves credentials from Secrets Manager at runtime. This is the standard pattern with RDS Proxy + Secrets Manager.
