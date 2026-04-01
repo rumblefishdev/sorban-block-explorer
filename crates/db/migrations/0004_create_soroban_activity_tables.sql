@@ -36,20 +36,6 @@ CREATE INDEX idx_events_contract ON soroban_events (contract_id, created_at DESC
 CREATE INDEX idx_events_topics ON soroban_events USING GIN (topics);
 CREATE INDEX idx_events_tx ON soroban_events (transaction_id);
 
-CREATE TABLE event_interpretations (
-    id                   BIGSERIAL PRIMARY KEY,
-    event_id             BIGINT NOT NULL,
-    event_created_at     TIMESTAMPTZ NOT NULL,
-    interpretation_type  VARCHAR(50) NOT NULL,
-    human_readable       TEXT NOT NULL,
-    structured_data      JSONB NOT NULL,
-    FOREIGN KEY (event_id, event_created_at)
-        REFERENCES soroban_events(id, created_at) ON DELETE CASCADE
-);
-
-CREATE INDEX idx_interpretations_type ON event_interpretations (interpretation_type);
-CREATE INDEX idx_interpretations_event ON event_interpretations (event_id, event_created_at);
-
 -- Initial monthly partitions for soroban_invocations (Apr-Jun 2026)
 CREATE TABLE soroban_invocations_y2026m04 PARTITION OF soroban_invocations
     FOR VALUES FROM ('2026-04-01 00:00:00+00') TO ('2026-05-01 00:00:00+00');
