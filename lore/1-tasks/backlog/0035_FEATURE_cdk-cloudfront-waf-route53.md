@@ -4,7 +4,7 @@ title: 'CDK: CloudFront, WAF, Route 53, S3 static hosting'
 type: FEATURE
 status: backlog
 related_adr: ['0005']
-related_tasks: ['0006', '0092']
+related_tasks: ['0006', '0092', '0097']
 tags: [priority-medium, effort-medium, layer-infra]
 milestone: 1
 links:
@@ -28,7 +28,7 @@ Define the public delivery layer using CDK: CloudFront distribution for the Reac
 
 ## Status: Backlog
 
-**Current state:** Not started. No dependencies on other infrastructure tasks for the delivery layer definition, though WAF is attached to API Gateway in task 0033.
+**Current state:** Not started. No dependencies on other infrastructure tasks for the delivery layer definition, though WAF is attached to API Gateway in task 0097.
 
 ## Context
 
@@ -75,7 +75,7 @@ Define a WAF WebACL with:
 **WAF attachment points:**
 
 - SPA CloudFront distribution (attached here)
-- API Gateway (attached in task 0033)
+- API Gateway (attached in task 0097)
 
 ### Step 4: ACM TLS Certificates
 
@@ -100,7 +100,7 @@ For the staging environment:
 - [ ] SPA CloudFront distribution is defined with S3 origin and index.html fallback for client routes
 - [ ] API Gateway traffic does NOT route through CloudFront
 - [ ] WAF WebACL is defined with managed rules, IP reputation, and rate-based abuse controls
-- [ ] WAF is attached to CloudFront distribution and made available for API Gateway (task 0033)
+- [ ] WAF is attached to CloudFront distribution and made available for API Gateway (task 0097)
 - [ ] Route 53 hosted zone has A/AAAA aliases for frontend and API domains
 - [ ] ACM certificates are provisioned: us-east-1 for CloudFront, stack region for API Gateway
 - [ ] DNS validation is automated via Route 53

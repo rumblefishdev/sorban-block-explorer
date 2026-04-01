@@ -4,7 +4,7 @@ title: 'Backend: API Gateway response caching and cache-control headers'
 type: FEATURE
 status: backlog
 related_adr: ['0005']
-related_tasks: ['0023', '0092']
+related_tasks: ['0023', '0092', '0097']
 tags: [layer-backend, caching, api-gateway, performance]
 milestone: 2
 links: []
@@ -167,4 +167,4 @@ Document the API Gateway stage-level cache configuration needed to respect the C
 
 - The distinction between "latest ledger" (short TTL) and "historical ledger" (long TTL) requires the backend to know the current highest ledger.
 - API Gateway cache configuration is an infrastructure concern but the axum headers drive the behavior.
-- API Gateway infrastructure is defined in CDK task 0033.
+- API Gateway infrastructure is defined in CDK task 0097.
