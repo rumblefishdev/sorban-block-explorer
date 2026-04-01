@@ -56,7 +56,6 @@ Its job is to make indexed chain data usable:
 
 - hide ingestion and storage details behind stable REST resources
 - normalize raw indexed records into frontend-friendly responses
-- enrich Soroban-specific data with readable interpretations where available
 - provide unified search and consistent pagination semantics
 - expose raw XDR only where advanced inspection genuinely requires it
 
@@ -136,9 +135,9 @@ The backend serves data from the block explorer's own database, adding:
 
 - **Data normalization** - transforms raw indexed records into a consistent,
   frontend-friendly format (e.g. flattening nested fields, attaching human-readable
-  operation summaries and event interpretations)
-- **Soroban enrichment** - decorates contract invocations with metadata, function names,
-  and structured interpretations stored at ingestion time
+  operation summaries)
+- **Soroban enrichment** - decorates contract invocations with metadata and function names
+  stored at ingestion time
 - **Search** - unified search across transaction hashes, account IDs, contract IDs, token
   identifiers, NFT identifiers, pool IDs, and indexed metadata using PostgreSQL full-text
   indexes
@@ -154,7 +153,6 @@ The backend does **not**:
 - perform live chain indexing
 - call Horizon or any external chain API
 - rely on a third-party explorer database
-- shift protocol-specific interpretation responsibility back onto the frontend
 
 All chain data lives in the block explorer's RDS.
 
@@ -247,8 +245,7 @@ and advanced representations):
     {
       "type": "invoke_host_function",
       "contract_id": "CCAB...DEF",
-      "function_name": "swap",
-      "human_readable": "Swapped 100 USDC for 95.2 XLM on Soroswap"
+      "function_name": "swap"
     }
   ],
   "operation_tree": [...],
@@ -375,7 +372,7 @@ The backend should expose read models designed for explorer use, not raw storage
 That means:
 
 - flattening or restructuring nested data where that improves client usability
-- attaching human-readable labels produced upstream during ingestion or interpretation
+- attaching human-readable labels produced upstream during ingestion
 - keeping raw protocol payloads available only for advanced/detail use cases
 - preserving stable identifier fields needed for linking across pages
 
@@ -394,7 +391,7 @@ API-level expectations:
 
 Transaction detail is the clearest example of a dual-mode backend contract:
 
-- the normal view is centered on interpreted operations, call trees, and readable summaries
+- the normal view is centered on decoded operations and call trees
 - the advanced view includes raw parameters, raw event payloads, and raw XDR where needed
 
 The backend should treat these as two representations over the same transaction resource,

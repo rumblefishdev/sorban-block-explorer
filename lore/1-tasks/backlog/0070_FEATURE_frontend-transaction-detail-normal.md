@@ -52,7 +52,6 @@ The transaction detail page is the most complex page in the explorer. It has two
       "type": "invoke_host_function",
       "contract_id": "CCAB...DEF",
       "function_name": "swap",
-      "human_readable": "Swapped 100 USDC for 95.2 XLM on Soroswap",
       "source_account": "GABC...XYZ",
       "affected_accounts": ["GD2M...K8J1"],
       "affected_contracts": ["CCAB...DEF"]
@@ -172,5 +171,4 @@ Create `apps/web/src/pages/transaction-detail/TransactionDetailPage.tsx`:
 
 - Advanced mode is task 0071 and shares the same base info and API response.
 - The operation flow tree and invocation call tree components come from task 0065.
-- Human-readable summaries come from the backend `human_readable` field on operations.
 - Fee display should show both XLM and stroops for precision (e.g., "0.00001 XLM (100 stroops)").

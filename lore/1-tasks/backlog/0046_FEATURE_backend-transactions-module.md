@@ -20,7 +20,11 @@ history:
   - date: 2026-04-01
     status: backlog
     who: fmazur
-    note: 'Updated: event_interpretations enrichment deferred. Table exists but may be empty in milestone 1.'
+    note: 'Updated: event_interpretations enrichment deferred.'
+  - date: 2026-04-01
+    status: backlog
+    who: stkrolikiewicz
+    note: 'Updated: removed event_interpretations references — table removed from architecture (task 0098).'
 ---
 
 # Backend: Transactions module (list + detail + filters)
@@ -136,8 +140,7 @@ Transactions are the primary explorer entity for activity browsing. The list end
     {
       "type": "invoke_host_function",
       "contract_id": "CCAB...DEF",
-      "function_name": "swap",
-      "human_readable": "Swapped 100 USDC for 95.2 XLM on Soroswap"
+      "function_name": "swap"
     }
   ],
   "operation_tree": [],
@@ -145,12 +148,7 @@ Transactions are the primary explorer entity for activity browsing. The list end
     {
       "event_type": "contract",
       "topics": [],
-      "data": {},
-      "interpretation": {
-        "type": "swap",
-        "human_readable": "Swapped 100 USDC for 95.2 XLM",
-        "structured_data": {}
-      }
+      "data": {}
     }
   ],
   "parse_error": false
@@ -175,7 +173,6 @@ Transactions are the primary explorer entity for activity browsing. The list end
       "type": "invoke_host_function",
       "contract_id": "CCAB...DEF",
       "function_name": "swap",
-      "human_readable": "Swapped 100 USDC for 95.2 XLM on Soroswap",
       "raw_parameters": {},
       "raw_event_payloads": []
     }
@@ -203,7 +200,7 @@ Transactions are the primary explorer entity for activity browsing. The list end
 | `created_at`      | string         | yes    | yes      | ISO timestamp                            |
 | `operations`      | array          | yes    | yes      | Operations with human-readable summaries |
 | `operation_tree`  | array          | yes    | yes      | Decoded invocation hierarchy             |
-| `events`          | array          | yes    | yes      | Events with interpretations              |
+| `events`          | array          | yes    | yes      | Events                                   |
 | `envelope_xdr`    | string         | no     | yes      | Raw envelope XDR                         |
 | `result_xdr`      | string         | no     | yes      | Raw result XDR                           |
 | `parse_error`     | boolean        | yes    | yes      | Whether parse error occurred             |
@@ -245,7 +242,7 @@ Implement `GET /transactions` with cursor pagination, filter parsing, and slim r
 
 ### Step 3: Detail Endpoint (Normal View)
 
-Implement `GET /transactions/:hash` returning full detail with operations, operation_tree, events with interpretations, and result_code.
+Implement `GET /transactions/:hash` returning full detail with operations, operation_tree, events, and result_code.
 
 ### Step 4: Advanced View
 
@@ -266,7 +263,7 @@ Implement source_account, contract_id, and operation_type filters at the DB quer
 - [ ] `GET /v1/transactions/:hash?view=advanced` includes envelope_xdr, result_xdr, raw params
 - [ ] result_meta_xdr never returned to frontend
 - [ ] operation_tree returned from stored DB data (decoded at ingestion)
-- [ ] Events LEFT JOIN event_interpretations for interpretations (table exists but may be empty — enrichment deferred to post-milestone 1; handle NULL gracefully)
+- [ ] Events queried from soroban_events table
 - [ ] result_code present for failed transactions
 - [ ] filter[source_account], filter[contract_id], filter[operation_type] work correctly
 - [ ] parse_error transactions visible with null XDR-derived fields
@@ -278,4 +275,3 @@ Implement source_account, contract_id, and operation_type filters at the DB quer
 
 - This is the most complex API module due to dual-mode detail views and the variety of data sources joined.
 - The operation_tree is pre-computed at ingestion time; the API reads it from the DB, not from XDR decode.
-- Event interpretations are LEFT JOINed from the event_interpretations table. **Note:** The `event_interpretations` table exists in the DB schema but may be empty in milestone 1 (enrichment deferred — no separate Event Interpreter Lambda). If enrichment is needed later, it will be done inline in the indexer. The join must handle NULL/empty gracefully.
