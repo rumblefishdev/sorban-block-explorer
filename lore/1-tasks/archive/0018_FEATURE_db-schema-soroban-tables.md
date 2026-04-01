@@ -41,7 +41,7 @@ Implement the SQL DDL for three Soroban-specific tables: `soroban_contracts`, `s
 
 The Soroban tables form the contract-centric activity model of the explorer. Contracts are top-level entities; invocations and events are transaction children that also reference contracts.
 
-`event_interpretations` was originally in scope but removed after the Event Interpreter Lambda was dropped from the architecture (commit 7c961e6, task 0033).
+`event_interpretations` was originally in scope but removed after the Event Interpreter Lambda was dropped from the architecture (commit 7c961e6, task 0033). Architecture docs and backlog specs that still reference `event_interpretations` or single-column PKs on Soroban activity tables are obsolete — cleanup tracked in task 0098.
 
 ## Implementation
 
