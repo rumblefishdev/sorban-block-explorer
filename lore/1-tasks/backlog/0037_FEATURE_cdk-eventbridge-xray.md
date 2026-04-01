@@ -1,6 +1,6 @@
 ---
 id: '0037'
-title: 'CDK: EventBridge rules and X-Ray tracing'
+title: 'CDK: X-Ray tracing'
 type: FEATURE
 status: backlog
 related_adr: []
@@ -14,74 +14,57 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-04-01
+    status: backlog
+    who: fmazur
+    note: 'Updated: removed Event Interpreter references. Architecture simplified to 2 Lambdas (API + Indexer). EventBridge rule for interpreter deferred.'
 ---
 
-# CDK: EventBridge rules and X-Ray tracing
+# CDK: X-Ray tracing
 
 ## Summary
 
-Define EventBridge scheduling rules and X-Ray distributed tracing configuration using CDK. EventBridge triggers the Event Interpreter Lambda every 5 minutes with retry policy and DLQ. X-Ray active tracing is enabled on API Gateway, all three Lambda functions, and RDS Proxy (if supported). Sampling rules are environment-specific.
+Define X-Ray distributed tracing configuration using CDK. X-Ray active tracing is enabled on API Gateway, both Lambda functions (API + Indexer), and RDS Proxy (if supported). Sampling rules are environment-specific.
+
+> **Note:** The original EventBridge scheduling rule for the Event Interpreter Lambda has been removed. The architecture has been simplified to 2 Lambdas: API Lambda and Ledger Processor/Indexer Lambda. The pipeline is: Galexie -> S3 -> Indexer Lambda -> PostgreSQL <- API Lambda <- Frontend. If EventBridge scheduling is needed in the future, it can be added as a separate task.
 
 ## Status: Backlog
 
-**Current state:** Not started. No blocking dependencies, but coordinates with Lambda definitions in task 0033.
+**Current state:** Not started. No blocking dependencies, but coordinates with Lambda definitions in task 0033 (which defines 2 Lambdas: API + Indexer).
 
 ## Context
-
-EventBridge provides the scheduling mechanism for the Event Interpreter Lambda, which runs as a periodic enrichment job independent of the primary ingestion pipeline.
 
 X-Ray provides distributed tracing across the API request path (API Gateway -> Lambda -> RDS Proxy -> RDS) and the ingestion path (S3 -> Lambda -> RDS Proxy -> RDS). This is essential for debugging latency issues and understanding request flow.
 
 ### Source Code Location
 
-- `infra/aws-cdk/lib/observability/scheduling.ts`
+- `infra/aws-cdk/lib/observability/tracing.ts`
 
 ## Implementation Plan
 
-### Step 1: EventBridge Rule for Event Interpreter
-
-Define an EventBridge rule:
-
-- Schedule expression: `rate(5 minutes)`
-- Target: Event Interpreter Lambda (from task 0033)
-- IAM permission: EventBridge to invoke the Lambda function
-
-**Retry policy:**
-
-- Maximum retries: 2
-- On exhausted retries: send to DLQ (SQS)
-
-**DLQ for EventBridge:**
-
-- SQS queue to capture failed EventBridge-to-Lambda invocations
-- Separate from the Ledger Processor DLQ (task 0033)
-- Retention: 14 days
-- Alarm on queue depth > 0 (coordinates with task 0036)
-
-### Step 2: X-Ray Active Tracing - API Gateway
+### Step 1: X-Ray Active Tracing - API Gateway
 
 Enable X-Ray tracing on the API Gateway stage:
 
 - Active tracing captures request/response metadata and latency
 - Integrated with the API Lambda traces for end-to-end visibility
 
-### Step 3: X-Ray Active Tracing - Lambda Functions
+### Step 2: X-Ray Active Tracing - Lambda Functions
 
-Enable X-Ray active tracing on all three Lambda functions:
+Enable X-Ray active tracing on both Lambda functions:
 
 - API Lambda: traces API request processing, DB queries
-- Ledger Processor Lambda: traces XDR parsing, DB writes
-- Event Interpreter Lambda: traces event queries, interpretation writes
+- Ledger Processor/Indexer Lambda: traces XDR parsing, DB writes
 
 Each Lambda automatically creates X-Ray segments and subsegments for AWS SDK calls (S3, RDS, Secrets Manager).
 
-### Step 4: X-Ray Active Tracing - RDS Proxy
+### Step 3: X-Ray Active Tracing - RDS Proxy
 
 Enable X-Ray tracing on RDS Proxy if supported by the current CDK/RDS Proxy version. This adds visibility into connection pooling and query forwarding latency.
 
 If RDS Proxy X-Ray integration is not available via CDK, document the limitation and rely on Lambda-side database call tracing.
 
-### Step 5: Sampling Rules
+### Step 4: Sampling Rules
 
 Define X-Ray sampling rules that are environment-specific:
 
@@ -100,19 +83,13 @@ Sampling rules are configured as X-Ray sampling rule resources in CDK.
 
 ## Acceptance Criteria
 
-- [ ] EventBridge rule triggers Event Interpreter Lambda at rate(5 minutes)
-- [ ] EventBridge retry policy: max 2 retries with SQS DLQ on exhaustion
-- [ ] IAM permission allows EventBridge to invoke the Event Interpreter Lambda
 - [ ] X-Ray active tracing enabled on API Gateway stage
-- [ ] X-Ray active tracing enabled on all three Lambda functions
+- [ ] X-Ray active tracing enabled on both Lambda functions (API + Indexer)
 - [ ] X-Ray tracing on RDS Proxy if supported (documented limitation if not)
 - [ ] Production sampling rule: lower rate for cost efficiency
 - [ ] Staging sampling rule: higher rate for debugging
-- [ ] DLQ alarm integrates with monitoring (task 0036)
 
 ## Notes
 
-- The 5-minute EventBridge cadence means the Event Interpreter runs approximately 288 times per day. Each invocation should be fast (seconds, not minutes) under normal conditions.
-- X-Ray traces from the Ledger Processor are particularly valuable for diagnosing slow ledger processing. They can reveal whether time is spent in XDR parsing, DB writes, or S3 download.
+- X-Ray traces from the Ledger Processor/Indexer are particularly valuable for diagnosing slow ledger processing. They can reveal whether time is spent in XDR parsing, DB writes, or S3 download.
 - X-Ray sampling rules prevent excessive trace data in production while maintaining full visibility in staging.
-- EventBridge rules are region-specific. If the stack moves regions, the rule moves with it (defined in CDK, not manually).

@@ -85,11 +85,6 @@ The pipeline depends on four primary runtime components:
 - **Ledger Processor Lambda** for event-driven parsing and persistence
 - **RDS PostgreSQL** as the explorer's owned storage target
 
-An additional scheduled worker participates after primary ingestion:
-
-- **Event Interpreter Lambda** for post-processing recent events into human-readable
-  summaries
-
 ### 3.3 Why the Pipeline Is Structured This Way
 
 The current design uses S3 as a handoff boundary between ledger export and parse/write work.
@@ -229,20 +224,10 @@ Its responsibilities are:
 - keep replay of the same ledger idempotent
 - prevent stale backfill writes from overwriting newer live-derived state
 
-The Ledger Processor is the only worker in the documented design that turns raw ledger-close
-artifacts into first-class explorer records.
-
-### 7.2 Event Interpreter
-
-The Event Interpreter is a secondary worker triggered every 5 minutes by EventBridge.
-
-Its role is not primary chain ingestion. Instead, it:
-
-- reads recently stored event data
-- identifies known patterns such as swap, transfer, mint, and burn
-- writes human-readable summaries used by the explorer
-
-This keeps enrichment logic separate from the core ledger parse/write path.
+The Ledger Processor is the only Lambda worker in the indexing pipeline. It turns raw
+ledger-close artifacts into first-class explorer records. If event enrichment (human-readable
+interpretations of swap, transfer, mint, and burn patterns) is needed in the future, it will
+be done inline within the Ledger Processor rather than in a separate Lambda.
 
 ## 8. Operational Characteristics
 
@@ -304,7 +289,6 @@ For the indexing pipeline, that means:
 Responsibility split should remain clear:
 
 - `apps/indexer` owns ingestion entrypoints and live/backfill pipeline behavior
-- `apps/workers` owns background interpretation/enrichment work
 - `apps/api` reads indexed data and does not perform primary ingestion
 - `apps/web` consumes backend responses and does not parse canonical ledger artifacts
 
@@ -313,15 +297,14 @@ Responsibility split should remain clear:
 Within the current workspace direction documented in the repository:
 
 - infrastructure deploys the runtime components
-- application/runtime code is expected to live under `apps/indexer`, `apps/workers`, and
+- application/runtime code is expected to live under `apps/indexer`, `apps/api`, and
   related packages
 - infrastructure rollout is handled through AWS CDK and GitHub Actions
 
 ### 9.3 Current Workspace State
 
 The repository currently documents the intended indexing pipeline shape but does not yet
-contain the final production implementation of Galexie orchestration, the Ledger Processor,
-or the background workers.
+contain the final production implementation of Galexie orchestration or the Ledger Processor.
 
 That is expected. This document should serve as the detailed reference for future indexing
 implementation planning, while

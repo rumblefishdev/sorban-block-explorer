@@ -14,13 +14,17 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-04-01
+    status: backlog
+    who: fmazur
+    note: 'Updated: removed Event Interpreter references. Architecture simplified to 2 Lambdas (API + Indexer).'
 ---
 
 # CDK: IAM roles, ECR repository, NAT Gateway
 
 ## Summary
 
-Define IAM execution roles with least-privilege permissions for all compute components, an ECR repository for the Galexie container image, and a NAT Gateway in the public subnet for ECS Fargate outbound connectivity. IAM roles cover the API Lambda, Ledger Processor Lambda, Event Interpreter Lambda, ECS Galexie task role, and ECS task execution role.
+Define IAM execution roles with least-privilege permissions for all compute components, an ECR repository for the Galexie container image, and a NAT Gateway in the public subnet for ECS Fargate outbound connectivity. IAM roles cover the API Lambda, Ledger Processor (Indexer) Lambda, ECS Galexie task role, and ECS task execution role.
 
 ## Status: Backlog
 
@@ -63,18 +67,7 @@ Define IAM role for the Ledger Processor Lambda:
 - **VPC**: same as API Lambda
 - No S3 PutObject (Ledger Processor reads, does not write to S3)
 
-### Step 3: Event Interpreter Lambda Execution Role
-
-Define IAM role for the Event Interpreter Lambda:
-
-- **RDS Proxy access**: same as API Lambda
-- **Secrets Manager**: `secretsmanager:GetSecretValue` on database credentials secret
-- **CloudWatch Logs**: same as API Lambda
-- **X-Ray**: same as API Lambda
-- **VPC**: same as API Lambda
-- No S3 permissions (Event Interpreter reads from database only)
-
-### Step 4: ECS Galexie Task Role
+### Step 3: ECS Galexie Task Role
 
 Define IAM task role for the Galexie ECS Fargate task:
 
@@ -82,7 +75,7 @@ Define IAM task role for the Galexie ECS Fargate task:
 - **CloudWatch Logs**: `logs:CreateLogGroup`, `logs:CreateLogStream`, `logs:PutLogEvents`
 - No RDS, Secrets Manager, or X-Ray permissions (Galexie writes to S3 only)
 
-### Step 5: ECS Task Execution Role
+### Step 4: ECS Task Execution Role
 
 Define the ECS task execution role (used by the ECS agent, not the application):
 
@@ -90,7 +83,7 @@ Define the ECS task execution role (used by the ECS agent, not the application):
 - **CloudWatch Logs**: `logs:CreateLogGroup`, `logs:CreateLogStream`, `logs:PutLogEvents`
 - This role is used by both the Galexie service and backfill tasks
 
-### Step 6: ECR Repository
+### Step 5: ECR Repository
 
 Define an ECR repository for the Galexie container image:
 
@@ -100,7 +93,7 @@ Define an ECR repository for the Galexie container image:
 - Image scanning: enabled for vulnerability detection
 - The CI/CD pipeline (task 0039) pushes images tagged with git SHA
 
-### Step 7: NAT Gateway
+### Step 6: NAT Gateway
 
 Define a NAT Gateway in the public subnet:
 
@@ -114,7 +107,7 @@ Define a NAT Gateway in the public subnet:
 
 **Scaling note:** Single NAT Gateway at launch. For Multi-AZ expansion, add one NAT Gateway per AZ to avoid cross-AZ traffic charges and single-AZ failure impact.
 
-### Step 8: S3 VPC Endpoint Policy (Refinement)
+### Step 7: S3 VPC Endpoint Policy (Refinement)
 
 Refine the S3 VPC endpoint policy (endpoint created in task 0031) to restrict access to only the project's S3 buckets:
 
@@ -125,7 +118,6 @@ Refine the S3 VPC endpoint policy (endpoint created in task 0031) to restrict ac
 
 - [ ] API Lambda role: RDS Proxy (via Secrets Manager), CloudWatch Logs, X-Ray, VPC networking -- no S3
 - [ ] Ledger Processor role: S3 GetObject on stellar-ledger-data, RDS Proxy, CloudWatch Logs, X-Ray, VPC networking -- no S3 PutObject
-- [ ] Event Interpreter role: RDS Proxy, CloudWatch Logs, X-Ray, VPC networking -- no S3
 - [ ] ECS Galexie task role: S3 PutObject on stellar-ledger-data, CloudWatch Logs -- no RDS
 - [ ] ECS task execution role: ECR pull, CloudWatch Logs
 - [ ] All roles follow least-privilege principle (no wildcard actions or resources)

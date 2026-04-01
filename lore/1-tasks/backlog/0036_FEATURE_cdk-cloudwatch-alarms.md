@@ -14,6 +14,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-04-01
+    status: backlog
+    who: fmazur
+    note: 'Updated: removed Event Interpreter references. Architecture simplified to 2 Lambdas (API + Indexer).'
 ---
 
 # CDK: CloudWatch dashboards and alarms
@@ -60,7 +64,7 @@ Define CloudWatch dashboards with the following widgets:
 - RDS free storage space
 - Lambda concurrency utilization (concurrent executions vs limit)
 - Lambda cold start rate per function
-- Lambda duration per function (API, Ledger Processor, Event Interpreter)
+- Lambda duration per function (API, Ledger Processor)
 
 ### Step 2: Alarm Definitions
 
@@ -146,5 +150,5 @@ All alarm thresholds are parameterized and configured via the environment config
 
 - The "indexed vs network tip" metric requires a custom metric. The Ledger Processor can publish the highest processed ledger sequence to CloudWatch, and a separate check can compare it against the Stellar network tip (e.g., via Horizon or Galexie health).
 - Dashboard widgets should use STAT periods aligned with alarm evaluation periods for consistency.
-- Additional alarms can be added incrementally (e.g., DLQ depth from task 0033, Event Interpreter failure rate). The initial set covers the documented baseline.
+- Additional alarms can be added incrementally (e.g., DLQ depth from task 0033). The initial set covers the documented baseline.
 - CloudWatch Logs Insights queries may complement dashboards for ad-hoc investigation but are not defined as CDK resources.

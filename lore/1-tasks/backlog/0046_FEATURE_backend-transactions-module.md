@@ -17,6 +17,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
+  - date: 2026-04-01
+    status: backlog
+    who: fmazur
+    note: 'Updated: event_interpretations enrichment deferred. Table exists but may be empty in milestone 1.'
 ---
 
 # Backend: Transactions module (list + detail + filters)
@@ -262,7 +266,7 @@ Implement source_account, contract_id, and operation_type filters at the DB quer
 - [ ] `GET /v1/transactions/:hash?view=advanced` includes envelope_xdr, result_xdr, raw params
 - [ ] result_meta_xdr never returned to frontend
 - [ ] operation_tree returned from stored DB data (decoded at ingestion)
-- [ ] Events include interpretations from event_interpretations table
+- [ ] Events LEFT JOIN event_interpretations for interpretations (table exists but may be empty — enrichment deferred to post-milestone 1; handle NULL gracefully)
 - [ ] result_code present for failed transactions
 - [ ] filter[source_account], filter[contract_id], filter[operation_type] work correctly
 - [ ] parse_error transactions visible with null XDR-derived fields
@@ -274,4 +278,4 @@ Implement source_account, contract_id, and operation_type filters at the DB quer
 
 - This is the most complex API module due to dual-mode detail views and the variety of data sources joined.
 - The operation_tree is pre-computed at ingestion time; the API reads it from the DB, not from XDR decode.
-- Event interpretations are joined from the event_interpretations table.
+- Event interpretations are LEFT JOINed from the event_interpretations table. **Note:** The `event_interpretations` table exists in the DB schema but may be empty in milestone 1 (enrichment deferred — no separate Event Interpreter Lambda). If enrichment is needed later, it will be done inline in the indexer. The join must handle NULL/empty gracefully.

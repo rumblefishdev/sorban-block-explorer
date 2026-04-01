@@ -58,7 +58,6 @@ The infrastructure is expected to host:
 - explorer database storage
 - public REST API delivery
 - public frontend delivery
-- background interpretation jobs
 - operational visibility and alarms
 
 ### 2.2 AWS-Managed Runtime Bias
@@ -71,7 +70,7 @@ That shows up as:
 - AWS Lambda for event-driven processing and API handlers
 - RDS PostgreSQL for relational storage
 - API Gateway and CloudFront for public delivery
-- EventBridge, Secrets Manager, CloudWatch, and X-Ray for operational concerns
+- Secrets Manager, CloudWatch, and X-Ray for operational concerns
 
 This keeps the runtime model operationally narrow and aligned with the serverless/event-
 driven shape of the product.
@@ -181,7 +180,7 @@ plan.
 The deployment sketch implies a public/private split:
 
 - public-facing delivery components: CloudFront, API Gateway, Route 53
-- private runtime components: Lambda API handlers, Ledger Processor, Event Interpreter,
+- private runtime components: Lambda API handlers, Ledger Processor (Indexer),
   RDS PostgreSQL, ECS Fargate workloads
 - secret material accessed through Secrets Manager rather than baked into runtime images or
   application source
@@ -229,13 +228,6 @@ That split should remain stable even if the network layout expands later.
 - downloads and parses XDR using `@stellar/stellar-sdk`
 - writes explorer records and derived state to RDS
 
-**Lambda — Event Interpreter**
-
-- is triggered by EventBridge every 5 minutes
-- post-processes recent events
-- generates human-readable summaries for known patterns such as swaps, transfers, mint,
-  and burn events
-
 ### 5.4 API and Delivery Components
 
 **Lambda — Rust/axum API handlers**
@@ -269,10 +261,6 @@ That split should remain stable even if the network layout expands later.
 - no separate S3 bucket or CloudFront distribution needed
 
 ### 5.5 Operational Components
-
-**EventBridge Scheduler**
-
-- drives scheduled background execution such as the Event Interpreter
 
 **Secrets Manager**
 

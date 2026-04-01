@@ -17,6 +17,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
+  - date: 2026-04-01
+    status: backlog
+    who: fmazur
+    note: 'Updated: event_interpretations enrichment deferred. Table exists but may be empty in milestone 1.'
 ---
 
 # Backend: Contracts module (detail, interface, invocations, events)
@@ -244,22 +248,22 @@ Soroban contracts are first-class explorer entities. The contracts module expose
 
 **Event item fields:**
 
-| Field              | Type           | Description                                                |
-| ------------------ | -------------- | ---------------------------------------------------------- |
-| `transaction_hash` | string         | Parent transaction hash                                    |
-| `event_type`       | string         | `contract`, `system`, or `diagnostic`                      |
-| `topics`           | array (JSONB)  | Decoded event topics                                       |
-| `data`             | object (JSONB) | Decoded event data                                         |
-| `ledger_sequence`  | number         | Ledger sequence                                            |
-| `created_at`       | string         | ISO 8601 timestamp                                         |
-| `interpretation`   | object or null | Human-readable interpretation (from event_interpretations) |
+| Field              | Type           | Description                                                                                               |
+| ------------------ | -------------- | --------------------------------------------------------------------------------------------------------- |
+| `transaction_hash` | string         | Parent transaction hash                                                                                   |
+| `event_type`       | string         | `contract`, `system`, or `diagnostic`                                                                     |
+| `topics`           | array (JSONB)  | Decoded event topics                                                                                      |
+| `data`             | object (JSONB) | Decoded event data                                                                                        |
+| `ledger_sequence`  | number         | Ledger sequence                                                                                           |
+| `created_at`       | string         | ISO 8601 timestamp                                                                                        |
+| `interpretation`   | object or null | Human-readable interpretation (LEFT JOIN event_interpretations — table may be empty, enrichment deferred) |
 
 ### Behavioral Requirements
 
 - Contract metadata served from `soroban_contracts` table
 - Interface data from `soroban_contracts.metadata` (extracted at ingestion)
 - Invocations from `soroban_invocations` table, joined with transactions for hash
-- Events from `soroban_events` table, joined with event_interpretations
+- Events from `soroban_events` table, LEFT JOINed with event_interpretations (table exists but may be empty in milestone 1 — enrichment deferred, no separate Event Interpreter Lambda; handle NULL gracefully)
 - Stats (invocation_count, event_count) computed as aggregate counts
 - Contract metadata cached in Lambda in-memory cache (30-60s)
 
@@ -300,7 +304,7 @@ Implement `GET /contracts/:contract_id/invocations` with cursor pagination from 
 
 ### Step 5: Events Endpoint
 
-Implement `GET /contracts/:contract_id/events` with cursor pagination from `soroban_events` table, joined with `event_interpretations`.
+Implement `GET /contracts/:contract_id/events` with cursor pagination from `soroban_events` table, LEFT JOINed with `event_interpretations` (table may be empty — handle NULL gracefully).
 
 ### Step 6: In-Memory Caching
 
@@ -314,7 +318,7 @@ Implement Lambda in-memory cache for contract metadata with 30-60s TTL.
 - [ ] `GET /v1/contracts/:contract_id/events` returns paginated events with interpretations
 - [ ] Stats include invocation_count and event_count
 - [ ] Interface data sourced from soroban_contracts.metadata
-- [ ] Events joined with event_interpretations for human-readable enrichment
+- [ ] Events LEFT JOINed with event_interpretations for human-readable enrichment (table exists but may be empty — enrichment deferred to post-milestone 1; handle NULL gracefully)
 - [ ] Contract metadata cached in Lambda in-memory cache (30-60s)
 - [ ] Standard pagination and error envelopes on all paginated endpoints
 - [ ] 404 for non-existent contracts
@@ -323,4 +327,4 @@ Implement Lambda in-memory cache for contract metadata with 30-60s TTL.
 
 - This is the most Soroban-specific module and the richest in terms of sub-endpoints.
 - Interface extraction happens at ingestion time; the API just reads from metadata.
-- Event interpretations are optional (null when no known pattern matches).
+- Event interpretations are optional (null when no known pattern matches). **Note:** The `event_interpretations` table exists in the DB schema but may be empty in milestone 1 (enrichment deferred — no separate Event Interpreter Lambda). If enrichment is needed later, it will be done inline in the indexer.

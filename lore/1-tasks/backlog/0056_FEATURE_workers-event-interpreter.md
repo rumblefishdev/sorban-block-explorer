@@ -17,6 +17,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated per ADR 0005: crates/workers/ → Rust crate (crates/workers/)'
+  - date: 2026-04-01
+    status: backlog
+    who: fmazur
+    note: 'Deferred: architecture simplified to 2 Lambdas (API + Indexer). Pipeline is Galexie → S3 → Indexer → PostgreSQL ← API ← Frontend. Enrichment may be added inline in indexer if needed. Separate Lambda revisit in milestone 2 if required.'
 ---
 
 # Workers: Event Interpreter Lambda
@@ -27,7 +31,7 @@ Implement a scheduled Lambda worker that runs every 5 minutes via EventBridge, r
 
 ## Status: Backlog
 
-**Current state:** Not started. Research task 0008 (event interpreter patterns) provides foundational knowledge. Database schema task 0018 defines the soroban_events and event_interpretations tables.
+**Deferred:** Architecture simplified to 2 Lambdas (API + Indexer). Pipeline is Galexie → S3 → Indexer → PostgreSQL ← API ← Frontend. Enrichment may be added inline in the indexer if needed. Revisit in milestone 2 if a separate Lambda is required.
 
 ## Context
 

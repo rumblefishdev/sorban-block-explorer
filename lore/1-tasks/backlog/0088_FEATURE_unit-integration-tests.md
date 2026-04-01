@@ -1,6 +1,6 @@
 ---
 id: '0088'
-title: 'Unit and integration tests: XDR parsing, API endpoints, event interpretation'
+title: 'Unit and integration tests: XDR parsing, API endpoints'
 type: FEATURE
 status: backlog
 related_adr: ['0005']
@@ -18,13 +18,17 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated per ADR 0005: NestJS test patterns → cargo test + tokio::test'
+  - date: 2026-04-01
+    status: backlog
+    who: fmazur
+    note: 'Updated: removed Event Interpreter test references. Enrichment deferred.'
 ---
 
-# Unit and integration tests: XDR parsing, API endpoints, event interpretation
+# Unit and integration tests: XDR parsing, API endpoints
 
 ## Summary
 
-Write unit tests for XDR parsing correctness, API endpoint responses, and event interpretation logic. Write integration tests covering the end-to-end pipeline: ingestion → database → API → frontend data. D3 acceptance criteria require test coverage across all three layers.
+Write unit tests for XDR parsing correctness and API endpoint responses. Write integration tests covering the end-to-end pipeline: Galexie → S3 → Indexer Lambda → PostgreSQL → API Lambda. D3 acceptance criteria require test coverage across both layers.
 
 ## Status: Backlog
 
@@ -32,7 +36,7 @@ Write unit tests for XDR parsing correctness, API endpoint responses, and event 
 
 ## Context
 
-D3 (§7.4) requires "Unit and integration tests covering XDR parsing correctness, API endpoint responses, and event interpretation logic." The effort breakdown (§7.1F) allocates: unit tests API — 8 days, unit tests XDR/ingestion — 7 days, integration tests e2e — 5 days (20 days total).
+D3 (§7.4) requires "Unit and integration tests covering XDR parsing correctness and API endpoint responses." The effort breakdown (§7.1F) allocates: unit tests API — 8 days, unit tests XDR/ingestion — 7 days, integration tests e2e — 5 days (20 days total). Event interpretation/enrichment tests are deferred (no separate Event Interpreter Lambda in current architecture).
 
 ## Implementation Plan
 
@@ -46,12 +50,11 @@ Test all axum handler/query module layers using `cargo test` and `tokio::test`: 
 
 ### Step 3: Integration tests — end-to-end (5 days)
 
-Test ingestion → API → response pipeline with real database using `tokio::test` and `sqlx::test`. Ingest known testnet ledgers, query API endpoints, verify data consistency.
+Test Galexie → S3 → Indexer → PostgreSQL → API pipeline with real database using `tokio::test` and `sqlx::test`. Ingest known testnet ledgers, query API endpoints, verify data consistency.
 
 ## Acceptance Criteria
 
 - [ ] XDR parsing tests cover all 4 parsing tasks (0024–0027)
 - [ ] API endpoint tests cover all feature modules (0045–0053)
-- [ ] Event interpretation tests verify human-readable summaries for known patterns
 - [ ] Integration tests verify ingestion → API data consistency
 - [ ] All tests pass in CI pipeline

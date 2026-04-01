@@ -505,8 +505,7 @@ expanding to multi-AZ when SLA requirements demand it.
 │  ┌─ Private Subnet ──────────────────────────────────────────────────────┐  │
 │  │        │                           ▼                                  │  │
 │  │        │                  Lambda (Rust/axum API)                       │  │
-│  │        │                  Lambda (Ledger Processor)                   │  │
-│  │        │                  Lambda (Event Interpreter)                  │  │
+│  │        │                  Lambda (Indexer / Ledger Processor)         │  │
 │  │        │                           │                                  │  │
 │  │        │              ┌────────────┴────────────┐                     │  │
 │  │        │              │ RDS PostgreSQL           │                     │  │
@@ -531,14 +530,13 @@ expanding to multi-AZ when SLA requirements demand it.
 | Historical backfill task        | ECS Fargate (batch, one-time)      | Processes history archives to backfill from Soroban mainnet activation |
 | S3 bucket `stellar-ledger-data` | AWS S3                             | Receives `LedgerCloseMeta` XDR files; triggers Ledger Processor        |
 | Lambda — Ledger Processor       | AWS Lambda (S3 event-driven)       | Parses XDR; writes explorer records and derived state to RDS           |
-| Lambda — Event Interpreter      | AWS Lambda (EventBridge, 5 min)    | Post-processes recent events to generate human-readable summaries      |
 | Lambda — Rust/axum API handlers | AWS Lambda (per API Gateway route) | Serves all public API requests                                         |
 | RDS PostgreSQL                  | AWS RDS (db.r6g.large, Single-AZ)  | Block explorer database                                                |
 | API Gateway                     | AWS API Gateway                    | REST API, throttling, request validation, response caching             |
 | AWS WAF                         | AWS WAF                            | Managed rules and abuse protection for public ingress                  |
 | CloudFront CDN                  | AWS CloudFront                     | Serves React frontend                                                  |
 | Swagger UI                      | utoipa-swagger-ui `/api-docs`      | OpenAPI spec + interactive documentation                               |
-| EventBridge Scheduler           | AWS EventBridge                    | Cron triggers for background workers                                   |
+| EventBridge Scheduler           | AWS EventBridge                    | Cron triggers for operational tasks (e.g. partition management)        |
 | Secrets Manager                 | AWS Secrets Manager                | DB credentials, non-browser integration keys                           |
 | CloudWatch + X-Ray              | AWS CloudWatch                     | Logs, metrics, alarms, distributed tracing                             |
 | CI/CD pipeline                  | GitHub Actions → AWS CDK           | Infrastructure-as-code deploy                                          |
@@ -711,10 +709,9 @@ Ledger Processor Lambda. No separate code path is required.
 
 ### 4.4 Background Workers
 
-| Worker                | Trigger                     | Role                                                                                                 |
-| --------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------- |
-| **Ledger Processor**  | S3 PutObject (~every 5–6 s) | Primary ingestion — parses XDR, writes all chain data to RDS                                         |
-| **Event Interpreter** | EventBridge rate(5 min)     | Post-processes new events to generate human-readable summaries (swap, transfer, mint, burn patterns) |
+| Worker               | Trigger                     | Role                                                         |
+| -------------------- | --------------------------- | ------------------------------------------------------------ |
+| **Ledger Processor** | S3 PutObject (~every 5–6 s) | Primary ingestion — parses XDR, writes all chain data to RDS |
 
 ### 4.5 Operational Characteristics
 
@@ -1087,7 +1084,6 @@ partitioned and are kept indefinitely.
 | Ledger Processor Lambda — XDR parse + DB write (ledgers, txs, ops, accounts, NFTs, pools) | 6      |
 | Ledger Processor — Soroban invocations + CAP-67 events extraction                         | 5      |
 | Ledger Processor — contract deployments + token/NFT/pool detection                        | 4      |
-| Event Interpreter Lambda — human-readable summaries                                       | 5      |
 | Backfill validation — gap detection, idempotency checks                                   | 3      |
 | Ingestion lag monitoring + alerting                                                       | 2      |
 | **Subtotal**                                                                              | **25** |

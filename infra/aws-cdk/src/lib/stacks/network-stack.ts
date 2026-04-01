@@ -72,11 +72,10 @@ export class NetworkStack extends cdk.Stack {
     // RDS SG and DB-related egress rules are in RdsStack to avoid
     // cross-stack cyclic references between Network and Storage.
 
-    // Lambda — API handler, Ledger Processor, Event Interpreter
+    // Lambda — API handler, Ledger Processor
     const lambdaSg = new ec2.SecurityGroup(this, 'LambdaSg', {
       vpc,
-      description:
-        'Lambda functions (API, Ledger Processor, Event Interpreter)',
+      description: 'Lambda functions (API, Ledger Processor)',
       allowAllOutbound: false,
     });
     // Outbound HTTPS to 0.0.0.0/0 — intentionally broad. Lambda needs access to
