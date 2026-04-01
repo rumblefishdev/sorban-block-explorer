@@ -124,13 +124,13 @@ All collection endpoints in the explorer API use cursor-based pagination with a 
 
 ### Step 1: Cursor encode/decode utilities
 
-**Location:** `crates/api/src/common/pagination/cursor.ts`
+**Location:** `crates/api/src/common/cursor.rs`
 
 Implement base64 cursor encode/decode functions. Internal cursor structure includes sort key values and tie-breaking ID. Decode validates structure and returns clear errors for malformed cursors.
 
 ### Step 2: Pagination query builder
 
-**Location:** `crates/api/src/common/pagination/paginate.ts`
+**Location:** `crates/api/src/common/pagination.rs`
 
 Create a reusable pagination function that accepts a sqlx query, applies cursor-based WHERE conditions, adds ORDER BY with tie-breaking, and fetches `limit + 1` to determine `has_more`. Returns standard response envelope.
 
@@ -146,33 +146,30 @@ Implement a filter parsing utility that extracts `filter[key]` query parameters,
 
 Create axum extractors with validation for `limit` and `cursor` parameters with proper error mapping to 400 responses.
 
-### Step 5: BaseCrudRepository
+### Step 5: CRUD trait + macro
 
-**Location:** `crates/api/src/common/base_crud.rs`
+**Location:** `crates/api/src/common/crud.rs`
 
-Generic abstract class that composes cursor pagination + sqlx query building:
+Rust trait `CrudResource` + `macro_rules! crud_routes` that composes cursor pagination + sqlx queries:
 
-- `getOne(id)` — single record by primary key
-- `getList(cursor, limit, filters?)` — cursor-paginated list using Step 2
-- `create(data)` — insert with `InferInsertModel<T>`
-- `update(id, data)` — partial update with `Partial<InferInsertModel<T>>`
-- `delete(id)` — delete by primary key
+- `get_one(id)` — single record by primary key via `sqlx::query_as`
+- `get_list(cursor, limit, filters?)` — cursor-paginated list using Step 2
+- Type-safe via `sqlx::FromRow` + `utoipa::ToSchema` derives
+- Per-resource modules implement the trait and add custom query methods
+- Note: API is read-only (data written by Ledger Processor), so create/update/delete not needed for explorer endpoints
 
-Type-safe via sqlx schema generics. Per-entity services extend and add custom methods.
+### Step 6: Route builder macro
 
-### Step 6: BaseRouter
+**Location:** `crates/api/src/common/crud.rs` (same file as Step 5)
 
-**Location:** `crates/api/src/common/base_router.rs`
+`crud_routes!` macro generates axum `Router` with read endpoints per resource:
 
-Generic abstract axum controller with full CRUD endpoints (all enabled by default, opt-out via `exclude` config):
+- `GET /` — list with cursor pagination (uses `CrudResource::get_list`)
+- `GET /{id}` — detail (uses `CrudResource::get_one`)
+- `#[utoipa::path]` annotations auto-generated per endpoint
+- Concrete paginated response type generated via Rust type alias (utoipa 5.x pattern)
 
-- `GET /` — list with cursor pagination (delegates to `service.getList`)
-- `GET /:id` — detail (delegates to `service.getOne`)
-- `POST /` — create (delegates to `service.create`)
-- `PATCH /:id` — update (delegates to `service.update`)
-- `DELETE /:id` — delete (delegates to `service.delete`)
-
-Per-entity controllers extend and configure via `exclude` to disable unneeded endpoints (e.g., most explorer modules exclude write operations). Uses validation extractors from Step 4.
+Per-resource modules invoke the macro and can add custom routes alongside generated ones.
 
 ### Step 7: Tests
 
@@ -191,18 +188,18 @@ Per-entity controllers extend and configure via `exclude` to disable unneeded en
 - [ ] Invalid cursors return 400 with descriptive error
 - [ ] `has_more` correctly determined by fetching limit+1
 - [ ] Filter parser handles all documented filter[key] patterns
-- [ ] `BaseCrudRepository<T>` provides getOne, getList, create, update, delete
-- [ ] `BaseRouter<T>` provides full CRUD endpoints with opt-out `exclude` config
-- [ ] Type safety via sqlx `InferSelectModel<T>` / `InferInsertModel<T>`
-- [ ] Reusable across collection endpoints (BaseCrudRepository for 0046-0052, pagination utilities for 0045-0053)
+- [ ] `CrudResource` trait provides `get_one`, `get_list` with compile-time checked sqlx queries
+- [ ] `crud_routes!` macro generates axum Router with `#[utoipa::path]` annotations
+- [ ] Type safety via `sqlx::FromRow` + `utoipa::ToSchema` derives
+- [ ] Reusable across collection endpoints (CrudResource trait for 0046-0052, pagination utilities for 0045-0053)
 - [ ] Unit tests for cursor and filter utilities
 - [ ] Integration test for BaseCrudRepository against local PostgreSQL
 
 ## Notes
 
 - Pagination utilities consumed by tasks 0045-0053 (all collection endpoints).
-- `BaseCrudRepository` consumed by tasks 0046-0052; task 0045 (network stats) has no pagination/CRUD needs.
+- `CrudResource` trait consumed by tasks 0046-0052; task 0045 (network stats) has no pagination/CRUD needs.
 - The cursor structure is an internal implementation detail and must never be documented as a public contract.
 - Filter keys vary per endpoint; the parser must be configurable per module.
-- Search module (0053) uses cursor pagination but not BaseCrudRepository — it has cross-entity query patterns.
-- All CRUD endpoints enabled by default; entity modules use `exclude` to disable write operations (block explorer is read-heavy).
+- Search module (0053) uses cursor pagination but not CrudResource — it has cross-entity query patterns.
+- Explorer API is read-only (data written by Ledger Processor) — no create/update/delete endpoints needed.

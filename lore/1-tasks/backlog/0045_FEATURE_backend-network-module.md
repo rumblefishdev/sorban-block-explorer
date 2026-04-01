@@ -108,7 +108,7 @@ The network stats endpoint is the primary source of top-level explorer summary i
 
 ### Step 1: Network Route + handler setup
 
-Create `crates/api/src/network/` with axum route module with handlers and query module. Register in AppModule.
+Create `crates/api/src/network/` with axum route module with handlers and query module. Register routes in the top-level `Router` in `crates/api/src/main.rs`.
 
 ### Step 2: Stats Query Implementation
 

@@ -37,7 +37,7 @@ Key architectural boundaries:
 
 - **Completely independent from the Ledger Processor**: does not share code paths, triggers, or data flow with the ingestion pipeline
 - **Reads from DB, not S3/XDR**: queries the soroban_events table for recently stored events
-- **Deployed separately**: lives in `apps/workers`, not `crates/indexer`
+- **Deployed separately**: lives in `crates/workers`, not `crates/indexer`
 - **Runs on timer, not ledger trigger**: EventBridge rate(5 minutes), not S3 event
 
 ### Source Code Location

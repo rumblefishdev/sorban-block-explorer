@@ -33,7 +33,7 @@ This document covers the target design of the backend application only. It does 
 infrastructure provisioning, ingestion implementation, or the full database schema beyond
 what is needed to explain backend behavior.
 
-The current Nx workspace already reserves the backend boundary as:
+The target workspace structure (per ADR 0005, tasks 0094/0095) reserves the backend boundary as:
 
 - `crates/api` - application entrypoint for the public REST API (Rust/axum)
 - `libs/domain` - shared explorer-domain types that may be reused by backend and frontend
