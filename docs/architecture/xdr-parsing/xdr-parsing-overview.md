@@ -185,8 +185,6 @@ This means:
 
 - the backend serves decoded event data directly
 - the frontend does not need raw event XDR for normal event rendering
-- event interpretation jobs can work from structured persisted events rather than reparsing
-  chain payloads repeatedly
 
 ### 5.2 Return Values
 

@@ -36,7 +36,7 @@ Write unit tests for XDR parsing correctness and API endpoint responses. Write i
 
 ## Context
 
-D3 (§7.4) requires "Unit and integration tests covering XDR parsing correctness and API endpoint responses." The effort breakdown (§7.1F) allocates: unit tests API — 8 days, unit tests XDR/ingestion — 7 days, integration tests e2e — 5 days (20 days total). Event interpretation/enrichment tests are deferred (no separate Event Interpreter Lambda in current architecture).
+D3 (§7.4) requires "Unit and integration tests covering XDR parsing correctness and API endpoint responses." The effort breakdown (§7.1F) allocates: unit tests API — 8 days, unit tests XDR/ingestion — 7 days, integration tests e2e — 5 days (20 days total).
 
 ## Implementation Plan
 

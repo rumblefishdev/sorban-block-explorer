@@ -140,7 +140,6 @@ Batching reduces round trips to RDS Proxy and improves throughput.
 Child cleanup relies on ON DELETE CASCADE from parent tables:
 
 - transactions -> operations, soroban_invocations, soroban_events
-- soroban_events -> event_interpretations
 - liquidity_pools -> liquidity_pool_snapshots
 
 The idempotent write layer must NOT use a delete-then-reinsert pattern. This would trigger cascade deletes of child rows. Instead, use INSERT ON CONFLICT DO NOTHING or guarded upserts.

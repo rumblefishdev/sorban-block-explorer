@@ -13,9 +13,6 @@
       "path": "./apps/web"
     },
     {
-      "path": "./apps/workers"
-    },
-    {
       "path": "./infra/aws-cdk"
     },
     {

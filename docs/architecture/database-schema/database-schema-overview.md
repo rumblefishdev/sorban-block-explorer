@@ -79,7 +79,6 @@ The current schema shape is centered around a small set of core explorer entitie
 - `operations` as transaction children for classic and mixed transaction inspection
 - `soroban_contracts`, `soroban_invocations`, and `soroban_events` as the Soroban-native
   contract activity model
-- `event_interpretations` as the human-readable enrichment layer for known patterns
 - `tokens`, `accounts`, `nfts`, and `liquidity_pools` as derived, query-oriented explorer
   entities built on indexed state
 
@@ -91,7 +90,6 @@ ledgers
        ├─ operations
        ├─ soroban_invocations
        └─ soroban_events
-            └─ event_interpretations
 
 soroban_contracts
   ├─ soroban_invocations
@@ -296,31 +294,7 @@ Design notes:
 - `event_type` distinguishes contract/system/diagnostic event classes
 - `idx_topics` exists to support query patterns based on event signatures or topic structure
 
-### 4.7 Event Interpretations
-
-```sql
-CREATE TABLE event_interpretations (
-    id                   BIGSERIAL PRIMARY KEY,
-    event_id             BIGINT REFERENCES soroban_events(id) ON DELETE CASCADE,
-    interpretation_type  VARCHAR(50) NOT NULL,  -- 'swap', 'transfer', 'mint', 'burn'
-    human_readable       TEXT NOT NULL,
-    structured_data      JSONB NOT NULL,
-    INDEX idx_type (interpretation_type)
-);
-```
-
-Purpose:
-
-- store human-readable enrichment derived from known event patterns
-- decouple low-level event persistence from higher-level explorer interpretation
-- support readable summaries without losing the original event payload
-
-Design notes:
-
-- this table represents enrichment, not canonical chain truth
-- `structured_data` keeps normalized interpretation payloads queryable and extensible
-
-### 4.8 Tokens
+### 4.7 Tokens
 
 ```sql
 CREATE TABLE tokens (
@@ -350,7 +324,7 @@ Design notes:
 - Soroban-backed tokens are uniquely identified by `contract_id`
 - `asset_type` is required because the same table serves multiple token classes
 
-### 4.9 Accounts
+### 4.8 Accounts
 
 ```sql
 CREATE TABLE accounts (
@@ -377,7 +351,7 @@ Design notes:
 - richer account-state persistence should be added explicitly only if the source document
   expands account functionality
 
-### 4.10 NFTs
+### 4.9 NFTs
 
 ```sql
 CREATE TABLE nfts (
@@ -410,7 +384,7 @@ Design notes:
 - NFT transfer history is primarily derived from stored events and linked transactions,
   not a separate canonical NFT-ledger table in the current baseline schema
 
-### 4.11 Liquidity Pools
+### 4.10 Liquidity Pools
 
 ```sql
 CREATE TABLE liquidity_pools (
@@ -441,7 +415,7 @@ Design notes:
 - pool transaction history is derived from transactions, operations, and Soroban events
   rather than a dedicated canonical pool-transactions table in the current baseline schema
 
-### 4.12 Liquidity Pool Snapshots
+### 4.11 Liquidity Pool Snapshots
 
 ```sql
 CREATE TABLE liquidity_pool_snapshots (
@@ -483,7 +457,6 @@ At a high level:
 - one ledger close produces one ledger record
 - each ledger produces many transaction records
 - each transaction may produce operations, contract invocations, and events
-- event interpretation runs as a later enrichment step over stored event data
 - derived explorer entities such as tokens, accounts, NFTs, and liquidity pools are updated
   from extracted state and known event patterns
 - liquidity pool snapshots are appended as time-series records for chart-oriented reads
@@ -493,7 +466,6 @@ At a high level:
 The schema models a parent-child structure where appropriate:
 
 - deleting a transaction should clean up dependent operations, invocations, and events
-- deleting a Soroban event should clean up its interpretation rows
 - contract-linked entities remain queryable through `contract_id` relationships
 
 ### 5.3 Public Lookup Keys vs Internal Keys
@@ -562,7 +534,6 @@ Write-side characteristics:
   transactions
 - batch insertion of child rows per processed ledger file with replay-safe replacement or
   de-duplication for the same ledger sequence
-- periodic enrichment writes into `event_interpretations`
 - derived-state upserts for entities such as `tokens`, `accounts`, `nfts`, and
   `liquidity_pools`, guarded by ledger-sequence watermarks so older batches cannot overwrite
   newer state
@@ -590,8 +561,7 @@ The design deliberately stores both raw and derived forms where needed:
   `transactions.result_meta_xdr`)
 - decoded, structured forms for normal explorer views (`operations.details`,
   `transactions.operation_tree`, `soroban_invocations`, `soroban_events`)
-- interpreted human-readable forms in `event_interpretations` and time-series derived forms
-  in `liquidity_pool_snapshots`
+- time-series derived forms in `liquidity_pool_snapshots`
 
 This is a core architectural choice, not accidental duplication.
 

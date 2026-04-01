@@ -297,9 +297,9 @@ The backend serves data from the block explorer's own database, adding:
 
 - **Data normalization** — transforms raw indexed records into a consistent,
   frontend-friendly format (e.g. flattening nested fields, attaching human-readable
-  operation summaries and event interpretations)
-- **Soroban enrichment** — decorates contract invocations with metadata, function names,
-  and structured interpretations stored at ingestion time
+  operation summaries)
+- **Soroban enrichment** — decorates contract invocations with metadata and function names
+  stored at ingestion time
 - **Search** — unified search across transaction hashes, account IDs, contract IDs, token
   identifiers, NFT identifiers, pool IDs, and indexed metadata using PostgreSQL full-text
   indexes
@@ -340,8 +340,7 @@ and advanced representations):
     {
       "type": "invoke_host_function",
       "contract_id": "CCAB...DEF",
-      "function_name": "swap",
-      "human_readable": "Swapped 100 USDC for 95.2 XLM on Soroswap"
+      "function_name": "swap"
     }
   ],
   "operation_tree": [...],
@@ -946,20 +945,7 @@ CREATE TABLE soroban_events (
 ) PARTITION BY RANGE (created_at);
 ```
 
-### 6.7 Event Interpretations
-
-```sql
-CREATE TABLE event_interpretations (
-    id                   BIGSERIAL PRIMARY KEY,
-    event_id             BIGINT REFERENCES soroban_events(id) ON DELETE CASCADE,
-    interpretation_type  VARCHAR(50) NOT NULL,  -- 'swap', 'transfer', 'mint', 'burn'
-    human_readable       TEXT NOT NULL,
-    structured_data      JSONB NOT NULL,
-    INDEX idx_type (interpretation_type)
-);
-```
-
-### 6.8 Tokens
+### 6.7 Tokens
 
 ```sql
 CREATE TABLE tokens (
@@ -977,7 +963,7 @@ CREATE TABLE tokens (
 );
 ```
 
-### 6.9 Accounts
+### 6.8 Accounts
 
 ```sql
 CREATE TABLE accounts (
@@ -991,7 +977,7 @@ CREATE TABLE accounts (
 );
 ```
 
-### 6.10 NFTs
+### 6.9 NFTs
 
 ```sql
 CREATE TABLE nfts (
@@ -1011,7 +997,7 @@ CREATE TABLE nfts (
 );
 ```
 
-### 6.11 Liquidity Pools
+### 6.10 Liquidity Pools
 
 ```sql
 CREATE TABLE liquidity_pools (
@@ -1028,7 +1014,7 @@ CREATE TABLE liquidity_pools (
 );
 ```
 
-### 6.12 Liquidity Pool Snapshots
+### 6.11 Liquidity Pool Snapshots
 
 ```sql
 CREATE TABLE liquidity_pool_snapshots (
@@ -1045,7 +1031,7 @@ CREATE TABLE liquidity_pool_snapshots (
 ) PARTITION BY RANGE (created_at);
 ```
 
-### 6.13 Partitioning and Retention
+### 6.12 Partitioning and Retention
 
 Tables `soroban_invocations`, `soroban_events`, and `liquidity_pool_snapshots` are
 partitioned by month using native PostgreSQL range partitioning. The `operations` table is
@@ -1219,9 +1205,8 @@ infrastructure-as-code. CI/CD pipeline. CloudWatch dashboards and ingestion lag 
 
 All REST API endpoints live and serving mainnet data: transactions (list + detail),
 ledgers (list + detail), accounts (detail + history), contracts (detail + invocations +
-events), tokens, NFTs, liquidity pools, search (exact match + prefix). Human-readable
-event interpretation for known patterns (swaps, transfers, mints) on transaction detail
-pages. React SPA deployed via CloudFront with all pages. Rate limiting and response
+events), tokens, NFTs, liquidity pools, search (exact match + prefix). React SPA deployed
+via CloudFront with all pages. Rate limiting and response
 caching configured on API Gateway.
 
 **Acceptance criteria:**
@@ -1243,7 +1228,7 @@ caching configured on API Gateway.
 #### Deliverable 3 — Mainnet Launch
 
 Production deployment on mainnet at public URL. Unit and integration tests covering XDR
-parsing correctness, API endpoint responses, and event interpretation logic. Load test
+parsing correctness and API endpoint responses. Load test
 results documented (1M baseline, 10M stress). Security audit checklist (OWASP Top 10,
 IAM least-privilege, no public RDS endpoint). Monitoring dashboards and alerting active
 and accessible to Stellar team. Full API reference documentation published. GitHub
@@ -1280,6 +1265,3 @@ report.
 - **NFT and Liquidity Pool data** — Stellar's NFT ecosystem is nascent; LP chart data
   requires aggregation. Mitigated by building these pages last; graceful empty states
   designed from the start.
-- **Event interpretation coverage** — human-readable summaries rely on heuristics per
-  known protocol (Soroswap, Aquarius, Phoenix). Unknown contracts will show raw decoded
-  event data. Coverage expands incrementally as new protocols are identified.
