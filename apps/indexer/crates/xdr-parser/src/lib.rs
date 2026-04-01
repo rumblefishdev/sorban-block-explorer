@@ -8,18 +8,21 @@
 pub mod error;
 pub mod ledger;
 pub mod memo;
+pub mod operation;
 pub mod scval;
 pub mod transaction;
 pub mod types;
 
-mod envelope;
+pub(crate) mod envelope;
 mod xdr_limits;
 
+pub use envelope::InnerTxRef;
 pub use error::{ParseError, ParseErrorKind};
 pub use ledger::extract_ledger;
+pub use operation::extract_operations;
 pub use transaction::extract_transactions;
 pub use scval::scval_to_typed_json;
-pub use types::{ExtractedLedger, ExtractedTransaction};
+pub use types::{ExtractedLedger, ExtractedOperation, ExtractedTransaction};
 
 use stellar_xdr::curr::{LedgerCloseMetaBatch, ReadXdr};
 

@@ -51,3 +51,19 @@ pub struct ExtractedTransaction {
     /// True if XDR parsing failed for this transaction.
     pub parse_error: bool,
 }
+
+/// Extracted operation data, maps to the `operations` table.
+#[derive(Debug, Clone)]
+pub struct ExtractedOperation {
+    /// Parent transaction hash, hex-encoded (64 chars). Used to resolve the
+    /// surrogate `transaction_id` FK at persistence time.
+    pub transaction_hash: String,
+    /// Zero-based index of this operation within the transaction.
+    pub operation_index: u32,
+    /// Operation type string (e.g., "INVOKE_HOST_FUNCTION", "PAYMENT").
+    pub op_type: String,
+    /// Source account override, if different from the transaction source.
+    pub source_account: Option<String>,
+    /// Type-specific details as a JSON value, stored as JSONB in PostgreSQL.
+    pub details: serde_json::Value,
+}

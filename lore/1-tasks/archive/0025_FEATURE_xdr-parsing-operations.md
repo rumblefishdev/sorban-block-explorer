@@ -2,9 +2,9 @@
 id: '0025'
 title: 'XDR parsing: operation extraction and INVOKE_HOST_FUNCTION details'
 type: FEATURE
-status: active
-related_adr: ['0004']
-related_tasks: ['0002', '0024', '0017']
+status: completed
+related_adr: ['0004', '0005']
+related_tasks: ['0002', '0024', '0017', '0092']
 tags: [priority-high, effort-medium, layer-indexing, rust]
 milestone: 1
 links: []
@@ -21,6 +21,21 @@ history:
     status: backlog
     who: fmazur
     note: 'Scope changed to Rust-only per ADR 0004.'
+  - date: 2026-04-01
+    status: completed
+    who: FilipDz
+    note: >
+      Rust operation extraction in xdr-parser crate (operation.rs, ~420 LOC).
+      All 27 OperationBody variants with type-specific JSONB details.
+      INVOKE_HOST_FUNCTION: contractId, functionName, functionArgs (ScVal decoded),
+      returnValue from SorobanTransactionMeta (V3/V4). Also handles CreateContract,
+      UploadContractWasm, CreateContractV2 host function types.
+      ExtractedOperation carries transaction_hash for FK resolution at persistence.
+      SetOptions emits only present fields (sparse JSONB).
+      11 unit tests covering classic ops, Soroban invocations, ordering, edge cases.
+      Review fixes: transaction_hash FK field, signer key value (was discriminant),
+      safe u32 cast, envelope module kept pub(crate).
+      "Unknown op type" AC N/A — Rust exhaustive match enforces compile-time safety.
 ---
 
 # XDR parsing: operation extraction and INVOKE_HOST_FUNCTION details
@@ -29,9 +44,9 @@ history:
 
 Implement operation-level extraction from parsed transactions, handling all Stellar operation types with special attention to INVOKE_HOST_FUNCTION. Each operation is stored with its type and a JSONB details payload. For Soroban host function invocations, the parser additionally extracts contractId, functionName, functionArgs (ScVal decoded), and returnValue (ScVal decoded). Operations are written to the partitioned operations table.
 
-## Status: Backlog
+## Status: Completed
 
-**Current state:** Not started. Depends on task 0024 (LedgerCloseMeta deserialization) for parsed transaction data and task 0017 (operations table schema).
+**Current state:** Implemented. See `apps/indexer/crates/xdr-parser/src/operation.rs`.
 
 ## Context
 
@@ -47,7 +62,7 @@ This task writes to `operations.details` JSONB only. The `soroban_invocations` r
 
 ### Source Code Location
 
-- `apps/indexer/src/parsers/operations/`
+- `apps/indexer/crates/xdr-parser/src/operation.rs`
 
 ## Implementation Plan
 
