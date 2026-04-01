@@ -75,7 +75,8 @@ export class NetworkStack extends cdk.Stack {
     // Lambda — API handler, Ledger Processor
     const lambdaSg = new ec2.SecurityGroup(this, 'LambdaSg', {
       vpc,
-      description: 'Lambda functions (API, Ledger Processor)',
+      description:
+        'Lambda functions (API, Ledger Processor, Event Interpreter)',
       allowAllOutbound: false,
     });
     // Outbound HTTPS to 0.0.0.0/0 — intentionally broad. Lambda needs access to

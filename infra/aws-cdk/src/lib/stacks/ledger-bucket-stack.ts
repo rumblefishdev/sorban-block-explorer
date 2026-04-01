@@ -14,8 +14,8 @@ export interface LedgerBucketStackProps extends cdk.StackProps {
  * No lifecycle rules — files retained indefinitely.
  * Lifecycle can be added later if storage costs become a concern.
  *
- * S3 event notification for Ledger Processor Lambda will be configured
- * in the IndexerStack (task 0033) when the Lambda is created.
+ * S3 event notification for Ledger Processor Lambda is configured
+ * in ComputeStack (task 0099) via fromBucketAttributes import.
  */
 export class LedgerBucketStack extends cdk.Stack {
   readonly bucket: s3.IBucket;
