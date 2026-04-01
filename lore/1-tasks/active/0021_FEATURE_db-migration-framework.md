@@ -2,7 +2,7 @@
 id: '0021'
 title: 'Database migration framework'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0005']
 related_tasks: ['0015', '0031', '0092']
 tags: [priority-high, effort-medium, layer-database]
@@ -17,6 +17,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Rewritten per ADR 0005 + research 0092: Drizzle Kit → sqlx migration framework'
+  - date: 2026-04-01
+    status: active
+    who: stkrolikiewicz
+    note: 'Activated for implementation'
 ---
 
 # Database migration framework
