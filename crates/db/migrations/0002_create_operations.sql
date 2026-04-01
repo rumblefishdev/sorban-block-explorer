@@ -15,3 +15,6 @@ CREATE INDEX idx_operations_details ON operations USING GIN (details);
 
 CREATE TABLE operations_p0 PARTITION OF operations
     FOR VALUES FROM (0) TO (10000000);
+
+CREATE TABLE operations_default PARTITION OF operations
+    DEFAULT;
