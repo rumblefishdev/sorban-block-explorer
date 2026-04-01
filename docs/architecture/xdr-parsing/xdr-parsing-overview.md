@@ -61,7 +61,7 @@ purpose is to feed the explorer's own storage and read paths.
 > Per ADR 0004: Rust-only XDR parsing — all decode happens at ingestion time. No TS on-demand decode in the API.
 
 All XDR parsing happens exclusively in the Rust Ledger Processor Lambda at ingestion time.
-The NestJS API is pure CRUD — it reads pre-materialized data from PostgreSQL.
+The REST API is pure CRUD — it reads pre-materialized data from PostgreSQL.
 
 Every ledger's `LedgerCloseMeta` is fully deserialized in the Ledger Processor Lambda using
 `stellar-xdr` (Rust).
@@ -310,7 +310,7 @@ Responsibility should remain split clearly:
 
 - ingestion (Rust) owns canonical decode and materialization — single parser, single language
 - the database schema owns persistence of raw and structured decode outputs
-- the backend (NestJS) owns request-time normalization and raw XDR passthrough — no server-side decode (per ADR 0004)
+- the backend (axum) owns request-time normalization and raw XDR passthrough — no server-side decode (per ADR 0004)
 - the frontend consumes pre-materialized data and does not own normal XDR parsing
 
 ### 8.2 Current Workspace State

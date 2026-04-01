@@ -3,8 +3,8 @@ id: '0029'
 title: 'Indexer: Ledger Processor Lambda handler'
 type: FEATURE
 status: backlog
-related_adr: ['0004']
-related_tasks: ['0024', '0025', '0026', '0027', '0028']
+related_adr: ['0004', '0005']
+related_tasks: ['0024', '0025', '0026', '0027', '0028', '0092']
 tags: [priority-high, effort-medium, layer-indexing, rust]
 milestone: 1
 links:
@@ -14,6 +14,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-31
+    status: backlog
+    who: stkrolikiewicz
+    note: 'Updated per ADR 0005: apps/indexer/ → crates/indexer/'
 ---
 
 # Indexer: Ledger Processor Lambda handler
@@ -50,7 +54,7 @@ No hidden dependencies on internal services or external explorer APIs. The entir
 
 ### Source Code Location
 
-- `apps/indexer/src/handler/`
+- `crates/indexer/src/handler/`
 
 ## Implementation Plan
 

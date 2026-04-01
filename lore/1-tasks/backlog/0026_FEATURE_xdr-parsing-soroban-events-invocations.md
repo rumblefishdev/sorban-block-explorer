@@ -56,7 +56,7 @@ All inserts must target the correct partition.
 
 ### Source Code Location
 
-- `apps/indexer/src/parsers/soroban/`
+- `crates/indexer/src/parsers/soroban/`
 
 ## Implementation Plan
 

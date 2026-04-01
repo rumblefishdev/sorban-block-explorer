@@ -2,9 +2,10 @@
 id: '0091'
 title: 'Local dev: NestJS API local entrypoint and dev workflow'
 type: FEATURE
-status: backlog
-related_adr: []
-related_tasks: ['0023', '0016', '0045', '0038']
+status: canceled
+reason: obsolete
+related_adr: ['0005']
+related_tasks: ['0023', '0016', '0045', '0038', '0092']
 tags: [priority-medium, effort-small, layer-backend]
 milestone: 2
 links: []
@@ -13,6 +14,10 @@ history:
     status: backlog
     who: FilipDz
     note: 'Spawned from 0023 discussion - team needs local dev workflow for NestJS API'
+  - date: 2026-03-31
+    status: canceled
+    who: stkrolikiewicz
+    note: 'Obsolete per ADR 0005: NestJS local entrypoint replaced by cargo lambda watch for Rust backend'
 ---
 
 # Local dev: NestJS API local entrypoint and dev workflow

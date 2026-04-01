@@ -7,7 +7,7 @@
 
 A production-grade, Soroban-first block explorer for the Stellar network. The system
 prioritizes **human-readable transaction display** and first-class Soroban smart contract
-support. The frontend communicates exclusively with a custom NestJS REST API, which sources
+support. The frontend communicates exclusively with a custom Rust/axum REST API (per ADR 0005), which sources
 chain data from the block explorer's own PostgreSQL database — populated by a Galexie-based
 ingestion pipeline that processes `LedgerCloseMeta` XDR directly from the Stellar network.
 
@@ -264,15 +264,15 @@ Present across all pages:
 
 ### 2.1 Architecture
 
-The backend is a NestJS application running on AWS Lambda behind API Gateway. It is a
+The backend is a Rust application (axum + sqlx + utoipa, per ADR 0005) running on AWS Lambda behind API Gateway. It is a
 REST API. The backend does not perform chain indexing; it reads from the block explorer's
 own PostgreSQL database, which is populated by the Galexie-based ingestion pipeline.
 
 ```
 ┌──────────┐    HTTPS    ┌─────────────┐              ┌──────────────────────┐
-│  Client  │────────────>│ API Gateway │─────────────>│  Lambda (NestJS)     │
+│  Client  │────────────>│ API Gateway │─────────────>│  Lambda (Rust/axum)  │
 └──────────┘             └─────────────┘              │                      │
-                                                      │  NestJS Modules:     │
+                                                      │  axum Modules:       │
                                                       │  ├─ Network ─────────┤
                                                       │  ├─ Transactions ────┤
                                                       │  ├─ Ledgers ─────────┤
@@ -474,7 +474,7 @@ Caching operates at two levels:
 │                             │                                                 │
 │  API LAYER                  │                                                 │
 │  ┌──────────────────────────▼──────────┐  ┌────────────────────────────────┐  │
-│  │ API Gateway → Lambda (NestJS)       │  │ CloudFront CDN                 │  │
+│  │ API Gateway → Lambda (Rust/axum)    │  │ CloudFront CDN                 │  │
 │  │ REST, throttling, WAF               │  │ React SPA + static assets      │  │
 │  └─────────────────────────────────────┘  └────────────────────────────────┘  │
 └───────────────────────────────────────────────────────────────────────────────┘
@@ -485,8 +485,8 @@ Connections:
   Galexie → S3 (LedgerCloseMeta XDR files)
   S3 PutObject event → Lambda Ledger Processor
   Lambda Ledger Processor → RDS (write)
-  Lambda NestJS API → RDS (read)
-  React SPA → API Gateway → Lambda NestJS API
+  Lambda Rust/axum API → RDS (read)
+  React SPA → API Gateway → Lambda Rust/axum API
 ```
 
 ### 3.2 Deployment Model
@@ -504,7 +504,7 @@ expanding to multi-AZ when SLA requirements demand it.
 │           │                           │                                     │
 │  ┌─ Private Subnet ──────────────────────────────────────────────────────┐  │
 │  │        │                           ▼                                  │  │
-│  │        │                  Lambda (NestJS API)                         │  │
+│  │        │                  Lambda (Rust/axum API)                       │  │
 │  │        │                  Lambda (Ledger Processor)                   │  │
 │  │        │                  Lambda (Event Interpreter)                  │  │
 │  │        │                           │                                  │  │
@@ -532,12 +532,12 @@ expanding to multi-AZ when SLA requirements demand it.
 | S3 bucket `stellar-ledger-data` | AWS S3                             | Receives `LedgerCloseMeta` XDR files; triggers Ledger Processor        |
 | Lambda — Ledger Processor       | AWS Lambda (S3 event-driven)       | Parses XDR; writes explorer records and derived state to RDS           |
 | Lambda — Event Interpreter      | AWS Lambda (EventBridge, 5 min)    | Post-processes recent events to generate human-readable summaries      |
-| Lambda — NestJS API handlers    | AWS Lambda (per API Gateway route) | Serves all public API requests                                         |
+| Lambda — Rust/axum API handlers | AWS Lambda (per API Gateway route) | Serves all public API requests                                         |
 | RDS PostgreSQL                  | AWS RDS (db.r6g.large, Single-AZ)  | Block explorer database                                                |
 | API Gateway                     | AWS API Gateway                    | REST API, throttling, request validation, response caching             |
 | AWS WAF                         | AWS WAF                            | Managed rules and abuse protection for public ingress                  |
 | CloudFront CDN                  | AWS CloudFront                     | Serves React frontend                                                  |
-| Swagger UI                      | NestJS `/api-docs` endpoint        | OpenAPI spec + interactive documentation                               |
+| Swagger UI                      | utoipa-swagger-ui `/api-docs`      | OpenAPI spec + interactive documentation                               |
 | EventBridge Scheduler           | AWS EventBridge                    | Cron triggers for background workers                                   |
 | Secrets Manager                 | AWS Secrets Manager                | DB credentials, non-browser integration keys                           |
 | CloudWatch + X-Ray              | AWS CloudWatch                     | Logs, metrics, alarms, distributed tracing                             |
@@ -561,21 +561,21 @@ browsing.
 
 ### 3.4 Tech Stack
 
-| Component     | Technology                       | Purpose                                                   |
-| ------------- | -------------------------------- | --------------------------------------------------------- |
-| Ingestion     | Galexie (ECS Fargate)            | Streams `LedgerCloseMeta` XDR from Stellar network to S3  |
-| XDR parsing   | `@stellar/stellar-sdk` (Node.js) | Deserializes all XDR types in Ledger Processor Lambda     |
-| API Framework | NestJS / TypeScript              | Modular REST API                                          |
-| Compute       | AWS Lambda (ARM/Graviton2)       | Serverless; auto-scaling                                  |
-| Gateway       | AWS API Gateway                  | Request routing, throttling, validation, response caching |
-| Edge Security | AWS WAF                          | Managed rules, IP reputation, abuse protection            |
-| Database      | RDS PostgreSQL 16                | Block explorer schema with native range partitioning      |
-| CDN           | CloudFront                       | Static asset delivery for frontend                        |
-| DNS           | Route 53                         | Domain management                                         |
-| Monitoring    | CloudWatch + X-Ray               | Logging, distributed tracing, alarms                      |
-| Secrets       | Secrets Manager                  | Database credentials, non-browser integration keys        |
-| IaC           | AWS CDK (TypeScript)             | All infrastructure defined as code                        |
-| CI/CD         | GitHub Actions → `cdk deploy`    | Automated deployment on merge to main                     |
+| Component     | Technology                    | Purpose                                                   |
+| ------------- | ----------------------------- | --------------------------------------------------------- |
+| Ingestion     | Galexie (ECS Fargate)         | Streams `LedgerCloseMeta` XDR from Stellar network to S3  |
+| XDR parsing   | `stellar-xdr` crate (Rust)    | Deserializes all XDR types in Ledger Processor Lambda     |
+| API Framework | axum / Rust (per ADR 0005)    | Modular REST API with utoipa OpenAPI                      |
+| Compute       | AWS Lambda (ARM/Graviton2)    | Serverless; auto-scaling                                  |
+| Gateway       | AWS API Gateway               | Request routing, throttling, validation, response caching |
+| Edge Security | AWS WAF                       | Managed rules, IP reputation, abuse protection            |
+| Database      | RDS PostgreSQL 16             | Block explorer schema with native range partitioning      |
+| CDN           | CloudFront                    | Static asset delivery for frontend                        |
+| DNS           | Route 53                      | Domain management                                         |
+| Monitoring    | CloudWatch + X-Ray            | Logging, distributed tracing, alarms                      |
+| Secrets       | Secrets Manager               | Database credentials, non-browser integration keys        |
+| IaC           | AWS CDK (TypeScript)          | All infrastructure defined as code                        |
+| CI/CD         | GitHub Actions → `cdk deploy` | Automated deployment on merge to main                     |
 
 ### 3.5 Environments
 
@@ -768,7 +768,7 @@ XDR parsing happens in two places:
   Structured results are written to RDS. The frontend receives pre-decoded data for all
   normal operations.
 
-- **NestJS API (on request):** the raw `envelope_xdr`, `result_xdr`, and `result_meta_xdr`
+- **REST API (on request):** the raw `envelope_xdr`, `result_xdr`, and `result_meta_xdr`
   strings are stored verbatim in RDS. The API returns `envelope_xdr` and `result_xdr` to
   the frontend for the advanced view, and can decode all three on request using
   `@stellar/stellar-sdk` to serve additional structured fields or validate the stored
@@ -1067,18 +1067,18 @@ partitioned and are kept indefinitely.
 
 #### B. AWS Architecture + Galexie Infrastructure
 
-| Task                                                      | Days   |
-| --------------------------------------------------------- | ------ |
-| VPC, subnets, security groups, IAM roles (CDK)            | 4      |
-| ECS Fargate cluster + Galexie task definition + S3 bucket | 5      |
-| Galexie configuration and testnet validation              | 3      |
-| Lambda + API Gateway setup (NestJS deployment pipeline)   | 4      |
-| CloudFront CDN + Route 53 + TLS                           | 1      |
-| Secrets Manager, CloudWatch dashboards, X-Ray             | 2      |
-| Historical backfill ECS task + monitoring                 | 5      |
-| CI/CD pipeline (GitHub Actions → CDK)                     | 4      |
-| Staging + production environment parity                   | 4      |
-| **Subtotal**                                              | **32** |
+| Task                                                              | Days   |
+| ----------------------------------------------------------------- | ------ |
+| VPC, subnets, security groups, IAM roles (CDK)                    | 4      |
+| ECS Fargate cluster + Galexie task definition + S3 bucket         | 5      |
+| Galexie configuration and testnet validation                      | 3      |
+| Lambda + API Gateway setup (Rust deployment via cargo-lambda-cdk) | 4      |
+| CloudFront CDN + Route 53 + TLS                                   | 1      |
+| Secrets Manager, CloudWatch dashboards, X-Ray                     | 2      |
+| Historical backfill ECS task + monitoring                         | 5      |
+| CI/CD pipeline (GitHub Actions → CDK)                             | 4      |
+| Staging + production environment parity                           | 4      |
+| **Subtotal**                                                      | **32** |
 
 #### C. Data Ingestion Pipeline
 
@@ -1092,11 +1092,11 @@ partitioned and are kept indefinitely.
 | Ingestion lag monitoring + alerting                                                       | 2      |
 | **Subtotal**                                                                              | **25** |
 
-#### D. Core API Endpoints (NestJS)
+#### D. Core API Endpoints (axum)
 
 | Task                                                             | Days   |
 | ---------------------------------------------------------------- | ------ |
-| NestJS project scaffolding, module structure, Drizzle ORM setup  | 3      |
+| Rust API scaffolding (axum + utoipa), sqlx setup                 | 3      |
 | Network stats endpoint                                           | 1      |
 | Transactions endpoints (list + detail + operation tree)          | 9      |
 | Ledgers endpoints (list + detail)                                | 3      |
@@ -1141,7 +1141,7 @@ partitioned and are kept indefinitely.
 
 | Task                                                        | Days   |
 | ----------------------------------------------------------- | ------ |
-| Unit tests — API endpoints (NestJS)                         | 8      |
+| Unit tests — API endpoints (cargo test)                     | 8      |
 | Unit tests — XDR parsing + ingestion correctness            | 7      |
 | Integration tests — end-to-end (ingestion → API → frontend) | 5      |
 | Load testing (1M baseline scenario)                         | 4      |
@@ -1200,7 +1200,7 @@ Galexie ECS Fargate task running on mainnet, writing `LedgerCloseMeta` XDR files
 every ~5–6 seconds. Lambda Ledger Processor triggered per file, parsing and writing
 ledgers, transactions, operations, accounts, Soroban invocations, and CAP-67 events to a
 dedicated RDS PostgreSQL database. Historical backfill from Soroban mainnet activation ledger
-(late 2023). NestJS API scaffolding with core modules. OpenAPI specification. AWS CDK
+(late 2023). Rust API scaffolding with core modules (axum + utoipa). OpenAPI specification. AWS CDK
 infrastructure-as-code. CI/CD pipeline. CloudWatch dashboards and ingestion lag alarms.
 
 **Acceptance criteria:**

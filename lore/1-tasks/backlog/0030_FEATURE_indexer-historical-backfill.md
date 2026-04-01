@@ -3,8 +3,8 @@ id: '0030'
 title: 'Indexer: historical backfill Fargate task'
 type: FEATURE
 status: backlog
-related_adr: []
-related_tasks: ['0001', '0029', '0028']
+related_adr: ['0005']
+related_tasks: ['0001', '0029', '0028', '0092']
 tags: [priority-medium, effort-medium, layer-indexing]
 milestone: 1
 links:
@@ -14,6 +14,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-31
+    status: backlog
+    who: stkrolikiewicz
+    note: 'Updated per ADR 0005: apps/indexer/ → crates/indexer/'
 ---
 
 # Indexer: historical backfill Fargate task
@@ -36,7 +40,7 @@ Live-derived state remains authoritative for the newest ledgers. Backfill data m
 
 ### Source Code Location
 
-- `apps/indexer/src/backfill/`
+- `crates/indexer/src/backfill/`
 
 ## Implementation Plan
 

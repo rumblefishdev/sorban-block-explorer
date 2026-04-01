@@ -3,8 +3,8 @@ id: '0019'
 title: 'DB schema: tokens and accounts tables'
 type: FEATURE
 status: backlog
-related_adr: []
-related_tasks: ['0011', '0015']
+related_adr: ['0005']
+related_tasks: ['0011', '0015', '0092']
 tags: [priority-medium, effort-small, layer-database]
 milestone: 1
 links: []
@@ -13,13 +13,17 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-31
+    status: backlog
+    who: stkrolikiewicz
+    note: 'Updated per ADR 0005 + research 0092: plain SQL migrations instead of Drizzle ORM'
 ---
 
 # DB schema: tokens and accounts tables
 
 ## Summary
 
-Implement the Drizzle ORM schema definitions and SQL DDL for the `tokens` and `accounts` tables. These are derived, query-oriented explorer entities that unify classic Stellar assets with Soroban token contracts and provide account summary data for explorer views.
+Implement the SQL DDL for the `tokens` and `accounts` tables. These are derived, query-oriented explorer entities that unify classic Stellar assets with Soroban token contracts and provide account summary data for explorer views.
 
 ## Status: Backlog
 
@@ -98,17 +102,19 @@ This pattern is critical for correctness when live ingestion and historical back
 
 ## Implementation Plan
 
-### Step 1: Drizzle schema for tokens
+> **Migration approach:** Plain SQL (per ADR 0005). Run via psql or sqlx migrate run.
+
+### Step 1: SQL DDL for tokens
 
 Define the table with all columns, CHECK constraint on asset_type, FK to soroban_contracts, and both UNIQUE constraints.
 
-### Step 2: Drizzle schema for accounts
+### Step 2: SQL DDL for accounts
 
 Define the table with all columns, two FKs to ledgers(sequence), JSONB default for balances, and the last_seen_ledger DESC index.
 
 ### Step 3: Generate migration
 
-Use Drizzle Kit to generate the migration file. Verify CHECK constraint and UNIQUE constraints are correctly represented.
+Write plain SQL migration file. Apply via `psql` or `sqlx migrate run`. Verify CHECK constraint and UNIQUE constraints are correctly represented.
 
 ### Step 4: Validate unique constraints
 
@@ -124,10 +130,10 @@ Implement and test the upsert logic that respects ledger-sequence watermarks, en
 
 ## Acceptance Criteria
 
-- [ ] Drizzle schema for tokens matches DDL with CHECK constraint on asset_type
+- [ ] SQL DDL for tokens matches DDL with CHECK constraint on asset_type
 - [ ] Both UNIQUE constraints (asset_code+issuer_address and contract_id) are enforced
 - [ ] FK from tokens.contract_id to soroban_contracts.contract_id is defined
-- [ ] Drizzle schema for accounts matches DDL with two FKs to ledgers
+- [ ] SQL DDL for accounts matches DDL with two FKs to ledgers
 - [ ] balances column defaults to '[]'::jsonb
 - [ ] idx_last_seen index is created on accounts.last_seen_ledger DESC
 - [ ] Watermark-guarded upsert logic prevents older data from overwriting newer state

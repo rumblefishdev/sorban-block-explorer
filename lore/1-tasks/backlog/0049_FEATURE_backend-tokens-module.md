@@ -3,8 +3,8 @@ id: '0049'
 title: 'Backend: Tokens module (list + detail + transactions)'
 type: FEATURE
 status: backlog
-related_adr: []
-related_tasks: ['0023', '0043']
+related_adr: ['0005']
+related_tasks: ['0023', '0043', '0092']
 tags: [layer-backend, tokens, assets]
 milestone: 2
 links: []
@@ -13,6 +13,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-31
+    status: backlog
+    who: stkrolikiewicz
+    note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
 ---
 
 # Backend: Tokens module (list + detail + transactions)
@@ -20,6 +24,8 @@ history:
 ## Summary
 
 Implement the Tokens module providing paginated token listing with type/code filters, token detail, and token-related transaction history. The module must unify classic Stellar assets and Soroban token contracts through a single API while preserving identity distinctions between them.
+
+> **Stack:** axum 0.8 + utoipa 5.4 + sqlx 0.8 (per ADR 0005). Code in crates/api/.
 
 ## Status: Backlog
 
@@ -31,7 +37,7 @@ The explorer serves both classic Stellar assets and Soroban-based tokens through
 
 ### API Specification
 
-**Location:** `apps/api/src/tokens/`
+**Location:** `crates/api/src/tokens/`
 
 ---
 
@@ -188,9 +194,9 @@ The explorer serves both classic Stellar assets and Soroban-based tokens through
 
 ## Implementation Plan
 
-### Step 1: Module Scaffolding
+### Step 1: Route + handler setup
 
-Create `apps/api/src/tokens/` with module, controller, service, and DTOs.
+Create `crates/api/src/tokens/` with module, controller, service, and request/response types (ToSchema).
 
 ### Step 2: Token ID Resolution
 

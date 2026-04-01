@@ -3,8 +3,8 @@ id: '0054'
 title: 'Backend: in-memory caching in Lambda execution environment'
 type: FEATURE
 status: backlog
-related_adr: []
-related_tasks: ['0023']
+related_adr: ['0005']
+related_tasks: ['0023', '0092']
 tags: [layer-backend, caching, lambda, performance]
 milestone: 2
 links: []
@@ -13,6 +13,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-31
+    status: backlog
+    who: stkrolikiewicz
+    note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
 ---
 
 # Backend: in-memory caching in Lambda execution environment
@@ -21,9 +25,11 @@ history:
 
 Implement in-memory caching in the Lambda execution environment for two specific cache targets: network stats and frequently accessed contract metadata. This cache uses module-level variables that persist across warm Lambda invocations with 30-60s TTL. No shared cache across instances. No ElastiCache in the initial architecture.
 
+> **Stack:** axum 0.8 + utoipa 5.4 + sqlx 0.8 (per ADR 0005). Code in crates/api/.
+
 ## Status: Backlog
 
-**Current state:** Not started. Depends on task 0023 (NestJS API bootstrap).
+**Current state:** Not started. Depends on task 0023 (API bootstrap).
 
 ## Context
 
@@ -31,7 +37,7 @@ The Lambda execution environment allows module-level variables to persist across
 
 ### API Specification
 
-**Location:** `apps/api/src/common/cache/`
+**Location:** `crates/api/src/common/cache/`
 
 ### Cache Targets
 
@@ -96,7 +102,7 @@ This task IS the caching implementation. TTLs:
 
 ### Step 1: Cache Service
 
-Create `apps/api/src/common/cache/` with a simple in-memory cache service. The service manages module-level Map or object storing cached values with timestamps and TTLs.
+Create `crates/api/src/common/cache/` with a simple in-memory cache service. The service manages module-level Map or object storing cached values with timestamps and TTLs.
 
 ### Step 2: Network Stats Integration
 

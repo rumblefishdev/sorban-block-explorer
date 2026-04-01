@@ -3,8 +3,8 @@ id: '0051'
 title: 'Backend: NFTs module (list + detail + transfers)'
 type: FEATURE
 status: backlog
-related_adr: []
-related_tasks: ['0023', '0043']
+related_adr: ['0005']
+related_tasks: ['0023', '0043', '0092']
 tags: [layer-backend, nfts, soroban]
 milestone: 2
 links: []
@@ -13,6 +13,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-31
+    status: backlog
+    who: stkrolikiewicz
+    note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
 ---
 
 # Backend: NFTs module (list + detail + transfers)
@@ -20,6 +24,8 @@ history:
 ## Summary
 
 Implement the NFTs module providing paginated NFT listing with collection/contract filters, NFT detail with sparse metadata tolerance, and NFT transfer history derived from Soroban events and linked transactions (not a separate table).
+
+> **Stack:** axum 0.8 + utoipa 5.4 + sqlx 0.8 (per ADR 0005). Code in crates/api/.
 
 ## Status: Backlog
 
@@ -31,7 +37,7 @@ NFTs on Stellar/Soroban are modeled as explorer entities with potentially sparse
 
 ### API Specification
 
-**Location:** `apps/api/src/nfts/`
+**Location:** `crates/api/src/nfts/`
 
 ---
 
@@ -188,9 +194,9 @@ NFTs on Stellar/Soroban are modeled as explorer entities with potentially sparse
 
 ## Implementation Plan
 
-### Step 1: Module Scaffolding
+### Step 1: Route + handler setup
 
-Create `apps/api/src/nfts/` with module, controller, service, and DTOs.
+Create `crates/api/src/nfts/` with module, controller, service, and request/response types (ToSchema).
 
 ### Step 2: List Endpoint
 

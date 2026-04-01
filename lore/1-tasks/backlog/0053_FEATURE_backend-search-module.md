@@ -3,8 +3,8 @@ id: '0053'
 title: 'Backend: Search module (unified search with query classification)'
 type: FEATURE
 status: backlog
-related_adr: []
-related_tasks: ['0023', '0043']
+related_adr: ['0005']
+related_tasks: ['0023', '0043', '0092']
 tags: [layer-backend, search, full-text]
 milestone: 2
 links: []
@@ -13,6 +13,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-31
+    status: backlog
+    who: stkrolikiewicz
+    note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
 ---
 
 # Backend: Search module (unified search with query classification)
@@ -20,6 +24,8 @@ history:
 ## Summary
 
 Implement the Search module providing unified search across all entity types with query classification, exact-match redirect behavior, and grouped broad-search results. Search uses prefix/exact matching on identifiers and full-text search via PostgreSQL GIN indexes on metadata.
+
+> **Stack:** axum 0.8 + utoipa 5.4 + sqlx 0.8 (per ADR 0005). Code in crates/api/.
 
 ## Status: Backlog
 
@@ -31,7 +37,7 @@ Search is not a simple DB query wrapper. It is an API behavior surface that clas
 
 ### API Specification
 
-**Location:** `apps/api/src/search/`
+**Location:** `crates/api/src/search/`
 
 ---
 
@@ -168,9 +174,9 @@ Full-text metadata search uses the `soroban_contracts.search_vector` GIN index f
 
 ## Implementation Plan
 
-### Step 1: Module Scaffolding
+### Step 1: Route + handler setup
 
-Create `apps/api/src/search/` with module, controller, service, and DTOs.
+Create `crates/api/src/search/` with module, controller, service, and request/response types (ToSchema).
 
 ### Step 2: Query Classifier
 

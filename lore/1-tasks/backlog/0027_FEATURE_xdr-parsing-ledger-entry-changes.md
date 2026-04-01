@@ -39,7 +39,7 @@ All derived-state writes use watermark-based upserts (task 0028) to ensure backf
 
 ### Source Code Location
 
-- `apps/indexer/src/parsers/entry-changes/`
+- `crates/indexer/src/parsers/entry-changes/`
 
 ## Implementation Plan
 

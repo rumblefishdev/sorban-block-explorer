@@ -1,7 +1,7 @@
 ---
 id: '0005'
 title: 'Rust-only backend: API and Ledger Processor both in Rust'
-status: proposed
+status: accepted
 deciders: [stkrolikiewicz, fmazur]
 related_tasks: ['0092', '0093', '0094']
 related_adrs: ['0002', '0004']
@@ -14,6 +14,12 @@ history:
     status: proposed
     who: stkrolikiewicz
     note: 'ADR proposed after team meeting. Entire backend moves to Rust — not just Ledger Processor.'
+  - date: 2026-03-31
+    status: accepted
+    who: stkrolikiewicz
+    note: >
+      Accepted. Research 0092 validated stack: axum 0.8 + utoipa 5.4 + sqlx 0.8 + lambda_http 1.1.
+      PoC verified end-to-end. All backlog tasks being updated in 0093.
 ---
 
 # ADR 0005: Rust-only backend — API and Ledger Processor both in Rust

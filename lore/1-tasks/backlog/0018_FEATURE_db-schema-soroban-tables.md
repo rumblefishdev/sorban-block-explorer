@@ -3,8 +3,8 @@ id: '0018'
 title: 'DB schema: Soroban tables (contracts, invocations, events, interpretations)'
 type: FEATURE
 status: backlog
-related_adr: []
-related_tasks: ['0016', '0010']
+related_adr: ['0005']
+related_tasks: ['0016', '0010', '0092']
 tags: [priority-high, effort-medium, layer-database]
 milestone: 1
 links: []
@@ -13,13 +13,17 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: 2026-03-31
+    status: backlog
+    who: stkrolikiewicz
+    note: 'Updated per ADR 0005 + research 0092: plain SQL migrations instead of Drizzle ORM'
 ---
 
 # DB schema: Soroban tables (contracts, invocations, events, interpretations)
 
 ## Summary
 
-Implement the Drizzle ORM schema definitions and SQL DDL for the four Soroban-specific tables: `soroban_contracts`, `soroban_invocations`, `soroban_events`, and `event_interpretations`. These tables model Soroban contract activity as first-class explorer entities with decoded, queryable data.
+Implement the SQL DDL for the four Soroban-specific tables: `soroban_contracts`, `soroban_invocations`, `soroban_events`, and `event_interpretations`. These tables model Soroban contract activity as first-class explorer entities with decoded, queryable data.
 
 ## Status: Backlog
 
@@ -144,25 +148,27 @@ Deleting a transaction removes all its invocations, events, and the interpretati
 
 ## Implementation Plan
 
-### Step 1: Drizzle schema for soroban_contracts
+> **Migration approach:** Plain SQL (per ADR 0005). Run via psql or sqlx migrate run.
+
+### Step 1: SQL DDL for soroban_contracts
 
 Define the table with all columns, primary key, FK to ledgers, generated TSVECTOR column, and both indexes (contract_type and GIN on search_vector).
 
-### Step 2: Drizzle schema for soroban_invocations
+### Step 2: SQL DDL for soroban_invocations
 
 Define the partitioned table with dual FKs (transaction CASCADE, contract non-cascade), all columns, and both indexes. Configure PARTITION BY RANGE (created_at).
 
-### Step 3: Drizzle schema for soroban_events
+### Step 3: SQL DDL for soroban_events
 
 Define the partitioned table with dual FKs, all columns, and both indexes (contract + created_at DESC, GIN on topics). Configure PARTITION BY RANGE (created_at).
 
-### Step 4: Drizzle schema for event_interpretations
+### Step 4: SQL DDL for event_interpretations
 
 Define the table with FK to soroban_events (CASCADE), all columns, and the interpretation_type index.
 
 ### Step 5: Generate migrations
 
-Use Drizzle Kit to generate migration files. Supplement with raw SQL for partitioning clauses and the GENERATED ALWAYS AS column if Drizzle does not natively support them.
+Write plain SQL migration files. Apply via `psql` or `sqlx migrate run`. Include partitioning clauses and the GENERATED ALWAYS AS column directly in the SQL.
 
 ### Step 6: Create initial monthly partitions
 
@@ -178,10 +184,10 @@ Test that inserting a contract with metadata containing a name field populates t
 
 ## Acceptance Criteria
 
-- [ ] Drizzle schema for soroban_contracts matches DDL with generated TSVECTOR column
-- [ ] Drizzle schema for soroban_invocations matches DDL with monthly partitioning
-- [ ] Drizzle schema for soroban_events matches DDL with monthly partitioning
-- [ ] Drizzle schema for event_interpretations matches DDL with CASCADE from events
+- [ ] SQL DDL for soroban_contracts matches DDL with generated TSVECTOR column
+- [ ] SQL DDL for soroban_invocations matches DDL with monthly partitioning
+- [ ] SQL DDL for soroban_events matches DDL with monthly partitioning
+- [ ] SQL DDL for event_interpretations matches DDL with CASCADE from events
 - [ ] All indexes are created correctly (including GIN indexes)
 - [ ] Cascade chain works: delete transaction removes invocations, events, and interpretations
 - [ ] search_vector is automatically populated from metadata->>'name'
@@ -191,6 +197,6 @@ Test that inserting a contract with metadata containing a name field populates t
 
 ## Notes
 
-- The GENERATED ALWAYS AS column for search_vector may require raw SQL in the migration if Drizzle ORM does not support generated columns natively.
+- The GENERATED ALWAYS AS column for search_vector is written directly in SQL DDL.
 - Monthly partition creation for invocations and events is covered more comprehensively in task 0022 (partition management automation). This task should create the initial set.
 - The Event Interpreter Lambda (which populates event_interpretations) is a separate infrastructure concern. This task only defines the storage schema.
