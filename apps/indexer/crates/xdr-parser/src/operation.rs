@@ -37,7 +37,8 @@ pub fn extract_operations(
                 extract_op_details(&op.body, return_value.as_ref(), ledger_sequence, tx_index, i);
             ExtractedOperation {
                 transaction_hash: transaction_hash.to_string(),
-                operation_index: u32::try_from(i).unwrap_or(u32::MAX),
+                operation_index: u32::try_from(i)
+                    .expect("operation index does not fit into u32"),
                 op_type,
                 source_account,
                 details,
@@ -242,7 +243,7 @@ fn extract_op_details(
                 RevokeSponsorshipOp::Signer(s) => json!({
                     "kind": "signer",
                     "accountId": s.account_id.0.to_string(),
-                    "signerKey": s.signer_key.name(),
+                    "signerKey": s.signer_key.to_string(),
                 }),
             };
             ("REVOKE_SPONSORSHIP".into(), details)
@@ -423,7 +424,7 @@ fn format_claimable_balance_id(id: &ClaimableBalanceId) -> Value {
 fn format_contract_executable(exec: &ContractExecutable) -> Value {
     match exec {
         ContractExecutable::Wasm(hash) => json!({ "type": "wasm", "hash": hex::encode(hash.0) }),
-        ContractExecutable::StellarAsset => json!({ "type": "stellarAsset" }),
+        ContractExecutable::StellarAsset => json!({ "type": "stellar_asset" }),
     }
 }
 
