@@ -12,5 +12,10 @@
   "dbDeletionProtection": true,
   "dbBackupRetentionDays": 30,
   "dbProxy": true,
-  "kmsEncryption": true
+  "kmsEncryption": true,
+
+  "apiLambdaMemory": 256,
+  "apiLambdaTimeout": 30,
+  "indexerLambdaMemory": 512,
+  "indexerLambdaTimeout": 60
 }

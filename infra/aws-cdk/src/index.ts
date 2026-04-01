@@ -8,3 +8,5 @@ export { RdsStack } from './lib/stacks/rds-stack.js';
 export type { RdsStackProps } from './lib/stacks/rds-stack.js';
 export { LedgerBucketStack } from './lib/stacks/ledger-bucket-stack.js';
 export type { LedgerBucketStackProps } from './lib/stacks/ledger-bucket-stack.js';
+export { ComputeStack } from './lib/stacks/compute-stack.js';
+export type { ComputeStackProps } from './lib/stacks/compute-stack.js';

@@ -22,4 +22,10 @@ export interface EnvironmentConfig {
   readonly dbBackupRetentionDays: number;
   readonly dbProxy: boolean;
   readonly kmsEncryption: boolean;
+
+  // Compute (consumed by ComputeStack)
+  readonly apiLambdaMemory: number;
+  readonly apiLambdaTimeout: number;
+  readonly indexerLambdaMemory: number;
+  readonly indexerLambdaTimeout: number;
 }
