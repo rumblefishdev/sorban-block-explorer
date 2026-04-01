@@ -3,3 +3,4 @@
 //! Provides sqlx PgPool configuration and query functions.
 
 pub mod pool;
+pub mod soroban;

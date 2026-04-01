@@ -137,6 +137,7 @@ fn extract_single_transaction(
         memo_type,
         memo: memo_value,
         created_at: closed_at,
+        operation_tree: None,
         parse_error,
     }
 }

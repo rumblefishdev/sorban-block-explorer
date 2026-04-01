@@ -5,9 +5,13 @@
 //!
 //! This is the sole XDR parsing path (ADR-0004: Rust-only, ingestion-time).
 
+pub mod contract;
 pub mod error;
+pub mod event;
+pub mod invocation;
 pub mod ledger;
 pub mod memo;
+pub mod nft;
 pub mod operation;
 pub mod scval;
 pub mod transaction;
@@ -16,13 +20,20 @@ pub mod types;
 pub(crate) mod envelope;
 mod xdr_limits;
 
+pub use contract::extract_contract_interfaces;
 pub use envelope::InnerTxRef;
 pub use error::{ParseError, ParseErrorKind};
+pub use event::extract_events;
+pub use invocation::{extract_invocations, InvocationResult};
 pub use ledger::extract_ledger;
+pub use nft::detect_nft_events;
 pub use operation::extract_operations;
 pub use transaction::extract_transactions;
 pub use scval::scval_to_typed_json;
-pub use types::{ExtractedLedger, ExtractedOperation, ExtractedTransaction};
+pub use types::{
+    ContractFunction, ExtractedContractInterface, ExtractedEvent, ExtractedInvocation,
+    ExtractedLedger, ExtractedOperation, ExtractedTransaction, NftEvent,
+};
 
 use stellar_xdr::curr::{LedgerCloseMetaBatch, ReadXdr};
 
