@@ -2,6 +2,15 @@
   "envName": "production",
   "awsRegion": "us-east-1",
   "vpcCidr": "10.1.0.0/16",
-  "availabilityZones": ["us-east-1a"],
-  "natType": "gateway"
+  "availabilityZones": ["us-east-1a", "us-east-1b"],
+  "natType": "gateway",
+  "natGatewayCount": 1,
+
+  "dbInstanceClass": "t4g.micro",
+  "dbAllocatedStorage": 20,
+  "dbMultiAz": false,
+  "dbDeletionProtection": true,
+  "dbBackupRetentionDays": 30,
+  "dbProxy": true,
+  "kmsEncryption": true
 }

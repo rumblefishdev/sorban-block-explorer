@@ -12,4 +12,14 @@ export interface EnvironmentConfig {
   readonly vpcCidr: string;
   readonly availabilityZones: readonly string[];
   readonly natType: 'gateway' | 'instance';
+  readonly natGatewayCount: number;
+
+  // Storage (consumed by RdsStack, LedgerBucketStack)
+  readonly dbInstanceClass: string;
+  readonly dbAllocatedStorage: number;
+  readonly dbMultiAz: boolean;
+  readonly dbDeletionProtection: boolean;
+  readonly dbBackupRetentionDays: number;
+  readonly dbProxy: boolean;
+  readonly kmsEncryption: boolean;
 }

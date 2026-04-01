@@ -123,7 +123,7 @@ Production is the public-facing baseline:
 
 **Security:**
 
-- KMS-backed encryption on RDS and both S3 buckets
+- KMS-backed encryption on RDS and S3 ledger-data bucket
 - TLS enforced on database connections (`rds.force_ssl = 1`)
 - No IP allowlists (public access via WAF)
 - No password protection on CloudFront

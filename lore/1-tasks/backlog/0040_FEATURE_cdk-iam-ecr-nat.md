@@ -119,7 +119,6 @@ Define a NAT Gateway in the public subnet:
 Refine the S3 VPC endpoint policy (endpoint created in task 0031) to restrict access to only the project's S3 buckets:
 
 - Allow access to stellar-ledger-data bucket
-- Allow access to api-docs bucket
 - Deny access to other S3 buckets (defense in depth)
 
 ## Acceptance Criteria
