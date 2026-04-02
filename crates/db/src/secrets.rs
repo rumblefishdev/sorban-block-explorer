@@ -4,6 +4,7 @@
 //! to PostgreSQL through RDS Proxy with Secrets Manager credentials.
 
 use aws_sdk_secretsmanager::Client as SecretsClient;
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 
 /// Resolve a `DATABASE_URL` from Secrets Manager and an RDS endpoint.
 ///
@@ -41,8 +42,11 @@ pub async fn resolve_database_url(
         .as_str()
         .ok_or(ResolveError::MissingField("password"))?;
 
+    let encoded_username = utf8_percent_encode(username, NON_ALPHANUMERIC);
+    let encoded_password = utf8_percent_encode(password, NON_ALPHANUMERIC);
+
     Ok(format!(
-        "postgres://{username}:{password}@{rds_endpoint}:5432/soroban_explorer?sslmode=require"
+        "postgres://{encoded_username}:{encoded_password}@{rds_endpoint}:5432/soroban_explorer?sslmode=require"
     ))
 }
 

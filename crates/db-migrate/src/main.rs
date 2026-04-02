@@ -5,9 +5,11 @@
 //! connects through RDS Proxy, and runs pending sqlx migrations.
 //! On Delete: no-op (migrations are never auto-rolled-back).
 
-use lambda_runtime::{service_fn, Error, LambdaEvent};
-use serde_json::{json, Value};
+use lambda_runtime::{Error, LambdaEvent, service_fn};
+use serde_json::{Value, json};
 use sqlx::postgres::PgPoolOptions;
+
+const PHYSICAL_RESOURCE_ID: &str = "soroban-explorer-db-migrations";
 
 async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
     let (payload, _context) = event.into_parts();
@@ -38,23 +40,20 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
             pool.close().await;
 
             Ok(json!({
-                "Status": "SUCCESS",
+                "PhysicalResourceId": PHYSICAL_RESOURCE_ID,
                 "Data": { "Message": "Migrations applied" }
             }))
         }
         "Delete" => {
             tracing::info!("delete event — no-op for migrations");
             Ok(json!({
-                "Status": "SUCCESS",
+                "PhysicalResourceId": PHYSICAL_RESOURCE_ID,
                 "Data": { "Message": "No action on delete" }
             }))
         }
         other => {
-            tracing::warn!(request_type = other, "unknown request type — no-op");
-            Ok(json!({
-                "Status": "SUCCESS",
-                "Data": { "Message": "Unknown request type — no-op" }
-            }))
+            tracing::error!(request_type = other, "unknown request type — failing");
+            Err(format!("unknown RequestType: {other}").into())
         }
     }
 }
