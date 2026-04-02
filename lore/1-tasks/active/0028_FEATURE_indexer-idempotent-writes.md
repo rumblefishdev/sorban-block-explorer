@@ -2,7 +2,7 @@
 id: '0028'
 title: 'Indexer: idempotent write logic and ledger-sequence watermarks'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0005']
 related_tasks: ['0029', '0092']
 tags: [priority-high, effort-medium, layer-indexing]
@@ -17,6 +17,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated per ADR 0005: apps/indexer/ → crates/indexer/'
+  - date: 2026-04-02
+    status: active
+    who: FilipDz
+    note: 'Activated for implementation'
 ---
 
 # Indexer: idempotent write logic and ledger-sequence watermarks

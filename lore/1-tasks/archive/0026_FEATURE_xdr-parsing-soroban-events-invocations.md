@@ -24,7 +24,7 @@ history:
     note: 'Activated for implementation'
   - date: 2026-04-02
     status: completed
-    who: fdziubek
+    who: FilipDz
     note: >
       Implemented all 4 steps: CAP-67 event extraction, invocation tree
       decoding, contract interface extraction from WASM, NFT event detection.

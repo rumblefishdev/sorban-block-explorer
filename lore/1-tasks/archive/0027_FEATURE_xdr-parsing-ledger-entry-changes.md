@@ -19,11 +19,11 @@ history:
     note: 'Scope changed to Rust-only per ADR 0004.'
   - date: 2026-04-02
     status: active
-    who: fdziubek
+    who: FilipDz
     note: 'Activated for implementation'
   - date: 2026-04-02
     status: completed
-    who: fdziubek
+    who: FilipDz
     note: >
       All 7 steps implemented. 102 tests passing (+28 new).
       Raw extraction for all 10 entry types, derived state with
