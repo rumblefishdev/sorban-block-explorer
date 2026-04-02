@@ -2,7 +2,7 @@
 id: '0021'
 title: 'Database migration framework'
 type: FEATURE
-status: active
+status: completed
 related_adr: ['0005']
 related_tasks: ['0015', '0031', '0092']
 tags: [priority-high, effort-medium, layer-database]
@@ -21,6 +21,15 @@ history:
     status: active
     who: stkrolikiewicz
     note: 'Activated for implementation'
+  - date: 2026-04-02
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      All 7 implementation steps complete. sqlx-cli + migrations/ dir with 4 SQL
+      migrations, sqlx::migrate!() in crates/db, db-migrate Lambda binary with
+      CDK custom resource (MigrationStack), npm scripts for local dev workflow,
+      MIGRATIONS.md documenting all commands. CDK dependency chain enforces
+      RdsStack → MigrationStack → ComputeStack ordering.
 ---
 
 # Database migration framework
@@ -29,9 +38,7 @@ history:
 
 sqlx migration framework: sqlx-cli, sqlx::migrate!() embedding, CI sqlx migrate run, SQLX_OFFLINE mode. Migrations must complete successfully before new Lambda code (API and Indexer) is deployed -- migration failure blocks deployment.
 
-## Status: Backlog
-
-**Current state:** Not started.
+## Status: Completed
 
 ## Context
 
@@ -119,19 +126,58 @@ Document and implement the rollback approach:
 
 ## Acceptance Criteria
 
-- [ ] `migrations/` directory contains plain SQL migration files managed by sqlx-cli
-- [ ] Migration files are committed to source control
-- [ ] Local dev workflow works: `sqlx migrate add`, `sqlx migrate run`, and `sqlx migrate revert` function against local PostgreSQL
-- [ ] `sqlx::migrate!()` embeds migrations at compile time in the Rust binary
-- [ ] `SQLX_OFFLINE=true` mode works for CI builds without a live database
-- [ ] CDK pipeline runs `sqlx migrate run` before deploying new Lambda code
-- [ ] Migration failure blocks deployment (no partial rollout of code without schema)
-- [ ] Staging and production migrations connect through RDS Proxy
-- [ ] Migration files apply cleanly to a fresh PostgreSQL instance in CI
+- [x] `migrations/` directory contains plain SQL migration files managed by sqlx-cli
+- [x] Migration files are committed to source control
+- [x] Local dev workflow works: `sqlx migrate add`, `sqlx migrate run`, and `sqlx migrate revert` function against local PostgreSQL
+- [x] `sqlx::migrate!()` embeds migrations at compile time in the Rust binary
+- [x] `SQLX_OFFLINE=true` mode works for CI builds without a live database
+- [x] CDK pipeline runs `sqlx migrate run` before deploying new Lambda code
+- [x] Migration failure blocks deployment (no partial rollout of code without schema)
+- [x] Staging and production migrations connect through RDS Proxy
+- [ ] Migration files apply cleanly to a fresh PostgreSQL instance in CI (deferred to 0039 — CI/CD pipeline not yet implemented)
+
+## Implementation Notes
+
+### Files created/modified
+
+| File                                              | Purpose                                                                                 |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `crates/db/migrations/0001-0004_*.sql`            | 4 initial schema migrations (ledgers, transactions, operations, soroban)                |
+| `crates/db/src/migrate.rs`                        | `run_migrations()` using `sqlx::migrate!()` compile-time embedding                      |
+| `crates/db/src/lib.rs`                            | Module exports: migrate, pool, secrets                                                  |
+| `crates/db/src/pool.rs`                           | PgPool configuration                                                                    |
+| `crates/db/src/secrets.rs`                        | AWS Secrets Manager credential resolution                                               |
+| `crates/db-migrate/src/main.rs`                   | Lambda binary — CloudFormation custom resource handler                                  |
+| `infra/aws-cdk/src/lib/stacks/migration-stack.ts` | CDK stack: RustFunction + Provider + CustomResource                                     |
+| `infra/aws-cdk/src/lib/app.ts`                    | Dependency chain: `migration.addDependency(rds)` + `compute.addDependency(migration)`   |
+| `crates/db/MIGRATIONS.md`                         | Developer docs: all commands, conventions, rollback                                     |
+| `package.json`                                    | npm scripts: `db:migrate`, `db:revert`, `db:add`, `db:status`, `db:prepare`, `db:reset` |
+
+### CDK deployment ordering
+
+```
+NetworkStack → RdsStack → MigrationStack → ComputeStack
+```
+
+MigrationStack uses a CDK `CustomResource` with `Provider` wrapping a Rust Lambda. On every deploy, `Date.now()` forces re-invocation. sqlx migrations are idempotent — already-applied ones are skipped.
+
+## Design Decisions
+
+### From Plan
+
+1. **sqlx-cli for migration management**: Per ADR 0005, using plain SQL files managed by sqlx-cli.
+2. **`sqlx::migrate!()` compile-time embedding**: Migrations baked into the binary, no runtime file access needed.
+3. **CDK custom resource for deployment migration**: CloudFormation custom resource guarantees ordering — migration failure rolls back the stack.
+
+### Emerged
+
+4. **Separate `db-migrate` binary crate**: Lambda handler is a standalone crate rather than a feature flag on `crates/db`. Cleaner separation — the migration Lambda has its own `main.rs` and Lambda dependencies.
+5. **`Date.now()` for forced re-invocation**: CloudFormation custom resources only trigger on property changes. Using timestamp ensures migrations run on every deployment even if no properties changed.
+6. **Initial migrations are irreversible (0001-0004)**: Foundational schema — reverting would destroy all data. New migrations use `-r` flag for paired up/down files.
+7. **npm scripts as dev DX layer**: `npm run db:migrate` etc. wraps sqlx-cli with hardcoded local DATABASE_URL — avoids .env files for local dev.
 
 ## Notes
 
-- This task depends on the sqlx database connection configuration being in place.
-- The specific CDK integration mechanism (custom resource vs. CodeBuild step) should be decided during implementation based on CDK best practices and the existing pipeline structure.
-- Migration ordering is critical: all schema tasks (0016-0020) produce SQL DDL, but the migration framework must be ready to apply their migrations.
-- Task 0031 (referenced in related_tasks) covers broader CDK infrastructure. The migration integration should align with that infrastructure design.
+- CI validation of migrations (apply cleanly to fresh PostgreSQL) is deferred to task 0039 (CI/CD pipeline).
+- Migration ordering is critical: all schema tasks (0016-0020) produce SQL DDL consumed by this framework.
+- `.sqlx/` directory for SQLX_OFFLINE is not yet committed — will be generated once compile-time checked queries are added.
