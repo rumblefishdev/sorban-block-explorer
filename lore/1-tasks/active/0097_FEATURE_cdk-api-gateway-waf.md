@@ -2,7 +2,7 @@
 id: '0097'
 title: 'CDK: API Gateway + WAF + usage plans'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0005']
 related_tasks: ['0033', '0035']
 tags: [priority-high, effort-medium, layer-infra]
@@ -14,6 +14,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Split from task 0033 — API Gateway, WAF, and usage plans scope'
+  - date: 2026-04-02
+    status: active
+    who: fmazur
+    note: 'activate task'
 ---
 
 # CDK: API Gateway + WAF + usage plans
@@ -22,7 +26,7 @@ history:
 
 Define the REST API Gateway with Lambda proxy integration, response caching, throttling, WAF attachment, and optional API key usage plans. This task consumes the API Lambda ARN exported by task 0033 (ComputeStack) and exposes the public API endpoint.
 
-## Status: Backlog
+## Status: Active
 
 **Current state:** Not started. Depends on task 0033 (API Lambda definition) for the Lambda integration target.
 
