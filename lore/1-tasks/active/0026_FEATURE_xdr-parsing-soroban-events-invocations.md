@@ -38,7 +38,7 @@ Implement Soroban-specific parsing covering three areas: (1) CAP-67 event extrac
 
 Soroban transactions produce three categories of data that require specialized parsing beyond basic operation extraction:
 
-1. **CAP-67 Events**: Contract, system, and diagnostic events emitted during transaction execution. These are the primary mechanism for observing contract activity and are critical for the Event Interpreter (task 0056) and explorer event views.
+1. **CAP-67 Events**: Contract, system, and diagnostic events emitted during transaction execution. These are the primary mechanism for observing contract activity and are critical for the Event Interpreter and explorer event views.
 
 2. **Invocation Trees**: Complex Soroban transactions may involve nested contract-to-contract calls. The full hierarchy must be decoded to support the transaction detail tree view. The explorer needs both flat rows (for querying by contract/function) and nested JSON (for rendering the call tree).
 
@@ -56,7 +56,7 @@ All inserts must target the correct partition.
 - This task writes soroban_events rows, soroban_invocations rows, and transactions.operation_tree JSONB
 - This task writes contract interface data to soroban_contracts.metadata JSONB only
 - Contract creation (contract_id, wasm_hash, deployer) is owned by task 0027
-- Event interpretation (human-readable summaries) is owned by task 0056
+- Event interpretation (human-readable summaries) is a separate concern
 
 ### Source Code Location
 
@@ -149,4 +149,4 @@ The specific event signatures depend on the NFT contract conventions documented 
 - The invocation tree can be deep for complex DeFi transactions involving multiple contract calls. The parser must handle arbitrary nesting depth without stack overflow.
 - Diagnostic events may be suppressed in some protocol configurations. The parser should handle their absence gracefully.
 - Contract interface extraction quality depends on WASM structure. Not all contracts will have cleanly extractable interfaces. Store what is available; do not fail on partial extraction.
-- The GIN index on soroban_events.topics supports topic-based event queries used by the Event Interpreter (task 0056).
+- The GIN index on soroban_events.topics supports topic-based event queries used by the Event Interpreter.

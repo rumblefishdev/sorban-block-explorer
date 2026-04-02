@@ -8,7 +8,7 @@
 //! This tagged format allows consumers to distinguish types unambiguously.
 
 use base64::Engine;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use stellar_xdr::curr::ScVal;
 
 /// Decode an `ScVal` into a tagged JSON value: `{ "type": "...", "value": ... }`.
@@ -28,14 +28,20 @@ pub fn scval_to_typed_json(v: &ScVal) -> Value {
         ScVal::Duration(d) => ("duration", json!(d.0)),
         ScVal::U128(parts) => ("u128", json!(u128::from(parts).to_string())),
         ScVal::I128(parts) => ("i128", json!(i128::from(parts).to_string())),
-        ScVal::U256(parts) => ("u256", json!(format!(
-            "{:016x}{:016x}{:016x}{:016x}",
-            parts.hi_hi, parts.hi_lo, parts.lo_hi, parts.lo_lo
-        ))),
-        ScVal::I256(parts) => ("i256", json!(format!(
-            "{:016x}{:016x}{:016x}{:016x}",
-            parts.hi_hi, parts.hi_lo, parts.lo_hi, parts.lo_lo
-        ))),
+        ScVal::U256(parts) => (
+            "u256",
+            json!(format!(
+                "{:016x}{:016x}{:016x}{:016x}",
+                parts.hi_hi, parts.hi_lo, parts.lo_hi, parts.lo_lo
+            )),
+        ),
+        ScVal::I256(parts) => (
+            "i256",
+            json!(format!(
+                "{:016x}{:016x}{:016x}{:016x}",
+                parts.hi_hi, parts.hi_lo, parts.lo_hi, parts.lo_lo
+            )),
+        ),
         ScVal::Bytes(b) => (
             "bytes",
             json!(base64::engine::general_purpose::STANDARD.encode(b.0.as_slice())),
@@ -55,13 +61,14 @@ pub fn scval_to_typed_json(v: &ScVal) -> Value {
         ScVal::Vec(None) => ("vec", json!(null)),
         ScVal::Map(Some(m)) => (
             "map",
-            json!(m
-                .iter()
-                .map(|e| json!({
-                    "key": scval_to_typed_json(&e.key),
-                    "value": scval_to_typed_json(&e.val),
-                }))
-                .collect::<Vec<_>>()),
+            json!(
+                m.iter()
+                    .map(|e| json!({
+                        "key": scval_to_typed_json(&e.key),
+                        "value": scval_to_typed_json(&e.val),
+                    }))
+                    .collect::<Vec<_>>()
+            ),
         ),
         ScVal::Map(None) => ("map", json!(null)),
         ScVal::Address(a) => ("address", json!(a.to_string())),

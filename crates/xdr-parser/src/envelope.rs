@@ -91,4 +91,11 @@ impl<'a> InnerTxRef<'a> {
             InnerTxRef::V1(tx) => &tx.memo,
         }
     }
+
+    pub fn source_account(&self) -> String {
+        match self {
+            InnerTxRef::V0(tx) => MuxedAccount::from(&tx.source_account_ed25519).to_string(),
+            InnerTxRef::V1(tx) => tx.source_account.to_string(),
+        }
+    }
 }

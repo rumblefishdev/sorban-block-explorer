@@ -771,11 +771,13 @@ version = "0.1.0"
 dependencies = [
  "aws-config",
  "aws-sdk-secretsmanager",
+ "chrono",
  "domain",
  "percent-encoding",
  "serde_json",
  "sqlx",
  "tracing",
+ "xdr-parser",
 ]
 
 [[package]]
@@ -3453,6 +3455,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "hex",
+ "serde",
  "serde_json",
  "sha2",
  "stellar-xdr",

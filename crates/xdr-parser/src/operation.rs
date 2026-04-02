@@ -4,11 +4,11 @@
 //! INVOKE_HOST_FUNCTION operations get enriched extraction: contractId,
 //! functionName, functionArgs (ScVal decoded), and returnValue.
 
-use serde_json::{json, Value};
-use stellar_xdr::curr::*;
 use crate::envelope::InnerTxRef;
 use crate::scval::scval_to_typed_json;
 use crate::types::ExtractedOperation;
+use serde_json::{Value, json};
+use stellar_xdr::curr::*;
 
 /// Extract all operations from a transaction envelope, with optional return
 /// value from the transaction meta (for INVOKE_HOST_FUNCTION).
@@ -33,12 +33,16 @@ pub fn extract_operations(
         .enumerate()
         .map(|(i, op)| {
             let source_account = op.source_account.as_ref().map(|a| a.to_string());
-            let (op_type, details) =
-                extract_op_details(&op.body, return_value.as_ref(), ledger_sequence, tx_index, i);
+            let (op_type, details) = extract_op_details(
+                &op.body,
+                return_value.as_ref(),
+                ledger_sequence,
+                tx_index,
+                i,
+            );
             ExtractedOperation {
                 transaction_hash: transaction_hash.to_string(),
-                operation_index: u32::try_from(i)
-                    .expect("operation index does not fit into u32"),
+                operation_index: u32::try_from(i).expect("operation index does not fit into u32"),
                 op_type,
                 source_account,
                 details,
@@ -51,7 +55,10 @@ pub fn extract_operations(
 fn soroban_return_value(meta: &TransactionMeta) -> Option<ScVal> {
     match meta {
         TransactionMeta::V3(v3) => v3.soroban_meta.as_ref().map(|m| m.return_value.clone()),
-        TransactionMeta::V4(v4) => v4.soroban_meta.as_ref().and_then(|m| m.return_value.clone()),
+        TransactionMeta::V4(v4) => v4
+            .soroban_meta
+            .as_ref()
+            .and_then(|m| m.return_value.clone()),
         _ => None,
     }
 }
@@ -155,8 +162,7 @@ fn extract_op_details(
                 details.insert("highThreshold".into(), json!(t));
             }
             if let Some(ref domain) = op.home_domain {
-                let s = std::str::from_utf8(domain.as_vec())
-                    .unwrap_or("<invalid-utf8>");
+                let s = std::str::from_utf8(domain.as_vec()).unwrap_or("<invalid-utf8>");
                 details.insert("homeDomain".into(), json!(s));
             }
             if let Some(ref signer) = op.signer {
@@ -188,13 +194,9 @@ fn extract_op_details(
         ),
         OperationBody::Inflation => ("INFLATION".into(), json!({})),
         OperationBody::ManageData(op) => {
-            let name = std::str::from_utf8(op.data_name.as_vec())
-                .unwrap_or("<invalid-utf8>");
+            let name = std::str::from_utf8(op.data_name.as_vec()).unwrap_or("<invalid-utf8>");
             let value = op.data_value.as_ref().map(|v| {
-                base64::Engine::encode(
-                    &base64::engine::general_purpose::STANDARD,
-                    v.as_slice(),
-                )
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, v.as_slice())
             });
             (
                 "MANAGE_DATA".into(),
@@ -230,10 +232,9 @@ fn extract_op_details(
                 "sponsoredId": op.sponsored_id.0.to_string(),
             }),
         ),
-        OperationBody::EndSponsoringFutureReserves => (
-            "END_SPONSORING_FUTURE_RESERVES".into(),
-            json!({}),
-        ),
+        OperationBody::EndSponsoringFutureReserves => {
+            ("END_SPONSORING_FUTURE_RESERVES".into(), json!({}))
+        }
         OperationBody::RevokeSponsorship(op) => {
             let details = match op {
                 RevokeSponsorshipOp::LedgerEntry(key) => json!({
@@ -300,25 +301,18 @@ fn extract_op_details(
                 "extendTo": op.extend_to,
             }),
         ),
-        OperationBody::RestoreFootprint(_) => (
-            "RESTORE_FOOTPRINT".into(),
-            json!({}),
-        ),
+        OperationBody::RestoreFootprint(_) => ("RESTORE_FOOTPRINT".into(), json!({})),
     }
 }
 
 /// Extract enriched details for INVOKE_HOST_FUNCTION operations.
-fn extract_invoke_host_function(
-    op: &InvokeHostFunctionOp,
-    return_value: Option<&ScVal>,
-) -> Value {
+fn extract_invoke_host_function(op: &InvokeHostFunctionOp, return_value: Option<&ScVal>) -> Value {
     match &op.host_function {
         HostFunction::InvokeContract(args) => {
             let contract_id = args.contract_address.to_string();
-            let function_name = std::str::from_utf8(args.function_name.as_vec())
-                .unwrap_or("<invalid-utf8>");
-            let function_args: Vec<Value> =
-                args.args.iter().map(scval_to_typed_json).collect();
+            let function_name =
+                std::str::from_utf8(args.function_name.as_vec()).unwrap_or("<invalid-utf8>");
+            let function_args: Vec<Value> = args.args.iter().map(scval_to_typed_json).collect();
             let ret = return_value.map(scval_to_typed_json);
             json!({
                 "hostFunctionType": "invokeContract",
@@ -393,18 +387,14 @@ fn format_change_trust_asset(asset: &ChangeTrustAsset) -> Value {
 
 fn format_asset_code(code: &AssetCode) -> Value {
     let s = match code {
-        AssetCode::CreditAlphanum4(c) => {
-            std::str::from_utf8(c.as_slice())
-                .unwrap_or("<invalid>")
-                .trim_end_matches('\0')
-                .to_string()
-        }
-        AssetCode::CreditAlphanum12(c) => {
-            std::str::from_utf8(c.as_slice())
-                .unwrap_or("<invalid>")
-                .trim_end_matches('\0')
-                .to_string()
-        }
+        AssetCode::CreditAlphanum4(c) => std::str::from_utf8(c.as_slice())
+            .unwrap_or("<invalid>")
+            .trim_end_matches('\0')
+            .to_string(),
+        AssetCode::CreditAlphanum12(c) => std::str::from_utf8(c.as_slice())
+            .unwrap_or("<invalid>")
+            .trim_end_matches('\0')
+            .to_string(),
     };
     json!(s)
 }
@@ -479,9 +469,7 @@ mod tests {
     fn extract_invoke_host_function_with_args() {
         let contract_addr = ScAddress::Contract(ContractId(Hash([0xDD; 32])));
         let func_name = ScSymbol::try_from("transfer".as_bytes().to_vec()).unwrap();
-        let args = vec![ScVal::U64(42), ScVal::Bool(true)]
-            .try_into()
-            .unwrap();
+        let args = vec![ScVal::U64(42), ScVal::Bool(true)].try_into().unwrap();
 
         let op = Operation {
             source_account: None,

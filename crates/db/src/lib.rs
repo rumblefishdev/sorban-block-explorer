@@ -7,3 +7,4 @@ pub mod pool;
 
 #[cfg(feature = "aws-secrets")]
 pub mod secrets;
+pub mod soroban;
