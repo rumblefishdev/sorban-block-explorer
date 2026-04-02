@@ -2,7 +2,7 @@
 id: '0095'
 title: 'Monorepo restructure: flatten apps/, infra/, move web to top-level'
 type: REFACTOR
-status: backlog
+status: active
 related_adr: ['0005']
 related_tasks: ['0092', '0094']
 tags: [priority-medium, effort-small, layer-infra, nx]
@@ -12,6 +12,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Spawned from 0092 research. Independent of Rust implementation, can be done anytime.'
+  - date: 2026-04-02
+    status: active
+    who: fmazur
+    note: 'Activated task for implementation.'
 ---
 
 # Monorepo restructure: flatten apps/, infra/, move web to top-level
