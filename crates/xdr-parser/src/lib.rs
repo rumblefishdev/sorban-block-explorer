@@ -10,10 +10,12 @@ pub mod error;
 pub mod event;
 pub mod invocation;
 pub mod ledger;
+pub mod ledger_entry_changes;
 pub mod memo;
 pub mod nft;
 pub mod operation;
 pub mod scval;
+pub mod state;
 pub mod transaction;
 pub mod types;
 
@@ -26,13 +28,20 @@ pub use error::{ParseError, ParseErrorKind};
 pub use event::extract_events;
 pub use invocation::{extract_invocations, InvocationResult};
 pub use ledger::extract_ledger;
+pub use ledger_entry_changes::extract_ledger_entry_changes;
 pub use nft::detect_nft_events;
+pub use state::{
+    detect_nfts, detect_tokens, extract_account_states, extract_contract_deployments,
+    extract_liquidity_pools,
+};
 pub use operation::extract_operations;
 pub use transaction::extract_transactions;
 pub use scval::scval_to_typed_json;
 pub use types::{
-    ContractFunction, ExtractedContractInterface, ExtractedEvent, ExtractedInvocation,
-    ExtractedLedger, ExtractedOperation, ExtractedTransaction, NftEvent,
+    ContractFunction, ExtractedAccountState, ExtractedContractDeployment,
+    ExtractedContractInterface, ExtractedEvent, ExtractedInvocation, ExtractedLedger,
+    ExtractedLedgerEntryChange, ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot,
+    ExtractedNft, ExtractedOperation, ExtractedToken, ExtractedTransaction, NftEvent,
 };
 
 use stellar_xdr::curr::{LedgerCloseMetaBatch, ReadXdr};

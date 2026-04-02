@@ -167,6 +167,133 @@ pub struct NftEvent {
     pub created_at: i64,
 }
 
+/// Extracted ledger entry change from `TransactionMeta` V3/V4.
+///
+/// Produced by `extract_ledger_entry_changes`. One row per `LedgerEntryChange`
+/// found in `tx_changes_before`, per-operation changes, and `tx_changes_after`.
+#[derive(Debug, Clone)]
+pub struct ExtractedLedgerEntryChange {
+    /// Parent transaction hash, hex-encoded. Resolved to `transaction_id` FK at persistence time.
+    pub transaction_hash: String,
+    /// Change type: "created", "updated", "removed", "state", or "restored".
+    pub change_type: String,
+    /// Ledger entry type: "account", "trustline", "offer", "data", "claimable_balance",
+    /// "liquidity_pool", "contract_data", "contract_code", "config_setting", "ttl".
+    pub entry_type: String,
+    /// Identifying key fields as JSON (e.g. account_id, offer_id, contract + key).
+    pub key: serde_json::Value,
+    /// Full entry data as JSON. `None` for "removed" changes (only key is available).
+    pub data: Option<serde_json::Value>,
+    /// Zero-based index of this change within the transaction.
+    pub change_index: u32,
+    /// Operation index this change belongs to. `None` for tx-level changes
+    /// (`tx_changes_before` / `tx_changes_after`).
+    pub operation_index: Option<u32>,
+    /// Parent ledger sequence number.
+    pub ledger_sequence: u32,
+    /// Timestamp from parent ledger close time (Unix seconds).
+    pub created_at: i64,
+}
+
+/// Extracted contract deployment from LedgerEntryChanges.
+///
+/// Produced by `extract_contract_deployments` when a new contract instance
+/// appears in ledger entry changes. Maps to `soroban_contracts` table.
+#[derive(Debug, Clone)]
+pub struct ExtractedContractDeployment {
+    pub contract_id: String,
+    pub wasm_hash: Option<String>,
+    pub deployer_account: Option<String>,
+    pub deployed_at_ledger: u32,
+    /// "token", "dex", "lending", "nft", or "other".
+    pub contract_type: String,
+    pub is_sac: bool,
+    pub metadata: serde_json::Value,
+}
+
+/// Extracted account state from LedgerEntryChanges.
+///
+/// Produced by `extract_account_states`. Maps to `accounts` table.
+#[derive(Debug, Clone)]
+pub struct ExtractedAccountState {
+    pub account_id: String,
+    /// Set on account creation only. `None` for updates.
+    pub first_seen_ledger: Option<u32>,
+    /// Updated on every change. Watermark column.
+    pub last_seen_ledger: u32,
+    pub sequence_number: i64,
+    pub balances: serde_json::Value,
+    pub home_domain: Option<String>,
+    pub created_at: i64,
+}
+
+/// Extracted liquidity pool state from LedgerEntryChanges.
+///
+/// Produced by `extract_liquidity_pools`. Maps to `liquidity_pools` table.
+#[derive(Debug, Clone)]
+pub struct ExtractedLiquidityPool {
+    pub pool_id: String,
+    pub asset_a: serde_json::Value,
+    pub asset_b: serde_json::Value,
+    pub fee_bps: i32,
+    pub reserves: serde_json::Value,
+    pub total_shares: String,
+    pub tvl: Option<String>,
+    /// Set on pool creation only. `None` for updates.
+    pub created_at_ledger: Option<u32>,
+    /// Updated on every change. Watermark column.
+    pub last_updated_ledger: u32,
+    pub created_at: i64,
+}
+
+/// Liquidity pool snapshot, appended on each pool change.
+///
+/// Produced alongside `ExtractedLiquidityPool`. Maps to `liquidity_pool_snapshots`.
+#[derive(Debug, Clone)]
+pub struct ExtractedLiquidityPoolSnapshot {
+    pub pool_id: String,
+    pub ledger_sequence: u32,
+    pub created_at: i64,
+    pub reserves: serde_json::Value,
+    pub total_shares: String,
+    pub tvl: Option<String>,
+    pub volume: Option<String>,
+    pub fee_revenue: Option<String>,
+}
+
+/// Detected token from contract deployments or classic assets.
+///
+/// Produced by `detect_tokens`. Maps to `tokens` table.
+#[derive(Debug, Clone)]
+pub struct ExtractedToken {
+    /// "classic", "sac", or "soroban".
+    pub asset_type: String,
+    pub asset_code: Option<String>,
+    pub issuer_address: Option<String>,
+    pub contract_id: Option<String>,
+    pub name: Option<String>,
+    pub total_supply: Option<String>,
+    pub holder_count: Option<i32>,
+}
+
+/// Detected NFT from events and ledger entry changes.
+///
+/// Produced by `detect_nfts`. Maps to `nfts` table.
+#[derive(Debug, Clone)]
+pub struct ExtractedNft {
+    pub contract_id: String,
+    pub token_id: String,
+    pub collection_name: Option<String>,
+    pub owner_account: Option<String>,
+    pub name: Option<String>,
+    pub media_url: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+    pub minted_at_ledger: Option<u32>,
+    /// Updated on every NFT state change. Watermark column.
+    pub last_seen_ledger: u32,
+    pub created_at: i64,
+}
+
 /// Extracted operation data, maps to the `operations` table.
 ///
 /// **Note:** field names do not directly mirror DB column names for this struct:
