@@ -23,4 +23,5 @@ CREATE TABLE tokens (
 
 CREATE UNIQUE INDEX idx_tokens_classic ON tokens (asset_code, issuer_address) WHERE asset_type IN ('classic', 'sac');
 CREATE UNIQUE INDEX idx_tokens_soroban ON tokens (contract_id) WHERE asset_type = 'soroban';
+CREATE UNIQUE INDEX idx_tokens_sac ON tokens (contract_id) WHERE asset_type = 'sac';
 CREATE INDEX idx_tokens_type ON tokens (asset_type);

@@ -268,7 +268,7 @@ pub async fn upsert_token(
         r#"INSERT INTO tokens
                (asset_type, asset_code, issuer_address, contract_id, name, total_supply, holder_count)
            VALUES ($1, $2, $3, $4, $5, $6::numeric, $7)
-           ON CONFLICT ON CONSTRAINT tokens_pkey DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(&token.asset_type)
     .bind(&token.asset_code)
