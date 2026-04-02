@@ -2,7 +2,7 @@
 id: '0095'
 title: 'Monorepo restructure: flatten apps/, infra/, move web to top-level'
 type: REFACTOR
-status: active
+status: completed
 related_adr: ['0005']
 related_tasks: ['0092', '0094']
 tags: [priority-medium, effort-small, layer-infra, nx]
@@ -16,6 +16,13 @@ history:
     status: active
     who: fmazur
     note: 'Activated task for implementation.'
+  - date: 2026-04-02
+    status: done
+    who: fmazur
+    note: >
+      Monorepo restructured: web/ moved to top-level, infra/ flattened,
+      apps/ removed, obsolete libs cleaned up. All Nx targets passing.
+      CI criterion deferred.
 ---
 
 # Monorepo restructure: flatten apps/, infra/, move web to top-level
