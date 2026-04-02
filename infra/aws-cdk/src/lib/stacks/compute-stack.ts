@@ -20,7 +20,8 @@ export interface ComputeStackProps extends cdk.StackProps {
   readonly lambdaSecurityGroup: ec2.ISecurityGroup;
   readonly dbSecret: secretsmanager.ISecret;
   readonly dbProxyEndpoint: string;
-  readonly ledgerBucket: s3.IBucket;
+  readonly ledgerBucketArn: string;
+  readonly ledgerBucketName: string;
   readonly cargoWorkspacePath: string;
 }
 
@@ -49,16 +50,37 @@ export class ComputeStack extends cdk.Stack {
       lambdaSecurityGroup,
       dbSecret,
       dbProxyEndpoint,
-      ledgerBucket,
+      ledgerBucketArn,
+      ledgerBucketName,
       cargoWorkspacePath,
     } = props;
+
+    // Import the ledger bucket by name/ARN to break the cross-stack
+    // cyclic dependency that occurs with direct IBucket references.
+    // LedgerBucketStack owns the bucket; ComputeStack only needs to
+    // read from it and add an event notification.
+    const ledgerBucket = s3.Bucket.fromBucketAttributes(this, 'LedgerBucket', {
+      bucketArn: ledgerBucketArn,
+      bucketName: ledgerBucketName,
+    });
+
+    const apiLogGroup = new logs.LogGroup(this, 'ApiLogGroup', {
+      logGroupName: `/aws/lambda/${config.envName}-soroban-explorer-api`,
+      retention: logs.RetentionDays.ONE_MONTH,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const processorLogGroup = new logs.LogGroup(this, 'ProcessorLogGroup', {
+      logGroupName: `/aws/lambda/${config.envName}-soroban-explorer-indexer`,
+      retention: logs.RetentionDays.ONE_MONTH,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
 
     const sharedLambdaProps = {
       architecture: lambda.Architecture.ARM_64,
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [lambdaSecurityGroup],
-      logRetention: logs.RetentionDays.ONE_MONTH,
     };
 
     const sharedEnv = {
@@ -87,6 +109,7 @@ export class ComputeStack extends cdk.Stack {
       manifestPath: cargoWorkspacePath,
       binaryName: 'api',
       ...sharedLambdaProps,
+      logGroup: apiLogGroup,
       memorySize: config.apiLambdaMemory,
       timeout: cdk.Duration.seconds(config.apiLambdaTimeout),
       environment: {
@@ -108,6 +131,7 @@ export class ComputeStack extends cdk.Stack {
       manifestPath: cargoWorkspacePath,
       binaryName: 'indexer',
       ...sharedLambdaProps,
+      logGroup: processorLogGroup,
       memorySize: config.indexerLambdaMemory,
       timeout: cdk.Duration.seconds(config.indexerLambdaTimeout),
       environment: {

@@ -49,7 +49,8 @@ export function createApp({
     dbProxyEndpoint: rds.dbProxy
       ? rds.dbProxy.endpoint
       : rds.dbInstance.instanceEndpoint.hostname,
-    ledgerBucket: ledgerBucket.bucket,
+    ledgerBucketArn: ledgerBucket.bucket.bucketArn,
+    ledgerBucketName: ledgerBucket.bucket.bucketName,
     cargoWorkspacePath,
   });
 
