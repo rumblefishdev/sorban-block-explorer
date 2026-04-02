@@ -5,6 +5,7 @@ import { NetworkStack } from './stacks/network-stack.js';
 import { RdsStack } from './stacks/rds-stack.js';
 import { LedgerBucketStack } from './stacks/ledger-bucket-stack.js';
 import { ComputeStack } from './stacks/compute-stack.js';
+import { MigrationStack } from './stacks/migration-stack.js';
 
 export interface CreateAppOptions {
   readonly config: EnvironmentConfig;
@@ -40,19 +41,33 @@ export function createApp({
     config,
   });
 
-  new ComputeStack(app, `${prefix}-Compute`, {
+  const dbProxyEndpoint = rds.dbProxy
+    ? rds.dbProxy.endpoint
+    : rds.dbInstance.instanceEndpoint.hostname;
+
+  const migration = new MigrationStack(app, `${prefix}-Migration`, {
     env,
     config,
     vpc: network.vpc,
     lambdaSecurityGroup: network.lambdaSecurityGroup,
     dbSecret: rds.dbSecret,
-    dbProxyEndpoint: rds.dbProxy
-      ? rds.dbProxy.endpoint
-      : rds.dbInstance.instanceEndpoint.hostname,
+    dbProxyEndpoint,
+    cargoWorkspacePath,
+  });
+  migration.addDependency(rds);
+
+  const compute = new ComputeStack(app, `${prefix}-Compute`, {
+    env,
+    config,
+    vpc: network.vpc,
+    lambdaSecurityGroup: network.lambdaSecurityGroup,
+    dbSecret: rds.dbSecret,
+    dbProxyEndpoint,
     ledgerBucketArn: ledgerBucket.bucket.bucketArn,
     ledgerBucketName: ledgerBucket.bucket.bucketName,
     cargoWorkspacePath,
   });
+  compute.addDependency(migration);
 
   app.synth();
 }

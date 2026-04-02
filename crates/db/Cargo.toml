@@ -8,3 +8,11 @@ description = "Database access layer for the Soroban block explorer"
 domain = { path = "../domain" }
 sqlx = { workspace = true }
 tracing = { workspace = true }
+aws-config = { workspace = true, optional = true }
+aws-sdk-secretsmanager = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+percent-encoding = { version = "2", optional = true }
+
+[features]
+default = []
+aws-secrets = ["aws-config", "aws-sdk-secretsmanager", "serde_json", "percent-encoding"]

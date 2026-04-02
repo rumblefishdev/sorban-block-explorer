@@ -10,3 +10,5 @@ export { LedgerBucketStack } from './lib/stacks/ledger-bucket-stack.js';
 export type { LedgerBucketStackProps } from './lib/stacks/ledger-bucket-stack.js';
 export { ComputeStack } from './lib/stacks/compute-stack.js';
 export type { ComputeStackProps } from './lib/stacks/compute-stack.js';
+export { MigrationStack } from './lib/stacks/migration-stack.js';
+export type { MigrationStackProps } from './lib/stacks/migration-stack.js';

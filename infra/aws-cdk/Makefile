@@ -24,6 +24,9 @@ deploy-staging-rds: build
 deploy-staging-ledger-bucket: build
 	npx cdk --app "$(STAGING_APP)" deploy Explorer-staging-LedgerBucket --require-approval broadening
 
+deploy-staging-migration: build
+	npx cdk --app "$(STAGING_APP)" deploy Explorer-staging-Migration --require-approval broadening
+
 # --- Production ---
 
 synth-production: build
@@ -43,6 +46,9 @@ deploy-production-rds: build
 
 deploy-production-ledger-bucket: build
 	npx cdk --app "$(PRODUCTION_APP)" deploy Explorer-production-LedgerBucket --require-approval broadening
+
+deploy-production-migration: build
+	npx cdk --app "$(PRODUCTION_APP)" deploy Explorer-production-Migration --require-approval broadening
 
 # --- Shared ---
 

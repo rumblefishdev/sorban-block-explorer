@@ -1,0 +1,19 @@
+[package]
+name = "db-migrate"
+version = "0.1.0"
+edition = "2024"
+description = "Database migration Lambda for the Soroban block explorer (CloudFormation custom resource)"
+
+[[bin]]
+name = "db-migrate"
+path = "src/main.rs"
+
+[dependencies]
+db = { path = "../db", features = ["aws-secrets"] }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+lambda_runtime = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

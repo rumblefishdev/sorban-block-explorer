@@ -5,6 +5,7 @@ members = [
     "crates/indexer",
     "crates/xdr-parser",
     "crates/db",
+    "crates/db-migrate",
     "crates/domain",
 ]
 
@@ -20,6 +21,7 @@ chrono = { version = "0.4", features = ["serde"] }
 # Web framework + Lambda
 axum = "0.8"
 lambda_http = "1"
+lambda_runtime = "1"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 
 # OpenAPI
@@ -43,6 +45,10 @@ zstd = "0.13"
 # Observability
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# AWS SDK
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-secretsmanager = "1"
 
 # Error handling
 thiserror = "2"
