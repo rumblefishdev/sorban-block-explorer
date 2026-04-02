@@ -38,8 +38,6 @@ The current Nx workspace already reserves the frontend boundary as:
 
 - `web` - application entrypoint for the explorer web app
 - `libs/ui` - reusable presentation components and frontend-only view primitives
-- `libs/domain` - shared explorer concepts that may be reused by both frontend and backend
-- `libs/shared` - generic non-domain utilities used across the workspace
 
 The frontend bootstrap (React 19, Vite, MUI, React Router, TanStack Query) is in place.
 This document describes the intended production architecture for that boundary. Page
@@ -187,8 +185,6 @@ The intended code placement aligns with the workspace:
 
 - `web` should contain app bootstrap, route composition, and page orchestration
 - `libs/ui` should hold reusable frontend-oriented components and display models
-- `libs/domain` should hold cross-app explorer concepts such as identifiers, cursor types,
-  filters, and entity enums where those represent shared business concepts
 
 ### 4.4 Rendering Strategy
 

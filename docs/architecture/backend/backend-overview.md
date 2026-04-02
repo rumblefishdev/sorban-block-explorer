@@ -36,8 +36,7 @@ what is needed to explain backend behavior.
 The target workspace structure (per ADR 0005, tasks 0094/0095) reserves the backend boundary as:
 
 - `crates/api` - application entrypoint for the public REST API (Rust/axum)
-- `libs/domain` - shared explorer-domain types that may be reused by backend and frontend
-- `libs/shared` - generic cross-cutting utilities with no explorer-domain vocabulary
+- `crates/domain` - shared explorer-domain types used by backend crates
 
 This document describes the intended production architecture for that boundary. It is not
 a description of the current implementation state, which is still skeletal.
@@ -163,8 +162,7 @@ Responsibility split across the workspace should remain clear:
 - `crates/indexer` and related workers own ingestion and persistence into the explorer DB
 - `crates/api` owns query APIs, response shaping, search, and transport concerns
 - `web` consumes the REST API and should not reconstruct backend behavior client-side
-- `libs/domain` may hold reusable explorer-domain types shared across the boundary
-- `libs/shared` may hold generic helpers that are not explorer-specific
+- `crates/domain` holds reusable explorer-domain types shared across backend crates
 
 ## 5. Module Design
 
@@ -456,8 +454,7 @@ current bootstrap status.
 Expected code placement:
 
 - `crates/api` for application bootstrap, route wiring, axum modules, and runtime integrations
-- `libs/domain` for reusable explorer-domain types and value objects shared with other apps
-- `libs/shared` for generic helpers that are not specific to explorer business concepts
+- `crates/domain` for reusable explorer-domain types and value objects shared across backend crates
 
 This document should be treated as the detailed reference for future backend implementation
 planning, with
