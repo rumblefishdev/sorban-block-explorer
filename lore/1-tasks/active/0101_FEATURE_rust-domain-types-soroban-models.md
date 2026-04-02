@@ -1,10 +1,10 @@
 ---
 id: '0101'
-title: 'Rust domain types: Soroban models (contract, invocation, event, token, account, NFT)'
+title: 'Rust domain types: DB entity models (operation, Soroban, token, account, NFT, pool)'
 type: FEATURE
 status: active
-related_adr: ['0005']
-related_tasks: ['0010', '0011', '0012', '0079', '0094', '0018']
+related_adr: ['0005', '0007']
+related_tasks: ['0010', '0011', '0012', '0079', '0094', '0018', '0019', '0098']
 tags: [priority-high, effort-medium, layer-domain, rust]
 milestone: 1
 links: []
@@ -15,104 +15,130 @@ history:
     note: >
       Created to replace TypeScript domain types (tasks 0010-0012, 0079)
       which are obsolete after ADR 0005 (Rust-only backend).
-      crates/domain/ already has Ledger and Transaction; Soroban models,
-      Token, Account, NFT are missing.
+      crates/domain/ already has Ledger and Transaction; remaining models missing.
   - date: 2026-04-02
     status: active
     who: stkrolikiewicz
-    note: 'Activated — ready to implement Rust domain types'
+    note: >
+      Activated. Scope refined: pure DB row structs only, no enums, no re-exports.
+      EventInterpretation excluded (removed from architecture per 0098/ADR 0007).
+      API types (search, pagination, network stats, chart, view variants) excluded.
+      ContractFunction/FunctionParam stay in xdr-parser (consumers depend directly).
 ---
 
-# Rust domain types: Soroban models (contract, invocation, event, token, account, NFT)
+# Rust domain types: DB entity models
 
 ## Summary
 
-Define shared Rust domain structs in `crates/domain/` for Soroban contracts, invocations, events, event interpretations, tokens, accounts, and NFTs. These replace the TypeScript types from tasks 0010-0012 which became obsolete after ADR 0005 (Rust-only backend). The structs are consumed by both `crates/api/` and `crates/indexer/` and must align with the PostgreSQL DDL from task 0018.
+Define shared Rust domain structs in `crates/domain/` for all remaining DB entity models. Pure DB row mirrors — every field maps 1:1 to a DDL column with matching type and nullability. No enums, no business logic, no helpers. VARCHAR columns stay `String`, JSONB stays `serde_json::Value`.
+
+Complements the write-path `Extracted*` types in `crates/xdr-parser/` which serve a different purpose (pre-DB, no surrogate IDs, hash-based references, unix timestamps).
+
+Replaces TypeScript domain types from tasks 0010-0012 which became obsolete after ADR 0005 (Rust-only backend).
 
 ## Status: Active
 
-**Current state:** Not started. `crates/domain/` already has `Ledger` and `Transaction` structs as reference for patterns and conventions.
+**Current state:** Not started. `crates/domain/` already has `Ledger` and `Transaction` structs.
 
 ## Context
 
-After ADR 0005, the entire backend (API + Indexer) is Rust. TypeScript domain types in `libs/domain/` (tasks 0010-0012, split in 0079) are no longer consumed by any backend code. The Rust `crates/domain/` crate needs equivalent structs.
+### Two type layers
 
-### Existing patterns (from `crates/domain/`)
+```
+WRITE: XDR → Extracted* (xdr-parser) → SQL INSERT (db)
+READ:  SQL SELECT → domain types (domain) → response DTOs (api)
+```
 
-- `Ledger` and `Transaction` structs already exist with `#[derive(Debug, Clone, Serialize, Deserialize)]`
-- `chrono::DateTime<Utc>` for timestamps
-- `i64` for BIGINT/BIGSERIAL columns
-- `Option<T>` for nullable columns
-- `String` for VARCHAR columns
+| Concern      | xdr-parser `Extracted*`    | domain                            |
+| ------------ | -------------------------- | --------------------------------- |
+| IDs          | No surrogate IDs           | `id: i64` (DB-assigned)           |
+| FKs          | `transaction_hash: String` | `transaction_id: i64`             |
+| Timestamps   | `created_at: i64` (unix)   | `created_at: DateTime<Utc>`       |
+| Type columns | `String`                   | `String` (same — pure DDL mirror) |
+| Purpose      | Write path (indexer → DB)  | Read path (DB → API)              |
 
 ### Types to define
 
-Sourced from the TypeScript types in tasks 0010-0012 and DDL in task 0018:
+| Module         | Structs                                                | DDL source            |
+| -------------- | ------------------------------------------------------ | --------------------- |
+| `operation.rs` | `Operation`                                            | migration 0002        |
+| `soroban.rs`   | `SorobanContract`, `SorobanInvocation`, `SorobanEvent` | migrations 0003, 0004 |
+| `token.rs`     | `Token`                                                | migration 0005        |
+| `account.rs`   | `Account`                                              | migration 0005        |
+| `nft.rs`       | `Nft`                                                  | migration 0006        |
+| `pool.rs`      | `LiquidityPool`, `LiquidityPoolSnapshot`               | migration 0006        |
 
-| Module       | Structs/Enums                                                                                                                                                            | Source task |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------- |
-| `soroban.rs` | `ContractType`, `ContractFunction`, `ContractMetadata`, `SorobanContract`, `EventType`, `SorobanInvocation`, `SorobanEvent`, `InterpretationType`, `EventInterpretation` | 0010        |
-| `token.rs`   | `AssetType`, `Token`                                                                                                                                                     | 0011        |
-| `account.rs` | `Account`                                                                                                                                                                | 0011        |
-| `nft.rs`     | `Nft`                                                                                                                                                                    | 0011        |
+### Type mapping
 
-### Key type mapping decisions
-
-| TypeScript                       | Rust                                              | Rationale                                  |
-| -------------------------------- | ------------------------------------------------- | ------------------------------------------ |
-| `BigIntString` (string alias)    | `i64`                                             | sqlx maps BIGINT to i64 natively           |
-| `NumericString` (string alias)   | `rust_decimal::Decimal` or `String`               | NUMERIC(28,7) — evaluate sqlx support      |
-| `JsonValue`                      | `serde_json::Value`                               | Direct equivalent                          |
-| `ScVal` (JsonValue alias)        | `serde_json::Value`                               | Placeholder until xdr-parser crate matures |
-| `readonly` arrays                | `Vec<T>`                                          | Rust ownership handles immutability        |
-| Union types (`'token' \| 'dex'`) | `enum` with `#[serde(rename_all = "snake_case")]` | Idiomatic Rust                             |
+| DDL type             | Rust type                | Rationale                                           |
+| -------------------- | ------------------------ | --------------------------------------------------- |
+| BIGINT / BIGSERIAL   | `i64`                    | sqlx maps natively                                  |
+| SERIAL               | `i32`                    | 4-byte int, fits in i32                             |
+| SMALLINT             | `i16`                    | 2-byte int                                          |
+| INTEGER              | `i32`                    | 4-byte int                                          |
+| NUMERIC              | `String`                 | Avoids `rust_decimal` dep; API serializes as string |
+| VARCHAR              | `String`                 | Direct mapping                                      |
+| TEXT                 | `String`                 | Direct mapping                                      |
+| BOOLEAN              | `Option<bool>` or `bool` | `Option` if no NOT NULL constraint                  |
+| JSONB                | `serde_json::Value`      | Direct equivalent                                   |
+| TIMESTAMPTZ          | `DateTime<Utc>`          | Existing pattern                                    |
+| TSVECTOR (generated) | excluded                 | DB-only column                                      |
 
 ## Implementation Plan
 
-### Step 1: Add dependencies to `crates/domain/Cargo.toml`
+### Step 1: Add `serde_json` dependency to `crates/domain/Cargo.toml`
 
-Add `serde_json` (for JSONB fields) and potentially `rust_decimal` (for NUMERIC columns). Check if `sqlx::FromRow` derive should be in domain or kept at db layer.
+Only new dependency. Domain stays lightweight (serde + serde_json + chrono).
 
-### Step 2: Define Soroban enums and helper types
+### Step 2: Define `Operation` (`operation.rs`)
 
-Create `soroban.rs` with `ContractType`, `EventType`, `InterpretationType` enums and `ContractFunction`, `ContractMetadata` structs.
+Pure struct, all fields from migration 0002. `op_type: String` (not enum).
 
-### Step 3: Define Soroban entity structs
+### Step 3: Define Soroban structs (`soroban.rs`)
 
-In `soroban.rs`: `SorobanContract`, `SorobanInvocation`, `SorobanEvent`, `EventInterpretation`. Align field names and nullability with DDL from task 0018.
+`SorobanContract`, `SorobanInvocation`, `SorobanEvent`. All VARCHAR type columns as `String`. `is_sac: Option<bool>` (DDL has no NOT NULL).
 
-### Step 4: Define Token, Account, NFT
+### Step 4: Define `Token`, `Account`, `Nft`
 
-Create `token.rs` (`AssetType` enum, `Token` struct), `account.rs` (`Account` struct), `nft.rs` (`Nft` struct). Align with DDL.
+One struct per file. `asset_type: String` (not enum). All nullable fields as `Option<T>`.
 
-### Step 5: Register modules in `lib.rs`
+### Step 5: Define pool structs (`pool.rs`)
 
-Add `pub mod soroban;`, `pub mod token;`, `pub mod account;`, `pub mod nft;` to `crates/domain/src/lib.rs`.
+`LiquidityPool`, `LiquidityPoolSnapshot`. NUMERIC fields as `String`. JSONB fields as `serde_json::Value`.
 
-### Step 6: Verify compilation
+### Step 6: Register modules in `lib.rs`
 
-Run `cargo build -p domain` and ensure all structs compile and derive macros work.
+### Step 7: `cargo build -p domain`
 
 ## Acceptance Criteria
 
-- [ ] `ContractType`, `EventType`, `InterpretationType`, `AssetType` enums defined with serde support
-- [ ] `ContractFunction`, `ContractMetadata` helper types defined
+- [ ] `Operation` struct — all DDL fields from migration 0002
 - [ ] `SorobanContract` struct — all DDL fields except `search_vector`
-- [ ] `SorobanInvocation` struct — all DDL fields, JSONB as `serde_json::Value`
+- [ ] `SorobanInvocation` struct — all DDL fields
 - [ ] `SorobanEvent` struct — all DDL fields
-- [ ] `EventInterpretation` struct — all DDL fields
-- [ ] `Token` struct — all DDL fields, NUMERIC mapped appropriately
-- [ ] `Account` struct — all DDL fields, balances as `Vec<serde_json::Value>`
+- [ ] `Token` struct — all DDL fields
+- [ ] `Account` struct — all DDL fields
 - [ ] `Nft` struct — all DDL fields
+- [ ] `LiquidityPool` struct — all DDL fields
+- [ ] `LiquidityPoolSnapshot` struct — all DDL fields
 - [ ] All structs derive `Debug, Clone, Serialize, Deserialize`
-- [ ] Field nullability matches DDL (Option<T> for nullable)
+- [ ] Field nullability matches DDL exactly (`Option<T>` ↔ no NOT NULL)
+- [ ] No enums — all VARCHAR columns as `String`
+- [ ] No xdr-parser dependency — domain stays lightweight
 - [ ] Modules registered in `crates/domain/src/lib.rs`
 - [ ] `cargo build -p domain` passes
 
+## Out of Scope
+
+- **Enums** (OperationType, ContractType, EventType, AssetType) — business logic, belong in API layer when pattern matching is needed
+- **ContractFunction / FunctionParam** — defined in `crates/xdr-parser/`, consumers depend directly
+- **PoolAsset** — typed JSONB shape, not a DB entity; deserialize in API layer
+- **API view types** (Pointer/Summary/Detail) — response DTOs in `crates/api/`
+- **API request/response types** (pagination, search, network stats, chart) — not DB entities
+- **EventInterpretation** — removed from architecture (task 0098, ADR 0007)
+
 ## Notes
 
-- **Depends on 0094** (scaffold Cargo workspace) if `crates/domain/Cargo.toml` doesn't yet support additional dependencies.
-- **Does NOT depend on 0018** — types can be defined before SQL migrations exist, but should align with the DDL spec in 0018.
-- `search_vector` (TSVECTOR generated column) is DB-only — excluded from domain struct, same as in TypeScript.
-- Consider whether `sqlx::FromRow` derive belongs in domain crate or a separate db-layer mapping. Existing `Ledger`/`Transaction` structs don't use it — follow the same pattern for now.
-- TypeScript types in `libs/domain/` will be cleaned up when task 0095 (monorepo restructure) removes `apps/api` and `apps/indexer`. The `libs/domain/` package may still be needed by `web/` frontend for API response types — but that's covered by task 0096 (OpenAPI TypeScript codegen).
+- Domain types should be created **alongside DDL** — they are the Rust expression of the same DB contract. The gap exists because the TS→Rust migration (ADR 0005) happened after TS types were already created.
+- `search_vector` (TSVECTOR generated column) is DB-only — excluded from domain struct.
+- `sqlx::FromRow` derive: not added now (existing `Ledger`/`Transaction` don't use it). Can be added when `crates/db/` query functions are implemented.
