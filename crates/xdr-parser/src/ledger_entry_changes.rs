@@ -195,6 +195,8 @@ fn extract_entry_info(entry: &LedgerEntry) -> (&'static str, Value, Value) {
         LedgerEntryData::ContractCode(cc) => {
             ("contract_code", contract_code_key(cc), contract_code_data(cc))
         }
+        // Config setting payload intentionally excluded — protocol-internal, not exposed by explorer.
+        // Each variant has a different inner type; serializing all is high effort, low value.
         LedgerEntryData::ConfigSetting(cs) => {
             ("config_setting", config_setting_key(cs), json!({}))
         }
@@ -237,7 +239,7 @@ fn extract_key_info(key: &LedgerKey) -> (&'static str, Value) {
             ("contract_code", json!({ "hash": hex::encode(k.hash.0) }))
         }
         LedgerKey::ConfigSetting(k) => {
-            ("config_setting", json!({ "config_setting_id": k.config_setting_id as i32 }))
+            ("config_setting", json!({ "config_setting_id": format!("{:?}", k.config_setting_id) }))
         }
         LedgerKey::Ttl(k) => ("ttl", json!({ "key_hash": hex::encode(k.key_hash.0) })),
     }

@@ -116,7 +116,7 @@ pub fn extract_account_states(
         if change.entry_type != "account" {
             continue;
         }
-        if !matches!(change.change_type.as_str(), "created" | "updated") {
+        if !matches!(change.change_type.as_str(), "created" | "updated" | "restored") {
             continue;
         }
         let Some(ref data) = change.data else {
@@ -147,7 +147,7 @@ pub fn extract_account_states(
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
 
-        let is_creation = change.change_type == "created";
+        let is_creation = matches!(change.change_type.as_str(), "created" | "restored");
         accounts.push(ExtractedAccountState {
             account_id,
             first_seen_ledger: if is_creation { Some(change.ledger_sequence) } else { None },
@@ -179,7 +179,10 @@ pub fn extract_liquidity_pools(
         if change.entry_type != "liquidity_pool" {
             continue;
         }
-        if !matches!(change.change_type.as_str(), "created" | "updated") {
+        if !matches!(
+            change.change_type.as_str(),
+            "created" | "updated" | "restored"
+        ) {
             continue;
         }
         let Some(ref data) = change.data else {
@@ -211,7 +214,7 @@ pub fn extract_liquidity_pools(
             .unwrap_or(0)
             .to_string();
 
-        let is_creation = change.change_type == "created";
+        let is_creation = matches!(change.change_type.as_str(), "created" | "restored");
         let pool = ExtractedLiquidityPool {
             pool_id: pool_id.clone(),
             asset_a: asset_a.clone(),

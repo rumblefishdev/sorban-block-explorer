@@ -168,10 +168,14 @@ pub async fn upsert_account_state(
     pool: &PgPool,
     account: &ExtractedAccountState,
 ) -> Result<(), sqlx::Error> {
+    let first_seen = account
+        .first_seen_ledger
+        .unwrap_or(account.last_seen_ledger) as i64;
+
     sqlx::query(
         r#"INSERT INTO accounts
                (account_id, first_seen_ledger, last_seen_ledger, sequence_number, balances, home_domain)
-           VALUES ($1, $2, $2, $3, $4, $5)
+           VALUES ($1, $2, $3, $4, $5, $6)
            ON CONFLICT (account_id) DO UPDATE SET
                last_seen_ledger = EXCLUDED.last_seen_ledger,
                sequence_number = EXCLUDED.sequence_number,
@@ -180,6 +184,7 @@ pub async fn upsert_account_state(
            WHERE accounts.last_seen_ledger <= EXCLUDED.last_seen_ledger"#,
     )
     .bind(&account.account_id)
+    .bind(first_seen)
     .bind(account.last_seen_ledger as i64)
     .bind(account.sequence_number)
     .bind(&account.balances)
@@ -197,13 +202,14 @@ pub async fn upsert_liquidity_pool(
     pool: &PgPool,
     lp: &ExtractedLiquidityPool,
 ) -> Result<(), sqlx::Error> {
-    let total_shares: f64 = lp.total_shares.parse().unwrap_or(0.0);
-    let tvl: Option<f64> = lp.tvl.as_ref().and_then(|v| v.parse().ok());
+    let created_at_ledger = lp
+        .created_at_ledger
+        .unwrap_or(lp.last_updated_ledger) as i64;
 
     sqlx::query(
         r#"INSERT INTO liquidity_pools
                (pool_id, asset_a, asset_b, fee_bps, reserves, total_shares, tvl, created_at_ledger, last_updated_ledger)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+           VALUES ($1, $2, $3, $4, $5, $6::numeric, $7::numeric, $8, $9)
            ON CONFLICT (pool_id) DO UPDATE SET
                reserves = EXCLUDED.reserves,
                total_shares = EXCLUDED.total_shares,
@@ -216,8 +222,9 @@ pub async fn upsert_liquidity_pool(
     .bind(&lp.asset_b)
     .bind(lp.fee_bps)
     .bind(&lp.reserves)
-    .bind(total_shares)
-    .bind(tvl)
+    .bind(&lp.total_shares)
+    .bind(lp.tvl.as_deref())
+    .bind(created_at_ledger)
     .bind(lp.last_updated_ledger as i64)
     .execute(pool)
     .await?;
@@ -225,30 +232,27 @@ pub async fn upsert_liquidity_pool(
     Ok(())
 }
 
-/// Append a liquidity pool snapshot (never updated).
+/// Append a liquidity pool snapshot (idempotent — replays are ignored).
 pub async fn insert_liquidity_pool_snapshot(
     pool: &PgPool,
     snapshot: &ExtractedLiquidityPoolSnapshot,
 ) -> Result<(), sqlx::Error> {
     let created_at = unix_to_datetime(snapshot.created_at)?;
-    let total_shares: f64 = snapshot.total_shares.parse().unwrap_or(0.0);
-    let tvl: Option<f64> = snapshot.tvl.as_ref().and_then(|v| v.parse().ok());
-    let volume: Option<f64> = snapshot.volume.as_ref().and_then(|v| v.parse().ok());
-    let fee_revenue: Option<f64> = snapshot.fee_revenue.as_ref().and_then(|v| v.parse().ok());
 
     sqlx::query(
         r#"INSERT INTO liquidity_pool_snapshots
                (pool_id, ledger_sequence, created_at, reserves, total_shares, tvl, volume, fee_revenue)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
+           VALUES ($1, $2, $3, $4, $5::numeric, $6::numeric, $7::numeric, $8::numeric)
+           ON CONFLICT (pool_id, ledger_sequence, created_at) DO NOTHING"#,
     )
     .bind(&snapshot.pool_id)
     .bind(snapshot.ledger_sequence as i64)
     .bind(created_at)
     .bind(&snapshot.reserves)
-    .bind(total_shares)
-    .bind(tvl)
-    .bind(volume)
-    .bind(fee_revenue)
+    .bind(&snapshot.total_shares)
+    .bind(snapshot.tvl.as_deref())
+    .bind(snapshot.volume.as_deref())
+    .bind(snapshot.fee_revenue.as_deref())
     .execute(pool)
     .await?;
 
@@ -260,12 +264,10 @@ pub async fn upsert_token(
     pool: &PgPool,
     token: &ExtractedToken,
 ) -> Result<(), sqlx::Error> {
-    let total_supply: Option<f64> = token.total_supply.as_ref().and_then(|v| v.parse().ok());
-
     sqlx::query(
         r#"INSERT INTO tokens
                (asset_type, asset_code, issuer_address, contract_id, name, total_supply, holder_count)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           VALUES ($1, $2, $3, $4, $5, $6::numeric, $7)
            ON CONFLICT ON CONSTRAINT tokens_pkey DO NOTHING"#,
     )
     .bind(&token.asset_type)
@@ -273,7 +275,7 @@ pub async fn upsert_token(
     .bind(&token.issuer_address)
     .bind(&token.contract_id)
     .bind(&token.name)
-    .bind(total_supply)
+    .bind(token.total_supply.as_deref())
     .bind(token.holder_count)
     .execute(pool)
     .await?;
@@ -294,7 +296,7 @@ pub async fn upsert_nft(
                (contract_id, token_id, collection_name, owner_account, name, media_url, metadata, minted_at_ledger, last_seen_ledger)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
            ON CONFLICT (contract_id, token_id) DO UPDATE SET
-               owner_account = COALESCE(EXCLUDED.owner_account, nfts.owner_account),
+               owner_account = EXCLUDED.owner_account,
                name = COALESCE(EXCLUDED.name, nfts.name),
                media_url = COALESCE(EXCLUDED.media_url, nfts.media_url),
                metadata = COALESCE(EXCLUDED.metadata, nfts.metadata),

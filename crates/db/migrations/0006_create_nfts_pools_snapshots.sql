@@ -22,7 +22,8 @@ CREATE TABLE liquidity_pool_snapshots (
     tvl              NUMERIC,
     volume           NUMERIC,
     fee_revenue      NUMERIC,
-    PRIMARY KEY (id, created_at)
+    PRIMARY KEY (id, created_at),
+    UNIQUE (pool_id, ledger_sequence, created_at)
 ) PARTITION BY RANGE (created_at);
 
 CREATE INDEX idx_pool_snapshots_pool ON liquidity_pool_snapshots (pool_id, created_at DESC);
