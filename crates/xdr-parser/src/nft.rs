@@ -82,8 +82,8 @@ fn try_parse_transfer(
         return None;
     }
 
-    let from = topic_address_value(&remaining_topics[0]);
-    let to = topic_address_value(&remaining_topics[1]);
+    let from = topic_address_value(&remaining_topics[0])?;
+    let to = topic_address_value(&remaining_topics[1])?;
 
     Some(NftEvent {
         transaction_hash: event.transaction_hash.clone(),
@@ -114,7 +114,7 @@ fn try_parse_mint(
         return None;
     }
 
-    let to = topic_address_value(&remaining_topics[0]);
+    let to = topic_address_value(&remaining_topics[0])?;
 
     Some(NftEvent {
         transaction_hash: event.transaction_hash.clone(),
@@ -146,7 +146,7 @@ fn try_parse_burn(
         return None;
     }
 
-    let from = topic_address_value(&remaining_topics[0]);
+    let from = topic_address_value(&remaining_topics[0])?;
 
     Some(NftEvent {
         transaction_hash: event.transaction_hash.clone(),
@@ -175,27 +175,33 @@ fn looks_like_token_id(data: &Value) -> bool {
 }
 
 /// Extract a symbol string from a tagged ScVal JSON topic.
-fn topic_symbol_value(topic: &Value) -> String {
-    if let Some(s) = topic.get("value").and_then(|v| v.as_str()) {
-        s.to_string()
-    } else {
-        String::new()
-    }
-}
-
-/// Extract an address string from a tagged ScVal JSON topic.
 ///
-/// Only accepts topics typed as "address" with a string value.
-/// Returns empty string for non-address topics to avoid misattributing
-/// arbitrary JSON as an address.
-fn topic_address_value(topic: &Value) -> String {
+/// Only matches topics with `"type": "sym"` to avoid false positives
+/// from other topic types that happen to have string values.
+fn topic_symbol_value(topic: &Value) -> String {
     let type_str = topic.get("type").and_then(|v| v.as_str());
-    if type_str == Some("address")
+    if type_str == Some("sym")
         && let Some(s) = topic.get("value").and_then(|v| v.as_str())
     {
         return s.to_string();
     }
     String::new()
+}
+
+/// Extract an address string from a tagged ScVal JSON topic.
+///
+/// Only accepts topics typed as "address" with a non-empty string value.
+/// Returns `None` for non-address topics so callers can skip events
+/// with invalid address fields.
+fn topic_address_value(topic: &Value) -> Option<String> {
+    let type_str = topic.get("type").and_then(|v| v.as_str());
+    if type_str == Some("address")
+        && let Some(s) = topic.get("value").and_then(|v| v.as_str())
+        && !s.is_empty()
+    {
+        return Some(s.to_string());
+    }
+    None
 }
 
 #[cfg(test)]

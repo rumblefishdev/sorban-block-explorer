@@ -94,7 +94,7 @@ pub async fn upsert_contract_metadata(
         r#"INSERT INTO soroban_contracts (contract_id, wasm_hash, metadata)
            VALUES ($1, $2, $3)
            ON CONFLICT (contract_id) DO UPDATE SET
-               metadata = EXCLUDED.metadata,
+               metadata = COALESCE(soroban_contracts.metadata, '{}'::jsonb) || EXCLUDED.metadata,
                wasm_hash = COALESCE(soroban_contracts.wasm_hash, EXCLUDED.wasm_hash)"#,
     )
     .bind(contract_id)
