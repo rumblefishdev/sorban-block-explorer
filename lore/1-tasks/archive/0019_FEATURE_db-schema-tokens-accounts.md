@@ -2,7 +2,7 @@
 id: '0019'
 title: 'DB schema: tokens and accounts tables'
 type: FEATURE
-status: active
+status: completed
 related_adr: ['0005']
 related_tasks: ['0011', '0015', '0092']
 tags: [priority-medium, effort-small, layer-database]
@@ -21,6 +21,14 @@ history:
     status: active
     who: stkrolikiewicz
     note: 'Activated for implementation'
+  - date: 2026-04-02
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Aligned migration 0005 with spec: NUMERIC(28,7) for total_supply,
+      DEFAULT 0 for holder_count. Updated task spec to match actual design
+      (partial unique indexes, no FK to ledgers). Verified on fresh Postgres.
+      All 9 acceptance criteria met.
 ---
 
 # DB schema: tokens and accounts tables
@@ -29,9 +37,9 @@ history:
 
 Implement the SQL DDL for the `tokens` and `accounts` tables. These are derived, query-oriented explorer entities that unify classic Stellar assets with Soroban token contracts and provide account summary data for explorer views.
 
-## Status: Active
+## Status: Completed
 
-**Current state:** DDL aligned with implementation. Migration 0005 updated.
+**Current state:** Migration 0005 finalized. All acceptance criteria met. Verified on fresh PostgreSQL.
 
 ## Context
 
@@ -154,6 +162,32 @@ Already implemented in `soroban.rs` (`upsert_account_state`, `upsert_token`). Fo
 - [x] Migration applies cleanly to a fresh PostgreSQL instance
 
 > **Note:** Watermark-guarded upsert logic is already implemented in `soroban.rs` (`upsert_account_state`, `upsert_token`). Testing is scope of task 0028.
+
+## Implementation Notes
+
+**Files changed:** 1 migration file (`crates/db/migrations/0005_create_accounts_tokens.sql`) — 2 line changes.
+
+Migration 0005 already existed with both tables from earlier scaffolding work. This task aligned the DDL with the spec and documented the design rationale.
+
+## Design Decisions
+
+### From Plan
+
+1. **NUMERIC(28, 7) for total_supply**: Enforces Stellar's 7-decimal-place precision at the DB level. Prevents silent precision drift from extractors.
+
+2. **DEFAULT 0 for holder_count**: Sensible zero-state for newly discovered tokens.
+
+### Emerged
+
+3. **No FK from accounts to ledgers**: Original spec called for `REFERENCES ledgers(sequence)` on both `first_seen_ledger` and `last_seen_ledger`. Dropped because concurrent backfill + live ingestion means an account may reference a ledger not yet ingested. All derived-state tables (nfts in 0006, liquidity_pools in 0006) follow the same no-FK pattern — this is a project-wide convention, not an oversight.
+
+4. **Partial unique indexes instead of simple UNIQUE constraints**: Original spec had `UNIQUE(asset_code, issuer_address)` and `UNIQUE(contract_id)`. Kept existing partial indexes scoped by `asset_type` — they handle NULL correctly and prevent cross-type conflicts.
+
+5. **VARCHAR(20) for asset_type, VARCHAR(256) for name**: Wider than original spec (VARCHAR(10), VARCHAR(100)). Kept existing values for safety margin — no functional difference.
+
+## Issues Encountered
+
+None. Migration was already scaffolded; changes were minimal.
 
 ## Notes
 
