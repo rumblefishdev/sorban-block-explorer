@@ -2,7 +2,7 @@
 id: '0019'
 title: 'DB schema: tokens and accounts tables'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0005']
 related_tasks: ['0011', '0015', '0092']
 tags: [priority-medium, effort-small, layer-database]
@@ -17,6 +17,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated per ADR 0005 + research 0092: plain SQL migrations instead of Drizzle ORM'
+  - date: 2026-04-02
+    status: active
+    who: stkrolikiewicz
+    note: 'Activated for implementation'
 ---
 
 # DB schema: tokens and accounts tables
