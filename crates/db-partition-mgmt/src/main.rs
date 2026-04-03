@@ -138,6 +138,65 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
     }))
 }
 
+// ──────────────── Pure decision functions (testable) ───────────────
+
+/// Returns partition names that need to be created for a time-based table.
+/// Covers from Soroban activation (2024-02) to `today + FUTURE_MONTHS`.
+fn months_to_create(table: &str, existing: &[String], today: NaiveDate) -> Vec<(String, NaiveDate)> {
+    let start = NaiveDate::from_ymd_opt(SOROBAN_START.0, SOROBAN_START.1, 1)
+        .expect("valid SOROBAN_START");
+    let end = add_months(today, FUTURE_MONTHS);
+
+    let mut missing = Vec::new();
+    let mut cursor = start;
+
+    while cursor <= end {
+        let name = format!("{}_y{}m{:02}", table, cursor.year(), cursor.month());
+        if !existing.contains(&name) {
+            missing.push((name, cursor));
+        }
+        cursor = add_months(cursor, 1);
+    }
+
+    missing
+}
+
+/// Computes operations range usage and which new partitions to create.
+/// Returns (usage_percent, vec of (name, range_start, range_end) to create).
+fn operations_ranges_to_create(
+    existing: &[String],
+    max_transaction_id: i64,
+) -> (f64, Vec<(String, i64, i64)>) {
+    let highest_range_end = existing
+        .iter()
+        .filter_map(|name| parse_operations_range_end(name))
+        .max()
+        .unwrap_or(OPERATIONS_RANGE_SIZE);
+
+    let usage_percent = if highest_range_end > 0 {
+        (max_transaction_id as f64 / highest_range_end as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    let mut to_create = Vec::new();
+
+    if usage_percent > 80.0 || max_transaction_id >= highest_range_end {
+        let mut range_start = highest_range_end;
+        while range_start <= max_transaction_id + OPERATIONS_RANGE_SIZE {
+            let range_end = range_start + OPERATIONS_RANGE_SIZE;
+            let n = range_start / OPERATIONS_RANGE_SIZE;
+            let name = format!("operations_p{n}");
+            if !existing.contains(&name) {
+                to_create.push((name, range_start, range_end));
+            }
+            range_start = range_end;
+        }
+    }
+
+    (usage_percent, to_create)
+}
+
 // ───────────────── Time-based partition logic ──────────────────
 
 /// Ensures monthly partitions exist from Soroban activation to now + FUTURE_MONTHS.
@@ -147,36 +206,20 @@ async fn ensure_time_partitions(
     today: NaiveDate,
 ) -> Result<u32, Error> {
     let existing = get_existing_partitions(pool, table).await?;
-
-    let start = NaiveDate::from_ymd_opt(SOROBAN_START.0, SOROBAN_START.1, 1)
-        .ok_or("invalid SOROBAN_START date")?;
-    let end = add_months(today, FUTURE_MONTHS);
+    let missing = months_to_create(table, &existing, today);
 
     let mut created = 0u32;
-    let mut cursor = start;
-
-    while cursor <= end {
-        let name = format!(
-            "{}_y{}m{:02}",
-            table,
-            cursor.year(),
-            cursor.month()
+    for (name, month_start) in &missing {
+        let next = add_months(*month_start, 1);
+        let ddl = format!(
+            "CREATE TABLE IF NOT EXISTS {name} PARTITION OF {table} \
+             FOR VALUES FROM ('{from}') TO ('{to}')",
+            from = month_start.format("%Y-%m-%d 00:00:00+00"),
+            to = next.format("%Y-%m-%d 00:00:00+00"),
         );
-
-        if !existing.contains(&name) {
-            let next = add_months(cursor, 1);
-            let ddl = format!(
-                "CREATE TABLE IF NOT EXISTS {name} PARTITION OF {table} \
-                 FOR VALUES FROM ('{from}') TO ('{to}')",
-                from = cursor.format("%Y-%m-%d 00:00:00+00"),
-                to = next.format("%Y-%m-%d 00:00:00+00"),
-            );
-            sqlx::query(&ddl).execute(pool).await?;
-            tracing::info!(partition = %name, "created");
-            created += 1;
-        }
-
-        cursor = add_months(cursor, 1);
+        sqlx::query(&ddl).execute(pool).await?;
+        tracing::info!(partition = %name, "created");
+        created += 1;
     }
 
     Ok(created)
@@ -228,9 +271,8 @@ async fn get_existing_partitions(
 
 /// Parses `table_y2026m04` → NaiveDate(2026, 4, 1).
 fn parse_partition_month(name: &str) -> Option<NaiveDate> {
-    // Find the _yYYYYmMM suffix
     let y_pos = name.rfind("_y")?;
-    let suffix = &name[y_pos + 2..]; // "2026m04"
+    let suffix = &name[y_pos + 2..];
     let m_pos = suffix.find('m')?;
     let year: i32 = suffix[..m_pos].parse().ok()?;
     let month: u32 = suffix[m_pos + 1..].parse().ok()?;
@@ -252,41 +294,18 @@ async fn ensure_operations_partitions(pool: &PgPool) -> Result<OperationsResult,
         .fetch_one(pool)
         .await?;
 
-    // Find highest non-default range partition
     let existing = get_existing_partitions(pool, "operations").await?;
-    let highest_range_end = existing
-        .iter()
-        .filter_map(|name| parse_operations_range_end(name))
-        .max()
-        .unwrap_or(OPERATIONS_RANGE_SIZE); // p0 covers 0..10M
-
-    let usage_percent = if highest_range_end > 0 {
-        (max_id as f64 / highest_range_end as f64) * 100.0
-    } else {
-        0.0
-    };
+    let (usage_percent, to_create) = operations_ranges_to_create(&existing, max_id);
 
     let mut created = 0u32;
-
-    if usage_percent > 80.0 || max_id >= highest_range_end {
-        // Create next partition(s) until we have headroom
-        let mut range_start = highest_range_end;
-        while range_start <= max_id + OPERATIONS_RANGE_SIZE {
-            let range_end = range_start + OPERATIONS_RANGE_SIZE;
-            let n = range_start / OPERATIONS_RANGE_SIZE;
-            let name = format!("operations_p{n}");
-
-            if !existing.contains(&name) {
-                let ddl = format!(
-                    "CREATE TABLE IF NOT EXISTS {name} PARTITION OF operations \
-                     FOR VALUES FROM ({range_start}) TO ({range_end})"
-                );
-                sqlx::query(&ddl).execute(pool).await?;
-                tracing::info!(partition = %name, range_start, range_end, "created");
-                created += 1;
-            }
-            range_start = range_end;
-        }
+    for (name, range_start, range_end) in &to_create {
+        let ddl = format!(
+            "CREATE TABLE IF NOT EXISTS {name} PARTITION OF operations \
+             FOR VALUES FROM ({range_start}) TO ({range_end})"
+        );
+        sqlx::query(&ddl).execute(pool).await?;
+        tracing::info!(partition = %name, range_start, range_end, "created");
+        created += 1;
     }
 
     Ok(OperationsResult {
@@ -332,6 +351,8 @@ async fn main() -> Result<(), Error> {
 mod tests {
     use super::*;
 
+    // ── Parsing tests ──
+
     #[test]
     fn parse_partition_month_valid() {
         assert_eq!(
@@ -363,6 +384,8 @@ mod tests {
         assert_eq!(parse_operations_range_end("not_operations"), None);
     }
 
+    // ── Date arithmetic tests ──
+
     #[test]
     fn add_months_basic() {
         let jan = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
@@ -374,5 +397,75 @@ mod tests {
     fn add_months_year_boundary() {
         let nov = NaiveDate::from_ymd_opt(2025, 11, 1).unwrap();
         assert_eq!(add_months(nov, 3), NaiveDate::from_ymd_opt(2026, 2, 1).unwrap());
+    }
+
+    // ── Decision logic tests: months_to_create ──
+
+    #[test]
+    fn months_to_create_fills_gap() {
+        // Existing: only Apr 2026. Today: Apr 2026.
+        // Should create: 2024-02 through 2026-07 minus 2026-04 = 26 months
+        let existing = vec!["soroban_events_y2026m04".to_string()];
+        let today = NaiveDate::from_ymd_opt(2026, 4, 15).unwrap();
+        let missing = months_to_create("soroban_events", &existing, today);
+
+        // Should not include the existing partition
+        assert!(!missing.iter().any(|(n, _)| n == "soroban_events_y2026m04"));
+        // Should include Soroban start
+        assert!(missing.iter().any(|(n, _)| n == "soroban_events_y2024m02"));
+        // Should include 3 months ahead (Jul 2026)
+        assert!(missing.iter().any(|(n, _)| n == "soroban_events_y2026m07"));
+        // Should NOT include Aug 2026 (4 months ahead)
+        assert!(!missing.iter().any(|(n, _)| n == "soroban_events_y2026m08"));
+    }
+
+    #[test]
+    fn months_to_create_all_exist() {
+        // If all partitions exist, nothing to create
+        let today = NaiveDate::from_ymd_opt(2024, 3, 1).unwrap();
+        let existing: Vec<String> = (2..=6)
+            .map(|m| format!("soroban_events_y2024m{m:02}"))
+            .collect();
+        let missing = months_to_create("soroban_events", &existing, today);
+        // Only 2024-07 should be missing (month 6 = Jun exists, need through Jun = today+3)
+        assert!(missing.iter().all(|(n, _)| n != "soroban_events_y2024m02"));
+    }
+
+    // ── Decision logic tests: operations_ranges_to_create ──
+
+    #[test]
+    fn operations_no_expansion_under_80pct() {
+        let existing = vec!["operations_p0".to_string()];
+        let (usage, to_create) = operations_ranges_to_create(&existing, 5_000_000);
+        assert_eq!(usage, 50.0);
+        assert!(to_create.is_empty());
+    }
+
+    #[test]
+    fn operations_expands_at_80pct() {
+        let existing = vec!["operations_p0".to_string()];
+        let (usage, to_create) = operations_ranges_to_create(&existing, 8_500_000);
+        assert!(usage > 80.0);
+        assert!(!to_create.is_empty());
+        assert_eq!(to_create[0].0, "operations_p1");
+        assert_eq!(to_create[0].1, 10_000_000);
+        assert_eq!(to_create[0].2, 20_000_000);
+    }
+
+    #[test]
+    fn operations_expands_past_current_range() {
+        // max_id exceeds current range — should create enough partitions
+        let existing = vec!["operations_p0".to_string()];
+        let (_, to_create) = operations_ranges_to_create(&existing, 15_000_000);
+        // Need p1 (10M-20M) and p2 (20M-30M) for headroom
+        assert!(to_create.len() >= 2);
+    }
+
+    #[test]
+    fn operations_empty_db() {
+        let existing = vec!["operations_p0".to_string()];
+        let (usage, to_create) = operations_ranges_to_create(&existing, 0);
+        assert_eq!(usage, 0.0);
+        assert!(to_create.is_empty());
     }
 }

@@ -10,7 +10,7 @@ Partitions are created automatically. **Dropping partitions is a manual operatio
 
 ## Pre-Pruning Checklist
 
-- [ ] Confirm no active backfill is running (`GET /backfill/status` or check ECS tasks)
+- [ ] Confirm no active backfill is running (check the backfill ECS service/task family for running tasks and verify there are no recent backfill log entries in CloudWatch)
 - [ ] Confirm no active queries span the partition being dropped (check `pg_stat_activity`)
 - [ ] Verify the partition contains only data older than the retention threshold
 - [ ] Verify a backup exists (RDS automated backup or manual snapshot)
@@ -31,14 +31,14 @@ WHERE p.relname = 'soroban_events'
 ORDER BY c.relname;
 ```
 
-### 2. Detach the partition (non-blocking)
+### 2. Detach the partition
 
 ```sql
 ALTER TABLE soroban_events
     DETACH PARTITION soroban_events_y2024m02 CONCURRENTLY;
 ```
 
-`CONCURRENTLY` avoids locking the parent table. The detached table still exists as a standalone table.
+`CONCURRENTLY` reduces lock duration but does **not** fully eliminate locking — a brief `ACCESS SHARE` lock is still acquired on the parent table. This is normally sub-second but may block momentarily under heavy write load. Schedule during low-traffic periods. The detached table still exists as a standalone table.
 
 ### 3. Verify detachment
 
