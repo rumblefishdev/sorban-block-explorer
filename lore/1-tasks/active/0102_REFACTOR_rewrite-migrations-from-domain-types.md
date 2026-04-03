@@ -1,6 +1,6 @@
 ---
 id: '0102'
-title: 'Rewrite SQL migrations 0002-0006 to derive from domain types'
+title: 'Rewrite ALL SQL migrations to derive from domain types'
 type: REFACTOR
 status: active
 related_adr: ['0005']
@@ -24,24 +24,29 @@ history:
     note: Activated task for implementation.
 ---
 
-# Rewrite SQL migrations 0002-0006 to derive from domain types
+# Rewrite ALL SQL migrations to derive from domain types
 
 ## Summary
 
-Delete migrations 0002-0006 and rewrite them with domain types (`crates/domain/`) as source of truth. The DB is empty — no data risk. This establishes the correct workflow going forward: types define the contract, migrations implement it.
+Rewrite all migrations (0001-0006) with domain types (`crates/domain/`) as source of truth. The DB is empty — no data risk. This establishes the correct workflow going forward: types define the contract, migrations implement it.
+
+Scope expanded from original plan: migration 0001 included for consistent style, and `operation_tree` field added to `Transaction` domain struct.
 
 ## Status: Active
 
-**Current state:** Ready for implementation.
+**Current state:** Implementation complete, pending commit.
 
 ## Context
 
-Migrations 0002-0006 were written before Rust domain types existed (the TS→Rust migration gap). Task 0101 created domain types by reverse-engineering the existing migrations. Now we invert the relationship: domain types are the spec, migrations are derived.
+All migrations were written before Rust domain types existed (the TS→Rust migration gap). Task 0101 created domain types by reverse-engineering the existing migrations. Now we invert the relationship: domain types are the spec, migrations are derived.
 
 Known issues with current migrations:
 
 - Task 0020 DDL spec diverges from actual migration 0006 (nfts PK structure, column sizes, nullability, fee_bps NOT NULL)
 - No single source of truth — changes to schema require updating both domain types and migrations independently
+- Migration 0001 was ORM-generated (quoted identifiers, verbose FK syntax) while 0002-0006 were hand-written — inconsistent style
+- `transactions.operation_tree` column existed in DB but was missing from `Transaction` domain struct
+- Stale `DEFAULT` values on nullable columns (`parse_error`, `is_sac`, `holder_count`) conflicted with `Option<_>` domain types
 
 ### Target workflow (going forward)
 
@@ -51,49 +56,77 @@ Known issues with current migrations:
 
 ## Implementation Plan
 
-### Step 1: Delete migrations 0002-0006
+### Step 1: Add operation_tree to Transaction struct
 
-Move to `.trash/` per project policy. Keep 0001 (ledgers + transactions) — domain types `Ledger`/`Transaction` already existed before migrations.
+Add `pub operation_tree: Option<serde_json::Value>` to `Transaction` in `crates/domain/src/transaction.rs`. This was a DB column missing from the domain type — pre-computed Soroban invocation call tree populated by the ingestion pipeline.
 
-### Step 2: Rewrite migration for operations
+### Step 2: Delete ALL migrations 0001-0006
+
+Move to `.trash/` per project policy.
+
+### Step 3: Rewrite migration for ledgers + transactions
+
+Derive DDL from `domain::ledger::Ledger` and `domain::transaction::Transaction`. Rewrite from ORM-generated style to clean hand-written SQL. Drop stale `DEFAULT false` from `parse_error`. Include `operation_tree` JSONB column.
+
+### Step 4: Rewrite migration for operations
 
 Derive DDL from `domain::operation::Operation`. Verify every field, type, nullability matches.
 
-### Step 3: Rewrite migration for soroban_contracts
+### Step 5: Rewrite migration for soroban_contracts
 
-Derive from `domain::soroban::SorobanContract`. Include `search_vector` TSVECTOR generated column (DB-only, excluded from domain struct by design).
+Derive from `domain::soroban::SorobanContract`. Drop `DEFAULT FALSE` from `is_sac`. Include `search_vector` TSVECTOR generated column (DB-only, excluded from domain struct by design).
 
-### Step 4: Rewrite migration for soroban_invocations + soroban_events
+### Step 6: Rewrite migration for soroban_invocations + soroban_events
 
 Derive from `domain::soroban::SorobanInvocation` and `domain::soroban::SorobanEvent`. Include partitioning and initial partitions.
 
-### Step 5: Rewrite migration for accounts + tokens
+### Step 7: Rewrite migration for accounts + tokens
 
-Derive from `domain::account::Account` and `domain::token::Token`.
+Derive from `domain::account::Account` and `domain::token::Token`. Drop `DEFAULT 0` from `holder_count`.
 
-### Step 6: Rewrite migration for nfts + pools + snapshots
+### Step 8: Rewrite migration for nfts + pools + snapshots
 
 Derive from `domain::nft::Nft`, `domain::pool::LiquidityPool`, `domain::pool::LiquidityPoolSnapshot`. Include partitioning for snapshots.
 
-### Step 7: Verify migrations apply cleanly
+### Step 9: Verify migrations apply cleanly
 
 `sqlx migrate run` against a fresh PostgreSQL instance.
 
-### Step 8: Close/update tasks 0018, 0019, 0020
+### Step 10: Close/update tasks 0018, 0019, 0020
 
 Update status of DDL tasks to reflect the rewrite.
 
 ## Acceptance Criteria
 
-- [ ] Migrations 0002-0006 rewritten — every column matches domain struct field
-- [ ] Domain types are the documented source of truth for schema
+- [x] ALL migrations 0001-0006 rewritten — every column matches domain struct field
+- [x] Domain types are the documented source of truth for schema (inline comments)
 - [ ] `sqlx migrate run` applies cleanly to fresh PostgreSQL
-- [ ] Indexes, FKs, constraints, partitioning preserved
-- [ ] DB-only columns (search_vector) documented as exceptions
+- [x] Indexes, FKs, constraints, partitioning preserved
+- [x] DB-only columns (search_vector) documented as exceptions
+- [x] `operation_tree` added to Transaction domain struct
+- [x] Stale DEFAULTs removed (parse_error, is_sac, holder_count)
+- [x] Consistent SQL style across all migrations
 - [ ] Tasks 0018, 0019, 0020 updated/closed
 
 ## Notes
 
 - DB is empty — this is a pure rewrite with zero data risk
-- Migration 0001 (ledgers + transactions) stays as-is — it predates the domain types gap
 - This task also resolves the task 0020 divergence issue flagged in 0101
+- `accounts.balances` DEFAULT '[]' kept — non-optional field, default is INSERT convenience
+- FK transactions→ledgers preserved as original `ON DELETE NO ACTION` (no behavior change)
+
+## Deploy: reset DB before running new migrations
+
+Migration file checksums changed — sqlx will reject them on any DB that ran the old versions.
+Reset the `_sqlx_migrations` tracking table before deploying:
+
+```sql
+-- Option A: reset tracking only (keeps data — but schema is the same so safe)
+DROP TABLE IF EXISTS _sqlx_migrations;
+
+-- Option B: full wipe (preferred — DB has no production data)
+DROP SCHEMA public CASCADE;
+CREATE SCHEMA public;
+```
+
+Then redeploy the migration Lambda (CDK stack `Explorer-{env}-Migration`).

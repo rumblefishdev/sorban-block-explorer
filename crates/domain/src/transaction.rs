@@ -34,4 +34,8 @@ pub struct Transaction {
     pub created_at: DateTime<Utc>,
     /// True if XDR parsing failed.
     pub parse_error: Option<bool>,
+    /// Pre-computed Soroban invocation call tree as JSONB.
+    /// Populated asynchronously after transaction insert by the ingestion pipeline.
+    /// NULL for non-Soroban transactions.
+    pub operation_tree: Option<serde_json::Value>,
 }
