@@ -2,7 +2,7 @@
 id: '0035'
 title: 'CDK: CloudFront, WAF, Route 53, S3 static hosting'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0005']
 related_tasks: ['0006', '0092', '0097']
 tags: [priority-medium, effort-medium, layer-infra]
@@ -18,6 +18,12 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated per ADR 0005: NestJS /api-docs → utoipa-swagger-ui'
+  - date: 2026-04-03
+    status: active
+    who: stkrolikiewicz
+    note: >
+      Activated. Phase 1: CloudFront + WAF + S3 without custom domain.
+      Route 53 + ACM deferred until hosted zone is set up.
 ---
 
 # CDK: CloudFront, WAF, Route 53, S3 static hosting
