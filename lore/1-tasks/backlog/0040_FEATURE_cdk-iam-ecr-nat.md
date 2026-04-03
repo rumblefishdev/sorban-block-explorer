@@ -28,7 +28,7 @@ Define IAM execution roles with least-privilege permissions for all compute comp
 
 ## Status: Backlog
 
-**Current state:** Not started. Depends on VPC/networking (task 0031) for public subnet placement of the NAT Gateway.
+**Current state:** Reduced scope. ECS-specific items (task role, execution role, ECR repository, S3 VPC endpoint policy) merged into task 0034. NAT Gateway already exists in NetworkStack (task 0031). Remaining scope: GitHub Actions OIDC identity provider and deploy roles.
 
 ## Context
 

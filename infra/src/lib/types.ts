@@ -29,6 +29,33 @@ export interface EnvironmentConfig {
   readonly indexerLambdaMemory: number;
   readonly indexerLambdaTimeout: number;
 
+  // Ingestion — ECS Fargate (consumed by IngestionStack)
+
+  /** Fargate CPU units for Galexie tasks (256, 512, 1024, 2048, 4096). */
+  readonly galexieCpu: number;
+  /** Fargate memory in MiB for Galexie tasks. Must be compatible with CPU — see https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-cpu-memory-error.html */
+  readonly galexieMemory: number;
+  /** Ephemeral storage in GiB (21–200). Captive Core needs local disk for ledger catchup. */
+  readonly galexieEphemeralStorage: number;
+  /** Desired count for the Galexie live service (typically 1 — single writer). */
+  readonly galexieDesiredCount: number;
+  /** Stellar network passphrase. Determines which network Galexie connects to. */
+  readonly stellarNetworkPassphrase: string;
+  /** CloudWatch Logs retention in days for ECS log groups. */
+  readonly ecsLogRetentionDays: number;
+  /** Graceful shutdown timeout in seconds. ECS waits this long after SIGTERM before SIGKILL. */
+  readonly galexieStopTimeout: number;
+  /** Enable ECS Exec (shell access into containers via SSM). Adds ssmmessages IAM permissions. */
+  readonly ecsExecEnabled: boolean;
+  /**
+   * ECR image tag for Galexie container. Defaults to "latest" until CI/CD
+   * pipeline (task 0039) is implemented — once available, each deploy will
+   * set this to a git SHA for immutable, reproducible deployments.
+   */
+  readonly galexieImageTag: string;
+  /** Whether to create the backfill task definition. Not every environment needs backfill. */
+  readonly galexieBackfillEnabled: boolean;
+
   // API Gateway (consumed by ApiGatewayStack)
 
   /** Sustained requests per second before API Gateway returns 429. */

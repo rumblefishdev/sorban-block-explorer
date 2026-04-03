@@ -19,6 +19,17 @@
   "indexerLambdaMemory": 512,
   "indexerLambdaTimeout": 60,
 
+  "galexieCpu": 1024,
+  "galexieMemory": 4096,
+  "galexieEphemeralStorage": 30,
+  "galexieDesiredCount": 0,
+  "stellarNetworkPassphrase": "Test SDF Network ; September 2015",
+  "ecsLogRetentionDays": 30,
+  "galexieStopTimeout": 120,
+  "ecsExecEnabled": true,
+  "galexieImageTag": "latest",
+  "galexieBackfillEnabled": false,
+
   "apiGatewayThrottleRate": 50,
   "apiGatewayThrottleBurst": 100,
   "apiGatewayCacheEnabled": false,
