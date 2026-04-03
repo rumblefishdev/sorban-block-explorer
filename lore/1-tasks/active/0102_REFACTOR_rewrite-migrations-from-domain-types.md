@@ -104,7 +104,7 @@ Update status of DDL tasks to reflect the rewrite.
 - [x] Indexes, FKs, constraints, partitioning preserved
 - [x] DB-only columns (search_vector) documented as exceptions
 - [x] `operation_tree` added to Transaction domain struct
-- [x] Stale DEFAULTs removed (parse_error, is_sac, holder_count)
+- [x] Stale DEFAULTs removed (parse_error, holder_count); is_sac DEFAULT kept for upsert safety
 - [x] Consistent SQL style across all migrations
 - [ ] Tasks 0018, 0019, 0020 updated/closed
 
@@ -118,13 +118,9 @@ Update status of DDL tasks to reflect the rewrite.
 ## Deploy: reset DB before running new migrations
 
 Migration file checksums changed — sqlx will reject them on any DB that ran the old versions.
-Reset the `_sqlx_migrations` tracking table before deploying:
+Full schema wipe required (migrations use `CREATE TABLE` without `IF NOT EXISTS`):
 
 ```sql
--- Option A: reset tracking only (keeps data — but schema is the same so safe)
-DROP TABLE IF EXISTS _sqlx_migrations;
-
--- Option B: full wipe (preferred — DB has no production data)
 DROP SCHEMA public CASCADE;
 CREATE SCHEMA public;
 ```
