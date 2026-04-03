@@ -46,6 +46,8 @@ pub struct SorobanInvocation {
     pub return_value: Option<serde_json::Value>,
     /// Whether this invocation succeeded.
     pub successful: bool,
+    /// Zero-based depth-first index of this node in the invocation tree (dedup key).
+    pub invocation_index: i16,
     /// Parent ledger sequence number.
     pub ledger_sequence: i64,
     /// Timestamp for partitioning.
@@ -69,6 +71,8 @@ pub struct SorobanEvent {
     pub topics: serde_json::Value,
     /// ScVal-decoded event data payload as JSONB.
     pub data: serde_json::Value,
+    /// Zero-based index of this event within the transaction (dedup key).
+    pub event_index: i16,
     /// Parent ledger sequence number.
     pub ledger_sequence: i64,
     /// Timestamp for partitioning.
