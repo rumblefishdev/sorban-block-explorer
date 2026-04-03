@@ -1,5 +1,6 @@
 import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import type { Construct } from 'constructs';
 
 import type { EnvironmentConfig } from '../types.js';
@@ -135,10 +136,36 @@ export class NetworkStack extends cdk.Stack {
     // Gateway type (free, no hourly cost). Adds route table entries so
     // S3 traffic from private subnets stays within AWS network instead of
     // traversing the NAT Gateway — reduces cost and improves latency.
-    vpc.addGatewayEndpoint('S3Endpoint', {
+    //
+    // Endpoint policy restricts access to the project's ledger data bucket
+    // and CDK staging buckets (defense in depth — IAM still applies).
+    const ledgerBucketName = `${config.envName}-stellar-ledger-data`;
+    const s3Endpoint = vpc.addGatewayEndpoint('S3Endpoint', {
       service: ec2.GatewayVpcEndpointAwsService.S3,
       subnets: [{ subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS }],
     });
+    // Allow all S3 actions on our bucket — IAM roles provide the
+    // fine-grained action-level control (grantWrite, grantRead).
+    // Endpoint policy restricts WHICH buckets, IAM restricts WHICH actions.
+    s3Endpoint.addToPolicy(
+      new iam.PolicyStatement({
+        principals: [new iam.AnyPrincipal()],
+        actions: ['s3:*'],
+        resources: [
+          `arn:aws:s3:::${ledgerBucketName}`,
+          `arn:aws:s3:::${ledgerBucketName}/*`,
+        ],
+      })
+    );
+    // Allow CDK asset staging and bootstrap buckets — required for
+    // cdk deploy to upload Lambda bundles and CloudFormation templates.
+    s3Endpoint.addToPolicy(
+      new iam.PolicyStatement({
+        principals: [new iam.AnyPrincipal()],
+        actions: ['s3:*'],
+        resources: ['arn:aws:s3:::cdk-*', 'arn:aws:s3:::cdk-*/*'],
+      })
+    );
 
     // ---------------------
     // Tags

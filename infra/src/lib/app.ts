@@ -7,6 +7,7 @@ import { LedgerBucketStack } from './stacks/ledger-bucket-stack.js';
 import { ComputeStack } from './stacks/compute-stack.js';
 import { MigrationStack } from './stacks/migration-stack.js';
 import { ApiGatewayStack } from './stacks/api-gateway-stack.js';
+import { IngestionStack } from './stacks/ingestion-stack.js';
 
 export interface CreateAppOptions {
   readonly config: EnvironmentConfig;
@@ -69,6 +70,17 @@ export function createApp({
     cargoWorkspacePath,
   });
   compute.addDependency(migration);
+
+  const ingestion = new IngestionStack(app, `${prefix}-Ingestion`, {
+    env,
+    config,
+    vpc: network.vpc,
+    ecsSecurityGroup: network.ecsSecurityGroup,
+    ledgerBucketArn: ledgerBucket.bucket.bucketArn,
+    ledgerBucketName: ledgerBucket.bucket.bucketName,
+  });
+  ingestion.addDependency(network);
+  ingestion.addDependency(ledgerBucket);
 
   const apiGateway = new ApiGatewayStack(app, `${prefix}-ApiGateway`, {
     env,

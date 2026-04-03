@@ -12,3 +12,5 @@ export { ComputeStack } from './lib/stacks/compute-stack.js';
 export type { ComputeStackProps } from './lib/stacks/compute-stack.js';
 export { MigrationStack } from './lib/stacks/migration-stack.js';
 export type { MigrationStackProps } from './lib/stacks/migration-stack.js';
+export { IngestionStack } from './lib/stacks/ingestion-stack.js';
+export type { IngestionStackProps } from './lib/stacks/ingestion-stack.js';
