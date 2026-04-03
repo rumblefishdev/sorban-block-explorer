@@ -34,4 +34,6 @@ pub struct Transaction {
     pub created_at: DateTime<Utc>,
     /// True if XDR parsing failed.
     pub parse_error: Option<bool>,
+    /// Nested invocation tree JSON for direct rendering of the call graph.
+    pub operation_tree: Option<serde_json::Value>,
 }

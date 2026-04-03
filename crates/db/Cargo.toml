@@ -6,14 +6,15 @@ description = "Database access layer for the Soroban block explorer"
 
 [dependencies]
 domain = { path = "../domain" }
-xdr-parser = { path = "../xdr-parser" }
 sqlx = { workspace = true }
-chrono = { workspace = true }
-tracing = { workspace = true }
 aws-config = { workspace = true, optional = true }
 aws-sdk-secretsmanager = { workspace = true, optional = true }
 serde_json = { workspace = true }
 percent-encoding = { version = "2", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+chrono = { workspace = true }
 
 [features]
 default = []
