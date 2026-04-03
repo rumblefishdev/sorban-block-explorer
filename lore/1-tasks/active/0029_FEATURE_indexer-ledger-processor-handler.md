@@ -2,7 +2,7 @@
 id: '0029'
 title: 'Indexer: Ledger Processor Lambda handler'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0004', '0005']
 related_tasks: ['0024', '0025', '0026', '0027', '0028', '0092']
 tags: [priority-high, effort-medium, layer-indexing, rust]
@@ -18,6 +18,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated per ADR 0005: apps/indexer/ → crates/indexer/'
+  - date: 2026-04-03
+    status: active
+    who: FilipDz
+    note: 'Activated for implementation'
 ---
 
 # Indexer: Ledger Processor Lambda handler
