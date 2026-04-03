@@ -29,6 +29,9 @@ deploy-staging-ledger-bucket: build
 deploy-staging-migration: build
 	npx cdk --app "$(STAGING_APP)" deploy Explorer-staging-Migration --require-approval broadening
 
+deploy-staging-partition: build
+	npx cdk --app "$(STAGING_APP)" deploy Explorer-staging-Partition --require-approval broadening
+
 deploy-staging-bastion: build
 	npx cdk --app "$(BASTION_STAGING_APP)" deploy --require-approval broadening
 
@@ -57,6 +60,9 @@ deploy-production-ledger-bucket: build
 
 deploy-production-migration: build
 	npx cdk --app "$(PRODUCTION_APP)" deploy Explorer-production-Migration --require-approval broadening
+
+deploy-production-partition: build
+	npx cdk --app "$(PRODUCTION_APP)" deploy Explorer-production-Partition --require-approval broadening
 
 deploy-production-bastion: build
 	npx cdk --app "$(BASTION_PRODUCTION_APP)" deploy --require-approval broadening
