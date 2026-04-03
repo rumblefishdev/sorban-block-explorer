@@ -1,10 +1,11 @@
+-- Derived from: domain::operation::Operation (crates/domain/src/operation.rs)
 CREATE TABLE operations (
-    id                  BIGSERIAL,
-    transaction_id      BIGINT NOT NULL,
-    application_order   SMALLINT NOT NULL,
-    source_account      VARCHAR(56) NOT NULL,
-    type                VARCHAR(50) NOT NULL,
-    details             JSONB NOT NULL,
+    id                BIGSERIAL,                       -- Operation.id: i64
+    transaction_id    BIGINT NOT NULL,                 -- Operation.transaction_id: i64
+    application_order SMALLINT NOT NULL,               -- Operation.application_order: i16
+    source_account    VARCHAR(56) NOT NULL,            -- Operation.source_account: String
+    type              VARCHAR(50) NOT NULL,            -- Operation.op_type: String (serde rename "type")
+    details           JSONB NOT NULL,                  -- Operation.details: serde_json::Value
     PRIMARY KEY (id, transaction_id),
     FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE CASCADE
 ) PARTITION BY RANGE (transaction_id);

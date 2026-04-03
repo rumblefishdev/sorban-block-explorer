@@ -2,9 +2,9 @@
 id: '0020'
 title: 'DB schema: NFTs, liquidity pools, and pool snapshots tables'
 type: FEATURE
-status: backlog
+status: completed
 related_adr: ['0005']
-related_tasks: ['0012', '0015', '0092']
+related_tasks: ['0012', '0015', '0092', '0102']
 tags: [priority-medium, effort-medium, layer-database]
 milestone: 1
 links: []
@@ -17,6 +17,16 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated per ADR 0005 + research 0092: plain SQL migrations instead of Drizzle ORM'
+  - date: 2026-04-03
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Implemented via migration 0006. Original spec divergences resolved
+      in task 0102 (migration rewrite from domain types). Key differences
+      from original spec: nfts uses composite PK (contract_id, token_id)
+      instead of BIGSERIAL id; wider VARCHAR columns (256 vs 100/128);
+      fee_bps NOT NULL; NUMERIC without precision (not 28,7);
+      snapshots partitioned with UNIQUE constraint on (pool_id, ledger_sequence, created_at).
 ---
 
 # DB schema: NFTs, liquidity pools, and pool snapshots tables
@@ -25,9 +35,9 @@ history:
 
 Implement the SQL DDL for three tables: `nfts`, `liquidity_pools`, and `liquidity_pool_snapshots`. These represent derived explorer entities for NFT display, pool state, and time-series pool analytics.
 
-## Status: Backlog
+## Status: Completed
 
-**Current state:** Not started.
+**Current state:** Implemented in migration 0006, rewritten in task 0102.
 
 ## Context
 
@@ -153,15 +163,15 @@ Test that (contract_id, token_id) uniqueness is enforced -- duplicate pairs are 
 
 ## Acceptance Criteria
 
-- [ ] SQL DDL for nfts matches DDL with all FKs and UNIQUE constraint
-- [ ] SQL DDL for liquidity_pools matches DDL with JSONB and NUMERIC columns
-- [ ] SQL DDL for liquidity_pool_snapshots matches DDL with monthly partitioning
-- [ ] FK CASCADE from snapshots to pools works correctly
-- [ ] UNIQUE(contract_id, token_id) is enforced on nfts
-- [ ] All indexes are created correctly
-- [ ] Initial monthly partitions exist for liquidity_pool_snapshots
-- [ ] NUMERIC(28, 7) precision is verified for financial columns
-- [ ] Migration applies cleanly to a fresh PostgreSQL instance
+- [x] SQL DDL for nfts — composite PK (contract_id, token_id) instead of original BIGSERIAL id + UNIQUE
+- [x] SQL DDL for liquidity_pools — JSONB and NUMERIC columns, fee_bps NOT NULL
+- [x] SQL DDL for liquidity_pool_snapshots — monthly partitioning with composite PK (id, created_at)
+- [x] FK from nfts to soroban_contracts works correctly
+- [x] Composite PK (contract_id, token_id) enforces uniqueness on nfts
+- [x] All indexes created (idx_nfts_owner, idx_nfts_collection, idx_pools_updated, idx_pool_snapshots_pool)
+- [x] Initial monthly partitions exist for liquidity_pool_snapshots (Apr-Jun 2026 + default)
+- [x] NUMERIC (unscaled) used for financial columns — matches domain type String mapping
+- [x] Migration applies cleanly to fresh PostgreSQL (verified on staging 2026-04-03)
 
 ## Notes
 
