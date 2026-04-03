@@ -16,6 +16,8 @@ pub struct Operation {
     /// Source account (G... or M... address). Inherited from transaction if not overridden.
     pub source_account: String,
     /// Operation type string (e.g. "INVOKE_HOST_FUNCTION", "PAYMENT").
+    /// DDL column: `type`.
+    #[serde(rename = "type")]
     pub op_type: String,
     /// Type-specific details stored as JSONB.
     pub details: serde_json::Value,

@@ -16,8 +16,8 @@ pub struct Account {
     pub last_seen_ledger: i64,
     /// Account transaction sequence number.
     pub sequence_number: i64,
-    /// Array of balance objects as JSONB.
-    pub balances: Vec<serde_json::Value>,
+    /// Account balances as JSONB.
+    pub balances: serde_json::Value,
     /// Account home domain.
     pub home_domain: Option<String>,
 }
