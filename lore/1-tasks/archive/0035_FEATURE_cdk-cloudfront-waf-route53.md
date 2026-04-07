@@ -2,9 +2,9 @@
 id: '0035'
 title: 'CDK: CloudFront, WAF, Route 53, S3 static hosting'
 type: FEATURE
-status: active
+status: completed
 related_adr: ['0005']
-related_tasks: ['0006', '0092', '0097']
+related_tasks: ['0006', '0092', '0097', '0038']
 tags: [priority-medium, effort-medium, layer-infra]
 milestone: 1
 links:
@@ -24,6 +24,18 @@ history:
     note: >
       Activated. Phase 1: CloudFront + WAF + S3 without custom domain.
       Route 53 + ACM deferred until hosted zone is set up.
+  - date: 2026-04-07
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Implemented full delivery layer with custom domain (hosted zone +
+      cert provisioned out of band). 3 commits, 9 files, ~770 lines.
+      WafWebAcl reusable construct (eliminates dual-stack duplication),
+      KVS-backed basic auth, security headers (HSTS env-aware), config
+      validateConfig() fail-fast on CHANGE_ME placeholders. PR #69.
+      Production envs still have CHANGE_ME hostedZoneId/certificateArn —
+      deferred to task 0038 (env config). Snapshot tests deferred (no
+      test framework in repo yet).
 ---
 
 # CDK: CloudFront, WAF, Route 53, S3 static hosting
@@ -180,3 +192,77 @@ PR #32 corrected research 0006 to recommend per-service stack decomposition (`Ap
 - The staging password protection pattern (CloudFront Functions basic auth) is lightweight and does not require Lambda@Edge if the logic is simple enough.
 - All domain names and hosted zone IDs must be parameterized for redeployability across different AWS accounts and domains.
 - Swagger UI is served from the API directly (utoipa-swagger-ui `/api-docs` endpoint) — no separate CloudFront distribution or S3 bucket needed for API docs.
+
+## Implementation Notes
+
+**Files created:**
+
+- `infra/src/lib/stacks/delivery-stack.ts` (~245 lines) — S3 + CloudFront + Route 53 + ResponseHeadersPolicy + optional KVS-backed basic auth
+- `infra/src/lib/constructs/waf-web-acl.ts` (~180 lines) — reusable WAF construct (managed rules + rate limit + CW Logs with confused-deputy guarded resource policy)
+- `infra/src/lib/cloudfront-functions/basic-auth.ts` (~45 lines) — CF Function source generator with explicit KVS id binding
+
+**Files modified:**
+
+- `infra/src/lib/stacks/api-gateway-stack.ts` — REGIONAL WAF added via `WafWebAcl` construct (replaces deferred placeholder from task 0097)
+- `infra/src/lib/types.ts` — added `enableWaf`, `enableBasicAuth`, `cloudFrontWafRateLimit`, `apiWafRateLimit` to `EnvironmentConfig`; added `validateConfig()` helper
+- `infra/src/lib/app.ts` — wires `DeliveryStack`, calls `validateConfig()` at start
+- `infra/envs/staging.json` — populated `hostedZoneId`, `certificateArn`, plus the four new flags
+- `infra/envs/production.json` — added the four new flags (hostedZoneId/cert still `CHANGE_ME`, deferred to 0038)
+- `infra/Makefile` — added `deploy-{staging,production}-delivery` targets
+
+**Verification:**
+
+- `cdk synth staging` passes — all 9 stacks generated cleanly
+- `cdk synth production` fails with clear error from `validateConfig()` (CHANGE_ME placeholders) — intentional, replaces previous silent passthrough
+
+## Design Decisions
+
+### From Plan
+
+1. **CloudFront with OAC + private S3 bucket** — straight from spec.
+2. **WAF with AWS managed rule groups + rate-based rule** — straight from spec.
+3. **HTTPS-only with redirect from HTTP** — straight from spec.
+4. **No password protection on production** — straight from spec.
+5. **CloudFront Functions over Lambda@Edge** for staging gating — Notes mentioned both, picked CF Functions for cost/latency/reversibility.
+
+### Emerged
+
+6. **Two WAF WebACLs instead of one shared.** Original AC implied a single shared ACL, but `CLOUDFRONT` and `REGIONAL` scopes cannot share an ACL — AWS WAF design constraint. Two ACLs with identical rule sets is the only valid configuration.
+
+7. **`WafWebAcl` reusable construct.** First iteration duplicated ~150 lines of WAF setup between `DeliveryStack` and `ApiGatewayStack`. Refactored to a shared construct so the two scopes stay in lockstep on rule changes. Eliminates copy-paste drift risk.
+
+8. **CloudFront KeyValueStore over Secrets Manager / SSM SecureString.** AC literally specified Secrets Manager OR SSM SecureString, but neither is reachable from a CloudFront Function in runtime — `valueFromLookup` would bake plaintext into the CFN template, defeating the intent. Lambda@Edge would meet the literal AC but is overkill for staging gating. KVS is the AWS-native pattern: credentials in a dedicated IAM-gated store, never in git/code/template, rotatable in seconds via `aws cloudfront-keyvaluestore put-key`. Documented in task Deviation #2.
+
+9. **Single ACM certificate covers both CloudFront and API Gateway.** AC specified separate certs (us-east-1 + stack region), but stack region happens to be us-east-1, so one wildcard works. If region ever moves, `EnvironmentConfig` will need split fields. Documented in Deviation #3.
+
+10. **Certificate imported, not provisioned by CDK.** AC specified DNS validation via Route 53. The cert pre-exists (managed out of band, shared with other infra), so imported by ARN. CDK-managed validation would compete on the same DNS records and create lifecycle coupling. Documented in Deviation #4.
+
+11. **`enableWaf: false` on staging.** WAF fixed cost is ~$15-20/month/env. Staging is gated by basic auth (5-person team, low traffic), so WAF adds little. Disabled on staging via `enableWaf` flag, enabled on production. ~$200-300/year saved.
+
+12. **HSTS env-aware: short max-age + no preload + no includeSubdomains on staging.** First iteration set `preload: true, includeSubdomains: true, max-age=1y` everywhere. HSTS preload is a one-way door (months to remove via hstspreload.org), and `includeSubdomains` on a staging subdomain affects all sibling subdomains. Tightened to: production gets full hardening, staging gets `max-age=7d` only. Preload is opt-in only via explicit security sign-off.
+
+13. **CSP intentionally omitted.** AWS managed `SECURITY_HEADERS` policy includes `default-src 'self'` which breaks typical SPAs loading fonts/assets from CDNs. Custom policy ships HSTS + nosniff + frame-options + referrer-policy without CSP — to be added in a follow-up task once the SPA is deployed and what it loads is observable, then dial in via `Content-Security-Policy-Report-Only` before enforcing.
+
+14. **`validateConfig()` fail-fast at synth.** Production envs have `CHANGE_ME` placeholders pending task 0038. Without validation, `cdk synth production` would silently produce a broken template; with it, the error message names exactly which fields are wrong. Returns all errors at once, not one at a time.
+
+15. **Soft warning for `enableWaf=false && enableBasicAuth=false`.** That combination leaves CloudFront publicly open with no gating — almost always a staging mistake but might be intentional on production with application-layer controls. Logs a warning rather than blocking.
+
+16. **CF Function code in separate TS module (`cloudfront-functions/basic-auth.ts`).** First iteration had it as a string template literal inside the stack. Extracted to a generator function `basicAuthFunctionCode(kvsId: string)` for testability, syntax highlighting, and so the JS source is auditable separately from the TypeScript stack code.
+
+## Issues Encountered
+
+- **`cdk synth` failed initially on missing SSM parameters** for the early SSM-based basic auth attempt. This led to the KVS pivot (Decision 8). KVS has zero synth-time dependencies — it just needs to exist and be populated post-deploy.
+
+- **HSTS preload regression in iteration 2 of senior review.** Added `preload: true` in `cloudfront.ResponseHeadersPolicy` based on managed-policy default, without analyzing the consequences. Caught and fixed in iteration 3 (Decision 12). Future tasks touching CloudFront response headers should explicitly review HSTS parameters per environment.
+
+- **Account ID mismatch during first synth** — local AWS profile pointed to `045028348791`, but `certificateArn` references account `750702271865`. Resolved by user setting `AWS_PROFILE` to staging account in their shell. No code change needed, but worth flagging that the staging hosted zone and cert live on a specific AWS account that the synth profile must match.
+
+- **Rebase conflicts on `app.ts` and `Makefile`** during merge with develop. Develop had landed `PartitionStack` (0022) and `IngestionStack` (0034) in parallel. Both stacks coexist with `DeliveryStack` cleanly — no architectural conflicts, just text-level merge resolution.
+
+## Future Work
+
+- **Production environment values** — `production.json` still has `CHANGE_ME` for `hostedZoneId` and `certificateArn`. Covered by existing task **0038** (env config). No new task needed.
+- **Snapshot tests for CDK stacks** — repo has no test framework yet. Setting one up is its own scope (vitest/jest decision, devDeps, nx target, CI integration). Will spawn dedicated task.
+- **CSP tuning** — to be added once SPA is deployed and load patterns are observable. Likely as part of the SPA deployment task or task 0036 (alarms).
+- **WAF managed rules in COUNT mode first** — production should ramp via COUNT before BLOCK to avoid false positives. Should be addressed in production launch readiness (covered by task 0038 / 0039 / 0090).
+- **CloudFront `BucketDeployment` for placeholder index.html** — currently the bucket is empty after deploy. Frontend deployment is in scope of task 0039 (CI/CD), not here.
