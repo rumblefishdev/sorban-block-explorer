@@ -40,6 +40,10 @@ pub async fn persist_ledger(
     let tx_ids = db::persistence::insert_transactions_batch(&mut **db_tx, &domain_txs).await?;
 
     let hash_to_id: HashMap<&str, i64> = tx_ids.iter().map(|(h, id)| (h.as_str(), *id)).collect();
+    let hash_to_source: HashMap<&str, &str> = transactions
+        .iter()
+        .map(|t| (t.hash.as_str(), t.source_account.as_str()))
+        .collect();
 
     // 3. Insert operations (resolve transaction_hash → transaction_id)
     for (tx_hash, ops) in operations {
@@ -47,10 +51,9 @@ pub async fn persist_ledger(
             warn!(tx_hash, "no transaction_id found for operations — skipping");
             continue;
         };
-        let tx_source = transactions
-            .iter()
-            .find(|t| t.hash == *tx_hash)
-            .map(|t| t.source_account.as_str())
+        let tx_source = hash_to_source
+            .get(tx_hash.as_str())
+            .copied()
             .unwrap_or("");
         let domain_ops: Vec<_> = ops
             .iter()

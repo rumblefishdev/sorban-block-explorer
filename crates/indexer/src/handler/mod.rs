@@ -79,25 +79,28 @@ pub async fn handler(event: LambdaEvent<S3Event>, state: &HandlerState) -> Resul
 
     for record in &payload.records {
         let bucket = &record.s3.bucket.name;
-        let key = &record.s3.object.key;
+        // S3 event keys are URL-encoded (e.g. slashes as %2F, spaces as +).
+        let key = percent_encoding::percent_decode_str(&record.s3.object.key)
+            .decode_utf8_lossy()
+            .into_owned();
 
-        info!(bucket, key, "processing S3 record");
+        info!(bucket, key = key.as_str(), "processing S3 record");
 
         // Validate S3 key pattern
-        let ledger_range = match xdr_parser::parse_s3_key(key) {
+        let ledger_range = match xdr_parser::parse_s3_key(&key) {
             Ok(range) => range,
             Err(e) => {
-                warn!(bucket, key, error = %e, "skipping non-matching S3 key");
+                warn!(bucket, key = key.as_str(), error = %e, "skipping non-matching S3 key");
                 continue;
             }
         };
 
-        match process_s3_object(state, bucket, key, ledger_range).await {
+        match process_s3_object(state, bucket, &key, ledger_range).await {
             Ok(()) => {
-                info!(bucket, key, "S3 record processed successfully");
+                info!(bucket, key = key.as_str(), "S3 record processed successfully");
             }
             Err(e) => {
-                error!(bucket, key, error = %e, "failed to process S3 record");
+                error!(bucket, key = key.as_str(), error = %e, "failed to process S3 record");
                 return Err(e.into());
             }
         }
