@@ -3,7 +3,7 @@
 //! Extracts contract, system, and diagnostic events from `SorobanTransactionMeta`.
 //! Each event is decoded into an `ExtractedEvent` with ScVal-decoded topics and data.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use stellar_xdr::curr::*;
 
 use crate::scval::scval_to_typed_json;

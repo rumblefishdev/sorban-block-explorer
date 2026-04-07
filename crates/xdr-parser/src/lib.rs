@@ -26,17 +26,17 @@ pub use contract::extract_contract_interfaces;
 pub use envelope::InnerTxRef;
 pub use error::{ParseError, ParseErrorKind};
 pub use event::extract_events;
-pub use invocation::{extract_invocations, InvocationResult};
+pub use invocation::{InvocationResult, extract_invocations};
 pub use ledger::extract_ledger;
 pub use ledger_entry_changes::extract_ledger_entry_changes;
 pub use nft::detect_nft_events;
+pub use operation::extract_operations;
+pub use scval::scval_to_typed_json;
 pub use state::{
     detect_nfts, detect_tokens, extract_account_states, extract_contract_deployments,
     extract_liquidity_pools,
 };
-pub use operation::extract_operations;
 pub use transaction::extract_transactions;
-pub use scval::scval_to_typed_json;
 pub use types::{
     ContractFunction, ExtractedAccountState, ExtractedContractDeployment,
     ExtractedContractInterface, ExtractedEvent, ExtractedInvocation, ExtractedLedger,

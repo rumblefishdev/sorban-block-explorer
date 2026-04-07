@@ -52,15 +52,12 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
         }));
     }
 
-    let secret_arn =
-        std::env::var("SECRET_ARN").map_err(|_| "SECRET_ARN not set")?;
+    let secret_arn = std::env::var("SECRET_ARN").map_err(|_| "SECRET_ARN not set")?;
     let rds_endpoint =
         std::env::var("RDS_PROXY_ENDPOINT").map_err(|_| "RDS_PROXY_ENDPOINT not set")?;
-    let env_name =
-        std::env::var("ENV_NAME").unwrap_or_else(|_| "unknown".into());
+    let env_name = std::env::var("ENV_NAME").unwrap_or_else(|_| "unknown".into());
 
-    let database_url =
-        db::secrets::resolve_database_url(&secret_arn, &rds_endpoint).await?;
+    let database_url = db::secrets::resolve_database_url(&secret_arn, &rds_endpoint).await?;
     let pool = PgPoolOptions::new()
         .max_connections(1)
         .connect(&database_url)
@@ -84,12 +81,7 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
         metrics.push(
             MetricDatum::builder()
                 .metric_name("FuturePartitionCount")
-                .dimensions(
-                    Dimension::builder()
-                        .name("Table")
-                        .value(*table)
-                        .build(),
-                )
+                .dimensions(Dimension::builder().name("Table").value(*table).build())
                 .value(future_count as f64)
                 .unit(StandardUnit::Count)
                 .build(),
@@ -142,9 +134,13 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
 
 /// Returns partition names that need to be created for a time-based table.
 /// Covers from Soroban activation (2024-02) to `today + FUTURE_MONTHS`.
-fn months_to_create(table: &str, existing: &[String], today: NaiveDate) -> Vec<(String, NaiveDate)> {
-    let start = NaiveDate::from_ymd_opt(SOROBAN_START.0, SOROBAN_START.1, 1)
-        .expect("valid SOROBAN_START");
+fn months_to_create(
+    table: &str,
+    existing: &[String],
+    today: NaiveDate,
+) -> Vec<(String, NaiveDate)> {
+    let start =
+        NaiveDate::from_ymd_opt(SOROBAN_START.0, SOROBAN_START.1, 1).expect("valid SOROBAN_START");
     let end = add_months(today, FUTURE_MONTHS);
 
     let mut missing = Vec::new();
@@ -246,8 +242,8 @@ async fn count_future_partitions(
     table: &str,
     today: NaiveDate,
 ) -> Result<u32, Error> {
-    let current_month_start = NaiveDate::from_ymd_opt(today.year(), today.month(), 1)
-        .ok_or("invalid date")?;
+    let current_month_start =
+        NaiveDate::from_ymd_opt(today.year(), today.month(), 1).ok_or("invalid date")?;
     let next_month = add_months(current_month_start, 1);
 
     let existing = get_existing_partitions(pool, table).await?;
@@ -264,10 +260,7 @@ async fn count_future_partitions(
 }
 
 /// Queries pg_inherits to list child partition names (excluding _default).
-async fn get_existing_partitions(
-    pool: &PgPool,
-    parent_table: &str,
-) -> Result<Vec<String>, Error> {
+async fn get_existing_partitions(pool: &PgPool, parent_table: &str) -> Result<Vec<String>, Error> {
     let rows = sqlx::query(
         "SELECT c.relname::text \
          FROM pg_inherits i \
@@ -358,8 +351,7 @@ fn add_months(date: NaiveDate, months: u32) -> NaiveDate {
     let total_months = date.year() * 12 + date.month() as i32 - 1 + months as i32;
     let year = total_months / 12;
     let month = (total_months % 12) + 1;
-    NaiveDate::from_ymd_opt(year, month as u32, 1)
-        .unwrap_or(date)
+    NaiveDate::from_ymd_opt(year, month as u32, 1).unwrap_or(date)
 }
 
 // ──────────────────────────── Main ─────────────────────────────
@@ -402,9 +394,18 @@ mod tests {
 
     #[test]
     fn parse_operations_range_end_valid() {
-        assert_eq!(parse_operations_range_end("operations_p0"), Some(10_000_000));
-        assert_eq!(parse_operations_range_end("operations_p1"), Some(20_000_000));
-        assert_eq!(parse_operations_range_end("operations_p5"), Some(60_000_000));
+        assert_eq!(
+            parse_operations_range_end("operations_p0"),
+            Some(10_000_000)
+        );
+        assert_eq!(
+            parse_operations_range_end("operations_p1"),
+            Some(20_000_000)
+        );
+        assert_eq!(
+            parse_operations_range_end("operations_p5"),
+            Some(60_000_000)
+        );
     }
 
     #[test]
@@ -418,14 +419,23 @@ mod tests {
     #[test]
     fn add_months_basic() {
         let jan = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
-        assert_eq!(add_months(jan, 1), NaiveDate::from_ymd_opt(2026, 2, 1).unwrap());
-        assert_eq!(add_months(jan, 12), NaiveDate::from_ymd_opt(2027, 1, 1).unwrap());
+        assert_eq!(
+            add_months(jan, 1),
+            NaiveDate::from_ymd_opt(2026, 2, 1).unwrap()
+        );
+        assert_eq!(
+            add_months(jan, 12),
+            NaiveDate::from_ymd_opt(2027, 1, 1).unwrap()
+        );
     }
 
     #[test]
     fn add_months_year_boundary() {
         let nov = NaiveDate::from_ymd_opt(2025, 11, 1).unwrap();
-        assert_eq!(add_months(nov, 3), NaiveDate::from_ymd_opt(2026, 2, 1).unwrap());
+        assert_eq!(
+            add_months(nov, 3),
+            NaiveDate::from_ymd_opt(2026, 2, 1).unwrap()
+        );
     }
 
     // ── Decision logic tests: months_to_create ──

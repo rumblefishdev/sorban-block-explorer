@@ -40,8 +40,7 @@ pub fn detect_nft_events(events: &[ExtractedEvent]) -> Vec<NftEvent> {
 
         match first_lower.as_str() {
             "transfer" => {
-                if let Some(nft) =
-                    try_parse_transfer(contract_id, &topics[1..], &event.data, event)
+                if let Some(nft) = try_parse_transfer(contract_id, &topics[1..], &event.data, event)
                 {
                     nft_events.push(nft);
                 }
@@ -209,11 +208,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn make_event(
-        contract_id: &str,
-        topics: Vec<Value>,
-        data: Value,
-    ) -> ExtractedEvent {
+    fn make_event(contract_id: &str, topics: Vec<Value>, data: Value) -> ExtractedEvent {
         ExtractedEvent {
             transaction_hash: "abcd1234".into(),
             event_type: "contract".into(),

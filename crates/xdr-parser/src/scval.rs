@@ -174,7 +174,7 @@ mod tests {
         let addr = ScAddress::Contract(ContractId(Hash([0xAB; 32])));
         let v = scval_to_typed_json(&ScVal::Address(addr));
         assert_eq!(v["type"], "address");
-        assert!(v["value"].as_str().unwrap().len() > 0);
+        assert!(!v["value"].as_str().unwrap().is_empty());
     }
 
     #[test]
@@ -182,7 +182,7 @@ mod tests {
         let e = ScError::Budget(ScErrorCode::ExceededLimit);
         let v = scval_to_typed_json(&ScVal::Error(e));
         assert_eq!(v["type"], "error");
-        assert!(v["value"].as_str().unwrap().len() > 0);
+        assert!(!v["value"].as_str().unwrap().is_empty());
     }
 
     #[test]

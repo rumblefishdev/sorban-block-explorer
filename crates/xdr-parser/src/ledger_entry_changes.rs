@@ -7,7 +7,7 @@
 //! Supported entry types: account, trustline, offer, data, claimable_balance,
 //! liquidity_pool, contract_data, contract_code, config_setting, ttl.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use stellar_xdr::curr::*;
 
 use crate::scval::scval_to_typed_json;
@@ -186,20 +186,24 @@ fn extract_entry_info(entry: &LedgerEntry) -> (&'static str, Value, Value) {
             claimable_balance_key(cb),
             claimable_balance_data(cb),
         ),
-        LedgerEntryData::LiquidityPool(lp) => {
-            ("liquidity_pool", liquidity_pool_key(lp), liquidity_pool_data(lp))
-        }
-        LedgerEntryData::ContractData(cd) => {
-            ("contract_data", contract_data_key(cd), contract_data_data(cd))
-        }
-        LedgerEntryData::ContractCode(cc) => {
-            ("contract_code", contract_code_key(cc), contract_code_data(cc))
-        }
+        LedgerEntryData::LiquidityPool(lp) => (
+            "liquidity_pool",
+            liquidity_pool_key(lp),
+            liquidity_pool_data(lp),
+        ),
+        LedgerEntryData::ContractData(cd) => (
+            "contract_data",
+            contract_data_key(cd),
+            contract_data_data(cd),
+        ),
+        LedgerEntryData::ContractCode(cc) => (
+            "contract_code",
+            contract_code_key(cc),
+            contract_code_data(cc),
+        ),
         // Config setting payload intentionally excluded — protocol-internal, not exposed by explorer.
         // Each variant has a different inner type; serializing all is high effort, low value.
-        LedgerEntryData::ConfigSetting(cs) => {
-            ("config_setting", config_setting_key(cs), json!({}))
-        }
+        LedgerEntryData::ConfigSetting(cs) => ("config_setting", config_setting_key(cs), json!({})),
         LedgerEntryData::Ttl(t) => ("ttl", ttl_key(t), ttl_data(t)),
     }
 }
@@ -212,35 +216,48 @@ fn extract_entry_info(entry: &LedgerEntry) -> (&'static str, Value, Value) {
 fn extract_key_info(key: &LedgerKey) -> (&'static str, Value) {
     match key {
         LedgerKey::Account(k) => ("account", json!({ "account_id": k.account_id.to_string() })),
-        LedgerKey::Trustline(k) => ("trustline", json!({
-            "account_id": k.account_id.to_string(),
-            "asset": format_trustline_asset_key(&k.asset),
-        })),
-        LedgerKey::Offer(k) => ("offer", json!({
-            "seller_id": k.seller_id.to_string(),
-            "offer_id": k.offer_id,
-        })),
-        LedgerKey::Data(k) => ("data", json!({
-            "account_id": k.account_id.to_string(),
-            "data_name": String::from_utf8_lossy(k.data_name.as_slice()).to_string(),
-        })),
-        LedgerKey::ClaimableBalance(k) => {
-            ("claimable_balance", json!({ "balance_id": format_claimable_balance_id(&k.balance_id) }))
-        }
-        LedgerKey::LiquidityPool(k) => {
-            ("liquidity_pool", json!({ "pool_id": hex::encode(k.liquidity_pool_id.0.clone()) }))
-        }
-        LedgerKey::ContractData(k) => ("contract_data", json!({
-            "contract": k.contract.to_string(),
-            "key": scval_to_typed_json(&k.key),
-            "durability": format_durability(&k.durability),
-        })),
-        LedgerKey::ContractCode(k) => {
-            ("contract_code", json!({ "hash": hex::encode(k.hash.0) }))
-        }
-        LedgerKey::ConfigSetting(k) => {
-            ("config_setting", json!({ "config_setting_id": format!("{:?}", k.config_setting_id) }))
-        }
+        LedgerKey::Trustline(k) => (
+            "trustline",
+            json!({
+                "account_id": k.account_id.to_string(),
+                "asset": format_trustline_asset_key(&k.asset),
+            }),
+        ),
+        LedgerKey::Offer(k) => (
+            "offer",
+            json!({
+                "seller_id": k.seller_id.to_string(),
+                "offer_id": k.offer_id,
+            }),
+        ),
+        LedgerKey::Data(k) => (
+            "data",
+            json!({
+                "account_id": k.account_id.to_string(),
+                "data_name": String::from_utf8_lossy(k.data_name.as_slice()).to_string(),
+            }),
+        ),
+        LedgerKey::ClaimableBalance(k) => (
+            "claimable_balance",
+            json!({ "balance_id": format_claimable_balance_id(&k.balance_id) }),
+        ),
+        LedgerKey::LiquidityPool(k) => (
+            "liquidity_pool",
+            json!({ "pool_id": hex::encode(k.liquidity_pool_id.0.clone()) }),
+        ),
+        LedgerKey::ContractData(k) => (
+            "contract_data",
+            json!({
+                "contract": k.contract.to_string(),
+                "key": scval_to_typed_json(&k.key),
+                "durability": format_durability(&k.durability),
+            }),
+        ),
+        LedgerKey::ContractCode(k) => ("contract_code", json!({ "hash": hex::encode(k.hash.0) })),
+        LedgerKey::ConfigSetting(k) => (
+            "config_setting",
+            json!({ "config_setting_id": format!("{:?}", k.config_setting_id) }),
+        ),
         LedgerKey::Ttl(k) => ("ttl", json!({ "key_hash": hex::encode(k.key_hash.0) })),
     }
 }
@@ -542,11 +559,7 @@ mod tests {
         let tx_meta = TransactionMeta::V3(TransactionMetaV3 {
             ext: ExtensionPoint::V0,
             tx_changes_before: LedgerEntryChanges::default(),
-            operations: vec![OperationMeta {
-                changes,
-            }]
-            .try_into()
-            .unwrap(),
+            operations: vec![OperationMeta { changes }].try_into().unwrap(),
             tx_changes_after: LedgerEntryChanges::default(),
             soroban_meta: None,
         });
@@ -631,7 +644,9 @@ mod tests {
                 .try_into()
                 .unwrap(),
             operations: vec![OperationMeta {
-                changes: vec![LedgerEntryChange::Created(op_entry)].try_into().unwrap(),
+                changes: vec![LedgerEntryChange::Created(op_entry)]
+                    .try_into()
+                    .unwrap(),
             }]
             .try_into()
             .unwrap(),
@@ -679,9 +694,8 @@ mod tests {
             ext: LedgerEntryExt::V0,
         };
 
-        let changes: LedgerEntryChanges = vec![LedgerEntryChange::Created(entry)]
-            .try_into()
-            .unwrap();
+        let changes: LedgerEntryChanges =
+            vec![LedgerEntryChange::Created(entry)].try_into().unwrap();
         let tx_meta = TransactionMeta::V3(TransactionMetaV3 {
             ext: ExtensionPoint::V0,
             tx_changes_before: changes,
@@ -714,9 +728,8 @@ mod tests {
             ext: LedgerEntryExt::V0,
         };
 
-        let changes: LedgerEntryChanges = vec![LedgerEntryChange::Created(entry)]
-            .try_into()
-            .unwrap();
+        let changes: LedgerEntryChanges =
+            vec![LedgerEntryChange::Created(entry)].try_into().unwrap();
         let tx_meta = TransactionMeta::V3(TransactionMetaV3 {
             ext: ExtensionPoint::V0,
             tx_changes_before: changes,
@@ -747,9 +760,8 @@ mod tests {
             ext: LedgerEntryExt::V0,
         };
 
-        let changes: LedgerEntryChanges = vec![LedgerEntryChange::Created(entry)]
-            .try_into()
-            .unwrap();
+        let changes: LedgerEntryChanges =
+            vec![LedgerEntryChange::Created(entry)].try_into().unwrap();
         let tx_meta = TransactionMeta::V3(TransactionMetaV3 {
             ext: ExtensionPoint::V0,
             tx_changes_before: changes,
@@ -778,9 +790,8 @@ mod tests {
             ext: LedgerEntryExt::V0,
         };
 
-        let changes: LedgerEntryChanges = vec![LedgerEntryChange::Created(entry)]
-            .try_into()
-            .unwrap();
+        let changes: LedgerEntryChanges =
+            vec![LedgerEntryChange::Created(entry)].try_into().unwrap();
         let tx_meta = TransactionMeta::V3(TransactionMetaV3 {
             ext: ExtensionPoint::V0,
             tx_changes_before: changes,
@@ -807,9 +818,8 @@ mod tests {
             ext: LedgerEntryExt::V0,
         };
 
-        let changes: LedgerEntryChanges = vec![LedgerEntryChange::Updated(entry)]
-            .try_into()
-            .unwrap();
+        let changes: LedgerEntryChanges =
+            vec![LedgerEntryChange::Updated(entry)].try_into().unwrap();
         let tx_meta = TransactionMeta::V3(TransactionMetaV3 {
             ext: ExtensionPoint::V0,
             tx_changes_before: changes,
@@ -838,9 +848,8 @@ mod tests {
     #[test]
     fn v4_meta_extraction() {
         let entry = make_account_entry(make_account_id(0xAA), 500);
-        let changes: LedgerEntryChanges = vec![LedgerEntryChange::Created(entry)]
-            .try_into()
-            .unwrap();
+        let changes: LedgerEntryChanges =
+            vec![LedgerEntryChange::Created(entry)].try_into().unwrap();
 
         let tx_meta = TransactionMeta::V4(TransactionMetaV4 {
             ext: ExtensionPoint::V0,
@@ -911,9 +920,8 @@ mod tests {
             ext: LedgerEntryExt::V0,
         };
 
-        let changes: LedgerEntryChanges = vec![LedgerEntryChange::Created(entry)]
-            .try_into()
-            .unwrap();
+        let changes: LedgerEntryChanges =
+            vec![LedgerEntryChange::Created(entry)].try_into().unwrap();
         let tx_meta = TransactionMeta::V3(TransactionMetaV3 {
             ext: ExtensionPoint::V0,
             tx_changes_before: changes,
@@ -954,6 +962,11 @@ mod tests {
         assert_eq!(results[0].entry_type, "contract_data");
         assert!(results[0].data.is_none());
         assert_eq!(results[0].key["durability"], "temporary");
-        assert!(results[0].key["contract"].as_str().unwrap().starts_with('C'));
+        assert!(
+            results[0].key["contract"]
+                .as_str()
+                .unwrap()
+                .starts_with('C')
+        );
     }
 }

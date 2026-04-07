@@ -209,11 +209,7 @@ fn spec_function_to_contract_function(func: &ScSpecFunctionV0) -> ContractFuncti
         })
         .collect();
 
-    let outputs = func
-        .outputs
-        .iter()
-        .map(spec_type_to_string)
-        .collect();
+    let outputs = func.outputs.iter().map(spec_type_to_string).collect();
 
     ContractFunction {
         name,
@@ -244,7 +240,9 @@ fn spec_type_to_string(t: &ScSpecTypeDef) -> String {
         ScSpecTypeDef::String => "string".into(),
         ScSpecTypeDef::Symbol => "symbol".into(),
         ScSpecTypeDef::Address => "address".into(),
-        ScSpecTypeDef::Option(inner) => format!("option<{}>", spec_type_to_string(&inner.value_type)),
+        ScSpecTypeDef::Option(inner) => {
+            format!("option<{}>", spec_type_to_string(&inner.value_type))
+        }
         ScSpecTypeDef::Result(inner) => format!(
             "result<{}, {}>",
             spec_type_to_string(&inner.ok_type),

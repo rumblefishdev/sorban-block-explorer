@@ -74,10 +74,7 @@ pub struct HandlerState {
 // ---------------------------------------------------------------------------
 
 /// Top-level Lambda handler. Processes each S3 record independently.
-pub async fn handler(
-    event: LambdaEvent<S3Event>,
-    state: &HandlerState,
-) -> Result<(), Error> {
+pub async fn handler(event: LambdaEvent<S3Event>, state: &HandlerState) -> Result<(), Error> {
     let (payload, _ctx) = event.into_parts();
 
     for record in &payload.records {

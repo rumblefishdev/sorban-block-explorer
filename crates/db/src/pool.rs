@@ -2,8 +2,8 @@
 //!
 //! Lambda functions should use `max_connections(1)` with RDS Proxy.
 
-use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 
 /// Create a PgPool configured for Lambda (single connection, RDS Proxy).
 ///

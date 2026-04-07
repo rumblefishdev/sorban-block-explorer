@@ -8,8 +8,7 @@ use serde_json::Value;
 
 use crate::types::{
     ExtractedAccountState, ExtractedContractDeployment, ExtractedLedgerEntryChange,
-    ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot, ExtractedNft, ExtractedToken,
-    NftEvent,
+    ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot, ExtractedNft, ExtractedToken, NftEvent,
 };
 
 // ---------------------------------------------------------------------------
@@ -73,11 +72,10 @@ pub fn extract_contract_deployments(
 fn is_contract_instance_key(key: &Value) -> bool {
     let key_field = key.get("key");
     match key_field {
-        Some(k) => {
-            k.get("type")
-                .and_then(|v| v.as_str())
-                .is_some_and(|t| t == "ledger_key_contract_instance")
-        }
+        Some(k) => k
+            .get("type")
+            .and_then(|v| v.as_str())
+            .is_some_and(|t| t == "ledger_key_contract_instance"),
         None => false,
     }
 }
@@ -116,7 +114,10 @@ pub fn extract_account_states(
         if change.entry_type != "account" {
             continue;
         }
-        if !matches!(change.change_type.as_str(), "created" | "updated" | "restored") {
+        if !matches!(
+            change.change_type.as_str(),
+            "created" | "updated" | "restored"
+        ) {
             continue;
         }
         let Some(ref data) = change.data else {
@@ -133,10 +134,7 @@ pub fn extract_account_states(
             continue;
         }
 
-        let sequence_number = data
-            .get("seq_num")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0);
+        let sequence_number = data.get("seq_num").and_then(|v| v.as_i64()).unwrap_or(0);
 
         let balance = data.get("balance").and_then(|v| v.as_i64()).unwrap_or(0);
         let balances = serde_json::json!([{ "asset_type": "native", "balance": balance }]);
@@ -150,7 +148,11 @@ pub fn extract_account_states(
         let is_creation = matches!(change.change_type.as_str(), "created" | "restored");
         accounts.push(ExtractedAccountState {
             account_id,
-            first_seen_ledger: if is_creation { Some(change.ledger_sequence) } else { None },
+            first_seen_ledger: if is_creation {
+                Some(change.ledger_sequence)
+            } else {
+                None
+            },
             last_seen_ledger: change.ledger_sequence,
             sequence_number,
             balances,
@@ -171,7 +173,10 @@ pub fn extract_account_states(
 /// Returns pool state updates and a snapshot for each change.
 pub fn extract_liquidity_pools(
     changes: &[ExtractedLedgerEntryChange],
-) -> (Vec<ExtractedLiquidityPool>, Vec<ExtractedLiquidityPoolSnapshot>) {
+) -> (
+    Vec<ExtractedLiquidityPool>,
+    Vec<ExtractedLiquidityPoolSnapshot>,
+) {
     let mut pools = Vec::new();
     let mut snapshots = Vec::new();
 
@@ -200,8 +205,14 @@ pub fn extract_liquidity_pools(
         }
 
         let params = data.get("params").cloned().unwrap_or(serde_json::json!({}));
-        let asset_a = params.get("asset_a").cloned().unwrap_or(serde_json::json!(null));
-        let asset_b = params.get("asset_b").cloned().unwrap_or(serde_json::json!(null));
+        let asset_a = params
+            .get("asset_a")
+            .cloned()
+            .unwrap_or(serde_json::json!(null));
+        let asset_b = params
+            .get("asset_b")
+            .cloned()
+            .unwrap_or(serde_json::json!(null));
         let fee_bps = params.get("fee").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
 
         let reserve_a = data.get("reserve_a").and_then(|v| v.as_i64()).unwrap_or(0);
@@ -223,7 +234,11 @@ pub fn extract_liquidity_pools(
             reserves: reserves.clone(),
             total_shares: total_shares.clone(),
             tvl: None,
-            created_at_ledger: if is_creation { Some(change.ledger_sequence) } else { None },
+            created_at_ledger: if is_creation {
+                Some(change.ledger_sequence)
+            } else {
+                None
+            },
             last_updated_ledger: change.ledger_sequence,
             created_at: change.created_at,
         };
@@ -291,10 +306,7 @@ pub fn detect_nfts(nft_events: &[NftEvent]) -> Vec<ExtractedNft> {
         }
 
         let (owner_account, minted_at_ledger) = match event.event_kind.as_str() {
-            "mint" => (
-                event.to.clone(),
-                Some(event.ledger_sequence),
-            ),
+            "mint" => (event.to.clone(), Some(event.ledger_sequence)),
             "transfer" => (event.to.clone(), None),
             "burn" => (None, None),
             _ => continue,
@@ -386,7 +398,10 @@ mod tests {
         let deployments = extract_contract_deployments(&changes, "GDEPLOYER");
         assert_eq!(deployments.len(), 1);
         assert_eq!(deployments[0].contract_id, "CABC123");
-        assert_eq!(deployments[0].deployer_account.as_deref(), Some("GDEPLOYER"));
+        assert_eq!(
+            deployments[0].deployer_account.as_deref(),
+            Some("GDEPLOYER")
+        );
         assert_eq!(deployments[0].wasm_hash, Some("aa".repeat(32)));
         assert!(!deployments[0].is_sac);
         assert_eq!(deployments[0].contract_type, "other");
@@ -519,7 +534,12 @@ mod tests {
     #[test]
     fn skip_state_and_removed_accounts() {
         let changes = vec![
-            make_change("account", "state", json!({}), Some(json!({"account_id": "G1", "balance": 0, "seq_num": 0}))),
+            make_change(
+                "account",
+                "state",
+                json!({}),
+                Some(json!({"account_id": "G1", "balance": 0, "seq_num": 0})),
+            ),
             make_change("account", "removed", json!({}), None),
         ];
 

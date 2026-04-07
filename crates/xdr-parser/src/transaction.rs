@@ -160,7 +160,12 @@ fn encode_xdr<T: WriteXdr>(value: &T, limits: &Limits, ledger: u32, tx_idx: usiz
     }
 }
 
-fn encode_xdr_opt<T: WriteXdr>(value: &T, limits: &Limits, ledger: u32, tx_idx: usize) -> Option<String> {
+fn encode_xdr_opt<T: WriteXdr>(
+    value: &T,
+    limits: &Limits,
+    ledger: u32,
+    tx_idx: usize,
+) -> Option<String> {
     match value.to_xdr(limits.clone()) {
         Ok(bytes) => Some(base64::engine::general_purpose::STANDARD.encode(&bytes)),
         Err(e) => {

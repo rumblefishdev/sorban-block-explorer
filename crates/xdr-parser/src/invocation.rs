@@ -193,8 +193,7 @@ fn invocation_to_json(
     }
 
     let mut visits = Vec::new();
-    let mut dfs_stack: Vec<(&SorobanAuthorizedInvocation, Value)> =
-        vec![(root, root_return_value)];
+    let mut dfs_stack: Vec<(&SorobanAuthorizedInvocation, Value)> = vec![(root, root_return_value)];
 
     while let Some((node, ret_val)) = dfs_stack.pop() {
         let child_count = node.sub_invocations.len();
@@ -216,8 +215,7 @@ fn invocation_to_json(
             decode_authorized_function(&visit.node.function);
 
         // Pop this node's children from the result stack
-        let children: Vec<Value> = result_stack
-            .split_off(result_stack.len() - visit.child_count);
+        let children: Vec<Value> = result_stack.split_off(result_stack.len() - visit.child_count);
 
         let node_json = json!({
             "contractId": contract_id,

@@ -4,14 +4,11 @@ use sqlx::PgPool;
 use stellar_xdr::curr::{LedgerCloseMeta, TransactionMeta};
 use tracing::{info, warn};
 
-use super::persist;
 use super::HandlerError;
+use super::persist;
 
 /// Process a single ledger: run all parsing stages and persist in one DB transaction.
-pub async fn process_ledger(
-    meta: &LedgerCloseMeta,
-    pool: &PgPool,
-) -> Result<(), HandlerError> {
+pub async fn process_ledger(meta: &LedgerCloseMeta, pool: &PgPool) -> Result<(), HandlerError> {
     // --- Stage 0024: Ledger + transaction extraction ---
     let extracted_ledger = xdr_parser::extract_ledger(meta)?;
     let ledger_sequence = extracted_ledger.sequence;
@@ -19,8 +16,7 @@ pub async fn process_ledger(
 
     info!(ledger_sequence, "parsing ledger");
 
-    let extracted_transactions =
-        xdr_parser::extract_transactions(meta, ledger_sequence, closed_at);
+    let extracted_transactions = xdr_parser::extract_transactions(meta, ledger_sequence, closed_at);
 
     // Get envelopes and per-tx metas for downstream stages
     let envelopes = xdr_parser::envelope::extract_envelopes(meta);
@@ -98,7 +94,11 @@ pub async fn process_ledger(
                 ledger_sequence,
                 closed_at,
             );
-            all_ledger_entry_changes.push((ext_tx.hash.clone(), ext_tx.source_account.clone(), changes));
+            all_ledger_entry_changes.push((
+                ext_tx.hash.clone(),
+                ext_tx.source_account.clone(),
+                changes,
+            ));
         }
     }
 
@@ -161,8 +161,20 @@ pub async fn process_ledger(
 /// Collect per-transaction TransactionMeta references from any LedgerCloseMeta variant.
 fn collect_tx_metas(meta: &LedgerCloseMeta) -> Vec<&TransactionMeta> {
     match meta {
-        LedgerCloseMeta::V0(v) => v.tx_processing.iter().map(|p| &p.tx_apply_processing).collect(),
-        LedgerCloseMeta::V1(v) => v.tx_processing.iter().map(|p| &p.tx_apply_processing).collect(),
-        LedgerCloseMeta::V2(v) => v.tx_processing.iter().map(|p| &p.tx_apply_processing).collect(),
+        LedgerCloseMeta::V0(v) => v
+            .tx_processing
+            .iter()
+            .map(|p| &p.tx_apply_processing)
+            .collect(),
+        LedgerCloseMeta::V1(v) => v
+            .tx_processing
+            .iter()
+            .map(|p| &p.tx_apply_processing)
+            .collect(),
+        LedgerCloseMeta::V2(v) => v
+            .tx_processing
+            .iter()
+            .map(|p| &p.tx_apply_processing)
+            .collect(),
     }
 }

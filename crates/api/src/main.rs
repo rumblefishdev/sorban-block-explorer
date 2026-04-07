@@ -1,7 +1,7 @@
 //! REST API Lambda handler for the Soroban block explorer.
 
-use axum::{routing::get, Json, Router};
-use serde_json::{json, Value};
+use axum::{Json, Router, routing::get};
+use serde_json::{Value, json};
 
 async fn health() -> Json<Value> {
     Json(json!({ "status": "ok" }))
@@ -33,7 +33,12 @@ mod tests {
     async fn health_returns_ok() {
         let app = app();
         let response = app
-            .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);

@@ -5,7 +5,7 @@
 mod handler;
 
 use aws_sdk_s3::Client as S3Client;
-use lambda_runtime::{service_fn, Error};
+use lambda_runtime::{Error, service_fn};
 use tracing::info;
 
 #[tokio::main]
@@ -36,10 +36,7 @@ async fn main() -> Result<(), Error> {
     let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let s3_client = S3Client::new(&aws_config);
 
-    let state = handler::HandlerState {
-        s3_client,
-        db_pool,
-    };
+    let state = handler::HandlerState { s3_client, db_pool };
 
     info!("indexer ready — starting Lambda runtime");
 
