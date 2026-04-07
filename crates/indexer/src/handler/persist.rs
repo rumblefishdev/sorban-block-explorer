@@ -59,6 +59,26 @@ pub async fn persist_ledger(
         db::persistence::insert_operations_batch(&mut **db_tx, &domain_ops).await?;
     }
 
+    // 3b. Ensure all referenced contracts exist (FK constraint on soroban_events/invocations)
+    let mut contract_ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for (_tx_hash, evts) in events {
+        for e in evts {
+            if let Some(ref cid) = e.contract_id {
+                contract_ids.insert(cid.as_str());
+            }
+        }
+    }
+    for (_tx_hash, invs) in invocations {
+        for inv in invs {
+            if let Some(ref cid) = inv.contract_id {
+                contract_ids.insert(cid.as_str());
+            }
+        }
+    }
+    for cid in &contract_ids {
+        db::soroban::ensure_contract_exists(&mut **db_tx, cid).await?;
+    }
+
     // 4. Insert events
     for (tx_hash, evts) in events {
         let Some(&tx_id) = hash_to_id.get(tx_hash.as_str()) else {

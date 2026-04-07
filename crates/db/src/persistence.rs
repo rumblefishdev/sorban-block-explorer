@@ -69,7 +69,7 @@ pub async fn insert_transactions_batch(
                     result_code, envelope_xdr, result_xdr, result_meta_xdr,
                     memo_type, memo, created_at, parse_error, operation_tree)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-               ON CONFLICT ON CONSTRAINT transactions_hash_unique DO UPDATE SET hash = EXCLUDED.hash
+               ON CONFLICT (hash) DO UPDATE SET hash = EXCLUDED.hash
                RETURNING id"#,
         )
         .bind(&tx.hash)

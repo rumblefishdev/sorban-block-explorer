@@ -17,6 +17,28 @@ use domain::{
 };
 use sqlx::Acquire;
 
+/// Ensure a minimal `soroban_contracts` row exists for the given contract_id.
+///
+/// Inserts a stub row with only the contract_id if it doesn't exist yet.
+/// This satisfies FK constraints when events/invocations reference contracts
+/// that were deployed in earlier ledgers (not yet in the database).
+pub async fn ensure_contract_exists(
+    executor: impl Acquire<'_, Database = sqlx::Postgres>,
+    contract_id: &str,
+) -> Result<(), sqlx::Error> {
+    let mut conn = executor.acquire().await?;
+    sqlx::query(
+        r#"INSERT INTO soroban_contracts (contract_id)
+           VALUES ($1)
+           ON CONFLICT (contract_id) DO NOTHING"#,
+    )
+    .bind(contract_id)
+    .execute(&mut *conn)
+    .await?;
+
+    Ok(())
+}
+
 /// Update `transactions.operation_tree` for a given transaction.
 pub async fn update_operation_tree(
     executor: impl Acquire<'_, Database = sqlx::Postgres>,
