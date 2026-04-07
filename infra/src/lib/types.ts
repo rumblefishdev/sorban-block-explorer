@@ -114,6 +114,33 @@ export interface EnvironmentConfig {
 }
 
 /**
+ * Returns the record name relative to the hosted zone, suitable for
+ * `recordName` on `route53.ARecord` / `AaaaRecord`.
+ *
+ * CDK Route 53 record constructs concatenate `recordName` with the
+ * hosted zone name unless `recordName` ends with a trailing dot. Passing
+ * a full FQDN like `staging.sorobanscan.rumblefish.dev` (no trailing dot)
+ * against a zone `sorobanscan.rumblefish.dev` therefore produces a
+ * broken record `staging.sorobanscan.rumblefish.dev.sorobanscan.rumblefish.dev`.
+ *
+ * This helper strips the zone suffix so callers always get a relative
+ * label. For an apex record (`fqdn === zoneName`) it returns the zone
+ * name itself, which CDK accepts as the apex.
+ */
+export function relativeRecordName(fqdn: string, zoneName: string): string {
+  if (fqdn === zoneName) {
+    return zoneName;
+  }
+  const suffix = `.${zoneName}`;
+  if (!fqdn.endsWith(suffix)) {
+    throw new Error(
+      `relativeRecordName: "${fqdn}" is not within zone "${zoneName}"`
+    );
+  }
+  return fqdn.slice(0, -suffix.length);
+}
+
+/**
  * Validates an EnvironmentConfig at synth time. Throws on missing or
  * placeholder values rather than letting `cdk synth`/`cdk deploy` fail
  * deep inside CloudFormation with cryptic errors.

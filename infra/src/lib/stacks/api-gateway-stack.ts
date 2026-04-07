@@ -8,7 +8,7 @@ import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
 import type { Construct } from 'constructs';
 
 import { WafWebAcl } from '../constructs/waf-web-acl.js';
-import type { EnvironmentConfig } from '../types.js';
+import { relativeRecordName, type EnvironmentConfig } from '../types.js';
 
 export interface ApiGatewayStackProps extends cdk.StackProps {
   readonly config: EnvironmentConfig;
@@ -142,9 +142,16 @@ export class ApiGatewayStack extends cdk.Stack {
       }
     );
 
+    // recordName must be RELATIVE to the hosted zone — see
+    // relativeRecordName() in types.ts.
+    const apiRecordName = relativeRecordName(
+      config.apiDomainName,
+      config.hostedZoneName
+    );
+
     new route53.ARecord(this, 'ApiARecord', {
       zone: hostedZone,
-      recordName: config.apiDomainName,
+      recordName: apiRecordName,
       target: route53.RecordTarget.fromAlias(
         new targets.ApiGatewayDomain(apiDomain)
       ),
@@ -152,7 +159,7 @@ export class ApiGatewayStack extends cdk.Stack {
 
     new route53.AaaaRecord(this, 'ApiAaaaRecord', {
       zone: hostedZone,
-      recordName: config.apiDomainName,
+      recordName: apiRecordName,
       target: route53.RecordTarget.fromAlias(
         new targets.ApiGatewayDomain(apiDomain)
       ),

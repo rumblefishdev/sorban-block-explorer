@@ -9,7 +9,7 @@ import type { Construct } from 'constructs';
 
 import { basicAuthFunctionCode } from '../cloudfront-functions/basic-auth.js';
 import { WafWebAcl } from '../constructs/waf-web-acl.js';
-import type { EnvironmentConfig } from '../types.js';
+import { relativeRecordName, type EnvironmentConfig } from '../types.js';
 
 export interface DeliveryStackProps extends cdk.StackProps {
   readonly config: EnvironmentConfig;
@@ -89,7 +89,7 @@ export class DeliveryStack extends cdk.Stack {
     // ~seconds, no CDK deploy needed.
     //
     // First-deploy gotcha: KVS is empty until you populate it. Until then,
-    // every request returns 401 (closed by default — safer than open).
+    // requests fail closed and the function returns 503 (safer than open).
     let viewerRequestFunction: cloudfront.Function | undefined;
 
     if (config.enableBasicAuth) {
@@ -220,9 +220,17 @@ export class DeliveryStack extends cdk.Stack {
       }
     );
 
+    // recordName must be RELATIVE to the hosted zone — CDK concatenates
+    // it with zoneName unless it ends in a trailing dot. See
+    // relativeRecordName() in types.ts.
+    const frontendRecordName = relativeRecordName(
+      config.domainName,
+      config.hostedZoneName
+    );
+
     new route53.ARecord(this, 'FrontendARecord', {
       zone: hostedZone,
-      recordName: config.domainName,
+      recordName: frontendRecordName,
       target: route53.RecordTarget.fromAlias(
         new targets.CloudFrontTarget(distribution)
       ),
@@ -230,7 +238,7 @@ export class DeliveryStack extends cdk.Stack {
 
     new route53.AaaaRecord(this, 'FrontendAaaaRecord', {
       zone: hostedZone,
-      recordName: config.domainName,
+      recordName: frontendRecordName,
       target: route53.RecordTarget.fromAlias(
         new targets.CloudFrontTarget(distribution)
       ),

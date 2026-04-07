@@ -28,7 +28,8 @@ async function handler(event) {
     return {
       statusCode: 503,
       statusDescription: 'Service Unavailable',
-      statusBody: 'Auth not configured'
+      headers: { 'cache-control': { value: 'no-store' } },
+      body: 'Auth not configured'
     };
   }
   if (!headers.authorization || headers.authorization.value !== expected) {
