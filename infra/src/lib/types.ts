@@ -112,3 +112,59 @@ export interface EnvironmentConfig {
    */
   readonly apiWafRateLimit: number;
 }
+
+/**
+ * Validates an EnvironmentConfig at synth time. Throws on missing or
+ * placeholder values rather than letting `cdk synth`/`cdk deploy` fail
+ * deep inside CloudFormation with cryptic errors.
+ *
+ * Catches the most common footgun: a placeholder like `CHANGE_ME`
+ * accidentally committed to envs/*.json.
+ */
+export function validateConfig(config: EnvironmentConfig): void {
+  const errors: string[] = [];
+
+  if (
+    !/^arn:aws:acm:[a-z0-9-]+:\d{12}:certificate\//.test(config.certificateArn)
+  ) {
+    errors.push(
+      `certificateArn must be a valid ACM certificate ARN, got: "${config.certificateArn}"`
+    );
+  }
+  if (!/^Z[A-Z0-9]+$/.test(config.hostedZoneId)) {
+    errors.push(
+      `hostedZoneId must be a Route 53 hosted zone ID (e.g. "Z1234ABCD"), got: "${config.hostedZoneId}"`
+    );
+  }
+  if (!config.hostedZoneName || config.hostedZoneName.includes('CHANGE')) {
+    errors.push(
+      `hostedZoneName missing or placeholder: "${config.hostedZoneName}"`
+    );
+  }
+  if (!config.domainName || config.domainName.includes('CHANGE')) {
+    errors.push(`domainName missing or placeholder: "${config.domainName}"`);
+  }
+  if (!config.apiDomainName || config.apiDomainName.includes('CHANGE')) {
+    errors.push(
+      `apiDomainName missing or placeholder: "${config.apiDomainName}"`
+    );
+  }
+  if (config.cloudFrontWafRateLimit < 100) {
+    errors.push(
+      `cloudFrontWafRateLimit must be >= 100 (AWS WAF minimum), got: ${config.cloudFrontWafRateLimit}`
+    );
+  }
+  if (config.apiWafRateLimit < 100) {
+    errors.push(
+      `apiWafRateLimit must be >= 100 (AWS WAF minimum), got: ${config.apiWafRateLimit}`
+    );
+  }
+
+  if (errors.length > 0) {
+    throw new Error(
+      `Invalid EnvironmentConfig for "${config.envName}":\n  - ${errors.join(
+        '\n  - '
+      )}`
+    );
+  }
+}

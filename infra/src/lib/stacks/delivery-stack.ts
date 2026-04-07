@@ -7,6 +7,7 @@ import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import type { Construct } from 'constructs';
 
+import { basicAuthFunctionCode } from '../cloudfront-functions/basic-auth.js';
 import { WafWebAcl } from '../constructs/waf-web-acl.js';
 import type { EnvironmentConfig } from '../types.js';
 
@@ -104,34 +105,7 @@ export class DeliveryStack extends cdk.Stack {
           keyValueStore: basicAuthKvs,
           runtime: cloudfront.FunctionRuntime.JS_2_0,
           code: cloudfront.FunctionCode.fromInline(
-            `
-import cf from 'cloudfront';
-const kvs = cf.kvs();
-
-async function handler(event) {
-  var request = event.request;
-  var headers = request.headers;
-  var expected;
-  try {
-    var token = await kvs.get('auth-token');
-    expected = 'Basic ' + token;
-  } catch (e) {
-    return {
-      statusCode: 503,
-      statusDescription: 'Service Unavailable',
-      statusBody: 'Auth not configured'
-    };
-  }
-  if (!headers.authorization || headers.authorization.value !== expected) {
-    return {
-      statusCode: 401,
-      statusDescription: 'Unauthorized',
-      headers: { 'www-authenticate': { value: 'Basic realm="Staging"' } }
-    };
-  }
-  return request;
-}
-          `.trim()
+            basicAuthFunctionCode(basicAuthKvs.keyValueStoreId)
           ),
         }
       );
@@ -140,6 +114,42 @@ async function handler(event) {
         value: basicAuthKvs.keyValueStoreArn,
       });
     }
+
+    // ---------------------
+    // Response Headers Policy — security baseline
+    // ---------------------
+    // Custom policy rather than the AWS-managed `SECURITY_HEADERS`,
+    // because the managed policy includes a strict CSP (`default-src
+    // 'self'`) that breaks typical SPAs loading fonts/assets from CDNs.
+    // CSP is intentionally omitted here — it should be added in a
+    // follow-up task once the frontend is deployed and we know what it
+    // actually loads (then dial in via Content-Security-Policy-Report-Only
+    // before enforcing).
+    const responseHeadersPolicy = new cloudfront.ResponseHeadersPolicy(
+      this,
+      'ResponseHeadersPolicy',
+      {
+        responseHeadersPolicyName: `${config.envName}-soroban-explorer-headers`,
+        securityHeadersBehavior: {
+          strictTransportSecurity: {
+            accessControlMaxAge: cdk.Duration.days(365),
+            includeSubdomains: true,
+            preload: true,
+            override: true,
+          },
+          contentTypeOptions: { override: true },
+          frameOptions: {
+            frameOption: cloudfront.HeadersFrameOption.DENY,
+            override: true,
+          },
+          referrerPolicy: {
+            referrerPolicy:
+              cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN,
+            override: true,
+          },
+        },
+      }
+    );
 
     // ---------------------
     // CloudFront Distribution
@@ -156,6 +166,7 @@ async function handler(event) {
         origin: origins.S3BucketOrigin.withOriginAccessControl(spaBucket),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        responseHeadersPolicy,
         ...(viewerRequestFunction && {
           functionAssociations: [
             {

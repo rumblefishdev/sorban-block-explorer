@@ -1,6 +1,6 @@
 import * as cdk from 'aws-cdk-lib';
 
-import type { EnvironmentConfig } from './types.js';
+import { validateConfig, type EnvironmentConfig } from './types.js';
 import { NetworkStack } from './stacks/network-stack.js';
 import { RdsStack } from './stacks/rds-stack.js';
 import { LedgerBucketStack } from './stacks/ledger-bucket-stack.js';
@@ -21,6 +21,8 @@ export function createApp({
   config,
   cargoWorkspacePath,
 }: CreateAppOptions): void {
+  validateConfig(config);
+
   const app = new cdk.App();
 
   const env: cdk.Environment = {
