@@ -168,18 +168,34 @@ export class DeliveryStack extends cdk.Stack {
     // ---------------------
     // CloudFront Distribution
     // ---------------------
-    const distribution = new cloudfront.Distribution(this, 'Distribution', {
-      domainNames: [config.domainName],
-      certificate,
-      defaultRootObject: 'index.html',
-      priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
-      ...(waf && { webAclId: waf.webAclArn }),
-      minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
-      httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
-      defaultBehavior: {
+    // Cache policies
+    // ---------------------
+    // index.html must NOT be cached for long: it references hashed asset
+    // bundles whose names change every deploy. A long TTL on index.html
+    // means users with a cache hit get an old document pointing at new
+    // (or missing) bundle paths. Hashed assets in the default behavior
+    // are content-addressed and safe to cache for a long time.
+    const indexHtmlCachePolicy = new cloudfront.CachePolicy(
+      this,
+      'IndexHtmlCachePolicy',
+      {
+        cachePolicyName: `${config.envName}-soroban-explorer-index-html`,
+        comment: 'Short TTL for SPA index.html — see task 0106',
+        minTtl: cdk.Duration.seconds(0),
+        defaultTtl: cdk.Duration.seconds(60),
+        maxTtl: cdk.Duration.minutes(5),
+        enableAcceptEncodingGzip: true,
+        enableAcceptEncodingBrotli: true,
+      }
+    );
+
+    // Behavior props shared between the default (assets) and the
+    // /index.html override. Both need the same origin, security headers,
+    // protocol policy, and (optionally) the basic auth function.
+    const sharedBehaviorProps: Omit<cloudfront.BehaviorOptions, 'cachePolicy'> =
+      {
         origin: origins.S3BucketOrigin.withOriginAccessControl(spaBucket),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
         responseHeadersPolicy,
         ...(viewerRequestFunction && {
           functionAssociations: [
@@ -189,6 +205,29 @@ export class DeliveryStack extends cdk.Stack {
             },
           ],
         }),
+      };
+
+    // ---------------------
+    const distribution = new cloudfront.Distribution(this, 'Distribution', {
+      domainNames: [config.domainName],
+      certificate,
+      defaultRootObject: 'index.html',
+      priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
+      ...(waf && { webAclId: waf.webAclArn }),
+      minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
+      httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
+      defaultBehavior: {
+        ...sharedBehaviorProps,
+        cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+      },
+      additionalBehaviors: {
+        // CloudFront `defaultRootObject` rewrites `/` → `/index.html`
+        // before behavior matching, so this pattern covers both apex
+        // requests and explicit /index.html requests.
+        '/index.html': {
+          ...sharedBehaviorProps,
+          cachePolicy: indexHtmlCachePolicy,
+        },
       },
       errorResponses: [
         {
