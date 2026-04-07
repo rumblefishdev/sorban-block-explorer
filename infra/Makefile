@@ -2,6 +2,7 @@ STAGING_APP := node dist/bin/staging.js
 PRODUCTION_APP := node dist/bin/production.js
 BASTION_STAGING_APP := node dist/bin/bastion-staging.js
 BASTION_PRODUCTION_APP := node dist/bin/bastion-production.js
+CICD_APP := node dist/bin/cicd.js
 
 build:
 	cd .. && npx nx build @rumblefish/soroban-block-explorer-aws-cdk
@@ -81,6 +82,14 @@ deploy-production-bastion: build
 
 destroy-production-bastion: build
 	npx cdk --app "$(BASTION_PRODUCTION_APP)" destroy --force
+
+# --- CI/CD (shared, deploy once per account) ---
+
+deploy-cicd: build
+	npx cdk --app "$(CICD_APP)" deploy --require-approval broadening
+
+diff-cicd: build
+	npx cdk --app "$(CICD_APP)" diff
 
 # --- Shared ---
 

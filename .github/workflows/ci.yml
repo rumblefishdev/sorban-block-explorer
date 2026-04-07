@@ -10,7 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  main:
+  typescript:
+    name: TypeScript (lint, build, typecheck)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,3 +26,25 @@ jobs:
       - run: npm ci
       - run: npx nx format:check --all
       - run: npx nx run-many -t lint build typecheck
+
+  rust:
+    name: Rust (fmt, clippy, test, lambda build)
+    runs-on: ubuntu-latest
+    env:
+      SQLX_OFFLINE: 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-lambda
+        run: pip3 install cargo-lambda
+
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+      - run: cargo lambda build --release --arm64
