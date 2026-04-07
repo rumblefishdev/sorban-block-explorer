@@ -1,0 +1,102 @@
+name: Deploy Staging
+
+on:
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
+    branches: [develop]
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to staging
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-lambda
+        run: pip3 install cargo-lambda
+
+      - run: npm ci
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Mirror Galexie image to ECR
+        run: |
+          REPO_URI=$(aws ssm get-parameter \
+            --name /soroban-explorer/staging/ecr-galexie-repo-uri \
+            --query Parameter.Value --output text)
+
+          # Pin by digest for supply chain safety.
+          # Update GALEXIE_IMAGE_DIGEST in GitHub Environment vars when upgrading.
+          GALEXIE_DIGEST="${{ vars.GALEXIE_IMAGE_DIGEST }}"
+          if [[ ! "$GALEXIE_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::Invalid GALEXIE_IMAGE_DIGEST format: $GALEXIE_DIGEST"
+            exit 1
+          fi
+
+          aws ecr get-login-password --region us-east-1 | \
+            docker login --username AWS --password-stdin \
+            $(echo $REPO_URI | cut -d/ -f1)
+
+          # Skip mirror if this digest is already in ECR (saves ~2 min + Docker Hub rate limit).
+          EXISTING=$(aws ecr batch-get-image --repository-name staging-galexie \
+            --image-ids imageTag=latest --query 'images[0].imageId.imageDigest' \
+            --output text 2>/dev/null || echo "NONE")
+
+          if [ "$EXISTING" = "$GALEXIE_DIGEST" ]; then
+            echo "Image already in ECR, skipping pull. Tagging with git SHA."
+            MANIFEST=$(aws ecr batch-get-image --repository-name staging-galexie \
+              --image-ids imageTag=latest --query 'images[0].imageManifest' --output text)
+            aws ecr put-image --repository-name staging-galexie \
+              --image-tag ${GITHUB_SHA} --image-manifest "$MANIFEST" || true
+          else
+            docker pull stellar/stellar-galexie@${GALEXIE_DIGEST}
+            docker tag stellar/stellar-galexie@${GALEXIE_DIGEST} ${REPO_URI}:${GITHUB_SHA}
+            docker tag stellar/stellar-galexie@${GALEXIE_DIGEST} ${REPO_URI}:latest
+            docker push ${REPO_URI}:${GITHUB_SHA}
+            docker push ${REPO_URI}:latest
+          fi
+
+      - name: Build CDK
+        run: npx nx build @rumblefish/soroban-block-explorer-aws-cdk
+
+      - name: CDK deploy
+        run: |
+          cd infra && npx cdk --app "node dist/bin/staging.js" deploy --all \
+            --require-approval never \
+            -c galexieImageTag=${GITHUB_SHA}
+        env:
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+
+      - name: Smoke test
+        run: |
+          API_ENDPOINT=$(aws cloudformation describe-stacks \
+            --stack-name Explorer-staging-ApiGateway \
+            --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
+            --output text)
+          curl -f --retry 3 --retry-delay 5 ${API_ENDPOINT}/health

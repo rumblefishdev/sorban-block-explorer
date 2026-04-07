@@ -73,3 +73,10 @@ export interface EnvironmentConfig {
   /** Daily request quota for partner API key usage plans. */
   readonly apiGatewayPartnerDailyQuota: number;
 }
+
+/** Configuration for the shared CI/CD stack (consumed by CicdStack). */
+export interface CicdConfig {
+  readonly awsRegion: string;
+  /** GitHub org/repo, e.g. "rumblefishdev/soroban-block-explorer" */
+  readonly githubRepo: string;
+}

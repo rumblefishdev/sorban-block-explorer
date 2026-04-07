@@ -1,5 +1,5 @@
 // Config
-export type { EnvironmentConfig } from './lib/types.js';
+export type { EnvironmentConfig, CicdConfig } from './lib/types.js';
 
 // Stacks
 export { NetworkStack } from './lib/stacks/network-stack.js';
@@ -14,3 +14,5 @@ export { MigrationStack } from './lib/stacks/migration-stack.js';
 export type { MigrationStackProps } from './lib/stacks/migration-stack.js';
 export { IngestionStack } from './lib/stacks/ingestion-stack.js';
 export type { IngestionStackProps } from './lib/stacks/ingestion-stack.js';
+export { CicdStack } from './lib/stacks/cicd-stack.js';
+export type { CicdStackProps } from './lib/stacks/cicd-stack.js';
