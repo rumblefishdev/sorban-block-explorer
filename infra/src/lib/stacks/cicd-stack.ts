@@ -3,7 +3,9 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import type { Construct } from 'constructs';
 
 const GITHUB_OIDC_THUMBPRINT = 'ffffffffffffffffffffffffffffffffffffffff';
-const GITHUB_OIDC_ISSUER = 'https://token.actions.githubusercontent.com';
+const GITHUB_OIDC_URL = 'https://token.actions.githubusercontent.com';
+/** Condition key prefix — AWS IAM strips the https:// from the issuer URL. */
+const GITHUB_OIDC_ISSUER = 'token.actions.githubusercontent.com';
 const GITHUB_OIDC_AUDIENCE = 'sts.amazonaws.com';
 
 export interface CicdStackProps extends cdk.StackProps {
@@ -43,7 +45,7 @@ export class CicdStack extends cdk.Stack {
       this,
       'GitHubOidcProvider',
       {
-        url: GITHUB_OIDC_ISSUER,
+        url: GITHUB_OIDC_URL,
         clientIds: [GITHUB_OIDC_AUDIENCE],
         thumbprints: [GITHUB_OIDC_THUMBPRINT],
       }
