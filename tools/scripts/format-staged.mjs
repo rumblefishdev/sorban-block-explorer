@@ -17,6 +17,23 @@ if (stagedFiles.length === 0) {
   process.exit(0);
 }
 
+const rustFiles = stagedFiles.filter((f) => f.endsWith('.rs'));
+if (rustFiles.length > 0) {
+  const fmtResult = spawnSync('rustfmt', ['--edition', '2024', ...rustFiles], {
+    stdio: 'inherit',
+  });
+
+  if (fmtResult.error?.code === 'ENOENT') {
+    console.warn('rustfmt not found, skipping Rust formatting');
+  } else if (fmtResult.error) {
+    throw fmtResult.error;
+  } else if (fmtResult.status !== 0) {
+    process.exit(fmtResult.status ?? 1);
+  } else {
+    execFileSync('git', ['add', '--', ...rustFiles]);
+  }
+}
+
 const formatResult = spawnSync('nx', ['format:write', '--stdin'], {
   input: stagedFiles.join('\n'),
   stdio: ['pipe', 'inherit', 'inherit'],

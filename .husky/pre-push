@@ -1,2 +1,4 @@
 #!/usr/bin/env sh
+set -e
+SQLX_OFFLINE=true cargo clippy --all-targets -- -D warnings
 npm run -s verify:push
