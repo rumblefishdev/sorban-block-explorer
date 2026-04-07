@@ -20,9 +20,14 @@ jobs:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     environment: staging
+    env:
+      # workflow_run events set GITHUB_SHA to default branch HEAD, not the
+      # commit that triggered CI. Use head_sha to deploy exactly what CI validated.
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
@@ -72,13 +77,21 @@ jobs:
             echo "Image already in ECR, skipping pull. Tagging with git SHA."
             MANIFEST=$(aws ecr batch-get-image --repository-name staging-galexie \
               --image-ids imageTag=latest --query 'images[0].imageManifest' --output text)
-            aws ecr put-image --repository-name staging-galexie \
-              --image-tag ${GITHUB_SHA} --image-manifest "$MANIFEST" || true
+            # ImageAlreadyExistsException is expected if this SHA was already tagged.
+            OUTPUT=$(aws ecr put-image --repository-name staging-galexie \
+              --image-tag ${DEPLOY_SHA} --image-manifest "$MANIFEST" 2>&1) || {
+              if echo "$OUTPUT" | grep -q "ImageAlreadyExistsException"; then
+                echo "Tag already exists, skipping."
+              else
+                echo "$OUTPUT" >&2
+                exit 1
+              fi
+            }
           else
             docker pull stellar/stellar-galexie@${GALEXIE_DIGEST}
-            docker tag stellar/stellar-galexie@${GALEXIE_DIGEST} ${REPO_URI}:${GITHUB_SHA}
+            docker tag stellar/stellar-galexie@${GALEXIE_DIGEST} ${REPO_URI}:${DEPLOY_SHA}
             docker tag stellar/stellar-galexie@${GALEXIE_DIGEST} ${REPO_URI}:latest
-            docker push ${REPO_URI}:${GITHUB_SHA}
+            docker push ${REPO_URI}:${DEPLOY_SHA}
             docker push ${REPO_URI}:latest
           fi
 
@@ -89,7 +102,7 @@ jobs:
         run: |
           cd infra && npx cdk --app "node dist/bin/staging.js" deploy --all \
             --require-approval never \
-            -c galexieImageTag=${GITHUB_SHA}
+            -c galexieImageTag=${DEPLOY_SHA}
         env:
           CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
 
