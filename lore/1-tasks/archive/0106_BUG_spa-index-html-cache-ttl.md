@@ -22,13 +22,19 @@ history:
     status: completed
     who: stkrolikiewicz
     note: >
-      Added IndexHtmlCachePolicy (default 60s, max 5min) and an
-      additionalBehaviors entry for /index.html. Default behavior keeps
-      CACHING_OPTIMIZED for hashed assets. Verified in synthesized
-      template: /index.html uses the new policy ref while the default
-      behavior keeps the managed policy ID. Shared behavior props
-      extracted into a local helper to avoid duplication of origin /
-      headers / function association across both behaviors.
+      Added ShortTtlCachePolicy (default 60s, max 5min) and applied it
+      to the default CloudFront behavior — covers index.html, the apex,
+      and any unknown path (safe by default). Long TTL via the managed
+      CACHING_OPTIMIZED policy is now opt-in via additionalBehaviors for
+      `/assets/*` (Vite default) and `/static/*` (CRA default). First
+      iteration kept CACHING_OPTIMIZED on the default and put short TTL
+      on an additionalBehaviors[/index.html] entry, but that relied on
+      an unverified assumption about CloudFront defaultRootObject
+      rewriting and behavior matching order — inverted the strategy in
+      a follow-up commit for safety. Shared behavior props extracted
+      into a local helper. Verified in synthesized template: default
+      behavior references ShortTtlCachePolicy, /assets/* and /static/*
+      reference the managed CACHING_OPTIMIZED ID.
 ---
 
 # BUG: SPA index.html cached for 24h on CloudFront
@@ -52,17 +58,21 @@ The implementation collapsed both into a single `defaultBehavior` with `CACHING_
 
 ## Fix
 
-Add an `additionalBehaviors` entry for `/index.html` with a custom `CachePolicy` that has a short TTL (e.g., 60s default, 5min max). The default behavior (long TTL via `CACHING_OPTIMIZED`) continues to handle hashed assets.
+Inverted cache strategy — **safe by default**:
 
-CloudFront `defaultRootObject` rewrites `/` → `/index.html` before behavior matching, so the new behavior covers both apex requests and explicit `/index.html` requests.
+- **Default behavior** uses a new `ShortTtlCachePolicy` (60s default, 5min max). This covers `index.html`, the apex `/`, and any unknown path. Any SPA build artifact that doesn't match the explicit asset patterns falls through here and gets the safe short TTL (acceptable degradation, not a bug).
+- **`additionalBehaviors`** opt-in long TTL via the AWS-managed `CACHING_OPTIMIZED` policy (1 day default, 1 year max) for known hashed-asset directories: `/assets/*` (Vite default output) and `/static/*` (Create React App default output).
+- All behaviors share origin / response headers policy / basic auth function via a local `sharedBehaviorProps` helper, so the security gating cannot drift between cache behaviors.
+
+The first iteration tried the opposite (long TTL on default, short TTL on `additionalBehaviors[/index.html]`), but that depended on an unverified assumption that CloudFront's `defaultRootObject` rewriting happens **before** behavior matching. Inverting eliminates the assumption — the apex request hits the safe default regardless of when (or if) the rewrite happens.
 
 ## Acceptance Criteria
 
-- [x] `index.html` cache TTL is at most 5 minutes at the edge (60s default, 300s max)
-- [x] Hashed assets (default behavior) keep long TTL (CACHING_OPTIMIZED)
-- [x] CloudFront Function (basic auth) attaches to BOTH default and index.html behaviors when `enableBasicAuth` is true (via `sharedBehaviorProps`)
-- [x] Response headers policy attaches to BOTH behaviors (via `sharedBehaviorProps`)
-- [x] Verified in synthesized template — IndexHtmlCachePolicy ref on /index.html behavior, managed policy ID on default behavior
+- [x] `index.html` cache TTL is at most 5 minutes at the edge (default behavior, 60s default, 300s max)
+- [x] Hashed assets keep long TTL (`/assets/*` and `/static/*` use managed `CACHING_OPTIMIZED`)
+- [x] CloudFront Function (basic auth) attaches to ALL behaviors when `enableBasicAuth` is true (via `sharedBehaviorProps`)
+- [x] Response headers policy attaches to ALL behaviors (via `sharedBehaviorProps`)
+- [x] Verified in synthesized template — default behavior references `ShortTtlCachePolicy`, `/assets/*` and `/static/*` reference the managed `CACHING_OPTIMIZED` ID
 
 ## Notes
 

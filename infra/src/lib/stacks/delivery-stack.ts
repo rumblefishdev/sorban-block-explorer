@@ -195,9 +195,10 @@ export class DeliveryStack extends cdk.Stack {
       }
     );
 
-    // Behavior props shared between the default (assets) and the
-    // /index.html override. Both need the same origin, security headers,
-    // protocol policy, and (optionally) the basic auth function.
+    // Behavior props shared between the short-TTL default behavior and
+    // the long-TTL asset-directory behaviors (`/assets/*`, `/static/*`).
+    // All need the same origin, security headers, protocol policy, and
+    // (optionally) the basic auth function.
     const sharedBehaviorProps: Omit<cloudfront.BehaviorOptions, 'cachePolicy'> =
       {
         origin: origins.S3BucketOrigin.withOriginAccessControl(spaBucket),
