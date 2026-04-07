@@ -97,7 +97,11 @@ pub async fn handler(event: LambdaEvent<S3Event>, state: &HandlerState) -> Resul
 
         match process_s3_object(state, bucket, &key, ledger_range).await {
             Ok(()) => {
-                info!(bucket, key = key.as_str(), "S3 record processed successfully");
+                info!(
+                    bucket,
+                    key = key.as_str(),
+                    "S3 record processed successfully"
+                );
             }
             Err(e) => {
                 error!(bucket, key = key.as_str(), error = %e, "failed to process S3 record");

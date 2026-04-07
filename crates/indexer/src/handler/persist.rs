@@ -51,10 +51,7 @@ pub async fn persist_ledger(
             warn!(tx_hash, "no transaction_id found for operations — skipping");
             continue;
         };
-        let tx_source = hash_to_source
-            .get(tx_hash.as_str())
-            .copied()
-            .unwrap_or("");
+        let tx_source = hash_to_source.get(tx_hash.as_str()).copied().unwrap_or("");
         let domain_ops: Vec<_> = ops
             .iter()
             .map(|op| convert::to_operation(op, tx_id, tx_source))

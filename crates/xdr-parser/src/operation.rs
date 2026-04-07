@@ -507,7 +507,7 @@ mod tests {
         let details = &result[0].details;
         assert_eq!(details["hostFunctionType"], "invokeContract");
         assert_eq!(details["functionName"], "transfer");
-        assert!(details["contractId"].as_str().unwrap().len() > 0);
+        assert!(!details["contractId"].as_str().unwrap().is_empty());
 
         // Check function args are ScVal-decoded
         let args = details["functionArgs"].as_array().unwrap();
