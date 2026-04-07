@@ -132,9 +132,23 @@ export class DeliveryStack extends cdk.Stack {
         responseHeadersPolicyName: `${config.envName}-soroban-explorer-headers`,
         securityHeadersBehavior: {
           strictTransportSecurity: {
-            accessControlMaxAge: cdk.Duration.days(365),
-            includeSubdomains: true,
-            preload: true,
+            // 1 year on production, 1 week on staging. Short max-age on
+            // staging means HSTS misconfiguration is recoverable within
+            // days rather than a year.
+            accessControlMaxAge:
+              config.envName === 'production'
+                ? cdk.Duration.days(365)
+                : cdk.Duration.days(7),
+            // Only on production: staging is itself a subdomain, so
+            // includeSubdomains here would force ALL sibling subdomains
+            // (sandbox, dev, internal tools) to HTTPS and break legit
+            // dev workflows.
+            includeSubdomains: config.envName === 'production',
+            // Never set automatically: HSTS preload submission to
+            // hstspreload.org is a one-way door — removal takes months
+            // and is not guaranteed. Enable explicitly only after a
+            // production launch decision and security sign-off.
+            preload: false,
             override: true,
           },
           contentTypeOptions: { override: true },

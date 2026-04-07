@@ -167,4 +167,17 @@ export function validateConfig(config: EnvironmentConfig): void {
       )}`
     );
   }
+
+  // Soft sanity check: an environment with neither WAF nor basic auth
+  // exposes an unprotected public CloudFront distribution. That may be
+  // intentional for production (relying on application-layer controls),
+  // but is almost always a mistake on staging — flag it loudly.
+  if (!config.enableWaf && !config.enableBasicAuth) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[validateConfig] WARNING: ${config.envName} has both enableWaf=false and enableBasicAuth=false. ` +
+        `The CloudFront distribution will be publicly accessible with no gating. ` +
+        `If this is intentional, ignore. Otherwise enable one of them in envs/${config.envName}.json.`
+    );
+  }
 }
