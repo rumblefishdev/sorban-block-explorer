@@ -168,18 +168,41 @@ export class DeliveryStack extends cdk.Stack {
     // ---------------------
     // CloudFront Distribution
     // ---------------------
-    const distribution = new cloudfront.Distribution(this, 'Distribution', {
-      domainNames: [config.domainName],
-      certificate,
-      defaultRootObject: 'index.html',
-      priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
-      ...(waf && { webAclId: waf.webAclArn }),
-      minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
-      httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
-      defaultBehavior: {
+    // Cache policies
+    // ---------------------
+    // SPA cache strategy is "safe by default": short TTL on the default
+    // behavior (covers index.html, the apex, any unknown path) and long
+    // TTL only for explicitly known asset directories. This avoids the
+    // pitfall of caching index.html for 24h via CACHING_OPTIMIZED — see
+    // task 0106 for the original bug.
+    //
+    // Asset path patterns assume Vite (`/assets/*`) and Create React App
+    // (`/static/*`). If the SPA build uses a different layout, the new
+    // pattern needs to be added here OR it falls back to the safe short
+    // TTL (acceptable degradation, not breakage).
+    const shortTtlCachePolicy = new cloudfront.CachePolicy(
+      this,
+      'ShortTtlCachePolicy',
+      {
+        cachePolicyName: `${config.envName}-soroban-explorer-short-ttl`,
+        comment:
+          'Short TTL for SPA index.html and unknown paths — see task 0106',
+        minTtl: cdk.Duration.seconds(0),
+        defaultTtl: cdk.Duration.seconds(60),
+        maxTtl: cdk.Duration.minutes(5),
+        enableAcceptEncodingGzip: true,
+        enableAcceptEncodingBrotli: true,
+      }
+    );
+
+    // Behavior props shared between the short-TTL default behavior and
+    // the long-TTL asset-directory behaviors (`/assets/*`, `/static/*`).
+    // All need the same origin, security headers, protocol policy, and
+    // (optionally) the basic auth function.
+    const sharedBehaviorProps: Omit<cloudfront.BehaviorOptions, 'cachePolicy'> =
+      {
         origin: origins.S3BucketOrigin.withOriginAccessControl(spaBucket),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
         responseHeadersPolicy,
         ...(viewerRequestFunction && {
           functionAssociations: [
@@ -189,6 +212,34 @@ export class DeliveryStack extends cdk.Stack {
             },
           ],
         }),
+      };
+
+    // ---------------------
+    const distribution = new cloudfront.Distribution(this, 'Distribution', {
+      domainNames: [config.domainName],
+      certificate,
+      defaultRootObject: 'index.html',
+      priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
+      ...(waf && { webAclId: waf.webAclArn }),
+      minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
+      httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
+      defaultBehavior: {
+        ...sharedBehaviorProps,
+        cachePolicy: shortTtlCachePolicy,
+      },
+      additionalBehaviors: {
+        // Long TTL only for hashed asset directories. CACHING_OPTIMIZED
+        // is the AWS-managed policy with min/default/max = 1s/1d/1y.
+        // Vite default output:
+        '/assets/*': {
+          ...sharedBehaviorProps,
+          cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        },
+        // Create React App default output:
+        '/static/*': {
+          ...sharedBehaviorProps,
+          cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        },
       },
       errorResponses: [
         {
