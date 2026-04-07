@@ -2,7 +2,7 @@
 id: '0040'
 title: 'CDK: IAM roles, ECR repository, NAT Gateway'
 type: FEATURE
-status: backlog
+status: active
 related_adr: []
 related_tasks: ['0006', '0031']
 tags: [priority-high, effort-medium, layer-infra]
@@ -18,6 +18,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Updated: removed Event Interpreter references. Architecture simplified to 2 Lambdas (API + Indexer).'
+  - date: 2026-04-07
+    status: active
+    who: FilipDz
+    note: 'Activated for implementation'
 ---
 
 # CDK: IAM roles, ECR repository, NAT Gateway
