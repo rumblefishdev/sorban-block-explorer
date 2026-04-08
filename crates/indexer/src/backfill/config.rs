@@ -68,6 +68,10 @@ pub struct BackfillConfig {
     /// Maximum seconds to wait for a single ECS task to reach STOPPED state.
     #[arg(long, default_value_t = 3600)]
     pub task_timeout_secs: u64,
+
+    /// S3 key prefix for ledger files. Defaults to "ledgers/" (Galexie default).
+    #[arg(long, default_value = "ledgers/")]
+    pub ledger_prefix: String,
 }
 
 impl BackfillConfig {

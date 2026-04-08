@@ -178,7 +178,7 @@ pub async fn wait_for_task(
                 });
             }
             _ => {
-                info!(%range, task_arn, status, "ECS task still running");
+                tracing::debug!(%range, task_arn, status, "ECS task still running");
             }
         }
     }

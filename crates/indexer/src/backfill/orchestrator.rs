@@ -4,11 +4,12 @@ use std::time::Duration;
 use aws_sdk_ecs::Client as EcsClient;
 use aws_sdk_s3::Client as S3Client;
 use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 use tracing::{error, info};
 
 use crate::config::BackfillConfig;
 use crate::range::{LedgerRange, find_gaps};
-use crate::runner::{RunTaskParams, TaskOutcome, launch_task, wait_for_task};
+use crate::runner::{RunTaskParams, launch_task, wait_for_task};
 use crate::scanner::scan_existing_ranges;
 
 #[derive(Debug, thiserror::Error)]
@@ -42,8 +43,8 @@ pub async fn run(config: &BackfillConfig) -> Result<BackfillSummary, Orchestrati
     let bucket = config.bucket_name();
 
     // Step 1: Scan S3 for existing files.
-    info!(%total_range, bucket, "scanning S3 for existing ledger files");
-    let existing = scan_existing_ranges(&s3_client, &bucket, "ledgers/").await?;
+    info!(%total_range, bucket, prefix = config.ledger_prefix, "scanning S3 for existing ledger files");
+    let existing = scan_existing_ranges(&s3_client, &bucket, &config.ledger_prefix).await?;
 
     // Step 2: Find gaps.
     let batches = find_gaps(total_range, &existing, config.batch_size);
@@ -66,8 +67,9 @@ pub async fn run(config: &BackfillConfig) -> Result<BackfillSummary, Orchestrati
         "backfill plan ready"
     );
 
+    // Log individual planned batches at debug to avoid log spam for large backfills.
     for (i, batch) in batches.iter().enumerate() {
-        info!(batch = i + 1, %batch, "planned batch");
+        tracing::debug!(batch = i + 1, %batch, "planned batch");
     }
 
     // Step 3: Dry-run exits here.
@@ -81,7 +83,9 @@ pub async fn run(config: &BackfillConfig) -> Result<BackfillSummary, Orchestrati
         });
     }
 
-    // Step 4: Launch tasks with bounded concurrency.
+    // Step 4: Launch tasks with bounded concurrency using JoinSet.
+    // acquire_owned blocks the dispatch loop when all concurrency slots are taken,
+    // so at most `config.concurrency` Fargate tasks run simultaneously.
     let params = Arc::new(RunTaskParams {
         cluster: config.cluster_name(),
         task_definition: config.task_def_family(),
@@ -94,7 +98,8 @@ pub async fn run(config: &BackfillConfig) -> Result<BackfillSummary, Orchestrati
     let semaphore = Arc::new(Semaphore::new(config.concurrency));
     let poll_interval = Duration::from_secs(config.poll_interval_secs);
 
-    let mut handles = Vec::with_capacity(batches.len());
+    let mut join_set: JoinSet<(LedgerRange, Result<_, crate::runner::RunnerError>)> =
+        JoinSet::new();
 
     for (i, batch) in batches.into_iter().enumerate() {
         let permit = semaphore
@@ -105,32 +110,28 @@ pub async fn run(config: &BackfillConfig) -> Result<BackfillSummary, Orchestrati
         let ecs = ecs_client.clone();
         let params = Arc::clone(&params);
 
-        handles.push(tokio::spawn(async move {
+        join_set.spawn(async move {
             let batch_num = i + 1;
             info!(batch = batch_num, %batch, "launching ECS task");
 
             let result = launch_and_wait(&ecs, &params, batch, poll_interval).await;
 
             match &result {
-                Ok(_) => {
-                    info!(batch = batch_num, %batch, "batch completed successfully");
-                }
-                Err(e) => {
-                    error!(batch = batch_num, %batch, error = %e, "batch failed");
-                }
+                Ok(_) => info!(batch = batch_num, %batch, "batch completed successfully"),
+                Err(e) => error!(batch = batch_num, %batch, error = %e, "batch failed"),
             }
 
             drop(permit);
             (batch, result)
-        }));
+        });
     }
 
-    // Step 5: Collect results.
+    // Step 5: Collect results as tasks complete.
     let mut succeeded = 0usize;
     let mut failed = 0usize;
 
-    for handle in handles {
-        match handle.await {
+    while let Some(join_result) = join_set.join_next().await {
+        match join_result {
             Ok((_batch, Ok(_))) => succeeded += 1,
             Ok((_batch, Err(e))) => {
                 error!(error = %e, "task error");
@@ -165,7 +166,7 @@ async fn launch_and_wait(
     params: &RunTaskParams,
     range: LedgerRange,
     poll_interval: Duration,
-) -> Result<TaskOutcome, crate::runner::RunnerError> {
+) -> Result<(), crate::runner::RunnerError> {
     let task_arn = launch_task(ecs, params, range).await?;
     let timeout = Duration::from_secs(params.task_timeout_secs);
     wait_for_task(
@@ -176,5 +177,6 @@ async fn launch_and_wait(
         poll_interval,
         timeout,
     )
-    .await
+    .await?;
+    Ok(())
 }

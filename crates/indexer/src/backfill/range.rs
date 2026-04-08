@@ -28,7 +28,7 @@ pub fn split_into_batches(total: LedgerRange, batch_size: u32) -> Vec<LedgerRang
     let mut batches = Vec::new();
     let mut cursor = total.start;
     while cursor <= total.end {
-        let batch_end = (cursor + batch_size - 1).min(total.end);
+        let batch_end = cursor.saturating_add(batch_size - 1).min(total.end);
         batches.push(LedgerRange::new(cursor, batch_end));
         cursor = batch_end + 1;
     }
@@ -45,7 +45,7 @@ fn merge_ranges(mut ranges: Vec<LedgerRange>) -> Vec<LedgerRange> {
     for r in &ranges[1..] {
         let last = merged.last_mut().unwrap();
         // Adjacent ranges (end + 1 == start) should also merge.
-        if r.start <= last.end + 1 {
+        if r.start <= last.end.saturating_add(1) {
             last.end = last.end.max(r.end);
         } else {
             merged.push(*r);
