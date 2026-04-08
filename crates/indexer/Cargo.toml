@@ -8,6 +8,10 @@ description = "Ledger Processor Lambda for the Soroban block explorer"
 name = "indexer"
 path = "src/main.rs"
 
+[[bin]]
+name = "backfill"
+path = "src/backfill/main.rs"
+
 [dependencies]
 xdr-parser = { path = "../xdr-parser" }
 domain = { path = "../domain" }
@@ -17,7 +21,9 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 lambda_runtime = { workspace = true }
 aws-config = { workspace = true }
-aws-sdk-s3 = "1"
+aws-sdk-ecs = { workspace = true }
+aws-sdk-s3 = { workspace = true }
+clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }

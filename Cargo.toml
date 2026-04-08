@@ -45,11 +45,16 @@ zstd = "0.13"
 
 # Observability
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # AWS SDK
 aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-ecs = "1"
+aws-sdk-s3 = "1"
 aws-sdk-secretsmanager = "1"
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
 
 # Error handling
 thiserror = "2"
