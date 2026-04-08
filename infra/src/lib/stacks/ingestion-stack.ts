@@ -232,6 +232,13 @@ export class IngestionStack extends cdk.Stack {
         streamPrefix: 'galexie',
       }),
       entryPoint: galexieCommand('append'),
+      workingDirectory: '/data',
+      environment: {
+        // Start ledger for append mode. Galexie resumes from the first
+        // missing ledger at or after this value. Set to a recent ledger
+        // on first deploy to avoid replaying the entire mainnet history.
+        START: '62024874',
+      },
       healthCheck: {
         command: ['CMD-SHELL', 'pgrep -x stellar-core || exit 1'],
         interval: cdk.Duration.seconds(30),
@@ -307,6 +314,7 @@ export class IngestionStack extends cdk.Stack {
           streamPrefix: 'galexie',
         }),
         entryPoint: galexieCommand('scan-and-fill'),
+        workingDirectory: '/data',
         environment: {
           // START and END are overridden per RunTask invocation.
           // Defaults here serve as documentation; actual values are
@@ -336,9 +344,11 @@ export class IngestionStack extends cdk.Stack {
     // ---------------------
     // IAM Grants
     // ---------------------
-    // Task role — application permissions (S3 write + list for checkpoint resume).
+    // Task role — application permissions (S3 read + write + list).
+    // Galexie needs read for manifest (.config.json) and checkpoint resume,
+    // write for exporting ledger data, and list for scanning existing files.
     for (const taskDef of taskDefs) {
-      ledgerBucket.grantWrite(taskDef.taskRole);
+      ledgerBucket.grantReadWrite(taskDef.taskRole);
       // ListBucket is needed for Galexie checkpoint resume (scans S3 for
       // last exported ledger). IBucket.grant() is not available on imported
       // buckets, so we add the permission via inline policy.
