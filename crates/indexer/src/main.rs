@@ -21,10 +21,10 @@ async fn main() -> Result<(), Error> {
     let database_url = match std::env::var("DATABASE_URL") {
         Ok(url) => url,
         Err(_) => {
-            let secret_arn = std::env::var("DB_SECRET_ARN")
-                .map_err(|_| "either DATABASE_URL or DB_SECRET_ARN must be set")?;
-            let rds_endpoint = std::env::var("RDS_ENDPOINT")
-                .map_err(|_| "RDS_ENDPOINT must be set when using DB_SECRET_ARN")?;
+            let secret_arn = std::env::var("SECRET_ARN")
+                .map_err(|_| "either DATABASE_URL or SECRET_ARN must be set")?;
+            let rds_endpoint = std::env::var("RDS_PROXY_ENDPOINT")
+                .map_err(|_| "RDS_PROXY_ENDPOINT must be set when using SECRET_ARN")?;
             db::secrets::resolve_database_url(&secret_arn, &rds_endpoint)
                 .await
                 .map_err(|e| format!("failed to resolve database URL: {e}"))?
