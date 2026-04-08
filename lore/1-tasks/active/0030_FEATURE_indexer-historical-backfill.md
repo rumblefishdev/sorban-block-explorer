@@ -2,7 +2,7 @@
 id: '0030'
 title: 'Indexer: historical backfill Fargate task'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0005']
 related_tasks: ['0001', '0029', '0028', '0092']
 tags: [priority-medium, effort-medium, layer-indexing]
@@ -18,6 +18,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated per ADR 0005: apps/indexer/ → crates/indexer/'
+  - date: 2026-04-08
+    status: active
+    who: FilipDz
+    note: 'Activated task for implementation'
 ---
 
 # Indexer: historical backfill Fargate task
@@ -26,9 +30,9 @@ history:
 
 Implement an ECS Fargate task that reads Stellar public history archives, exports LedgerCloseMeta XDR files to the same S3 bucket used by live Galexie ingestion, and triggers the standard Ledger Processor Lambda for parsing and persistence. This enables the explorer to backfill historical data from Soroban mainnet activation onward while reusing the exact same processing pipeline as live ingestion.
 
-## Status: Backlog
+## Status: Active
 
-**Current state:** Not started. Depends on the Ledger Processor (task 0029) and idempotent writes (task 0028) for downstream processing. Research task 0001 (Galexie/Captive Core setup) provides foundational knowledge.
+**Current state:** Starting implementation. Depends on the Ledger Processor (task 0029) and idempotent writes (task 0028) for downstream processing. Research task 0001 (Galexie/Captive Core setup) provides foundational knowledge.
 
 ## Context
 
