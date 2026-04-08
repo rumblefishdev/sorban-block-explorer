@@ -81,6 +81,7 @@ export class ComputeStack extends cdk.Stack {
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [lambdaSecurityGroup],
+      tracing: lambda.Tracing.ACTIVE,
     };
 
     const sharedEnv = {

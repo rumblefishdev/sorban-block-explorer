@@ -2,7 +2,7 @@
 id: '0040'
 title: 'CDK: IAM roles, ECR repository, NAT Gateway'
 type: FEATURE
-status: active
+status: completed
 related_adr: []
 related_tasks: ['0006', '0031']
 tags: [priority-high, effort-medium, layer-infra]
@@ -22,6 +22,13 @@ history:
     status: active
     who: FilipDz
     note: 'Activated for implementation'
+  - date: 2026-04-08
+    status: completed
+    who: FilipDz
+    note: >
+      OIDC provider + deploy roles in CiCdStack (cicd-stack.ts).
+      X-Ray tracing enabled on Lambdas (compute-stack.ts).
+      Most ACs already met by tasks 0031, 0033, 0034.
 ---
 
 # CDK: IAM roles, ECR repository, NAT Gateway
@@ -120,19 +127,19 @@ Refine the S3 VPC endpoint policy (endpoint created in task 0031) to restrict ac
 
 ## Acceptance Criteria
 
-- [ ] API Lambda role: RDS Proxy (via Secrets Manager), CloudWatch Logs, X-Ray, VPC networking -- no S3
-- [ ] Ledger Processor role: S3 GetObject on stellar-ledger-data, RDS Proxy, CloudWatch Logs, X-Ray, VPC networking -- no S3 PutObject
-- [ ] ECS Galexie task role: S3 PutObject on stellar-ledger-data, CloudWatch Logs -- no RDS
-- [ ] ECS task execution role: ECR pull, CloudWatch Logs
-- [ ] All roles follow least-privilege principle (no wildcard actions or resources)
-- [ ] ECR repository is defined with lifecycle policy and image scanning
-- [ ] NAT Gateway is placed in the public subnet with Elastic IP
-- [ ] Private subnet route table routes 0.0.0.0/0 through NAT Gateway
-- [ ] NAT Gateway documentation notes Single NAT at launch, expandable per-AZ
-- [ ] S3 VPC endpoint policy restricts access to project buckets only
-- [ ] GitHub Actions OIDC identity provider resource defined in CDK
-- [ ] Separate IAM deploy roles for staging and production with repository and branch scope conditions
-- [ ] Secrets Manager IAM permissions scoped to specific secret ARNs per workload (not wildcard)
+- [x] API Lambda role: RDS Proxy (via Secrets Manager), CloudWatch Logs, X-Ray, VPC networking -- no S3 (ComputeStack, task 0033)
+- [x] Ledger Processor role: S3 GetObject on stellar-ledger-data, RDS Proxy, CloudWatch Logs, X-Ray, VPC networking -- no S3 PutObject (ComputeStack, task 0033)
+- [x] ECS Galexie task role: S3 PutObject on stellar-ledger-data, CloudWatch Logs -- no RDS (IngestionStack, task 0034)
+- [x] ECS task execution role: ECR pull, CloudWatch Logs (IngestionStack, task 0034)
+- [x] All roles follow least-privilege principle (no wildcard actions or resources)
+- [x] ECR repository is defined with lifecycle policy and image scanning (IngestionStack, task 0034)
+- [x] NAT Gateway is placed in the public subnet with Elastic IP (NetworkStack, task 0031)
+- [x] Private subnet route table routes 0.0.0.0/0 through NAT Gateway (NetworkStack, task 0031)
+- [x] NAT Gateway documentation notes Single NAT at launch, expandable per-AZ (NetworkStack, task 0031)
+- [x] S3 VPC endpoint policy restricts access to project buckets only (NetworkStack, task 0031)
+- [x] GitHub Actions OIDC identity provider resource defined in CDK (CiCdStack)
+- [x] Separate IAM deploy roles for staging and production with repository and branch scope conditions (CiCdStack)
+- [x] Secrets Manager IAM permissions scoped to specific secret ARNs per workload (not wildcard) (grantRead pattern)
 
 ## Notes
 
