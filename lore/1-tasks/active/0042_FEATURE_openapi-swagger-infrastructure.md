@@ -2,7 +2,7 @@
 id: '0042'
 title: 'OpenAPI/Swagger infrastructure setup'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0005']
 related_tasks: ['0023', '0057', '0092']
 tags: [priority-medium, effort-small, layer-backend]
@@ -17,6 +17,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated per ADR 0005: NestJS → Rust (axum + utoipa + sqlx)'
+  - date: 2026-04-08
+    status: active
+    who: stkrolikiewicz
+    note: 'Activated — dependency 0023 (API bootstrap) completed; starting M1 OpenAPI infra.'
 ---
 
 # OpenAPI/Swagger infrastructure setup
