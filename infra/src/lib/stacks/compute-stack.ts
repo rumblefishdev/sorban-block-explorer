@@ -119,6 +119,10 @@ export class ComputeStack extends cdk.Stack {
         // (e.g. /health becomes /staging/health), breaking axum route matching.
         // This env var tells lambda_http to skip the stage prefix.
         AWS_LAMBDA_HTTP_IGNORE_STAGE_IN_PATH: 'true',
+        // Advertised base URL for the OpenAPI `servers` block so the
+        // spec generated at runtime (task 0042) carries the correct
+        // hostname per environment. Consumed by api::config::AppConfig.
+        API_BASE_URL: `https://${config.apiDomainName}`,
       },
     });
     this.apiFunction = apiFunction;

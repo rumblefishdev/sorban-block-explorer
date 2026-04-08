@@ -47,4 +47,12 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+
+      # The api crate ships `swagger-ui` as an opt-in feature (task
+      # 0042). Production Lambda builds stay on default features to
+      # keep the binary lean (~4 MB vs ~15 MB). CI validates both
+      # configurations so neither path bit-rots.
+      - run: cargo clippy -p api --all-targets --features swagger-ui -- -D warnings
+      - run: cargo test -p api --features swagger-ui
+
       - run: cargo lambda build --release --arm64
