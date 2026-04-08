@@ -32,12 +32,12 @@ same improvements for production; staging acts as pilot.
 
 ## Subtasks (= PRs)
 
-| #    | Title                               | Risk          | Notes                                                               |
-| ---- | ----------------------------------- | ------------- | ------------------------------------------------------------------- |
-| PR 0 | Add `workflow_dispatch` trigger     | minimal       | Prerequisite for Phase 0 measurement + pre-merge testing            |
-| PR 1 | Region as `vars.AWS_REGION`         | low           | One file, strict scope                                              |
-| PR 2 | Deploy caching (measurement-driven) | medium        | Phase 0 baseline mandatory; stale-binary risk → SHA256 verification |
-| PR 3 | Tag-gated deploy trigger            | high (social) | ADR + team sign-off required                                        |
+| #    | Title                                            | Risk          | Notes                                                               |
+| ---- | ------------------------------------------------ | ------------- | ------------------------------------------------------------------- |
+| PR 0 | Add `workflow_dispatch` trigger                  | minimal       | Prerequisite for Phase 0 measurement + pre-merge testing            |
+| PR 1 | Document region single source of truth (pivoted) | minimal       | Comments only — see worklog 2026-04-08 for pivot rationale          |
+| PR 2 | Deploy caching (measurement-driven)              | medium        | Phase 0 baseline mandatory; stale-binary risk → SHA256 verification |
+| PR 3 | Tag-gated deploy trigger                         | high (social) | ADR + team sign-off required                                        |
 
 Detailed steps, acceptance criteria, and scope limits per PR →
 **[notes/G-subtask-breakdown.md](notes/G-subtask-breakdown.md)**
@@ -79,10 +79,10 @@ regression guards, post-merge validation, cost tracking, monitoring →
 ## Top-level acceptance criteria
 
 - [ ] PR 0 merged — `workflow_dispatch` available
-- [ ] PR 1 merged — no literal `us-east-1` in `deploy-staging.yml`; sourced from `vars.AWS_REGION`
+- [ ] PR 1 merged — `deploy-staging.yml` documents `infra/envs/staging.json` as canonical source for region (PIVOTED — see worklog/2026-04-08-pr1-pivot-to-comments.md)
 - [ ] PR 2 merged — measurable deploy-time reduction justified by Phase 0 baseline; cache validation test matrix passed; SHA256 Lambda verification step added
 - [ ] PR 3 merged OR moved to blocked/canceled with documented reason — staging trigger behavior matches ADR
-- [ ] Regression guard in CI prevents reintroduction of `us-east-1` literal
+- [ ] ~~Regression guard in CI prevents reintroduction of `us-east-1` literal~~ (dropped — PR 1 pivoted to comments-only, no enforcement layer needed since region is architecturally locked by ACM cert)
 - [ ] Worklog entries for each PR (facts + emerged decisions)
 - [ ] Post-merge validation period observed (see quality gates)
 

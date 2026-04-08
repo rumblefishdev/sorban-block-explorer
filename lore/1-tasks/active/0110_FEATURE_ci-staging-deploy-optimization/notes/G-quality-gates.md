@@ -23,16 +23,57 @@ is how "small CI change" turns into "broken staging for 3 hours".
 **Problem:** `deploy-staging.yml` runs only on push-to-develop. Broken
 workflow = broken staging immediately after merge.
 
-**Strategy (enabled by PR 0's `workflow_dispatch`):**
+**⚠️ Revised approach (emerged decision, see below).** Original plan was
+to use `workflow_dispatch` from a feature branch ref to test changes
+before merging. This was abandoned for two reasons:
 
-1. Open PR from feature branch.
-2. Use `workflow_dispatch` from the **feature branch ref** in the GitHub Actions UI. GitHub runs the workflow file as it exists on that branch.
-3. Observe run end-to-end before merging.
-4. Only merge after successful manual run.
+1. The `staging` GitHub Environment has an existing branch policy
+   restricting deploys to `develop` only. Allowing feature branches would
+   require widening that policy — extra admin overhead, weakens the
+   existing safety net, and risks staging being polluted by experimental
+   feature-branch deploys.
+2. For most PRs in this task, the change is small enough that
+   careful code review + post-merge observation + revert-on-fail is
+   strictly cheaper and not meaningfully less safe.
 
-**Limitation:** does NOT protect against bugs that only manifest on the
-`push:` trigger path (e.g. PR 3 tag trigger). For such cases, use a
-throwaway tag on a test branch as the pre-merge test.
+**Replacement strategy per PR:**
+
+| PR   | Pre-merge check                                                                                 | Post-merge check                                                                                              |
+| ---- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| PR 0 | `actionlint` + code review (1 line YAML)                                                        | Observe next deploy on develop is green                                                                       |
+| PR 1 | `actionlint` + code review + grep for missed `us-east-1`                                        | Observe next deploy is green; SHA256 of any Lambda unchanged                                                  |
+| PR 2 | `actionlint` + code review + cache validation test matrix simulated as much as possible locally | Watch next 3 deploys (Phase 0 baseline + organic) for cache correctness, SHA256 verification step, total time |
+| PR 3 | `actionlint` + code review                                                                      | Throwaway test tag (`staging-test-<sha>`) on develop after merge to verify trigger; delete tag after          |
+
+**Common across all PRs:**
+
+- Run `actionlint .github/workflows/deploy-staging.yml` locally before commit. Catches ~90% of YAML/action mistakes for free, no infra needed.
+- Self-review the diff line by line in PR view before requesting review.
+- Have rollback command ready (in PR description).
+
+**Why this is safe enough:**
+
+- The Required Reviewers gate on `staging` environment (see below) means every deploy waits for manual approval — a broken workflow trying to run gets stopped at the gate, you click cancel instead of approve.
+- All PRs in this task are revertable in <2 minutes via `git revert + push develop`.
+- Post-merge validation periods (see "Post-merge validation period") catch issues before declaring task done.
+
+## Required reviewers gate (operational, not in code)
+
+For the duration of task 0110, request that repo admin enables
+**Required reviewers** on the `staging` GitHub Environment with
+`stkrolikiewicz`, `Efem67`, and `fikoayee` as approvers. Effect: every
+deploy (push, manual, future tag) pauses at "Waiting for review" until
+one of the reviewers manually approves.
+
+This is the primary defense against accidental staging breakage during
+the task. Zero code changes, reversible by toggling a checkbox.
+
+**Action:** request via Slack/team chat with the prepared admin message.
+Confirm enabled before starting PR 1.
+
+**Branch policy (`develop` only) stays unchanged.** Do not request
+widening to feature branches — see "Pre-merge testing" above for
+rationale.
 
 ## Stop-loss for PR 2
 

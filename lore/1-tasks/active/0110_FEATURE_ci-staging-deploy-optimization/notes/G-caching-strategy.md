@@ -196,7 +196,7 @@ follow-up if team grows.
 ## Cache validation test matrix
 
 Before merging PR 2, verify cache correctness against this matrix. Each
-row = one test deploy via `workflow_dispatch` from PR branch. Expected
+row = one test deploy via `workflow_dispatch` on `develop` after merge (feature-branch deploys not used — see G-quality-gates.md). Expected
 hit/miss pattern is what you should observe.
 
 | Change                               | node_modules | rust cache | nx cache | cargo-lambda |
