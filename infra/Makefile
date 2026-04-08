@@ -2,6 +2,7 @@ STAGING_APP := node dist/bin/staging.js
 PRODUCTION_APP := node dist/bin/production.js
 BASTION_STAGING_APP := node dist/bin/bastion-staging.js
 BASTION_PRODUCTION_APP := node dist/bin/bastion-production.js
+CICD_APP := node dist/bin/cicd.js
 
 build:
 	cd .. && npx nx build @rumblefish/soroban-block-explorer-aws-cdk
@@ -34,6 +35,9 @@ deploy-staging-partition: build
 
 deploy-staging-ingestion: build
 	npx cdk --app "$(STAGING_APP)" deploy Explorer-staging-Ingestion --require-approval broadening
+
+deploy-staging-delivery: build
+	npx cdk --app "$(STAGING_APP)" deploy Explorer-staging-Delivery --require-approval broadening
 
 deploy-staging-bastion: build
 	npx cdk --app "$(BASTION_STAGING_APP)" deploy --require-approval broadening
@@ -70,24 +74,24 @@ deploy-production-partition: build
 deploy-production-ingestion: build
 	npx cdk --app "$(PRODUCTION_APP)" deploy Explorer-production-Ingestion --require-approval broadening
 
+deploy-production-delivery: build
+	npx cdk --app "$(PRODUCTION_APP)" deploy Explorer-production-Delivery --require-approval broadening
+
 deploy-production-bastion: build
 	npx cdk --app "$(BASTION_PRODUCTION_APP)" deploy --require-approval broadening
 
 destroy-production-bastion: build
 	npx cdk --app "$(BASTION_PRODUCTION_APP)" destroy --force
 
-# --- Shared ---
-
-bootstrap:
-	npx cdk bootstrap
-
-CICD_APP := node dist/bin/cicd.js
-
-synth-cicd: build
-	npx cdk --app "$(CICD_APP)" synth
+# --- CI/CD (shared, deploy once per account) ---
 
 deploy-cicd: build
 	npx cdk --app "$(CICD_APP)" deploy --require-approval broadening
 
-destroy-cicd: build
-	npx cdk --app "$(CICD_APP)" destroy --force
+diff-cicd: build
+	npx cdk --app "$(CICD_APP)" diff
+
+# --- Shared ---
+
+bootstrap:
+	npx cdk bootstrap

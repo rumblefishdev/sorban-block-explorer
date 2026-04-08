@@ -36,5 +36,15 @@
   "apiGatewayCacheSize": "0.5",
   "apiGatewayCacheTtlImmutable": 3600,
   "apiGatewayCacheTtlMutable": 10,
-  "apiGatewayPartnerDailyQuota": 10000
+  "apiGatewayPartnerDailyQuota": 10000,
+
+  "domainName": "sorobanscan.rumblefish.dev",
+  "apiDomainName": "api.sorobanscan.rumblefish.dev",
+  "hostedZoneId": "CHANGE_ME",
+  "hostedZoneName": "sorobanscan.rumblefish.dev",
+  "certificateArn": "CHANGE_ME",
+  "enableWaf": true,
+  "enableBasicAuth": false,
+  "cloudFrontWafRateLimit": 10000,
+  "apiWafRateLimit": 2000
 }

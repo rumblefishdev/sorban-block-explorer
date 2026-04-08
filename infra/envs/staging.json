@@ -36,5 +36,15 @@
   "apiGatewayCacheSize": "0.5",
   "apiGatewayCacheTtlImmutable": 3600,
   "apiGatewayCacheTtlMutable": 10,
-  "apiGatewayPartnerDailyQuota": 10000
+  "apiGatewayPartnerDailyQuota": 10000,
+
+  "domainName": "staging.sorobanscan.rumblefish.dev",
+  "apiDomainName": "api.staging.sorobanscan.rumblefish.dev",
+  "hostedZoneId": "Z0920117B9QSLT9FXPPW",
+  "hostedZoneName": "staging.sorobanscan.rumblefish.dev",
+  "certificateArn": "arn:aws:acm:us-east-1:750702271865:certificate/77d18214-7e28-42f9-9729-13d470076758",
+  "enableWaf": false,
+  "enableBasicAuth": true,
+  "cloudFrontWafRateLimit": 5000,
+  "apiWafRateLimit": 2000
 }

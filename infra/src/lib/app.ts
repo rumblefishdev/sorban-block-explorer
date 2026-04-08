@@ -1,12 +1,13 @@
 import * as cdk from 'aws-cdk-lib';
 
-import type { EnvironmentConfig } from './types.js';
+import { validateConfig, type EnvironmentConfig } from './types.js';
 import { NetworkStack } from './stacks/network-stack.js';
 import { RdsStack } from './stacks/rds-stack.js';
 import { LedgerBucketStack } from './stacks/ledger-bucket-stack.js';
 import { ComputeStack } from './stacks/compute-stack.js';
 import { MigrationStack } from './stacks/migration-stack.js';
 import { PartitionStack } from './stacks/partition-stack.js';
+import { DeliveryStack } from './stacks/delivery-stack.js';
 import { ApiGatewayStack } from './stacks/api-gateway-stack.js';
 import { IngestionStack } from './stacks/ingestion-stack.js';
 
@@ -20,6 +21,8 @@ export function createApp({
   config,
   cargoWorkspacePath,
 }: CreateAppOptions): void {
+  validateConfig(config);
+
   const app = new cdk.App();
 
   const env: cdk.Environment = {
@@ -94,11 +97,15 @@ export function createApp({
   // CDK auto-detects dependencies from cross-stack references
   // (vpc, ecsSecurityGroup, bucket ARN/name).
 
+  new DeliveryStack(app, `${prefix}-Delivery`, {
+    env,
+    config,
+  });
+
   const apiGateway = new ApiGatewayStack(app, `${prefix}-ApiGateway`, {
     env,
     config,
     apiFunction: compute.apiFunction,
-    // wafWebAclArn: delivery.wafWebAclArn,  // task 0035
   });
   apiGateway.addDependency(compute);
 

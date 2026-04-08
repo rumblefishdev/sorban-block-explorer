@@ -72,4 +72,146 @@ export interface EnvironmentConfig {
   readonly apiGatewayCacheTtlMutable: number;
   /** Daily request quota for partner API key usage plans. */
   readonly apiGatewayPartnerDailyQuota: number;
+
+  // Delivery (consumed by DeliveryStack + ApiGatewayStack)
+
+  /** Frontend SPA domain, e.g. "staging.sorobanscan.rumblefish.dev". */
+  readonly domainName: string;
+  /** API custom domain, e.g. "api.staging.sorobanscan.rumblefish.dev". */
+  readonly apiDomainName: string;
+  /** Existing Route 53 hosted zone ID for sorobanscan.rumblefish.dev. */
+  readonly hostedZoneId: string;
+  /** Hosted zone name, e.g. "sorobanscan.rumblefish.dev". */
+  readonly hostedZoneName: string;
+  /** ACM wildcard certificate ARN in us-east-1 covering *.sorobanscan.rumblefish.dev. */
+  readonly certificateArn: string;
+  /**
+   * Provision WAF WebACLs (one CLOUDFRONT-scoped on the distribution,
+   * one REGIONAL-scoped on the API Gateway stage). Disable on staging
+   * to save the ~$15-20/month fixed cost when basic auth gating is
+   * the primary access control.
+   */
+  readonly enableWaf: boolean;
+  /**
+   * Enable CloudFront Function basic auth on the SPA distribution.
+   * Credentials live in CloudFront KeyValueStore — see DeliveryStack
+   * for the bootstrap procedure. Production should leave this false.
+   */
+  readonly enableBasicAuth: boolean;
+  /**
+   * Per-IP request limit over a 5-minute window for the CloudFront WAF.
+   * Browser-facing — needs to be high enough to accommodate normal SPA
+   * page loads (50-100 asset requests). Suggested: 5000+ for production,
+   * lower for staging.
+   */
+  readonly cloudFrontWafRateLimit: number;
+  /**
+   * Per-IP request limit over a 5-minute window for the API Gateway WAF.
+   * Should reflect realistic API usage; lower than the CloudFront limit.
+   * Suggested: 1000-2000.
+   */
+  readonly apiWafRateLimit: number;
+}
+
+/**
+ * Returns the record name relative to the hosted zone, suitable for
+ * `recordName` on `route53.ARecord` / `AaaaRecord`.
+ *
+ * CDK Route 53 record constructs concatenate `recordName` with the
+ * hosted zone name unless `recordName` ends with a trailing dot. Passing
+ * a full FQDN like `staging.sorobanscan.rumblefish.dev` (no trailing dot)
+ * against a zone `sorobanscan.rumblefish.dev` therefore produces a
+ * broken record `staging.sorobanscan.rumblefish.dev.sorobanscan.rumblefish.dev`.
+ *
+ * This helper strips the zone suffix so callers always get a relative
+ * label. For an apex record (`fqdn === zoneName`) it returns the zone
+ * name itself, which CDK accepts as the apex.
+ */
+export function relativeRecordName(fqdn: string, zoneName: string): string {
+  if (fqdn === zoneName) {
+    return zoneName;
+  }
+  const suffix = `.${zoneName}`;
+  if (!fqdn.endsWith(suffix)) {
+    throw new Error(
+      `relativeRecordName: "${fqdn}" is not within zone "${zoneName}"`
+    );
+  }
+  return fqdn.slice(0, -suffix.length);
+}
+
+/**
+ * Validates an EnvironmentConfig at synth time. Throws on missing or
+ * placeholder values rather than letting `cdk synth`/`cdk deploy` fail
+ * deep inside CloudFormation with cryptic errors.
+ *
+ * Catches the most common footgun: a placeholder like `CHANGE_ME`
+ * accidentally committed to envs/*.json.
+ */
+export function validateConfig(config: EnvironmentConfig): void {
+  const errors: string[] = [];
+
+  if (
+    !/^arn:aws:acm:[a-z0-9-]+:\d{12}:certificate\//.test(config.certificateArn)
+  ) {
+    errors.push(
+      `certificateArn must be a valid ACM certificate ARN, got: "${config.certificateArn}"`
+    );
+  }
+  if (!/^Z[A-Z0-9]+$/.test(config.hostedZoneId)) {
+    errors.push(
+      `hostedZoneId must be a Route 53 hosted zone ID (e.g. "Z1234ABCD"), got: "${config.hostedZoneId}"`
+    );
+  }
+  if (!config.hostedZoneName || config.hostedZoneName.includes('CHANGE')) {
+    errors.push(
+      `hostedZoneName missing or placeholder: "${config.hostedZoneName}"`
+    );
+  }
+  if (!config.domainName || config.domainName.includes('CHANGE')) {
+    errors.push(`domainName missing or placeholder: "${config.domainName}"`);
+  }
+  if (!config.apiDomainName || config.apiDomainName.includes('CHANGE')) {
+    errors.push(
+      `apiDomainName missing or placeholder: "${config.apiDomainName}"`
+    );
+  }
+  if (config.cloudFrontWafRateLimit < 100) {
+    errors.push(
+      `cloudFrontWafRateLimit must be >= 100 (AWS WAF minimum), got: ${config.cloudFrontWafRateLimit}`
+    );
+  }
+  if (config.apiWafRateLimit < 100) {
+    errors.push(
+      `apiWafRateLimit must be >= 100 (AWS WAF minimum), got: ${config.apiWafRateLimit}`
+    );
+  }
+
+  if (errors.length > 0) {
+    throw new Error(
+      `Invalid EnvironmentConfig for "${config.envName}":\n  - ${errors.join(
+        '\n  - '
+      )}`
+    );
+  }
+
+  // Soft sanity check: an environment with neither WAF nor basic auth
+  // exposes an unprotected public CloudFront distribution. That may be
+  // intentional for production (relying on application-layer controls),
+  // but is almost always a mistake on staging — flag it loudly.
+  if (!config.enableWaf && !config.enableBasicAuth) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[validateConfig] WARNING: ${config.envName} has both enableWaf=false and enableBasicAuth=false. ` +
+        `The CloudFront distribution will be publicly accessible with no gating. ` +
+        `If this is intentional, ignore. Otherwise enable one of them in envs/${config.envName}.json.`
+    );
+  }
+}
+
+/** Configuration for the shared CI/CD stack (consumed by CicdStack). */
+export interface CicdConfig {
+  readonly awsRegion: string;
+  /** GitHub org/repo, e.g. "rumblefishdev/soroban-block-explorer" */
+  readonly githubRepo: string;
 }

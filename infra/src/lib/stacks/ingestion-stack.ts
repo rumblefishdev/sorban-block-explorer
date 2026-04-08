@@ -85,6 +85,12 @@ export class IngestionStack extends cdk.Stack {
     const logRetention = toRetentionDays(config.ecsLogRetentionDays);
     validateStopTimeout(config.galexieStopTimeout);
 
+    // Image tag: CDK context (-c galexieImageTag=sha) takes precedence
+    // over config. CI/CD passes git SHA via context for immutable deploys.
+    const galexieImageTag =
+      (this.node.tryGetContext('galexieImageTag') as string) ||
+      config.galexieImageTag;
+
     // Import the ledger bucket by ARN/name to avoid cross-stack
     // cyclic dependency (same pattern as ComputeStack).
     const ledgerBucket = s3.Bucket.fromBucketAttributes(this, 'LedgerBucket', {
@@ -187,10 +193,7 @@ export class IngestionStack extends cdk.Stack {
     liveTaskDef.addVolume({ name: 'tmp' });
 
     const liveContainer = liveTaskDef.addContainer('Galexie', {
-      image: ecs.ContainerImage.fromEcrRepository(
-        repository,
-        config.galexieImageTag
-      ),
+      image: ecs.ContainerImage.fromEcrRepository(repository, galexieImageTag),
       logging: ecs.LogDrivers.awsLogs({
         logGroup: liveLogGroup,
         streamPrefix: 'galexie',
@@ -266,7 +269,7 @@ export class IngestionStack extends cdk.Stack {
       const backfillContainer = backfillTaskDef.addContainer('Galexie', {
         image: ecs.ContainerImage.fromEcrRepository(
           repository,
-          config.galexieImageTag
+          galexieImageTag
         ),
         logging: ecs.LogDrivers.awsLogs({
           logGroup: backfillLogGroup,

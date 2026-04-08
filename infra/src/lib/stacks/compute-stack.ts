@@ -115,6 +115,10 @@ export class ComputeStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(config.apiLambdaTimeout),
       environment: {
         ...sharedEnv,
+        // lambda_http prepends the API Gateway stage name to the path by default
+        // (e.g. /health becomes /staging/health), breaking axum route matching.
+        // This env var tells lambda_http to skip the stage prefix.
+        AWS_LAMBDA_HTTP_IGNORE_STAGE_IN_PATH: 'true',
       },
     });
     this.apiFunction = apiFunction;

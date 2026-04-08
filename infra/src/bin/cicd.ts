@@ -1,15 +1,10 @@
 #!/usr/bin/env node
-import * as cdk from 'aws-cdk-lib';
+import { createRequire } from 'node:module';
 
-import { CiCdStack } from '../lib/stacks/cicd-stack.js';
+import type { CicdConfig } from '../lib/types.js';
+import { createCicdApp } from '../lib/cicd-app.js';
 
-const app = new cdk.App();
+const require = createRequire(import.meta.url);
+const config = require('../../envs/cicd.json') as CicdConfig;
 
-const env: cdk.Environment = {
-  account: process.env['CDK_DEFAULT_ACCOUNT'],
-  region: process.env['CDK_DEFAULT_REGION'] ?? 'us-east-1',
-};
-
-new CiCdStack(app, 'Explorer-CiCd', { env });
-
-app.synth();
+createCicdApp(config);

@@ -1,15 +1,18 @@
 import * as cdk from 'aws-cdk-lib';
+import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as route53 from 'aws-cdk-lib/aws-route53';
+import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
 import type { Construct } from 'constructs';
 
-import type { EnvironmentConfig } from '../types.js';
+import { WafWebAcl } from '../constructs/waf-web-acl.js';
+import { relativeRecordName, type EnvironmentConfig } from '../types.js';
 
 export interface ApiGatewayStackProps extends cdk.StackProps {
   readonly config: EnvironmentConfig;
   readonly apiFunction: lambda.IFunction;
-  readonly wafWebAclArn?: string;
 }
 
 /**
@@ -20,8 +23,13 @@ export interface ApiGatewayStackProps extends cdk.StackProps {
  * - Environment-specific throttling (rate + burst limits)
  * - Optional response caching (disabled on staging to save cost)
  * - CORS for SPA browser access
- * - Optional WAF WebACL attachment (wired when task 0035 lands)
+ * - REGIONAL WAF WebACL with managed rules + rate limit (task 0035)
  * - API key usage plan for non-browser consumers
+ *
+ * NOTE on WAF: This stack creates its OWN REGIONAL WebACL. The CloudFront
+ * distribution (DeliveryStack) has a separate CLOUDFRONT-scoped WebACL
+ * with the same rule set. AWS WAF requires distinct ACLs for CLOUDFRONT
+ * and REGIONAL scopes — one ACL cannot serve both. See task 0035.
  */
 export class ApiGatewayStack extends cdk.Stack {
   readonly api: apigateway.RestApi;
@@ -29,7 +37,7 @@ export class ApiGatewayStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: ApiGatewayStackProps) {
     super(scope, id, props);
 
-    const { config, apiFunction, wafWebAclArn } = props;
+    const { config, apiFunction } = props;
 
     // ---------------------
     // REST API
@@ -49,9 +57,8 @@ export class ApiGatewayStack extends cdk.Stack {
           cacheDataEncrypted: true,
         }),
       },
-      // TODO: restrict to SPA domain when Route 53 is configured (task 0035)
       defaultCorsPreflightOptions: {
-        allowOrigins: apigateway.Cors.ALL_ORIGINS,
+        allowOrigins: [`https://${config.domainName}`],
         allowMethods: ['GET', 'OPTIONS'],
         allowHeaders: ['Content-Type', 'Accept'],
       },
@@ -60,15 +67,24 @@ export class ApiGatewayStack extends cdk.Stack {
     this.api = api;
 
     // ---------------------
-    // WAF Attachment
+    // WAF (REGIONAL) — optional, own WebACL for API Gateway
     // ---------------------
-    // Task 0035 defines the WAF WebACL. This stack only consumes the
-    // ARN and attaches it to the API Gateway stage. Until task 0035
-    // is implemented, wafWebAclArn is not passed and this is skipped.
-    if (wafWebAclArn) {
+    // Same rule set as the CLOUDFRONT-scoped WebACL in DeliveryStack via
+    // the shared WafWebAcl construct. A CLOUDFRONT-scoped WebACL cannot
+    // be associated with a REGIONAL resource (API Gateway stage), so two
+    // ACLs are required.
+    const waf = config.enableWaf
+      ? new WafWebAcl(this, 'ApiWaf', {
+          scope: 'REGIONAL',
+          name: `${config.envName}-soroban-explorer-api`,
+          rateLimit: config.apiWafRateLimit,
+        })
+      : undefined;
+
+    if (waf) {
       new wafv2.CfnWebACLAssociation(this, 'WafAssociation', {
         resourceArn: api.deploymentStage.stageArn,
-        webAclArn: wafWebAclArn,
+        webAclArn: waf.webAclArn,
       });
     }
 
@@ -103,6 +119,53 @@ export class ApiGatewayStack extends cdk.Stack {
     usagePlan.addApiKey(apiKey);
 
     // ---------------------
+    // Custom Domain + Route 53
+    // ---------------------
+    const certificate = acm.Certificate.fromCertificateArn(
+      this,
+      'ApiCertificate',
+      config.certificateArn
+    );
+
+    const apiDomain = api.addDomainName('ApiDomain', {
+      domainName: config.apiDomainName,
+      certificate,
+      endpointType: apigateway.EndpointType.REGIONAL,
+    });
+
+    const hostedZone = route53.HostedZone.fromHostedZoneAttributes(
+      this,
+      'HostedZone',
+      {
+        hostedZoneId: config.hostedZoneId,
+        zoneName: config.hostedZoneName,
+      }
+    );
+
+    // recordName must be RELATIVE to the hosted zone — see
+    // relativeRecordName() in types.ts.
+    const apiRecordName = relativeRecordName(
+      config.apiDomainName,
+      config.hostedZoneName
+    );
+
+    new route53.ARecord(this, 'ApiARecord', {
+      zone: hostedZone,
+      recordName: apiRecordName,
+      target: route53.RecordTarget.fromAlias(
+        new targets.ApiGatewayDomain(apiDomain)
+      ),
+    });
+
+    new route53.AaaaRecord(this, 'ApiAaaaRecord', {
+      zone: hostedZone,
+      recordName: apiRecordName,
+      target: route53.RecordTarget.fromAlias(
+        new targets.ApiGatewayDomain(apiDomain)
+      ),
+    });
+
+    // ---------------------
     // Tags
     // ---------------------
     cdk.Tags.of(this).add('Project', 'soroban-block-explorer');
@@ -115,5 +178,13 @@ export class ApiGatewayStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ApiEndpoint', {
       value: api.url,
     });
+    new cdk.CfnOutput(this, 'ApiCustomDomain', {
+      value: `https://${config.apiDomainName}`,
+    });
+    if (waf) {
+      new cdk.CfnOutput(this, 'ApiWafWebAclArn', {
+        value: waf.webAclArn,
+      });
+    }
   }
 }

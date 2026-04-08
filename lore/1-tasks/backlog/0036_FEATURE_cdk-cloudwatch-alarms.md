@@ -4,7 +4,7 @@ title: 'CDK: CloudWatch dashboards and alarms'
 type: FEATURE
 status: backlog
 related_adr: []
-related_tasks: ['0006']
+related_tasks: ['0006', '0108']
 tags: [priority-medium, effort-small, layer-infra]
 milestone: 1
 links:
@@ -70,11 +70,12 @@ Define CloudWatch dashboards with the following widgets:
 
 Define alarms with evaluation periods:
 
-**Galexie ingestion lag:**
+**Galexie ingestion lag (hang detection):**
 
 - Condition: S3 timestamps more than 60 seconds behind current time (compare latest object creation time vs wall clock)
 - Evaluation: 3 consecutive datapoints of 1-minute period, all breaching
 - Severity: high (ingestion is stalled)
+- Note: This is the hang detection layer. Task 0108 adds a process-level health check (`pgrep`) that catches crashes but not silent hangs where Galexie is alive but not producing data. This alarm covers that gap.
 
 **Ledger Processor error rate:**
 
