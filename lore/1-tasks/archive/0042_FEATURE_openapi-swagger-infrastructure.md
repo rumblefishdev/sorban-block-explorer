@@ -41,9 +41,9 @@ Set up utoipa OpenAPI integration, document builder configuration, utoipa-swagge
 
 > **Stack:** axum 0.8 + utoipa 5.4 + sqlx 0.8 (per ADR 0005). Code in crates/api/.
 
-## Status: Backlog
+## Status: Completed
 
-**Current state:** Not started. Depends on task 0023 (API bootstrap).
+**Current state:** Completed 2026-04-08. Shipped the M1 OpenAPI scaffold (utoipa integration, `ApiDoc` document builder, `/api-docs-json` always-on, opt-in `swagger-ui` feature) after dependency 0023 landed.
 
 ## Context
 

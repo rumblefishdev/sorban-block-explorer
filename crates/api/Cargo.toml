@@ -9,11 +9,11 @@ name = "api"
 path = "src/main.rs"
 
 [features]
-# Swagger UI is a ~12 MB embedded asset bundle. Gated behind an opt-in
-# feature so production Lambda builds (`--no-default-features`) stay
-# lean (~4 MB) while local/staging builds can enable the browser UI.
-# The OpenAPI JSON (/api-docs-json) is always available — it only
-# costs ~310 KB and is useful for external consumers.
+# Swagger UI is a ~12 MB embedded asset bundle. Gated behind the
+# opt-in `swagger-ui` feature so Lambda builds stay lean (~4 MB) by
+# default — the feature is off unless `cargo build --features
+# swagger-ui` is used (locally or in staging). The OpenAPI JSON at
+# /api-docs-json is always available regardless and costs ~310 KB.
 default = []
 swagger-ui = ["dep:utoipa-swagger-ui"]
 

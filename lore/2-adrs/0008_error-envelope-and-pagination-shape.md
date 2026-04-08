@@ -18,7 +18,7 @@ history:
 
 **Related:**
 
-- [Task 0042: OpenAPI/Swagger infrastructure setup](../1-tasks/active/0042_FEATURE_openapi-swagger-infrastructure.md)
+- [Task 0042: OpenAPI/Swagger infrastructure setup](../1-tasks/archive/0042_FEATURE_openapi-swagger-infrastructure.md)
 - [ADR 0005: Rust-only backend API](./0005_rust-only-backend-api.md)
 
 ---
@@ -36,7 +36,7 @@ Both shapes are load-bearing. Changing them after M2 endpoints ship is a breakin
 
 ## Decision
 
-Adopt the following Rust shapes, defined in `crates/api/src/openapi/schemas.rs` and exposed as OpenAPI schema components via `ApiDoc::components`:
+Adopt the following Rust shapes, defined in `crates/api/src/openapi/schemas.rs`. `ErrorEnvelope` and `PageInfo` are registered eagerly as OpenAPI schema components via `ApiDoc::components(schemas(...))`. `Paginated<T>` is a generic wrapper that appears in the OpenAPI output only when concretely instantiated by endpoint handler return types — no concrete instantiation exists yet in M1, so M2 endpoint modules will register `Paginated<Transaction>`, `Paginated<Ledger>`, etc. automatically via their handler signatures.
 
 ```rust
 pub struct ErrorEnvelope {

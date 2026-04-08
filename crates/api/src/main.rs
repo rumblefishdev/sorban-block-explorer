@@ -40,7 +40,10 @@ fn app(config: &AppConfig) -> Router {
         .split_for_parts();
     spec.servers = Some(vec![utoipa::openapi::server::Server::new(&config.base_url)]);
 
-    let spec_for_json = spec.clone();
+    // Share the spec behind an Arc so `/api-docs-json` only clones
+    // a reference count per request instead of the full document.
+    let spec_arc = std::sync::Arc::new(spec);
+    let spec_for_json = spec_arc.clone();
     let router = router.route(
         "/api-docs-json",
         get(move || {
@@ -49,7 +52,7 @@ fn app(config: &AppConfig) -> Router {
         }),
     );
 
-    mount_swagger_ui(router, &spec)
+    mount_swagger_ui(router, spec_arc.as_ref())
 }
 
 #[cfg(feature = "swagger-ui")]
