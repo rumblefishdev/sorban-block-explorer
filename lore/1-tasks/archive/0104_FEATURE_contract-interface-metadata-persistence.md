@@ -2,7 +2,7 @@
 id: '0104'
 title: 'Persist contract interface metadata via wasm_hash→contract_id join'
 type: FEATURE
-status: backlog
+status: completed
 related_adr: ['0004']
 related_tasks: ['0026', '0029']
 tags: [priority-medium, effort-small, layer-indexing, rust]
@@ -13,6 +13,13 @@ history:
     status: backlog
     who: FilipDz
     note: 'Spawned from 0029 future work. Contract interface metadata (function signatures from WASM) cannot be stored correctly because ExtractedContractInterface only has wasm_hash, not contract_id.'
+  - date: 2026-04-08
+    status: completed
+    who: FilipDz
+    note: >
+      Implemented wasm_hash→contract_id join for interface metadata persistence.
+      3 files changed. 2 new integration tests passing (9 total in db crate).
+      Migration 0008 adds partial index on wasm_hash. PR #78.
 ---
 
 # Persist contract interface metadata via wasm_hash→contract_id join
@@ -40,7 +47,25 @@ During ledger processing (task 0029), step 7 (contract interface metadata) is cu
 
 ## Acceptance Criteria
 
-- [ ] Contract function signatures are stored in `soroban_contracts.metadata` JSONB
-- [ ] Multiple contracts sharing the same wasm_hash all get metadata populated
-- [ ] Interface extraction works correctly when deployment and WASM upload happen in the same ledger
-- [ ] Replay-safe: re-processing a ledger does not corrupt metadata
+- [x] Contract function signatures are stored in `soroban_contracts.metadata` JSONB
+- [x] Multiple contracts sharing the same wasm_hash all get metadata populated
+- [x] Interface extraction works correctly when deployment and WASM upload happen in the same ledger
+- [x] Replay-safe: re-processing a ledger does not corrupt metadata
+
+## Implementation Notes
+
+- **Migration 0008**: partial index `idx_contracts_wasm_hash` on `soroban_contracts(wasm_hash) WHERE wasm_hash IS NOT NULL`
+- **`update_contract_interfaces_by_wasm_hash()`** in `crates/db/src/soroban.rs`: UPDATE with JSONB `||` merge, returns rows_affected count
+- **`persist_ledger()` step reorder**: contract deployments (old step 8) moved to step 7; interface metadata now step 8, runs after deployments so `wasm_hash` is populated
+- Warns (no error) when WASM uploaded without deployment in same ledger — metadata will be applied when the contract is eventually deployed and re-indexed
+
+## Design Decisions
+
+### From Plan
+
+1. **Join via DB query on wasm_hash**: as specified in task spec, query `soroban_contracts` for all rows matching `wasm_hash` after deployments are upserted.
+
+### Emerged
+
+2. **Step reorder (7↔8) instead of two-pass**: rather than a separate pass, swapped the deployment and interface steps so the existing single-pass flow works. Simpler than the task spec's suggestion of a staging table.
+3. **Warn-and-skip for orphan WASM**: task spec suggested a staging table (TBD). Chose to warn and skip — the metadata will be applied on re-index after the contract is deployed. Avoids new table complexity for a rare edge case.
