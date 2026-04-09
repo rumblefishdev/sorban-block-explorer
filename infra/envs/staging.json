@@ -18,6 +18,7 @@
   "apiLambdaTimeout": 30,
   "indexerLambdaMemory": 512,
   "indexerLambdaTimeout": 60,
+  "indexerLambdaConcurrency": 20,
 
   "galexieCpu": 2048,
   "galexieMemory": 13312,

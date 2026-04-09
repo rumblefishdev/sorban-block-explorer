@@ -138,6 +138,10 @@ export class ComputeStack extends cdk.Stack {
       logGroup: processorLogGroup,
       memorySize: config.indexerLambdaMemory,
       timeout: cdk.Duration.seconds(config.indexerLambdaTimeout),
+      // Limit concurrency to avoid exhausting RDS max_connections (~87 on t4g.micro).
+      // Each instance holds 1 DB connection (pool.rs max_connections=1).
+      // 20 concurrent is sufficient for Galexie's ~12 files/min throughput.
+      reservedConcurrentExecutions: config.indexerLambdaConcurrency,
       environment: {
         ...sharedEnv,
         BUCKET_NAME: ledgerBucket.bucketName,
