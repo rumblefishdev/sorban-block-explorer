@@ -48,11 +48,24 @@ The workflow file (`deploy-production.yml`) was drafted in task 0039 and can be 
 
 Apply the three improvements validated on staging in 0110:
 
-- [ ] **Region as GitHub variable** — no literal `us-east-1` in `deploy-production.yml`; sourced from `vars.AWS_REGION` in the `production` GitHub Environment.
-- [ ] **Deploy caching** — reuse caching strategy from 0110 (inputs only: node_modules, cargo target, Nx cache; **do NOT cache `cdk.out`**). Baseline measurements taken before optimization.
-- [ ] **Tag-gated trigger** — align with tagging scheme established by 0110's ADR. Production typically triggers on release tags (e.g. `prod-v*` or `v*`); exact pattern decided in the ADR.
+- [ ] **Region documentation** — add inline comments next to `us-east-1` literals referencing `infra/envs/production.json` as single source of truth (same approach as 0110 PR 1 — no `vars.AWS_REGION`, region locked by ACM cert).
+- [ ] **Deploy caching** — `node_modules/` cache via `actions/cache` (same pattern as 0110 PR 2). Rust/Nx/cargo-lambda caching not worth it per 0110 Phase 0 baseline (CDK deploy is 76% of wall-clock, not build steps).
+- [ ] **Tag-gated trigger** — decide tag naming scheme for production (see open questions below).
 
 **Dependency:** 0110 should land first so production reuses the validated
-patterns (caching keys, tag scheme, ADR, region-var convention). If 0110 is
-blocked, production workflow can still be built with the core workflow
-criteria, and extended scope applied as a follow-up.
+patterns. If 0110 is blocked, production workflow can still be built with
+the core workflow criteria, and extended scope applied as a follow-up.
+
+## Open questions
+
+### Production tag naming scheme
+
+Staging uses `staging-YYYY.MM.DD-N` (date-based, per ADR 0009). Production defaults to the same date-based scheme (`prod-YYYY.MM.DD-N`). Consider pivoting to SemVer (`vX.Y.Z`) when activating this task — decision to make in 0103 scope.
+
+### Required Reviewers for production
+
+Staging Required Reviewers gate zostanie wyłączony po wdrożeniu tag-gatingu (tag = explicit deploy decision). Dla produkcji rozważyć:
+
+- Czy tag-gating wystarczy (jak staging)?
+- Czy prod potrzebuje dodatkowy Required Reviewers gate mimo tagów (defense in depth)?
+- Kto powinien być approverem na prod?
