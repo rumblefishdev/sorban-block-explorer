@@ -85,9 +85,23 @@ jobs:
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
+        id: setup-node
         with:
           node-version-file: .nvmrc
+          # Keeps ~/.npm download cache warm as fallback when node_modules
+          # cache misses (e.g. after LRU eviction or package-lock change).
           cache: npm
+
+      - name: Cache node_modules
+        id: cache-node-modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ runner.arch }}-node${{ steps.setup-node.outputs.node-version }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -95,8 +109,6 @@ jobs:
 
       - name: Install cargo-lambda
         run: pip3 install cargo-lambda
-
-      - run: npm ci
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
