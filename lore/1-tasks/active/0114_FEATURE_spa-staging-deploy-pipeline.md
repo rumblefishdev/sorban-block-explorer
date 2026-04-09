@@ -2,7 +2,7 @@
 id: '0114'
 title: 'FEATURE: SPA staging deploy pipeline (build + s3 sync + CloudFront invalidation)'
 type: FEATURE
-status: backlog
+status: active
 related_adr: []
 related_tasks: ['0035', '0106', '0084', '0103']
 tags: [layer-infra, layer-frontend, priority-high, effort-small]
@@ -22,6 +22,10 @@ history:
       deploy step exists in `.github/workflows/deploy-staging.yml`.
       The workflow only builds CDK + smokes the API. Result: SPA has
       never been published to staging.
+  - date: 2026-04-09
+    status: active
+    who: stkrolikiewicz
+    note: Activated task for implementation.
 ---
 
 # FEATURE: SPA staging deploy pipeline
