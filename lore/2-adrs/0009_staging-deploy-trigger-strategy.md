@@ -1,7 +1,7 @@
 ---
 id: '0009'
 title: 'Staging deploys triggered by git tags, not by push to develop'
-status: proposed
+status: accepted
 deciders: [stkrolikiewicz, fmazur]
 related_tasks: ['0110']
 related_adrs: []
@@ -13,6 +13,10 @@ history:
     status: proposed
     who: stkrolikiewicz
     note: 'ADR drafted as part of lore-0110 PR 3 prerequisite. 5-day review window opens on share.'
+  - date: '2026-04-09'
+    status: accepted
+    who: stkrolikiewicz
+    note: 'Accepted. Date-based tags staging-YYYY.MM.DD-N confirmed.'
 ---
 
 # ADR 0009: Staging deploys triggered by git tags, not by push to develop

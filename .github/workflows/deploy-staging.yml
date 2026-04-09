@@ -2,8 +2,8 @@ name: Deploy Staging
 
 on:
   push:
-    branches:
-      - develop
+    tags:
+      - 'staging-*'
   workflow_dispatch:
 
 concurrency:
