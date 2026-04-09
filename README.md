@@ -85,6 +85,17 @@ npm run infra:synth:staging       # Generate CloudFormation template
 
 Replace `staging` with `production` for production deployments.
 
+### CI deploy (staging)
+
+Staging deploys via GitHub Actions, triggered by git tags (see [ADR 0009](lore/2-adrs/0009_staging-deploy-trigger-strategy.md)):
+
+```bash
+./scripts/staging-deploy.sh              # tag and deploy current HEAD on develop
+./scripts/staging-deploy.sh <commit-sha> # rollback: deploy a specific commit
+```
+
+The script creates a `staging-YYYY.MM.DD-N` tag and pushes it. The deploy workflow runs automatically. Manual redeploy without a tag: `gh workflow run deploy-staging.yml --ref develop`.
+
 Or use the Makefile directly from `infra/`:
 
 ```bash
