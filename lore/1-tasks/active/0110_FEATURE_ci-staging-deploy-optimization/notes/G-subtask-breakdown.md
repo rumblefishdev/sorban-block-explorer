@@ -90,73 +90,58 @@ scratch work only (baseline measurements, ADR drafts).
 
 ---
 
-## PR 2 — Deploy caching
+## PR 2 — Deploy optimization (REVISED after Phase 0)
 
-**Goal:** Reduce deploy time for no-op / small-change deploys by caching synthesis _inputs_, not outputs.
+**⚠️ Major revision.** Phase 0 baseline (see `worklog/2026-04-09-phase0-baseline.md`) showed CDK deploy (CloudFormation) is **76% of wall-clock** (6m 7s avg). Rust/npm/cargo-lambda collectively <2 min. Original caching plan (Rust cache tuning, cargo-lambda binary, Nx cache, SHA256 verification, test matrix) was built on wrong assumptions and is **dropped**.
 
-### Phase 0 — Baseline (mandatory, before any code change)
+**Goal (revised):** Reduce deploy time for no-change deploys. Two levers only.
 
-Steps:
+### Phase 0 — Baseline ✅ DONE
 
-1. Trigger staging deploy 3× via `workflow_dispatch` (enabled by PR 0) against an unchanged `develop` (or with trivial unrelated changes).
-2. From each run collect per-step timings via GitHub Actions UI or `gh run view --log`.
-3. Record in `worklog/baseline-YYYY-MM-DD.md` using the template below.
-4. Also record current staging deploy frequency via `gh api 'repos/:owner/:repo/actions/workflows/deploy-staging.yml/runs?per_page=100'` — count runs in last 30 days. Gates PR 2 and PR 3 ROI.
+See `worklog/2026-04-09-phase0-baseline.md`. Summary: avg **8m 1s** total, CDK deploy **6m 7s** (76%), npm ci **47s** (10%). Go/no-go: **GO** (>5 min).
 
-Template table to fill in the worklog:
+### Phase 1 — Implementation
 
-| step                           | run1 | run2 | run3 | avg |
-| ------------------------------ | ---- | ---- | ---- | --- |
-| mirror-image (total)           |      |      |      |     |
-| setup-node + npm ci            |      |      |      |     |
-| Swatinem/rust-cache restore    |      |      |      |     |
-| rust build (cargo check, etc.) |      |      |      |     |
-| pip3 install cargo-lambda      |      |      |      |     |
-| nx build CDK                   |      |      |      |     |
-| cdk deploy --all               |      |      |      |     |
-| smoke test                     |      |      |      |     |
-| **total**                      |      |      |      |     |
+Full revised strategy → **[G-caching-strategy.md](G-caching-strategy.md)**
 
-**Go/no-go gate:** if total avg <5 min and deploys <2×/day, **close PR 2 as `canceled: obsolete`** and move on.
+**Optimization 1 (primary): `cdk diff` early exit.**
 
-### Phase 1 — Implementation (only after baseline)
+Run `cdk diff --all` before `cdk deploy`. If no stack changes, skip deploy entirely. Expected saving: **~5 min on no-op deploys**.
 
-Apply caching in ROI order. Full strategy and Rust/Node/Nx details →
-**[G-caching-strategy.md](G-caching-strategy.md)**
+**⚠️ Blocking issue:** `galexieImageTag=${GITHUB_SHA}` changes every commit, so `cdk diff` always reports changes. Must resolve before implementing. Options in G-caching-strategy.md.
 
-Summary (detailed in the other note):
+**Optimization 2 (secondary): `node_modules/` cache.**
 
-1. Nx task cache (`.nx/cache`) — biggest expected win.
-2. cargo-lambda prebuilt binary — certain ~30-60s win.
-3. Rust build cache tuning (`Swatinem/rust-cache` with explicit key + `target/lambda/`).
-4. `node_modules/` cache — only if still a bottleneck after above.
+Cache `node_modules/` keyed on `package-lock.json` + OS + arch + Node version. Expected saving: **~42s** (npm ci 47s → ~5s on hit).
 
-**Pre-flight:** verify `nx.json` `inputs`/`outputs` are correctly declared for the CDK `build` target. If not → **spawn a separate PR to fix Nx config first**, block PR 2 until it lands. Caching broken Nx config just replicates breakage.
+**⚠️ Cache size concern:** repo at 9.8 GB / 10 GB limit. Cleanup needed before adding ~200-500 MB node_modules cache.
 
-### Phase 2 — Validation (before merge)
+**Dropped from original plan:** Nx cache (<6s build), Rust cache tuning (<9s), cargo-lambda prebuilt binary (<8s), SHA256 Lambda verification (guard for dropped Rust cache risk), cache validation test matrix (for dropped caches). Total savings from all dropped items: <30s combined.
 
-- Run cache correctness test matrix (see G-caching-strategy.md). Every row must produce correct hit/miss pattern.
-- Add **post-deploy Lambda SHA256 verification step** to workflow — compute hash of built zip, compare to deployed `CodeSha256` from `aws lambda get-function`. This is mandatory for PR 2 merge regardless of which caches end up in scope, because stale-binary is the #1 caching failure mode.
-- Observe at least one deploy with cache hit and one with cache miss (forced).
+### Decision needed before implementation
 
-**Scope limit (hard):** at most 2 files — `deploy-staging.yml` + possibly one minor CDK/Nx config tweak if absolutely required. If CDK source code needs to change for caching to work, stop and reconsider.
+Choose one of:
 
-**Stop-loss:** 2 working days from start of Phase 1. If improvement <20% total deploy time after 2 days → ship what's working, spawn follow-up backlog task, close PR 2.
+**(A)** Solve `galexieImageTag` problem → `cdk diff` early exit. ~5 min saving, requires design work.
 
-**Acceptance:**
+**(B)** Accept 6 min CDK deploy → only `node_modules/` cache. ~42s saving, minimal effort.
 
-- Baseline documented in worklog (3 runs + deploy frequency).
-- Each caching layer added justified by baseline data (not speculation).
-- Cache validation test matrix passed (all rows correct).
-- SHA256 Lambda verification step in place and green.
-- Measured deploy time improvement documented in PR description (sample size: ≥3 no-op deploys post-merge).
-- No correctness regressions (smoke test green, no cross-account cache pollution).
+**(C)** Cancel PR 2 entirely. <1 min saving for 1-3 deploys/week = <3 min/week saved. ROI arguably negative.
 
-**Risks:**
+**(D)** Hybrid — ship (B) now, spawn follow-up for `galexieImageTag` investigation.
 
-- Cache key too loose → stale artifacts → broken deploy. Keys must include lockfile hashes, toolchain versions, arch.
-- Nx cache masks bugs if declared inputs are incomplete.
-- Native module platform mismatch on `node_modules/` cache restore.
+**Scope limit (hard):** `deploy-staging.yml` only. No CDK source changes.
+
+**Stop-loss:** 1 working day. If <20% improvement → ship or cancel.
+
+**Acceptance (revised):**
+
+- Phase 0 baseline documented ✅
+- Design decision on `galexieImageTag` documented (if pursuing A)
+- No-op deploy measurably faster (target depends on chosen option)
+- Cache size stays under 10 GB (cleanup before merge if needed)
+- Smoke test still passes
+- No correctness regressions
 
 ---
 

@@ -33,20 +33,21 @@ same improvements for production; staging acts as pilot.
 
 ## Subtasks (= PRs)
 
-| #    | Title                                            | Risk          | Notes                                                               |
-| ---- | ------------------------------------------------ | ------------- | ------------------------------------------------------------------- |
-| PR 0 | Add `workflow_dispatch` trigger                  | minimal       | Prerequisite for Phase 0 measurement + pre-merge testing            |
-| PR 1 | Document region single source of truth (pivoted) | minimal       | Comments only — see worklog 2026-04-08 for pivot rationale          |
-| PR 2 | Deploy caching (measurement-driven)              | medium        | Phase 0 baseline mandatory; stale-binary risk → SHA256 verification |
-| PR 3 | Tag-gated deploy trigger                         | high (social) | ADR + team sign-off required                                        |
+| #    | Title                                            | Risk          | Notes                                                                                         |
+| ---- | ------------------------------------------------ | ------------- | --------------------------------------------------------------------------------------------- |
+| PR 0 | Add `workflow_dispatch` trigger                  | minimal       | Prerequisite for Phase 0 measurement + pre-merge testing                                      |
+| PR 1 | Document region single source of truth (pivoted) | minimal       | Comments only — see worklog 2026-04-08 for pivot rationale                                    |
+| PR 2 | Deploy optimization (revised after Phase 0)      | medium        | CDK deploy=76%, not caching. `cdk diff` early exit or `node_modules` cache. Decision pending. |
+| PR 3 | Tag-gated deploy trigger                         | high (social) | ADR + team sign-off required                                                                  |
 
 Detailed steps, acceptance criteria, and scope limits per PR →
 **[notes/G-subtask-breakdown.md](notes/G-subtask-breakdown.md)**
 
 ## Caching strategy (PR 2 deep dive)
 
-Rust / cargo-lambda / Node / Nx caching is non-trivial and has several traps.
-Full analysis with ROI ranking, test matrix, and stale-binary mitigations →
+Phase 0 baseline showed CDK deploy (CloudFormation) is 76% of wall-clock.
+Original caching plan (Rust/Nx/cargo-lambda) dropped — wrong bottleneck.
+Revised strategy: `cdk diff` early exit + `node_modules` cache →
 **[notes/G-caching-strategy.md](notes/G-caching-strategy.md)**
 
 ## Quality gates & process
@@ -81,7 +82,7 @@ regression guards, post-merge validation, cost tracking, monitoring →
 
 - [ ] PR 0 merged — `workflow_dispatch` available
 - [ ] PR 1 merged — `deploy-staging.yml` documents `infra/envs/staging.json` as canonical source for region (PIVOTED — see worklog/2026-04-08-pr1-pivot-to-comments.md)
-- [ ] PR 2 merged — measurable deploy-time reduction justified by Phase 0 baseline; cache validation test matrix passed; SHA256 Lambda verification step added
+- [ ] PR 2 merged OR canceled with documented rationale — if merged: measurable deploy-time reduction justified by Phase 0 baseline (CDK deploy=76%, see worklog 2026-04-09)
 - [ ] PR 3 merged OR moved to blocked/canceled with documented reason — staging trigger behavior matches ADR
 - [ ] ~~Regression guard in CI prevents reintroduction of `us-east-1` literal~~ (dropped — PR 1 pivoted to comments-only, no enforcement layer needed since region is architecturally locked by ACM cert)
 - [ ] Worklog entries for each PR (facts + emerged decisions)
