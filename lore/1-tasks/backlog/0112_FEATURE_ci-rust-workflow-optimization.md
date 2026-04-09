@@ -1,11 +1,21 @@
 ---
 id: '0112'
-title: 'CI: optimize Rust workflow (arm64 runner, path filter, cache tuning)'
+title: 'CI: optimize ci.yml workflow (Rust + TypeScript — arm64, path filter, Nx cache, node_modules cache)'
 type: FEATURE
 status: backlog
 related_adr: []
 related_tasks: ['0110']
-tags: [ci, rust, cargo-lambda, performance, priority-low, effort-small]
+tags:
+  [
+    ci,
+    rust,
+    typescript,
+    cargo-lambda,
+    nx,
+    performance,
+    priority-low,
+    effort-small,
+  ]
 milestone: 1
 links:
   - .github/workflows/ci.yml
