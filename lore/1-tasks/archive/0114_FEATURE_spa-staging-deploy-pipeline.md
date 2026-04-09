@@ -90,7 +90,10 @@ at `https://staging.sorobanscan.rumblefish.dev`.
 **Ordering:** Build SPA -> Build CDK -> CDK deploy -> S3 sync -> CF invalidation -> API smoke -> Frontend smoke
 
 **Manual step required:** Add `STAGING_BASIC_AUTH` secret (format `user:password`)
-to GitHub Environment "staging" before first run.
+to GitHub Environment "staging" before first run. The secret must match
+the base64 token in the CloudFront KeyValueStore `auth-token` key
+(see `delivery-stack.ts` for KVS population instructions). If the KVS
+is empty (fresh deploy), CloudFront returns 503 and the smoke test fails.
 
 ## Design Decisions
 

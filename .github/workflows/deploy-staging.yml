@@ -149,8 +149,11 @@ jobs:
       - name: Smoke test — Frontend
         run: |
           # Full end-to-end check through CloudFront.
-          # Staging has basic auth enabled (CloudFront Function) —
-          # credentials are stored in STAGING_BASIC_AUTH secret.
+          # Staging has basic auth enabled (CloudFront Function backed
+          # by a KeyValueStore). STAGING_BASIC_AUTH (user:password) must
+          # match the base64 token stored in the KVS `auth-token` key.
+          # If the KVS is empty (fresh deploy), CF returns 503 — populate
+          # it first (see delivery-stack.ts for instructions).
           RESPONSE=$(curl -s -o /dev/null -w '%{http_code} %{content_type}' \
             --retry 3 --retry-delay 5 \
             -u "${{ secrets.STAGING_BASIC_AUTH }}" \
