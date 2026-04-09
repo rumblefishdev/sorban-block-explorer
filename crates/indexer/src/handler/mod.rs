@@ -78,7 +78,6 @@ pub async fn handler(event: LambdaEvent<S3Event>, state: &HandlerState) -> Resul
     let (payload, _ctx) = event.into_parts();
 
     let total = payload.records.len();
-    let mut processed = 0usize;
     let mut skipped = 0usize;
 
     for record in &payload.records {
@@ -102,7 +101,6 @@ pub async fn handler(event: LambdaEvent<S3Event>, state: &HandlerState) -> Resul
 
         match process_s3_object(state, bucket, &key, ledger_range).await {
             Ok(()) => {
-                processed += 1;
                 info!(
                     bucket,
                     key = key.as_str(),
