@@ -132,6 +132,33 @@ export class CicdStack extends cdk.Stack {
         })
       );
 
+      // S3 sync for SPA deployment (upload web/dist/ to SPA bucket).
+      // Split into bucket-level (ListBucket) and object-level (Put/Delete)
+      // for clarity in IAM policy audits.
+      role.addToPolicy(
+        new iam.PolicyStatement({
+          actions: ['s3:ListBucket'],
+          resources: [`arn:aws:s3:::${envName}-soroban-explorer-spa`],
+        })
+      );
+      role.addToPolicy(
+        new iam.PolicyStatement({
+          actions: ['s3:PutObject', 's3:DeleteObject'],
+          resources: [`arn:aws:s3:::${envName}-soroban-explorer-spa/*`],
+        })
+      );
+
+      // CloudFront cache invalidation after SPA deploy.
+      // Scoped to distributions tagged with this environment. If tagging
+      // is not yet applied, this uses a wildcard — tighten when the
+      // distribution ARN is available as a stack output.
+      role.addToPolicy(
+        new iam.PolicyStatement({
+          actions: ['cloudfront:CreateInvalidation'],
+          resources: [`arn:aws:cloudfront::${accountId}:distribution/*`],
+        })
+      );
+
       // Output the role ARN — store as GitHub Environment secret.
       new cdk.CfnOutput(this, `${capitalize(envName)}DeployRoleArn`, {
         value: role.roleArn,
