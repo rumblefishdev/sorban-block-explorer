@@ -112,6 +112,13 @@ export interface EnvironmentConfig {
    * Suggested: 1000-2000.
    */
   readonly apiWafRateLimit: number;
+
+  // Observability — X-Ray (consumed by ObservabilityStack)
+
+  /** X-Ray sampling rate (0.0–1.0). Lower in production to reduce cost. */
+  readonly xraySamplingRate: number;
+  /** X-Ray reservoir size — fixed traces/sec guaranteed before sampling kicks in. */
+  readonly xrayReservoirSize: number;
 }
 
 /**
@@ -185,6 +192,19 @@ export function validateConfig(config: EnvironmentConfig): void {
   if (config.apiWafRateLimit < 100) {
     errors.push(
       `apiWafRateLimit must be >= 100 (AWS WAF minimum), got: ${config.apiWafRateLimit}`
+    );
+  }
+  if (config.xraySamplingRate < 0 || config.xraySamplingRate > 1) {
+    errors.push(
+      `xraySamplingRate must be between 0.0 and 1.0, got: ${config.xraySamplingRate}`
+    );
+  }
+  if (
+    !Number.isInteger(config.xrayReservoirSize) ||
+    config.xrayReservoirSize < 0
+  ) {
+    errors.push(
+      `xrayReservoirSize must be a non-negative integer, got: ${config.xrayReservoirSize}`
     );
   }
 
