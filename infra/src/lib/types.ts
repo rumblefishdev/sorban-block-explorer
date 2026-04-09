@@ -111,6 +111,13 @@ export interface EnvironmentConfig {
    * Suggested: 1000-2000.
    */
   readonly apiWafRateLimit: number;
+
+  // Observability — X-Ray (consumed by ObservabilityStack)
+
+  /** X-Ray sampling rate (0.0–1.0). Lower in production to reduce cost. */
+  readonly xraySamplingRate: number;
+  /** X-Ray reservoir size — fixed traces/sec guaranteed before sampling kicks in. */
+  readonly xrayReservoirSize: number;
 }
 
 /**

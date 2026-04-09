@@ -2,7 +2,7 @@
 id: '0037'
 title: 'CDK: X-Ray tracing'
 type: FEATURE
-status: active
+status: completed
 related_adr: []
 related_tasks: ['0006']
 tags: [priority-medium, effort-small, layer-infra]
@@ -22,6 +22,14 @@ history:
     status: active
     who: FilipDz
     note: 'Activated for implementation'
+  - date: 2026-04-09
+    status: completed
+    who: FilipDz
+    note: >
+      X-Ray tracing enabled on API Gateway (tracingEnabled), Lambdas
+      (tracing: ACTIVE, done in 0040), and env-specific sampling rules
+      in ObservabilityStack. RDS Proxy does not support X-Ray natively.
+      Actual source: infra/src/lib/stacks/observability-stack.ts
 ---
 
 # CDK: X-Ray tracing
@@ -87,11 +95,11 @@ Sampling rules are configured as X-Ray sampling rule resources in CDK.
 
 ## Acceptance Criteria
 
-- [ ] X-Ray active tracing enabled on API Gateway stage
-- [ ] X-Ray active tracing enabled on both Lambda functions (API + Indexer)
-- [ ] X-Ray tracing on RDS Proxy if supported (documented limitation if not)
-- [ ] Production sampling rule: lower rate for cost efficiency
-- [ ] Staging sampling rule: higher rate for debugging
+- [x] X-Ray active tracing enabled on API Gateway stage (tracingEnabled: true)
+- [x] X-Ray active tracing enabled on both Lambda functions (API + Indexer) (tracing: ACTIVE, task 0040)
+- [x] X-Ray tracing on RDS Proxy if supported (documented limitation if not) — RDS Proxy does not support X-Ray natively; DB call latency captured as Lambda subsegments
+- [x] Production sampling rule: lower rate for cost efficiency (5%, reservoir 1/sec)
+- [x] Staging sampling rule: higher rate for debugging (100%, reservoir 5/sec)
 
 ## Notes
 

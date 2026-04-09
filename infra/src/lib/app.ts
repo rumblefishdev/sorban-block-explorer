@@ -10,6 +10,7 @@ import { PartitionStack } from './stacks/partition-stack.js';
 import { DeliveryStack } from './stacks/delivery-stack.js';
 import { ApiGatewayStack } from './stacks/api-gateway-stack.js';
 import { IngestionStack } from './stacks/ingestion-stack.js';
+import { ObservabilityStack } from './stacks/observability-stack.js';
 
 export interface CreateAppOptions {
   readonly config: EnvironmentConfig;
@@ -101,6 +102,8 @@ export function createApp({
     env,
     config,
   });
+
+  new ObservabilityStack(app, `${prefix}-Observability`, { env, config });
 
   const apiGateway = new ApiGatewayStack(app, `${prefix}-ApiGateway`, {
     env,

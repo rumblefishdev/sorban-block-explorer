@@ -48,6 +48,7 @@ export class ApiGatewayStack extends cdk.Stack {
       proxy: true,
       deployOptions: {
         stageName: config.envName,
+        tracingEnabled: true,
         throttlingRateLimit: config.apiGatewayThrottleRate,
         throttlingBurstLimit: config.apiGatewayThrottleBurst,
         cacheClusterEnabled: config.apiGatewayCacheEnabled,

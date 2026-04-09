@@ -5,7 +5,6 @@
   "availabilityZones": ["us-east-1a", "us-east-1b"],
   "natType": "gateway",
   "natGatewayCount": 1,
-
   "dbInstanceClass": "t4g.micro",
   "dbAllocatedStorage": 20,
   "dbMultiAz": false,
@@ -13,12 +12,10 @@
   "dbBackupRetentionDays": 30,
   "dbProxy": true,
   "kmsEncryption": true,
-
   "apiLambdaMemory": 256,
   "apiLambdaTimeout": 30,
   "indexerLambdaMemory": 512,
   "indexerLambdaTimeout": 60,
-
   "galexieCpu": 4096,
   "galexieMemory": 16384,
   "galexieEphemeralStorage": 30,
@@ -29,7 +26,6 @@
   "ecsExecEnabled": false,
   "galexieImageTag": "latest",
   "galexieBackfillEnabled": true,
-
   "apiGatewayThrottleRate": 50,
   "apiGatewayThrottleBurst": 100,
   "apiGatewayCacheEnabled": false,
@@ -37,7 +33,6 @@
   "apiGatewayCacheTtlImmutable": 3600,
   "apiGatewayCacheTtlMutable": 10,
   "apiGatewayPartnerDailyQuota": 10000,
-
   "domainName": "sorobanscan.rumblefish.dev",
   "apiDomainName": "api.sorobanscan.rumblefish.dev",
   "hostedZoneId": "CHANGE_ME",
@@ -46,5 +41,7 @@
   "enableWaf": true,
   "enableBasicAuth": false,
   "cloudFrontWafRateLimit": 10000,
-  "apiWafRateLimit": 2000
+  "apiWafRateLimit": 2000,
+  "xraySamplingRate": 0.05,
+  "xrayReservoirSize": 1
 }
