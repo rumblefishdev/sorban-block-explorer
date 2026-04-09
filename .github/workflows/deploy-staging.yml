@@ -118,6 +118,9 @@ jobs:
           # Region is locked to us-east-1 by ACM cert requirement for CloudFront.
           aws-region: us-east-1
 
+      - name: Build SPA
+        run: npx nx build @rumblefish/soroban-block-explorer-web
+
       - name: Build CDK
         run: npx nx build @rumblefish/soroban-block-explorer-aws-cdk
 
@@ -129,10 +132,52 @@ jobs:
         env:
           CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
 
-      - name: Smoke test
+      - name: Upload SPA to S3
+        run: |
+          SPA_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name Explorer-staging-Delivery \
+            --query 'Stacks[0].Outputs[?OutputKey==`SpaBucketName`].OutputValue' \
+            --output text)
+          aws s3 sync web/dist/ "s3://${SPA_BUCKET}/" --delete
+
+      - name: Invalidate CloudFront cache
+        run: |
+          DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
+            --stack-name Explorer-staging-Delivery \
+            --query 'Stacks[0].Outputs[?OutputKey==`DistributionId`].OutputValue' \
+            --output text)
+          aws cloudfront create-invalidation \
+            --distribution-id "${DISTRIBUTION_ID}" \
+            --paths "/*"
+
+      - name: Smoke test — API
         run: |
           API_ENDPOINT=$(aws cloudformation describe-stacks \
             --stack-name Explorer-staging-ApiGateway \
             --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
             --output text)
           curl -f --retry 3 --retry-delay 5 ${API_ENDPOINT}/health
+
+      - name: Smoke test — Frontend
+        run: |
+          # Full end-to-end check through CloudFront.
+          # Staging has basic auth enabled (CloudFront Function backed
+          # by a KeyValueStore). STAGING_BASIC_AUTH (user:password) must
+          # match the base64 token stored in the KVS `auth-token` key.
+          # If the KVS is empty (fresh deploy), CF returns 503 — populate
+          # it first (see delivery-stack.ts for instructions).
+          RESPONSE=$(curl -s -o /dev/null -w '%{http_code} %{content_type}' \
+            --retry 3 --retry-delay 5 \
+            -u "${{ secrets.STAGING_BASIC_AUTH }}" \
+            https://staging.sorobanscan.rumblefish.dev/)
+          HTTP_STATUS=$(echo "$RESPONSE" | cut -d' ' -f1)
+          CONTENT_TYPE=$(echo "$RESPONSE" | cut -d' ' -f2-)
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::error::Frontend smoke test failed: expected HTTP 200, got ${HTTP_STATUS}"
+            exit 1
+          fi
+          if [[ "$CONTENT_TYPE" != *"text/html"* ]]; then
+            echo "::error::Frontend smoke test failed: expected text/html, got ${CONTENT_TYPE}"
+            exit 1
+          fi
+          echo "Frontend smoke test passed: HTTP ${HTTP_STATUS}, ${CONTENT_TYPE}"

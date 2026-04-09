@@ -311,6 +311,9 @@ export class DeliveryStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'SpaBucketName', {
       value: spaBucket.bucketName,
     });
+    new cdk.CfnOutput(this, 'DistributionId', {
+      value: distribution.distributionId,
+    });
     if (waf) {
       new cdk.CfnOutput(this, 'CloudFrontWafWebAclArn', {
         value: waf.webAclArn,
