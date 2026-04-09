@@ -77,6 +77,9 @@ pub struct HandlerState {
 pub async fn handler(event: LambdaEvent<S3Event>, state: &HandlerState) -> Result<(), Error> {
     let (payload, _ctx) = event.into_parts();
 
+    let total = payload.records.len();
+    let mut skipped = 0usize;
+
     for record in &payload.records {
         let bucket = &record.s3.bucket.name;
         // S3 event keys are URL-encoded (e.g. slashes as %2F, spaces as +).
@@ -86,11 +89,12 @@ pub async fn handler(event: LambdaEvent<S3Event>, state: &HandlerState) -> Resul
 
         info!(bucket, key = key.as_str(), "processing S3 record");
 
-        // Validate S3 key pattern
+        // Validate S3 key pattern (must match Galexie filename format).
         let ledger_range = match xdr_parser::parse_s3_key(&key) {
             Ok(range) => range,
             Err(e) => {
                 warn!(bucket, key = key.as_str(), error = %e, "skipping non-matching S3 key");
+                skipped += 1;
                 continue;
             }
         };
@@ -100,7 +104,9 @@ pub async fn handler(event: LambdaEvent<S3Event>, state: &HandlerState) -> Resul
                 info!(
                     bucket,
                     key = key.as_str(),
-                    "S3 record processed successfully"
+                    start = ledger_range.0,
+                    end = ledger_range.1,
+                    "S3 record processed",
                 );
             }
             Err(e) => {
@@ -108,6 +114,13 @@ pub async fn handler(event: LambdaEvent<S3Event>, state: &HandlerState) -> Resul
                 return Err(e.into());
             }
         }
+    }
+
+    if skipped > 0 && skipped == total {
+        error!(
+            total,
+            skipped, "all S3 records skipped by parse_s3_key — no data persisted"
+        );
     }
 
     Ok(())

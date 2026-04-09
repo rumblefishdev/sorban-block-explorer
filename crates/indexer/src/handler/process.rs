@@ -152,7 +152,7 @@ pub async fn process_ledger(meta: &LedgerCloseMeta, pool: &PgPool) -> Result<(),
         ledger_sequence,
         tx_count = extracted_transactions.len(),
         parse_errors = tx_parse_errors.len(),
-        "ledger persisted"
+        "ledger saved to database"
     );
 
     Ok(())

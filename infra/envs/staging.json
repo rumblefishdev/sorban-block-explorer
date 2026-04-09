@@ -19,8 +19,8 @@
   "indexerLambdaMemory": 512,
   "indexerLambdaTimeout": 60,
 
-  "galexieCpu": 4096,
-  "galexieMemory": 16384,
+  "galexieCpu": 2048,
+  "galexieMemory": 13312,
   "galexieEphemeralStorage": 30,
   "galexieDesiredCount": 1,
   "stellarNetworkPassphrase": "Public Global Stellar Network ; September 2015",

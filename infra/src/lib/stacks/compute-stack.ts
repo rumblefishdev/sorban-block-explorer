@@ -130,11 +130,6 @@ export class ComputeStack extends cdk.Stack {
     // ---------------------
     // Ledger Processor Lambda
     // ---------------------
-    // NOTE: The indexer binary (crates/indexer/) is currently a stub — it
-    // initializes tracing but does not yet run a Lambda handler loop.
-    // The actual S3 event handler is implemented in task 0029.
-    // Until then, S3 events will fail and land in the DLQ. This is
-    // expected — the infra is deployed ahead of the application code.
     const processorFunction = new RustFunction(this, 'ProcessorFunction', {
       functionName: `${config.envName}-soroban-explorer-indexer`,
       manifestPath: cargoWorkspacePath,
@@ -146,6 +141,7 @@ export class ComputeStack extends cdk.Stack {
       environment: {
         ...sharedEnv,
         BUCKET_NAME: ledgerBucket.bucketName,
+        RUST_LOG: 'info',
       },
     });
     this.processorFunction = processorFunction;
@@ -161,6 +157,7 @@ export class ComputeStack extends cdk.Stack {
     // Filtered to .xdr.zst suffix to avoid triggering on non-ledger objects
     // (e.g. metadata files, logs). Galexie writes ledger files as:
     //   {hex}--{start}-{end}/{hex}--{start}[-{end}].xdr.zst
+    // This suffix MUST match parse_s3_key() in crates/xdr-parser/src/lib.rs.
     // CDK automatically adds Lambda invoke permission for S3.
     ledgerBucket.addEventNotification(
       s3.EventType.OBJECT_CREATED,
