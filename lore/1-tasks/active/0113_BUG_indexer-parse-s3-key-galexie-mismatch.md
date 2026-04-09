@@ -100,13 +100,15 @@ All tests use `.xdr.zstd` (with `d`) and a hand-invented filename pattern. **Non
 
 ## Fix scope
 
-1. **Rewrite `parse_s3_key`** to accept the real Galexie format:
-   - Suffix `.xdr.zst`
-   - Filename pattern `{hex}--{start}[-{end}]` where `{hex}` is hex (ignore), `{start}` and `{end}` are u32 decimal
-   - Handle both single-ledger files (`FC4D8B46--62026937.xdr.zst`) and ranges (`FC4D8B46--62026937-62026938.xdr.zst`)
-2. **Replace tests** with real Galexie filename samples (use the ones from `aws s3 ls` output as fixtures).
-3. **Add `RUST_LOG` env var** to indexer Lambda in `compute-stack.ts` so tracing is not silently filtered. Recommended: `RUST_LOG=indexer=info,xdr_parser=warn` or `RUST_LOG=info`.
-4. **Optional improvement (consider):** change handler so that "all records skipped by parse_s3_key" is treated as an error or at minimum logged at error level — silent total skip is exactly the failure mode that caused this bug to hide for long.
+1. **Rewrite `parse_s3_key`** (`crates/xdr-parser/src/lib.rs:87-129`) to accept the real Galexie format:
+   - Suffix `.xdr.zst` (not `.xdr.zstd`)
+   - Validate hex prefix (8 hex chars) + `--` double-dash separator (strict, prevents over-accepting)
+   - Parse `{start}` (single) or `{start}-{end}` (range) after `--`
+   - Update doc comment to match new format
+2. **Replace tests** with real Galexie filename samples. Cover: valid single, valid range, valid with path prefix, invalid suffix, invalid hex, missing `--`, start > end, invalid number.
+3. **Add `RUST_LOG: 'info'`** env var to indexer Lambda in `compute-stack.ts:146-149`.
+4. **Log error on total skip** in handler (`crates/indexer/src/handler/mod.rs:77-113`): track processed count, `error!` if 0 of N records processed. This is the root cause of why the bug hid — not optional.
+5. **Cross-reference comments** in parser and CDK linking suffix `.xdr.zst` to each other, so they cannot drift again.
 
 **Out of scope (don't expand this PR):**
 
