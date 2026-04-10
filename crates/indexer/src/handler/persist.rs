@@ -154,17 +154,17 @@ pub async fn persist_ledger(
                     // is_sac = EXCLUDED.is_sac OR existing.is_sac
                     existing.is_sac = existing.is_sac || d.is_sac;
                     // metadata = existing || new (JSON merge)
-                    if let serde_json::Value::Object(ref new_map) = d.metadata {
-                        if let serde_json::Value::Object(ref mut ex_map) = existing.metadata {
-                            for (k, v) in new_map {
-                                ex_map.entry(k.clone()).or_insert_with(|| v.clone());
-                            }
+                    if let serde_json::Value::Object(ref new_map) = d.metadata
+                        && let serde_json::Value::Object(ref mut ex_map) = existing.metadata
+                    {
+                        for (k, v) in new_map {
+                            ex_map.entry(k.clone()).or_insert_with(|| v.clone());
                         }
                     }
                 })
                 .or_insert_with(|| d.clone());
         }
-        let domain_contracts: Vec<_> = merged.values().map(|d| convert::to_contract(d)).collect();
+        let domain_contracts: Vec<_> = merged.values().map(convert::to_contract).collect();
         db::soroban::upsert_contract_deployments_batch(&mut **db_tx, &domain_contracts).await?;
     }
 
@@ -236,7 +236,7 @@ pub async fn persist_ledger(
                 })
                 .or_insert_with(|| n.clone());
         }
-        let domain_nfts: Vec<_> = merged.values().map(|n| convert::to_nft(n)).collect();
+        let domain_nfts: Vec<_> = merged.values().map(convert::to_nft).collect();
         db::soroban::upsert_nfts_batch(&mut **db_tx, &domain_nfts).await?;
     }
 

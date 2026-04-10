@@ -408,7 +408,7 @@ async fn upsert_account_state(
     executor: impl Acquire<'_, Database = sqlx::Postgres>,
     account: &Account,
 ) -> Result<(), sqlx::Error> {
-    upsert_account_states_batch(executor, &[account.clone()]).await
+    upsert_account_states_batch(executor, std::slice::from_ref(account)).await
 }
 
 #[cfg(test)]
@@ -416,7 +416,7 @@ async fn upsert_nft(
     executor: impl Acquire<'_, Database = sqlx::Postgres>,
     nft: &Nft,
 ) -> Result<(), sqlx::Error> {
-    upsert_nfts_batch(executor, &[nft.clone()]).await
+    upsert_nfts_batch(executor, std::slice::from_ref(nft)).await
 }
 
 #[cfg(test)]
@@ -424,7 +424,7 @@ async fn upsert_liquidity_pool(
     executor: impl Acquire<'_, Database = sqlx::Postgres>,
     lp: &LiquidityPool,
 ) -> Result<(), sqlx::Error> {
-    upsert_liquidity_pools_batch(executor, &[lp.clone()]).await
+    upsert_liquidity_pools_batch(executor, std::slice::from_ref(lp)).await
 }
 
 #[cfg(test)]
