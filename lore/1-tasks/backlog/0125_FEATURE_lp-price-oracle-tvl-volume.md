@@ -31,7 +31,7 @@ columns exist in the schema but are effectively always NULL. Computing real valu
 
 1. **Price oracle**: Integrate external price feed (CoinGecko, StellarExpert API, or
    Horizon aggregation endpoint) to get USD prices for pool assets.
-2. **TVL computation**: reserve_a _ price_a + reserve_b _ price_b, updated per snapshot.
+2. **TVL computation**: reserve*a * price*a + reserve_b * price_b, updated per snapshot.
 3. **Volume tracking**: Identify swap operations in `soroban_invocations` or
    `soroban_events` for each pool and aggregate per time window.
 4. **Fee revenue**: volume \* (fee_bps / 10000).
