@@ -1,7 +1,7 @@
 # Data Pipeline Audit Report
 
 **Date:** 2026-04-10  
-**Author:** stkrolikiewicz
+**Author:** stkrolikiewicz  
 **Scope:** Full pipeline data correctness audit + Deliverable 1 readiness assessment
 
 ---
@@ -15,7 +15,9 @@
 5. [Nullable Fields Analysis](#5-nullable-fields-analysis)
 6. [Technical Design Coverage Gaps](#6-technical-design-coverage-gaps)
 7. [Manual Verification Checklist](#7-manual-verification-checklist)
-8. [Recommendations](#8-recommendations)
+8. [Third-Pass Audit Findings (F18-F25)](#8-third-pass-audit-findings-f18-f25)
+9. [Enrichment Pipeline Gap](#9-enrichment-pipeline-gap)
+10. [Recommendations](#10-recommendations)
 
 ---
 
@@ -44,7 +46,7 @@ criteria. Several technical design requirements have no corresponding backlog ta
 | D1 hard blockers               | 6 (0030, 0036, 0118, 0119, 0130, 0134) |
 | Nullable fields with no plan   | 5                                      |
 | Tech design reqs without tasks | 9 (all now have tasks)                 |
-| New tasks created              | 17 (0118-0134)                         |
+| New tasks created              | 18 (0118-0135)                         |
 | Intentionally not fixed        | 6 (F4, F6, F17, F23-F25)               |
 
 > **Note on finding numbers:** Findings are numbered F4-F25. Numbers F1-F3 and F5 were
@@ -469,9 +471,89 @@ from git history before the repo is made public.
 
 ---
 
-## 9. Recommendations
+## 9. Enrichment Pipeline Gap
 
-### 9.1 Immediate (Before D1 Closeout)
+### 9.1 Problem
+
+The technical design specifies data that **cannot be extracted from XDR alone**, but does
+not define how or when this data is computed. The design describes three layers (Ingestion,
+API, Frontend) but is missing a fourth — **Enrichment**:
+
+> Ingestion (XDR to DB) **-> Enrichment ->** API (DB to JSON) -> Frontend
+
+Six columns are always NULL because they require data from outside the XDR:
+
+| Column                     | Tech Design Ref | What It Needs                | Why Indexer Cannot Do It                          |
+| -------------------------- | --------------- | ---------------------------- | ------------------------------------------------- |
+| `tokens.holder_count`      | L166, L175      | Count of all token holders   | Requires global state aggregation, not per-ledger |
+| `tokens.metadata`          | L176            | Name, icon, domain           | Data in external stellar.toml (SEP-1), not in XDR |
+| `liquidity_pools.tvl`      | L223, L409      | Reserves x USD price         | USD prices not on-chain, requires price oracle    |
+| `lp_snapshots.tvl`         | L409            | Time-series TVL              | Same as above                                     |
+| `lp_snapshots.volume`      | L223, L409      | Sum of swaps per pool/period | Requires event aggregation across time windows    |
+| `lp_snapshots.fee_revenue` | L223, L409      | volume x fee_bps / 10000     | Derived, NULL when volume is NULL                 |
+
+### 9.2 Why the Tech Design Omits This
+
+1. **No "enrichment" section.** The data pipeline (Section 5) covers XDR parsing and DB
+   writes as the only data population step.
+2. **Only hint:** L601 — "Materialized views for aggregated statistics" in the scaling
+   table. Suggests the authors considered DB-side aggregation but never elaborated.
+3. **Risk section acknowledges the gap without solving it:** L1265 — "LP chart data
+   requires aggregation. Mitigated by building these pages last." — i.e., defer it.
+
+### 9.3 Proposed Enrichment Architecture
+
+The enrichment pipeline sits between ingestion and API. It has three execution modes:
+
+**Inline (synchronous, per ledger):**
+Runs inside the indexer Lambda during normal ledger processing. No extra infrastructure.
+Used for: `holder_count` increment/decrement at each trustline change.
+
+**Scheduled (asynchronous, EventBridge cron):**
+A dedicated "Enrichment Worker" Lambda triggered on a schedule. Fetches external data and
+computes aggregates. Used for: token metadata (daily TOML fetch), LP TVL (every 5 min,
+price x reserves), LP volume (every 5 min, swap aggregation).
+
+**One-time (post-backfill):**
+Manual or deploy-triggered run after historical backfill completes. Used for: full
+holder_count recount, initial TVL snapshot.
+
+| Type      | Trigger                     | Infrastructure                     | Tasks      |
+| --------- | --------------------------- | ---------------------------------- | ---------- |
+| Inline    | Every ledger (in indexer)   | None extra, code in indexer Lambda | 0135       |
+| Scheduled | EventBridge cron (5m/daily) | New Enrichment Worker Lambda       | 0124, 0125 |
+| One-time  | After backfill              | Manual run or deploy-triggered     | 0135       |
+
+Estimated cost: ~$1-3/mo (Lambda ARM64 256MB, free-tier EventBridge + CoinGecko API).
+
+### 9.4 Write-Only Columns (populated but no API reads them)
+
+These columns are populated by the indexer but not referenced in any API response spec.
+None should be removed — all have valid use cases:
+
+| Column                              | Tech Design Ref                | Recommendation                                                                                     |
+| ----------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------- |
+| `transactions.result_meta_xdr`      | L306, L767, L815               | Keep. L815: "preserved for advanced decode/debug". Large storage cost — consider S3 cold archival. |
+| `transactions.result_code`          | Not in API spec                | Keep + add to API. Useful for filtering failed tx by error type.                                   |
+| `transactions.parse_error`          | Not in design                  | Keep. Internal diagnostic, zero storage cost.                                                      |
+| `soroban_invocations.function_args` | L921 (schema only)             | Keep. Enables per-contract invocation queries with args.                                           |
+| `soroban_invocations.return_value`  | L922 (schema only)             | Keep. Same reasoning.                                                                              |
+| `accounts.home_domain`              | L668, L801 but not in API spec | Keep + add to API. Standard Stellar field. Likely a tech design omission.                          |
+
+### 9.5 Column Removal Assessment
+
+**No columns should be removed.** Every column either:
+
+- Is required by the tech design (placeholder columns — tasks 0124, 0125, 0135)
+- Is explicitly preserved by the tech design (result_meta_xdr — L815)
+- Has operational value (parse_error, result_code)
+- Enables query patterns not served by other columns (function_args, return_value)
+
+---
+
+## 10. Recommendations
+
+### 10.1 Immediate (Before D1 Closeout)
 
 1. **Complete task 0118** (NFT false positives fix) — before backfill, prevents millions of spurious records
 2. **Complete task 0119** (trustline balance extraction) — before backfill, dormant accounts won't self-fix
@@ -481,11 +563,11 @@ from git history before the repo is made public.
 6. **Complete task 0036** (CloudWatch dashboards + alarms) — hard blocker for AC#5
 7. **Run AC#3 spot-check** — manual DB query with known Soroswap/Aquarius hashes
 
-### 9.2 Before D2 Start
+### 10.2 Before D2 Start
 
-6. **Fix F8** (task 0120, Soroban-native token detection) — core feature gap for token listings
+8. **Fix F8** (task 0120, Soroban-native token detection) — core feature gap for token listings
 
-### 9.3 All Created Tasks (0118-0134)
+### 10.3 All Created Tasks (0118-0135)
 
 | Task | Title                                   | Severity | Milestone | Effort |
 | ---- | --------------------------------------- | -------- | --------- | ------ |
@@ -495,8 +577,8 @@ from git history before the repo is made public.
 | 0121 | NFT transfer history schema + API       | MEDIUM   | 2         | Medium |
 | 0122 | Transaction signatures extraction       | LOW      | 2         | Small  |
 | 0123 | XDR decoding service (API)              | MEDIUM   | 2         | Medium |
-| 0124 | Token metadata enrichment pipeline      | LOW      | 2         | Medium |
-| 0125 | LP price oracle / TVL / volume          | LOW      | 2         | Large  |
+| 0124 | Token metadata enrichment (scheduled)   | LOW      | 2         | Medium |
+| 0125 | LP TVL / volume / fee revenue (sched.)  | LOW      | 2         | Large  |
 | 0126 | Pool participants tracking              | LOW      | 2         | Medium |
 | 0127 | D3: Post-launch monitoring report       | LOW      | 3         | Small  |
 | 0128 | D3: Public GitHub repo setup            | LOW      | 3         | Small  |
@@ -506,3 +588,4 @@ from git history before the repo is made public.
 | 0132 | Missing DB indexes (F21)                | MEDIUM   | 2         | Small  |
 | 0133 | Full-text search indexes (F22)          | MEDIUM   | 2         | Medium |
 | 0134 | Envelope/meta ordering validation (F18) | MEDIUM   | **1**     | Small  |
+| 0135 | Token holder_count tracking (inline)    | MEDIUM   | 2         | Medium |
