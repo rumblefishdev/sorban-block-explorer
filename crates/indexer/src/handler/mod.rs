@@ -146,7 +146,8 @@ async fn process_s3_object(
 
     // Step 4: Process each ledger in the batch
     for ledger_meta in batch.ledger_close_metas.iter() {
-        if let Err(e) = process::process_ledger(ledger_meta, &state.db_pool, &state.cw_client).await
+        if let Err(e) =
+            process::process_ledger(ledger_meta, &state.db_pool, Some(&state.cw_client)).await
         {
             error!(
                 key,

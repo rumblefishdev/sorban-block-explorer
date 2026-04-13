@@ -13,11 +13,11 @@ use super::HandlerError;
 use super::persist;
 
 /// Process a single ledger: run all parsing stages and persist in one DB transaction.
-/// On success, publishes `LastProcessedLedgerSequence` to CloudWatch (best-effort).
+/// If `cw_client` is provided, publishes `LastProcessedLedgerSequence` to CloudWatch.
 pub async fn process_ledger(
     meta: &LedgerCloseMeta,
     pool: &PgPool,
-    cw_client: &CloudWatchClient,
+    cw_client: Option<&CloudWatchClient>,
 ) -> Result<(), HandlerError> {
     // --- Stage 0024: Ledger + transaction extraction ---
     let extracted_ledger = xdr_parser::extract_ledger(meta)?;
@@ -161,7 +161,9 @@ pub async fn process_ledger(
     )
     .await?;
 
+    let commit_timer = Instant::now();
     db_tx.commit().await?;
+    let commit_ms = commit_timer.elapsed().as_millis();
 
     let persist_ms = persist_timer.elapsed().as_millis();
 
@@ -171,10 +173,13 @@ pub async fn process_ledger(
         parse_errors = tx_parse_errors.len(),
         parse_ms,
         persist_ms,
+        commit_ms,
         "ledger saved to database"
     );
 
-    publish_ledger_sequence_metric(cw_client, ledger_sequence).await;
+    if let Some(cw) = cw_client {
+        publish_ledger_sequence_metric(cw, ledger_sequence).await;
+    }
 
     Ok(())
 }
