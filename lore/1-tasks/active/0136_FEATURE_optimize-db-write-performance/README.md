@@ -36,9 +36,12 @@ Backfill benchmark (task 0117): ~450ms DB write per ledger, ~50ms XDR parse.
 Target: <100ms DB writes. Approach: measure first, then optimize in impact order.
 
 **Context:** Local backfill is the production ingestion path — Lambda-based
-ingestion is deferred. All optimizations must produce correct, complete data.
-Temporary shortcuts (drop indexes/constraints) are acceptable only during the
-initial bulk load phase, with mandatory restoration and validation after.
+ingestion is deferred. Production run scope: ~11M ledgers (hundreds of millions
+of rows in events/operations). All optimizations must produce correct, complete
+data. At this scale, any "drop and rebuild" strategy (GIN indexes, UNIQUE
+constraints) carries significant rebuild cost (hours of `CREATE INDEX` /
+`VALIDATE CONSTRAINT`), so such approaches are gated on Phase 0 measurement
+data rather than assumed beneficial.
 
 Full root cause analysis: [notes/R-root-cause-analysis.md](notes/R-root-cause-analysis.md)
 
@@ -54,10 +57,13 @@ Full root cause analysis: [notes/R-root-cause-analysis.md](notes/R-root-cause-an
 
 ### Phase 1: Quick wins (no schema changes, ordered by impact/effort)
 
-4. **PG config tuning** — `synchronous_commit = off`, `wal_level = minimal`,
+4. **PG config tuning** — `synchronous_commit = off`,
    `checkpoint_completion_target = 0.9`, `work_mem = 256MB`. Zero code changes.
+   All settable at runtime (`SET` / `ALTER SYSTEM`), no PG restart required.
    Safe for backfill: idempotent re-run covers any crash-lost commits.
    Restore defaults after bulk load completes.
+   **Excluded:** `wal_level = minimal` — requires PG restart, disables
+   replication, marginal gain when `synchronous_commit = off` already applied.
 5. **Fix transactions no-op UPDATE** — replace `ON CONFLICT DO UPDATE...RETURNING`
    with: INSERT DO NOTHING (no RETURNING) + SELECT hash, id WHERE hash = ANY($1).
    Works for both fresh inserts and replays. Avoids WAL writes on conflict.
@@ -69,48 +75,54 @@ Full root cause analysis: [notes/R-root-cause-analysis.md](notes/R-root-cause-an
 7. **Batch contract interfaces** — replace per-item loop (`persist.rs:179-192`)
    with single UNNEST queries. Eliminates ~20 roundtrips per ledger.
    Permanent code improvement.
-8. **Bulk load phase only — `--fast` flag:**
-   - Drop GIN indexes before run (`operations.details`, `soroban_events.topics`,
-     `soroban_contracts.search_vector`), recreate with `CREATE INDEX CONCURRENTLY`
-     after. No API should query during bulk load.
-   - `SET CONSTRAINTS ALL DEFERRED` per transaction (FK check at COMMIT,
-     not per-INSERT)
-   - Flag must print clear warnings: "GIN indexes dropped — do not query until
-     backfill completes"
+8. **Deferred FK constraints** — `SET CONSTRAINTS ALL DEFERRED` per transaction
+   (FK check at COMMIT, not per-INSERT). Zero rebuild cost, safety preserved.
+   Permanent improvement — no rollback needed.
 
 **Benchmark after Phase 1. If <100ms achieved, stop here.**
 
+**Deferred to Phase 2 (data-gated):** GIN index drop/rebuild. At 11M ledgers
+(hundreds of millions of rows), `CREATE INDEX CONCURRENTLY` takes hours and
+blocks API usage. Only pursue if Phase 0 shows GIN maintenance is a dominant
+cost (>20% of write time).
+
 ### Phase 2: Schema changes (only if Phase 1 insufficient)
 
-9. **Drop UNIQUE constraints** on business keys (`uq_events_tx_index`,
-   `uq_invocations_tx_index`, `uq_operations_tx_order`) during bulk load only.
-   Keep BIGSERIAL as sole PK (monotonic, fast append — senior's recommendation).
-   Idempotency: `insert_ledger` returns `rows_affected = 0` for already-processed
-   ledgers — skip entire ledger on replay. Re-add constraints + validate after
-   bulk load (`ALTER TABLE ... VALIDATE CONSTRAINT` catches any duplicates).
-10. If still insufficient, evaluate **COPY protocol** vs INSERT...UNNEST
+9. **Drop GIN indexes** — only if Phase 0 proves GIN maintenance >20% of write
+   time. Drop before run, `CREATE INDEX CONCURRENTLY` after. Budget hours for
+   rebuild at 11M scale. API must be offline during backfill.
+10. **Drop UNIQUE constraints** on business keys (`uq_events_tx_index`,
+    `uq_invocations_tx_index`, `uq_operations_tx_order`) during bulk load only.
+    Keep BIGSERIAL as sole PK (monotonic, fast append — senior's recommendation).
+    Idempotency: `insert_ledger` returns `rows_affected = 0` for already-processed
+    ledgers — skip entire ledger on replay. Re-add constraints + validate after
+    bulk load. **Warning:** `ALTER TABLE ... VALIDATE CONSTRAINT` on hundreds of
+    millions of rows is expensive (hours). Only pursue if impact justifies cost.
+11. If still insufficient, evaluate **COPY protocol** vs INSERT...UNNEST
     (requires persist layer refactor — separate task).
-11. Re-benchmark.
+12. Re-benchmark.
 
 ### Phase 3: Validate
 
-12. Re-run backfill-bench on reference range (62015000-62015999)
-13. Compare: target <100ms avg per ledger
-14. Verify idempotency: replay same range, zero duplicates
-15. Restore PG config defaults, re-add indexes/constraints if dropped
-16. Validate data integrity: row counts, FK consistency, unique constraint check
+13. Re-run backfill-bench on reference range (62015000-62015999)
+14. Compare: target <100ms avg per ledger
+15. Verify idempotency: replay same range, zero duplicates
+16. Restore PG config defaults (`synchronous_commit = on`, default `work_mem`)
+17. If indexes/constraints were dropped (Phase 2): rebuild and validate — budget
+    hours for this step at production scale
+18. Validate data integrity: row counts, FK consistency, unique constraint check
 
 ## Acceptance Criteria
 
 - [ ] Per-query instrumentation in `persist_ledger` with timing logs
 - [ ] Timing report from Phase 0 with measured breakdown
-- [ ] PG config tuning documented (what to set during bulk load, what to restore after)
+- [ ] PG config tuning documented (runtime-settable only, no PG restart)
 - [ ] No-op UPDATE eliminated from `insert_transactions_batch` (permanent fix)
 - [ ] Contract interface writes batched, no per-item loop (permanent fix)
-- [ ] Multi-ledger batching supported (`--batch-size N`)
-- [ ] `--fast` flag for bulk load: drops GIN indexes + defers FK constraints
-- [ ] Post-bulk-load restoration: indexes rebuilt, constraints re-added, PG config restored
+- [ ] Deferred FK constraints per transaction (permanent fix)
+- [ ] Multi-ledger batching supported (`--batch-size N`) — gated on Phase 0 data
 - [ ] Benchmark: <100ms avg DB write per ledger on local PostgreSQL
 - [ ] Idempotency preserved: replay produces zero duplicates, no errors
 - [ ] Data integrity validated after bulk load (FK consistency, unique constraints)
-- [ ] Schema changes (Phase 2) gated on Phase 0/1 measurement data
+- [ ] Schema changes (Phase 2) gated on Phase 0/1 measurement data — with
+      rebuild cost explicitly budgeted for 11M ledger scale

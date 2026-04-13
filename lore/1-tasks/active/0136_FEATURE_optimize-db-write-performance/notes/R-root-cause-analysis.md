@@ -36,9 +36,13 @@ operations → events → invocations. FK constraint disabling is safe.
 Default PostgreSQL config prioritizes durability. For re-runnable local backfill:
 
 - `synchronous_commit = off` — don't wait for WAL flush per commit
-- `wal_level = minimal` + `max_wal_senders = 0` — reduce WAL volume
 - `checkpoint_completion_target = 0.9` — spread checkpoint I/O
 - `work_mem = 256MB` — larger sort/hash buffers
+
+All runtime-settable (`SET` / `ALTER SYSTEM + pg_reload_conf()`), no PG restart.
+
+**Excluded:** `wal_level = minimal` — requires PG restart, disables replication,
+marginal gain when `synchronous_commit = off` already applied.
 
 **Zero code changes, likely the single biggest win.**
 
@@ -82,6 +86,8 @@ Fix: batch into single UNNEST queries.
 - `soroban_contracts.search_vector` (TSVECTOR GIN)
 
 Fix for backfill: drop before bulk load, `CREATE INDEX CONCURRENTLY` after.
+**Caveat (11M scale):** Rebuild on hundreds of millions of rows takes hours.
+Only pursue if Phase 0 shows GIN maintenance is >20% of write time.
 
 ## Bottleneck 6: Deferred FK constraints
 
