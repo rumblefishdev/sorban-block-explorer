@@ -1,5 +1,9 @@
 //! Per-ledger processing: parse all stages and persist atomically.
 
+use aws_sdk_cloudwatch::{
+    Client as CloudWatchClient,
+    types::{Dimension, MetricDatum, StandardUnit},
+};
 use sqlx::PgPool;
 use std::time::Instant;
 use stellar_xdr::curr::{LedgerCloseMeta, TransactionMeta};
@@ -9,7 +13,12 @@ use super::HandlerError;
 use super::persist;
 
 /// Process a single ledger: run all parsing stages and persist in one DB transaction.
-pub async fn process_ledger(meta: &LedgerCloseMeta, pool: &PgPool) -> Result<(), HandlerError> {
+/// If `cw_client` is provided, publishes `LastProcessedLedgerSequence` to CloudWatch.
+pub async fn process_ledger(
+    meta: &LedgerCloseMeta,
+    pool: &PgPool,
+    cw_client: Option<&CloudWatchClient>,
+) -> Result<(), HandlerError> {
     // --- Stage 0024: Ledger + transaction extraction ---
     let extracted_ledger = xdr_parser::extract_ledger(meta)?;
     let ledger_sequence = extracted_ledger.sequence;
@@ -168,7 +177,37 @@ pub async fn process_ledger(meta: &LedgerCloseMeta, pool: &PgPool) -> Result<(),
         "ledger saved to database"
     );
 
+    if let Some(cw) = cw_client {
+        publish_ledger_sequence_metric(cw, ledger_sequence).await;
+    }
+
     Ok(())
+}
+
+/// Publish `LastProcessedLedgerSequence` to CloudWatch.
+/// Best-effort: failures are logged as warnings and do not abort ledger processing.
+async fn publish_ledger_sequence_metric(cw_client: &CloudWatchClient, ledger_sequence: u32) {
+    let env_name = std::env::var("ENV_NAME").unwrap_or_else(|_| "unknown".to_string());
+    let datum = MetricDatum::builder()
+        .metric_name("LastProcessedLedgerSequence")
+        .dimensions(
+            Dimension::builder()
+                .name("Environment")
+                .value(&env_name)
+                .build(),
+        )
+        .value(f64::from(ledger_sequence))
+        .unit(StandardUnit::None)
+        .build();
+    let result = cw_client
+        .put_metric_data()
+        .namespace("SorobanBlockExplorer/Indexer")
+        .metric_data(datum)
+        .send()
+        .await;
+    if let Err(e) = result {
+        warn!(ledger_sequence, error = %e, "failed to publish LastProcessedLedgerSequence metric");
+    }
 }
 
 /// Collect per-transaction TransactionMeta references from any LedgerCloseMeta variant.

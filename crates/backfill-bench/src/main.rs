@@ -227,7 +227,7 @@ async fn index_partition(
         let xdr_bytes = xdr_parser::decompress_zstd(&compressed)?;
         let batch = xdr_parser::deserialize_batch(&xdr_bytes)?;
         for ledger_meta in batch.ledger_close_metas.iter() {
-            indexer::handler::process::process_ledger(ledger_meta, pool).await?;
+            indexer::handler::process::process_ledger(ledger_meta, pool, None).await?;
         }
 
         if cleanup {

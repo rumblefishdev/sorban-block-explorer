@@ -21,6 +21,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 lambda_runtime = { workspace = true }
 aws-config = { workspace = true }
+aws-sdk-cloudwatch = "1"
 aws-sdk-s3 = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }

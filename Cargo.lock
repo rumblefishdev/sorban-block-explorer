@@ -1977,6 +1977,7 @@ name = "indexer"
 version = "0.1.0"
 dependencies = [
  "aws-config",
+ "aws-sdk-cloudwatch",
  "aws-sdk-s3",
  "chrono",
  "db",
