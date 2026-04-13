@@ -4,6 +4,7 @@
 
 mod handler;
 
+use aws_sdk_cloudwatch::Client as CloudWatchClient;
 use aws_sdk_s3::Client as S3Client;
 use lambda_runtime::{Error, service_fn};
 use tracing::info;
@@ -35,8 +36,13 @@ async fn main() -> Result<(), Error> {
 
     let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let s3_client = S3Client::new(&aws_config);
+    let cw_client = CloudWatchClient::new(&aws_config);
 
-    let state = handler::HandlerState { s3_client, db_pool };
+    let state = handler::HandlerState {
+        s3_client,
+        cw_client,
+        db_pool,
+    };
 
     info!("indexer ready — starting Lambda runtime");
 

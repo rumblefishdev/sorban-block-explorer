@@ -9,6 +9,7 @@
 //! Usage:
 //!   cargo run -p backfill-bench -- --start 62015000 --end 62015999
 
+use aws_sdk_cloudwatch::Client as CloudWatchClient;
 use chrono::Local;
 use clap::Parser;
 use sqlx::PgPool;
@@ -165,6 +166,7 @@ struct DownloadStats {
 async fn indexer(
     mut rx: mpsc::Receiver<(u32, bool)>,
     pool: &PgPool,
+    cw_client: &CloudWatchClient,
     start: u32,
 ) -> Result<(usize, usize), Box<dyn std::error::Error>> {
     let timer = Instant::now();
@@ -204,7 +206,7 @@ async fn indexer(
             let xdr_bytes = xdr_parser::decompress_zstd(&compressed)?;
             let batch = xdr_parser::deserialize_batch(&xdr_bytes)?;
             for ledger_meta in batch.ledger_close_metas.iter() {
-                indexer::handler::process::process_ledger(ledger_meta, pool).await?;
+                indexer::handler::process::process_ledger(ledger_meta, pool, cw_client).await?;
             }
 
             let _ = std::fs::remove_file(&path);
@@ -273,6 +275,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool = db::pool::create_pool(&args.database_url)?;
     info!("connected to database");
 
+    let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+    let cw_client = CloudWatchClient::new(&aws_config);
+
     // Shared download stats
     let dl_stats = Arc::new(DownloadStats {
         downloaded: AtomicUsize::new(0),
@@ -290,7 +295,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Run indexer on main task
-    let (indexed, skipped) = indexer(rx, &pool, args.start).await?;
+    let (indexed, skipped) = indexer(rx, &pool, &cw_client, args.start).await?;
 
     // Wait for downloader to fully finish
     dl_handle.await?;

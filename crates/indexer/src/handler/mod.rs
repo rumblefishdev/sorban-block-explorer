@@ -8,6 +8,7 @@ mod convert;
 mod persist;
 pub mod process;
 
+use aws_sdk_cloudwatch::Client as CloudWatchClient;
 use aws_sdk_s3::Client as S3Client;
 use lambda_runtime::{Error, LambdaEvent};
 use serde::Deserialize;
@@ -66,6 +67,7 @@ pub enum HandlerError {
 #[derive(Clone)]
 pub struct HandlerState {
     pub s3_client: S3Client,
+    pub cw_client: CloudWatchClient,
     pub db_pool: PgPool,
 }
 
@@ -144,7 +146,8 @@ async fn process_s3_object(
 
     // Step 4: Process each ledger in the batch
     for ledger_meta in batch.ledger_close_metas.iter() {
-        if let Err(e) = process::process_ledger(ledger_meta, &state.db_pool).await {
+        if let Err(e) = process::process_ledger(ledger_meta, &state.db_pool, &state.cw_client).await
+        {
             error!(
                 key,
                 error = %e,

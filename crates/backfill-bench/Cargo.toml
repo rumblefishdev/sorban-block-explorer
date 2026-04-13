@@ -9,6 +9,8 @@ name = "backfill-bench"
 path = "src/main.rs"
 
 [dependencies]
+aws-config = { workspace = true }
+aws-sdk-cloudwatch = "1"
 indexer = { path = "../indexer" }
 xdr-parser = { path = "../xdr-parser" }
 db = { path = "../db" }

@@ -277,7 +277,7 @@ export class CloudWatchStack extends cdk.Stack {
             height: 1,
           }),
         ],
-        // Row 2: Galexie freshness proxy + Processor duration
+        // Row 2: Galexie freshness proxy + last indexed ledger + Processor duration
         [
           new cloudwatch.GraphWidget({
             title: 'Galexie S3 freshness (Processor invocations/min)',
@@ -288,7 +288,21 @@ export class CloudWatchStack extends cdk.Stack {
                 label: 'Invocations',
               }),
             ],
-            width: 12,
+            width: 8,
+            height: 6,
+          }),
+          new cloudwatch.GraphWidget({
+            title: 'Last processed ledger sequence',
+            left: [
+              new cloudwatch.Metric({
+                namespace: 'SorobanBlockExplorer/Indexer',
+                metricName: 'LastProcessedLedgerSequence',
+                period: cdk.Duration.minutes(1),
+                statistic: cloudwatch.Stats.MAXIMUM,
+                label: 'Last indexed ledger',
+              }),
+            ],
+            width: 8,
             height: 6,
           }),
           new cloudwatch.GraphWidget({
@@ -310,7 +324,7 @@ export class CloudWatchStack extends cdk.Stack {
                 label: 'p99',
               }),
             ],
-            width: 12,
+            width: 8,
             height: 6,
           }),
         ],

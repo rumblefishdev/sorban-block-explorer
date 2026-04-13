@@ -776,6 +776,8 @@ dependencies = [
 name = "backfill-bench"
 version = "0.1.0"
 dependencies = [
+ "aws-config",
+ "aws-sdk-cloudwatch",
  "chrono",
  "clap",
  "db",
@@ -1977,6 +1979,7 @@ name = "indexer"
 version = "0.1.0"
 dependencies = [
  "aws-config",
+ "aws-sdk-cloudwatch",
  "aws-sdk-s3",
  "chrono",
  "db",
