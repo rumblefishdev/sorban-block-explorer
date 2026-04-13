@@ -2,7 +2,7 @@
 id: '0132'
 title: 'DB: add missing indexes for planned API query patterns'
 type: FEATURE
-status: backlog
+status: blocked
 related_adr: []
 related_tasks: ['0043', '0046', '0050', '0053', '0136']
 blocked_by: ['0136']
