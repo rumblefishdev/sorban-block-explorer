@@ -1,0 +1,20 @@
+[package]
+name = "backfill-bench"
+version = "0.1.0"
+edition = "2024"
+description = "Local backfill benchmark — stream XDR from Stellar public S3 to local Postgres"
+
+[[bin]]
+name = "backfill-bench"
+path = "src/main.rs"
+
+[dependencies]
+indexer = { path = "../indexer" }
+xdr-parser = { path = "../xdr-parser" }
+db = { path = "../db" }
+tokio = { workspace = true, features = ["process", "sync"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+sqlx = { workspace = true }
+clap = { version = "4", features = ["derive", "env"] }
+chrono = { workspace = true }

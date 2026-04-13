@@ -6,7 +6,7 @@
 
 mod convert;
 mod persist;
-mod process;
+pub mod process;
 
 use aws_sdk_s3::Client as S3Client;
 use lambda_runtime::{Error, LambdaEvent};
