@@ -93,7 +93,7 @@ remove it unless codified in CDK.
   queue in Lambda's async invoke queue. If Galexie writes faster than
   20 Lambda instances can process, events queue up. At 12 files/min and
   <1s per file, 20 concurrent is more than enough. But during historical
-  backfill (task 0030) with high file throughput, may need higher limit.
+  backfill (backfill-bench, task 0117) with high file throughput, may need higher limit.
 - **DLQ overflow** — throttled events retry 2x then go to DLQ. At steady
   state (12/min, 20 concurrent) no throttling expected. Monitor DLQ
   after fix.

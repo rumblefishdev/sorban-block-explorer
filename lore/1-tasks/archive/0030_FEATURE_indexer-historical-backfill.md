@@ -2,9 +2,11 @@
 id: '0030'
 title: 'Indexer: historical backfill Fargate task'
 type: FEATURE
-status: active
+status: superseded
 related_adr: ['0005']
-related_tasks: ['0001', '0029', '0028', '0092']
+related_tasks:
+  ['0001', '0029', '0028', '0092', '0118', '0119', '0130', '0134', '0135']
+blocked_by: ['0118', '0119', '0130', '0134']
 tags: [priority-medium, effort-medium, layer-indexing]
 milestone: 1
 links:
@@ -22,6 +24,20 @@ history:
     status: active
     who: FilipDz
     note: 'Activated task for implementation'
+  - date: '2026-04-13'
+    status: active
+    who: fmazur
+    note: 'Added hard blockers from pipeline audit (Section 10.4): 0118, 0119, 0130, 0134 must complete before backfill runs.'
+  - date: '2026-04-13'
+    status: superseded
+    who: fmazur
+    by: ['0117']
+    note: >
+      Team decided to use local backfill via backfill-bench (task 0117, completed)
+      instead of Fargate. backfill-bench streams from Stellar public S3 to local
+      Postgres using the same process_ledger pipeline. Fargate infrastructure not
+      needed. Audit pre-backfill blockers (0118, 0119, 0130, 0134) still apply to
+      running backfill-bench.
 ---
 
 # Indexer: historical backfill Fargate task
@@ -33,6 +49,23 @@ Implement an ECS Fargate task that reads Stellar public history archives, export
 ## Status: Active
 
 **Current state:** Starting implementation. Depends on the Ledger Processor (task 0029) and idempotent writes (task 0028) for downstream processing. Research task 0001 (Galexie/Captive Core setup) provides foundational knowledge.
+
+## Pre-Backfill Blockers (audit Section 10.4)
+
+**These tasks MUST be completed before running backfill.** Running backfill without them
+causes data corruption or massive waste that is expensive to fix retroactively.
+
+| Task                              | Why it blocks backfill                         | Consequence if skipped                                                 |
+| --------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------- |
+| **0118** (NFT false positives)    | Fungible transfers create spurious NFT records | Millions of false NFT records to clean up post-backfill                |
+| **0119** (trustline balances)     | Dormant accounts won't self-fix after backfill | Account balances permanently incomplete for historical accounts        |
+| **0130** (historical partitions)  | Only Apr-Jun 2026 partitions exist             | 29 months of data lands in DEFAULT partition, expensive to split later |
+| **0134** (envelope/meta ordering) | No validation that envelopes match their metas | Silent data corruption if any ordering issue in historical data        |
+
+**Post-backfill dependency:**
+| Task | When | What |
+|------|------|------|
+| **0135** (holder_count) | After backfill completes | One-time full recount — inline +1/-1 must be disabled during backfill |
 
 ## Context
 
