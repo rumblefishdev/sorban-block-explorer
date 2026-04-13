@@ -237,7 +237,7 @@ async fn index_partition(
         indexed += 1;
         *global_indexed += 1;
 
-        if *global_indexed % 100 == 0 {
+        if (*global_indexed).is_multiple_of(100) {
             let elapsed = global_timer.elapsed();
             let avg_ms = elapsed.as_millis() as f64 / *global_indexed as f64;
             info!(
