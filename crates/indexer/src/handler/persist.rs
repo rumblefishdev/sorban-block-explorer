@@ -1,7 +1,8 @@
 //! Persistence layer: writes all parsed data within a single DB transaction.
 
 use std::collections::HashMap;
-use tracing::warn;
+use std::time::Instant;
+use tracing::{info, warn};
 
 use super::HandlerError;
 use super::convert;
@@ -31,13 +32,33 @@ pub async fn persist_ledger(
     tokens: &[ExtractedToken],
     nfts: &[ExtractedNft],
 ) -> Result<(), HandlerError> {
+    let ledger_seq = ledger.sequence;
+    macro_rules! timed {
+        ($label:expr, $expr:expr) => {{
+            let t = Instant::now();
+            let result = $expr;
+            (result, $label, t.elapsed())
+        }};
+    }
+    let mut timings: Vec<(&str, std::time::Duration)> = Vec::with_capacity(16);
+
     // 1. Insert ledger
     let domain_ledger = convert::to_ledger(ledger);
-    db::persistence::insert_ledger(&mut **db_tx, &domain_ledger).await?;
+    let (result, label, dur) = timed!(
+        "insert_ledger",
+        db::persistence::insert_ledger(&mut **db_tx, &domain_ledger).await
+    );
+    result?;
+    timings.push((label, dur));
 
     // 2. Insert transactions and collect hash→id mapping
     let domain_txs: Vec<_> = transactions.iter().map(convert::to_transaction).collect();
-    let tx_ids = db::persistence::insert_transactions_batch(&mut **db_tx, &domain_txs).await?;
+    let (result, label, dur) = timed!(
+        "insert_transactions",
+        db::persistence::insert_transactions_batch(&mut **db_tx, &domain_txs).await
+    );
+    let tx_ids = result?;
+    timings.push((label, dur));
 
     let hash_to_id: HashMap<&str, i64> = tx_ids.iter().map(|(h, id)| (h.as_str(), *id)).collect();
     let hash_to_source: HashMap<&str, &str> = transactions
@@ -59,7 +80,12 @@ pub async fn persist_ledger(
                     .map(|op| convert::to_operation(op, tx_id, tx_source)),
             );
         }
-        db::persistence::insert_operations_batch(&mut **db_tx, &all_ops).await?;
+        let (result, label, dur) = timed!(
+            "insert_operations",
+            db::persistence::insert_operations_batch(&mut **db_tx, &all_ops).await
+        );
+        result?;
+        timings.push((label, dur));
     }
 
     // 3b. Ensure all referenced contracts exist (FK constraint on soroban_events/invocations)
@@ -80,7 +106,12 @@ pub async fn persist_ledger(
             }
         }
         let cids: Vec<&str> = contract_ids.into_iter().collect();
-        db::soroban::ensure_contracts_exist_batch(&mut **db_tx, &cids).await?;
+        let (result, label, dur) = timed!(
+            "ensure_contracts",
+            db::soroban::ensure_contracts_exist_batch(&mut **db_tx, &cids).await
+        );
+        result?;
+        timings.push((label, dur));
     }
 
     // 4. Insert events — flatten all transactions into a single batch
@@ -93,7 +124,12 @@ pub async fn persist_ledger(
             };
             all_events.extend(evts.iter().map(|e| convert::to_event(e, tx_id)));
         }
-        db::persistence::insert_events_batch(&mut **db_tx, &all_events).await?;
+        let (result, label, dur) = timed!(
+            "insert_events",
+            db::persistence::insert_events_batch(&mut **db_tx, &all_events).await
+        );
+        result?;
+        timings.push((label, dur));
     }
 
     // 5. Insert invocations — flatten all transactions into a single batch
@@ -109,7 +145,12 @@ pub async fn persist_ledger(
             };
             all_invs.extend(invs.iter().map(|inv| convert::to_invocation(inv, tx_id)));
         }
-        db::persistence::insert_invocations_batch(&mut **db_tx, &all_invs).await?;
+        let (result, label, dur) = timed!(
+            "insert_invocations",
+            db::persistence::insert_invocations_batch(&mut **db_tx, &all_invs).await
+        );
+        result?;
+        timings.push((label, dur));
     }
 
     // 6. Update operation trees — single batch UPDATE
@@ -127,7 +168,12 @@ pub async fn persist_ledger(
             ids.push(tx_id);
             trees.push(tree);
         }
-        db::soroban::update_operation_trees_batch(&mut **db_tx, &ids, &trees).await?;
+        let (result, label, dur) = timed!(
+            "update_op_trees",
+            db::soroban::update_operation_trees_batch(&mut **db_tx, &ids, &trees).await
+        );
+        result?;
+        timings.push((label, dur));
     }
 
     // 7. Upsert contract deployments — merge duplicates (mirrors DB COALESCE logic)
@@ -160,7 +206,12 @@ pub async fn persist_ledger(
                 .or_insert_with(|| d.clone());
         }
         let domain_contracts: Vec<_> = merged.values().map(convert::to_contract).collect();
-        db::soroban::upsert_contract_deployments_batch(&mut **db_tx, &domain_contracts).await?;
+        let (result, label, dur) = timed!(
+            "upsert_contracts",
+            db::soroban::upsert_contract_deployments_batch(&mut **db_tx, &domain_contracts).await
+        );
+        result?;
+        timings.push((label, dur));
     }
 
     // 8. Contract interface metadata — dual-path persistence for the 2-ledger deploy pattern.
@@ -176,19 +227,23 @@ pub async fn persist_ledger(
     //
     // upsert_contract_deployments_batch() applies wasm_interface_metadata after each batch upsert,
     // so any contract deployed in a later ledger automatically picks up the staged metadata.
-    for iface in contract_interfaces {
-        let metadata = serde_json::json!({
-            "functions": iface.functions,
-            "wasm_byte_len": iface.wasm_byte_len,
-        });
-        db::soroban::upsert_wasm_interface_metadata(&mut **db_tx, &iface.wasm_hash, &metadata)
+    {
+        let t = Instant::now();
+        for iface in contract_interfaces {
+            let metadata = serde_json::json!({
+                "functions": iface.functions,
+                "wasm_byte_len": iface.wasm_byte_len,
+            });
+            db::soroban::upsert_wasm_interface_metadata(&mut **db_tx, &iface.wasm_hash, &metadata)
+                .await?;
+            db::soroban::update_contract_interfaces_by_wasm_hash(
+                &mut **db_tx,
+                &iface.wasm_hash,
+                &metadata,
+            )
             .await?;
-        db::soroban::update_contract_interfaces_by_wasm_hash(
-            &mut **db_tx,
-            &iface.wasm_hash,
-            &metadata,
-        )
-        .await?;
+        }
+        timings.push(("contract_interfaces", t.elapsed()));
     }
 
     // 9. Upsert account states — dedup by account_id, keep last
@@ -198,7 +253,12 @@ pub async fn persist_ledger(
             deduped.insert(a.account_id.as_str(), a);
         }
         let domain_accounts: Vec<_> = deduped.values().map(|a| convert::to_account(a)).collect();
-        db::soroban::upsert_account_states_batch(&mut **db_tx, &domain_accounts).await?;
+        let (result, label, dur) = timed!(
+            "upsert_accounts",
+            db::soroban::upsert_account_states_batch(&mut **db_tx, &domain_accounts).await
+        );
+        result?;
+        timings.push((label, dur));
     }
 
     // 10. Upsert liquidity pools — dedup by pool_id, keep last
@@ -211,7 +271,12 @@ pub async fn persist_ledger(
             .values()
             .map(|lp| convert::to_liquidity_pool(lp))
             .collect();
-        db::soroban::upsert_liquidity_pools_batch(&mut **db_tx, &domain_pools).await?;
+        let (result, label, dur) = timed!(
+            "upsert_pools",
+            db::soroban::upsert_liquidity_pools_batch(&mut **db_tx, &domain_pools).await
+        );
+        result?;
+        timings.push((label, dur));
     }
 
     // 11. Insert pool snapshots — dedup by (pool_id, ledger_sequence, created_at), keep last
@@ -224,13 +289,24 @@ pub async fn persist_ledger(
             .values()
             .map(|s| convert::to_pool_snapshot(s))
             .collect();
-        db::soroban::insert_liquidity_pool_snapshots_batch(&mut **db_tx, &domain_snapshots).await?;
+        let (result, label, dur) = timed!(
+            "insert_pool_snapshots",
+            db::soroban::insert_liquidity_pool_snapshots_batch(&mut **db_tx, &domain_snapshots)
+                .await
+        );
+        result?;
+        timings.push((label, dur));
     }
 
     // 12. Upsert tokens — single batch (DO NOTHING, no dedup needed)
     {
         let domain_tokens: Vec<_> = tokens.iter().map(convert::to_token).collect();
-        db::soroban::upsert_tokens_batch(&mut **db_tx, &domain_tokens).await?;
+        let (result, label, dur) = timed!(
+            "upsert_tokens",
+            db::soroban::upsert_tokens_batch(&mut **db_tx, &domain_tokens).await
+        );
+        result?;
+        timings.push((label, dur));
     }
 
     // 13. Upsert NFTs — merge duplicates (mirrors DB COALESCE logic)
@@ -260,8 +336,26 @@ pub async fn persist_ledger(
                 .or_insert_with(|| n.clone());
         }
         let domain_nfts: Vec<_> = merged.values().map(convert::to_nft).collect();
-        db::soroban::upsert_nfts_batch(&mut **db_tx, &domain_nfts).await?;
+        let (result, label, dur) = timed!(
+            "upsert_nfts",
+            db::soroban::upsert_nfts_batch(&mut **db_tx, &domain_nfts).await
+        );
+        result?;
+        timings.push((label, dur));
     }
+
+    // Log per-query breakdown
+    let total: std::time::Duration = timings.iter().map(|(_, d)| *d).sum();
+    let breakdown: Vec<String> = timings
+        .iter()
+        .map(|(label, dur)| format!("{}={:.1}ms", label, dur.as_secs_f64() * 1000.0))
+        .collect();
+    info!(
+        ledger_seq,
+        total_ms = format!("{:.1}", total.as_secs_f64() * 1000.0),
+        "persist breakdown: {}",
+        breakdown.join(" | ")
+    );
 
     Ok(())
 }

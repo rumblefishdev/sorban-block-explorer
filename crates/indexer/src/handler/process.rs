@@ -152,7 +152,9 @@ pub async fn process_ledger(meta: &LedgerCloseMeta, pool: &PgPool) -> Result<(),
     )
     .await?;
 
+    let commit_timer = Instant::now();
     db_tx.commit().await?;
+    let commit_ms = commit_timer.elapsed().as_millis();
 
     let persist_ms = persist_timer.elapsed().as_millis();
 
@@ -162,6 +164,7 @@ pub async fn process_ledger(meta: &LedgerCloseMeta, pool: &PgPool) -> Result<(),
         parse_errors = tx_parse_errors.len(),
         parse_ms,
         persist_ms,
+        commit_ms,
         "ledger saved to database"
     );
 
