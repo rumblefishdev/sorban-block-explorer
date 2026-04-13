@@ -2,7 +2,7 @@
 id: '0112'
 title: 'CI: optimize ci.yml workflow (Rust + TypeScript — arm64, path filter, Nx cache, node_modules cache)'
 type: FEATURE
-status: backlog
+status: active
 related_adr: []
 related_tasks: ['0110']
 tags:
@@ -24,6 +24,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Spawned from lore-0110 discussion. Optimizations identified for ci.yml rust job; out of scope of 0110 (which targets deploy-staging.yml).'
+  - date: '2026-04-13'
+    status: active
+    who: FilipDz
+    note: 'Activated for implementation'
 ---
 
 # CI: optimize Rust workflow
