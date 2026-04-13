@@ -1,5 +1,6 @@
 import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as lambdaDestinations from 'aws-cdk-lib/aws-lambda-destinations';
 import * as logs from 'aws-cdk-lib/aws-logs';
@@ -175,6 +176,17 @@ export class ComputeStack extends cdk.Stack {
     dbSecret.grantRead(apiFunction);
     dbSecret.grantRead(processorFunction);
     ledgerBucket.grantRead(processorFunction);
+    processorFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['cloudwatch:PutMetricData'],
+        resources: ['*'],
+        conditions: {
+          StringEquals: {
+            'cloudwatch:namespace': 'SorobanBlockExplorer/Indexer',
+          },
+        },
+      })
+    );
 
     // ---------------------
     // Tags

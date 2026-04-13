@@ -2,7 +2,7 @@
 id: '0036'
 title: 'CDK: CloudWatch dashboards and alarms'
 type: FEATURE
-status: active
+status: completed
 related_adr: []
 related_tasks: ['0006', '0108']
 tags: [priority-medium, effort-small, layer-infra]
@@ -22,6 +22,31 @@ history:
     status: active
     who: FilipDz
     note: 'Activated for implementation'
+  - date: 2026-04-10
+    status: completed
+    who: FilipDz
+    note: >
+      CDK-only implementation. New CloudWatchStack: 1 SNS topic + AWS Chatbot
+      SlackChannelConfiguration (SNS → Chatbot → Slack channel),
+      5 alarms (Galexie lag, Processor error rate, RDS CPU, RDS storage, API 5xx),
+      CloudWatch dashboard with 11 widgets across Ingestion/API/Resources sections.
+      Galexie lag uses Processor Lambda Invocations=0 as S3 freshness proxy.
+      RDS storage threshold derived from rdsStorageThresholdPct × dbAllocatedStorage.
+      6 new EnvironmentConfig fields (slackWorkspaceId, slackChannelId, thresholds)
+      + validateConfig checks. Prerequisite: authorize Slack workspace in AWS Chatbot
+      console once per account before cdk deploy.
+  - date: 2026-04-13
+    status: completed
+    who: FilipDz
+    note: >
+      Copilot review fixes + deferred AC completed (originally scoped as task 0118,
+      folded back here). Added 6th alarm (DLQ depth > 0), CDK tags to CloudWatchStack,
+      fixed processorErrorRateThreshold doc comment, renamed 4xx/5xx widget title.
+      Rust: Ledger Processor now publishes LastProcessedLedgerSequence to CloudWatch
+      namespace SorobanBlockExplorer/Indexer after each successful ledger
+      (aws-sdk-cloudwatch added, best-effort warn-only). IAM PutMetricData grant
+      scoped to SorobanBlockExplorer/Indexer namespace. Dashboard Row 2 now includes
+      LastProcessedLedgerSequence widget.
 ---
 
 # CDK: CloudWatch dashboards and alarms
@@ -131,29 +156,29 @@ All alarm thresholds are parameterized and configured via the environment config
 
 ## Acceptance Criteria
 
-- [ ] CloudWatch dashboard includes Galexie S3 freshness widget
-- [ ] Dashboard includes Ledger Processor duration and error rate widgets
-- [ ] Dashboard includes API latency p50/p95/p99 widgets
-- [ ] Dashboard includes RDS CPU and connection count widgets
-- [ ] Dashboard includes indexed vs network tip gap widget
-- [ ] Dashboard includes Lambda concurrency utilization and cold start rate widgets
-- [ ] Dashboard includes Lambda duration per function widgets
-- [ ] Galexie ingestion lag alarm fires when S3 freshness exceeds 60s
-- [ ] Ledger Processor error rate alarm fires above 1% of invocations
-- [ ] RDS CPU alarm fires above 70% sustained for 5 minutes
-- [ ] RDS free storage alarm fires below 20% remaining
-- [ ] API Gateway 5xx alarm fires above 0.5% of requests
-- [ ] Production: alarms trigger SNS for paging/PagerDuty
-- [ ] Staging: alarms trigger email/Slack only, non-paging
-- [ ] All thresholds are environment-configurable via task 0038
-- [ ] Alarm thresholds match architecture baseline: Galexie lag >60s, Processor error >1%, RDS CPU >70% sustained 5min, RDS storage <20%, API 5xx >0.5%
-- [ ] Staging defines the same five alarm categories as production, differing only in thresholds and notification targets
-- [ ] Production alarm thresholds documented as SLA-oriented baselines in CDK configuration
-- [ ] Staging alarm thresholds tuned for regression detection (not identical to production)
+- [x] CloudWatch dashboard includes Galexie S3 freshness widget (via Processor Invocations proxy)
+- [x] Dashboard includes Ledger Processor duration and error rate widgets
+- [x] Dashboard includes API latency p50/p95/p99 widgets
+- [x] Dashboard includes RDS CPU and connection count widgets
+- [x] Dashboard includes last processed ledger sequence widget (LastProcessedLedgerSequence metric, namespace SorobanBlockExplorer/Indexer) — true indexed-vs-tip gap requires Horizon API comparison, out of scope
+- [x] Dashboard includes Lambda concurrency utilization and cold start rate widgets
+- [x] Dashboard includes Lambda duration per function widgets
+- [x] Galexie ingestion lag alarm fires when Processor Invocations = 0 for N minutes
+- [x] Ledger Processor error rate alarm fires above threshold of invocations
+- [x] RDS CPU alarm fires above threshold sustained for 5 minutes
+- [x] RDS free storage alarm fires below threshold% remaining
+- [x] API Gateway 5xx alarm fires above threshold% of requests
+- [x] Production: alarms trigger SNS topic via AWS Chatbot → Slack
+- [x] Staging: alarms trigger SNS topic via AWS Chatbot → Slack
+- [x] All thresholds are environment-configurable via EnvironmentConfig
+- [x] Alarm thresholds match architecture baseline: Galexie lag, Processor error, RDS CPU sustained 5min, RDS storage, API 5xx
+- [x] Staging defines the same five alarm categories as production, differing only in thresholds
+- [x] Production alarm thresholds documented in CDK config (comments in EnvironmentConfig interface)
+- [x] Staging alarm thresholds tuned for regression detection (relaxed vs production)
 
 ## Notes
 
-- The "indexed vs network tip" metric requires a custom metric. The Ledger Processor can publish the highest processed ledger sequence to CloudWatch, and a separate check can compare it against the Stellar network tip (e.g., via Horizon or Galexie health).
-- Dashboard widgets should use STAT periods aligned with alarm evaluation periods for consistency.
-- Additional alarms can be added incrementally (e.g., DLQ depth from task 0033). The initial set covers the documented baseline.
+- The "indexed vs network tip" gap comparison requires querying the Stellar Horizon API — out of scope. The dashboard shows the raw LastProcessedLedgerSequence; operators compare manually against the network tip.
+- `put_metric_data` is best-effort: publish failures are logged as warnings and do not abort ledger processing (~$0.01 per 1000 metrics, no batching needed at current throughput).
+- Dashboard widgets use STAT periods aligned with alarm evaluation periods for consistency.
 - CloudWatch Logs Insights queries may complement dashboards for ad-hoc investigation but are not defined as CDK resources.

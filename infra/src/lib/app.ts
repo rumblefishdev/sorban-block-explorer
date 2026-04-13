@@ -11,6 +11,7 @@ import { DeliveryStack } from './stacks/delivery-stack.js';
 import { ApiGatewayStack } from './stacks/api-gateway-stack.js';
 import { IngestionStack } from './stacks/ingestion-stack.js';
 import { ObservabilityStack } from './stacks/observability-stack.js';
+import { CloudWatchStack } from './stacks/cloudwatch-stack.js';
 
 export interface CreateAppOptions {
   readonly config: EnvironmentConfig;
@@ -111,6 +112,17 @@ export function createApp({
     apiFunction: compute.apiFunction,
   });
   apiGateway.addDependency(compute);
+
+  const cloudWatch = new CloudWatchStack(app, `${prefix}-CloudWatch`, {
+    env,
+    config,
+    apiFunction: compute.apiFunction,
+    processorFunction: compute.processorFunction,
+    deadLetterQueue: compute.deadLetterQueue,
+    rdsInstance: rds.dbInstance,
+    restApi: apiGateway.api,
+  });
+  cloudWatch.addDependency(apiGateway);
 
   app.synth();
 }
