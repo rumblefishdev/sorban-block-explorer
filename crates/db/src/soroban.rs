@@ -17,57 +17,88 @@ use domain::{
 };
 use sqlx::Acquire;
 
-/// Ensure a minimal `soroban_contracts` row exists for the given contract_id.
-///
-/// Inserts a stub row with only the contract_id if it doesn't exist yet.
-/// This satisfies FK constraints when events/invocations reference contracts
-/// that were deployed in earlier ledgers (not yet in the database).
-pub async fn ensure_contract_exists(
+/// Ensure minimal `soroban_contracts` rows exist for all given contract_ids.
+/// Uses UNNEST to insert all stubs in a single round trip.
+pub async fn ensure_contracts_exist_batch(
     executor: impl Acquire<'_, Database = sqlx::Postgres>,
-    contract_id: &str,
+    contract_ids: &[&str],
 ) -> Result<(), sqlx::Error> {
+    if contract_ids.is_empty() {
+        return Ok(());
+    }
     let mut conn = executor.acquire().await?;
     sqlx::query(
         r#"INSERT INTO soroban_contracts (contract_id)
-           VALUES ($1)
+           SELECT * FROM unnest($1::text[])
            ON CONFLICT (contract_id) DO NOTHING"#,
     )
-    .bind(contract_id)
+    .bind(contract_ids)
     .execute(&mut *conn)
     .await?;
 
     Ok(())
 }
 
-/// Update `transactions.operation_tree` for a given transaction.
-pub async fn update_operation_tree(
+/// Batch update `transactions.operation_tree` for multiple transactions.
+/// Uses UPDATE FROM UNNEST for a single round trip.
+pub async fn update_operation_trees_batch(
     executor: impl Acquire<'_, Database = sqlx::Postgres>,
-    transaction_id: i64,
-    operation_tree: &serde_json::Value,
+    transaction_ids: &[i64],
+    operation_trees: &[&serde_json::Value],
 ) -> Result<(), sqlx::Error> {
+    if transaction_ids.is_empty() {
+        return Ok(());
+    }
     let mut conn = executor.acquire().await?;
-    sqlx::query(r#"UPDATE transactions SET operation_tree = $1 WHERE id = $2"#)
-        .bind(operation_tree)
-        .bind(transaction_id)
-        .execute(&mut *conn)
-        .await?;
+    sqlx::query(
+        r#"UPDATE transactions t
+           SET operation_tree = u.tree
+           FROM unnest($1::bigint[], $2::jsonb[]) AS u(id, tree)
+           WHERE t.id = u.id"#,
+    )
+    .bind(transaction_ids)
+    .bind(operation_trees)
+    .execute(&mut *conn)
+    .await?;
 
     Ok(())
 }
 
-/// Upsert contract deployment into `soroban_contracts`.
-///
-/// Fills deployment fields (deployer_account, deployed_at_ledger, contract_type, is_sac).
-/// Merges metadata with any existing data from interface extraction (task 0026).
-pub async fn upsert_contract_deployment(
+/// Batch upsert contract deployments into `soroban_contracts`.
+/// Uses UNNEST for a single round trip.
+pub async fn upsert_contract_deployments_batch(
     executor: impl Acquire<'_, Database = sqlx::Postgres>,
-    contract: &SorobanContract,
+    contracts: &[SorobanContract],
 ) -> Result<(), sqlx::Error> {
+    if contracts.is_empty() {
+        return Ok(());
+    }
+    let len = contracts.len();
+    let mut contract_ids = Vec::with_capacity(len);
+    let mut wasm_hashes: Vec<Option<&str>> = Vec::with_capacity(len);
+    let mut deployer_accounts: Vec<Option<&str>> = Vec::with_capacity(len);
+    let mut deployed_at_ledgers: Vec<Option<i64>> = Vec::with_capacity(len);
+    let mut contract_types: Vec<Option<&str>> = Vec::with_capacity(len);
+    let mut is_sacs = Vec::with_capacity(len);
+    let mut metadatas: Vec<Option<&serde_json::Value>> = Vec::with_capacity(len);
+
+    for c in contracts {
+        contract_ids.push(c.contract_id.as_str());
+        wasm_hashes.push(c.wasm_hash.as_deref());
+        deployer_accounts.push(c.deployer_account.as_deref());
+        deployed_at_ledgers.push(c.deployed_at_ledger);
+        contract_types.push(c.contract_type.as_deref());
+        is_sacs.push(c.is_sac.unwrap_or(false));
+        metadatas.push(c.metadata.as_ref());
+    }
+
     let mut conn = executor.acquire().await?;
     sqlx::query(
         r#"INSERT INTO soroban_contracts
                (contract_id, wasm_hash, deployer_account, deployed_at_ledger, contract_type, is_sac, metadata)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           SELECT * FROM unnest(
+               $1::text[], $2::text[], $3::text[], $4::bigint[], $5::text[], $6::bool[], $7::jsonb[]
+           )
            ON CONFLICT (contract_id) DO UPDATE SET
                wasm_hash = COALESCE(soroban_contracts.wasm_hash, EXCLUDED.wasm_hash),
                deployer_account = COALESCE(soroban_contracts.deployer_account, EXCLUDED.deployer_account),
@@ -76,28 +107,33 @@ pub async fn upsert_contract_deployment(
                is_sac = EXCLUDED.is_sac OR soroban_contracts.is_sac,
                metadata = COALESCE(soroban_contracts.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb)"#,
     )
-    .bind(&contract.contract_id)
-    .bind(&contract.wasm_hash)
-    .bind(&contract.deployer_account)
-    .bind(contract.deployed_at_ledger)
-    .bind(&contract.contract_type)
-    .bind(contract.is_sac.unwrap_or(false))
-    .bind(&contract.metadata)
+    .bind(&contract_ids)
+    .bind(&wasm_hashes)
+    .bind(&deployer_accounts)
+    .bind(&deployed_at_ledgers)
+    .bind(&contract_types)
+    .bind(&is_sacs)
+    .bind(&metadatas)
     .execute(&mut *conn)
     .await?;
 
-    // Apply any pre-staged interface metadata for this contract's wasm_hash.
+    // Apply any pre-staged interface metadata for contracts with known wasm_hash.
     // This handles the 2-ledger deploy pattern: WASM uploaded in ledger A (interface
     // extracted and staged), contract deployed in ledger B (metadata applied here).
-    if contract.wasm_hash.is_some() {
+    let cids_with_wasm: Vec<&str> = contracts
+        .iter()
+        .filter(|c| c.wasm_hash.is_some())
+        .map(|c| c.contract_id.as_str())
+        .collect();
+    if !cids_with_wasm.is_empty() {
         sqlx::query(
             r#"UPDATE soroban_contracts sc
                SET metadata = COALESCE(sc.metadata, '{}'::jsonb) || wim.metadata
                FROM wasm_interface_metadata wim
-               WHERE sc.contract_id = $1
+               WHERE sc.contract_id = ANY($1)
                  AND sc.wasm_hash = wim.wasm_hash"#,
         )
-        .bind(&contract.contract_id)
+        .bind(&cids_with_wasm)
         .execute(&mut *conn)
         .await?;
     }
@@ -155,19 +191,39 @@ pub async fn update_contract_interfaces_by_wasm_hash(
     Ok(result.rows_affected())
 }
 
-/// Upsert account state into `accounts`.
-///
-/// Uses watermark on `last_seen_ledger` to prevent stale backfill overwrites.
-/// Sets `first_seen_ledger` only on first insert.
-pub async fn upsert_account_state(
+/// Batch upsert account states into `accounts`.
+/// Uses UNNEST for a single round trip. Watermark on `last_seen_ledger`.
+pub async fn upsert_account_states_batch(
     executor: impl Acquire<'_, Database = sqlx::Postgres>,
-    account: &Account,
+    accounts: &[Account],
 ) -> Result<(), sqlx::Error> {
+    if accounts.is_empty() {
+        return Ok(());
+    }
+    let len = accounts.len();
+    let mut account_ids = Vec::with_capacity(len);
+    let mut first_seen_ledgers = Vec::with_capacity(len);
+    let mut last_seen_ledgers = Vec::with_capacity(len);
+    let mut sequence_numbers = Vec::with_capacity(len);
+    let mut balances = Vec::with_capacity(len);
+    let mut home_domains: Vec<Option<&str>> = Vec::with_capacity(len);
+
+    for a in accounts {
+        account_ids.push(a.account_id.as_str());
+        first_seen_ledgers.push(a.first_seen_ledger);
+        last_seen_ledgers.push(a.last_seen_ledger);
+        sequence_numbers.push(a.sequence_number);
+        balances.push(&a.balances);
+        home_domains.push(a.home_domain.as_deref());
+    }
+
     let mut conn = executor.acquire().await?;
     sqlx::query(
         r#"INSERT INTO accounts
                (account_id, first_seen_ledger, last_seen_ledger, sequence_number, balances, home_domain)
-           VALUES ($1, $2, $3, $4, $5, $6)
+           SELECT * FROM unnest(
+               $1::text[], $2::bigint[], $3::bigint[], $4::bigint[], $5::jsonb[], $6::text[]
+           )
            ON CONFLICT (account_id) DO UPDATE SET
                last_seen_ledger = EXCLUDED.last_seen_ledger,
                sequence_number = EXCLUDED.sequence_number,
@@ -175,30 +231,58 @@ pub async fn upsert_account_state(
                home_domain = COALESCE(EXCLUDED.home_domain, accounts.home_domain)
            WHERE accounts.last_seen_ledger <= EXCLUDED.last_seen_ledger"#,
     )
-    .bind(&account.account_id)
-    .bind(account.first_seen_ledger)
-    .bind(account.last_seen_ledger)
-    .bind(account.sequence_number)
-    .bind(&account.balances)
-    .bind(&account.home_domain)
+    .bind(&account_ids)
+    .bind(&first_seen_ledgers)
+    .bind(&last_seen_ledgers)
+    .bind(&sequence_numbers)
+    .bind(&balances)
+    .bind(&home_domains)
     .execute(&mut *conn)
     .await?;
 
     Ok(())
 }
 
-/// Upsert liquidity pool state into `liquidity_pools`.
-///
-/// Uses watermark on `last_updated_ledger` to prevent stale backfill overwrites.
-pub async fn upsert_liquidity_pool(
+/// Batch upsert liquidity pool states into `liquidity_pools`.
+/// Uses UNNEST for a single round trip. Watermark on `last_updated_ledger`.
+pub async fn upsert_liquidity_pools_batch(
     executor: impl Acquire<'_, Database = sqlx::Postgres>,
-    lp: &LiquidityPool,
+    pools: &[LiquidityPool],
 ) -> Result<(), sqlx::Error> {
+    if pools.is_empty() {
+        return Ok(());
+    }
+    let len = pools.len();
+    let mut pool_ids = Vec::with_capacity(len);
+    let mut assets_a = Vec::with_capacity(len);
+    let mut assets_b = Vec::with_capacity(len);
+    let mut fee_bps_list = Vec::with_capacity(len);
+    let mut reserves = Vec::with_capacity(len);
+    let mut total_shares = Vec::with_capacity(len);
+    let mut tvls: Vec<Option<&str>> = Vec::with_capacity(len);
+    let mut created_at_ledgers = Vec::with_capacity(len);
+    let mut last_updated_ledgers = Vec::with_capacity(len);
+
+    for lp in pools {
+        pool_ids.push(lp.pool_id.as_str());
+        assets_a.push(&lp.asset_a);
+        assets_b.push(&lp.asset_b);
+        fee_bps_list.push(lp.fee_bps);
+        reserves.push(&lp.reserves);
+        total_shares.push(lp.total_shares.as_str());
+        tvls.push(lp.tvl.as_deref());
+        created_at_ledgers.push(lp.created_at_ledger);
+        last_updated_ledgers.push(lp.last_updated_ledger);
+    }
+
     let mut conn = executor.acquire().await?;
     sqlx::query(
         r#"INSERT INTO liquidity_pools
                (pool_id, asset_a, asset_b, fee_bps, reserves, total_shares, tvl, created_at_ledger, last_updated_ledger)
-           VALUES ($1, $2, $3, $4, $5, $6::numeric, $7::numeric, $8, $9)
+           SELECT pool_id, asset_a, asset_b, fee_bps, reserves, total_shares::numeric, tvl::numeric, created_at_ledger, last_updated_ledger
+           FROM unnest(
+               $1::text[], $2::jsonb[], $3::jsonb[], $4::int[], $5::jsonb[], $6::text[], $7::text[], $8::bigint[], $9::bigint[]
+           ) AS t(pool_id, asset_a, asset_b, fee_bps, reserves, total_shares, tvl, created_at_ledger, last_updated_ledger)
            ON CONFLICT (pool_id) DO UPDATE SET
                reserves = EXCLUDED.reserves,
                total_shares = EXCLUDED.total_shares,
@@ -206,85 +290,165 @@ pub async fn upsert_liquidity_pool(
                last_updated_ledger = EXCLUDED.last_updated_ledger
            WHERE liquidity_pools.last_updated_ledger <= EXCLUDED.last_updated_ledger"#,
     )
-    .bind(&lp.pool_id)
-    .bind(&lp.asset_a)
-    .bind(&lp.asset_b)
-    .bind(lp.fee_bps)
-    .bind(&lp.reserves)
-    .bind(&lp.total_shares)
-    .bind(lp.tvl.as_deref())
-    .bind(lp.created_at_ledger)
-    .bind(lp.last_updated_ledger)
+    .bind(&pool_ids)
+    .bind(&assets_a)
+    .bind(&assets_b)
+    .bind(&fee_bps_list)
+    .bind(&reserves)
+    .bind(&total_shares)
+    .bind(&tvls)
+    .bind(&created_at_ledgers)
+    .bind(&last_updated_ledgers)
     .execute(&mut *conn)
     .await?;
 
     Ok(())
 }
 
-/// Append a liquidity pool snapshot (idempotent — replays are ignored).
-pub async fn insert_liquidity_pool_snapshot(
+/// Batch append liquidity pool snapshots (idempotent — replays are ignored).
+/// Uses UNNEST for a single round trip.
+pub async fn insert_liquidity_pool_snapshots_batch(
     executor: impl Acquire<'_, Database = sqlx::Postgres>,
-    snapshot: &LiquidityPoolSnapshot,
+    snapshots: &[LiquidityPoolSnapshot],
 ) -> Result<(), sqlx::Error> {
+    if snapshots.is_empty() {
+        return Ok(());
+    }
+    let len = snapshots.len();
+    let mut pool_ids = Vec::with_capacity(len);
+    let mut ledger_sequences = Vec::with_capacity(len);
+    let mut created_ats = Vec::with_capacity(len);
+    let mut reserves = Vec::with_capacity(len);
+    let mut total_shares = Vec::with_capacity(len);
+    let mut tvls: Vec<Option<&str>> = Vec::with_capacity(len);
+    let mut volumes: Vec<Option<&str>> = Vec::with_capacity(len);
+    let mut fee_revenues: Vec<Option<&str>> = Vec::with_capacity(len);
+
+    for s in snapshots {
+        pool_ids.push(s.pool_id.as_str());
+        ledger_sequences.push(s.ledger_sequence);
+        created_ats.push(s.created_at);
+        reserves.push(&s.reserves);
+        total_shares.push(s.total_shares.as_str());
+        tvls.push(s.tvl.as_deref());
+        volumes.push(s.volume.as_deref());
+        fee_revenues.push(s.fee_revenue.as_deref());
+    }
+
     let mut conn = executor.acquire().await?;
     sqlx::query(
         r#"INSERT INTO liquidity_pool_snapshots
                (pool_id, ledger_sequence, created_at, reserves, total_shares, tvl, volume, fee_revenue)
-           VALUES ($1, $2, $3, $4, $5::numeric, $6::numeric, $7::numeric, $8::numeric)
+           SELECT pool_id, ledger_sequence, created_at, reserves, total_shares::numeric, tvl::numeric, volume::numeric, fee_revenue::numeric
+           FROM unnest(
+               $1::text[], $2::bigint[], $3::timestamptz[], $4::jsonb[], $5::text[], $6::text[], $7::text[], $8::text[]
+           ) AS t(pool_id, ledger_sequence, created_at, reserves, total_shares, tvl, volume, fee_revenue)
            ON CONFLICT (pool_id, ledger_sequence, created_at) DO NOTHING"#,
     )
-    .bind(&snapshot.pool_id)
-    .bind(snapshot.ledger_sequence)
-    .bind(snapshot.created_at)
-    .bind(&snapshot.reserves)
-    .bind(&snapshot.total_shares)
-    .bind(snapshot.tvl.as_deref())
-    .bind(snapshot.volume.as_deref())
-    .bind(snapshot.fee_revenue.as_deref())
+    .bind(&pool_ids)
+    .bind(&ledger_sequences)
+    .bind(&created_ats)
+    .bind(&reserves)
+    .bind(&total_shares)
+    .bind(&tvls)
+    .bind(&volumes)
+    .bind(&fee_revenues)
     .execute(&mut *conn)
     .await?;
 
     Ok(())
 }
 
-/// Upsert a detected token into `tokens`.
-pub async fn upsert_token(
+/// Batch upsert detected tokens into `tokens`.
+/// Uses UNNEST for a single round trip.
+pub async fn upsert_tokens_batch(
     executor: impl Acquire<'_, Database = sqlx::Postgres>,
-    token: &Token,
+    tokens: &[Token],
 ) -> Result<(), sqlx::Error> {
+    if tokens.is_empty() {
+        return Ok(());
+    }
+    let len = tokens.len();
+    let mut asset_types = Vec::with_capacity(len);
+    let mut asset_codes: Vec<Option<&str>> = Vec::with_capacity(len);
+    let mut issuer_addresses: Vec<Option<&str>> = Vec::with_capacity(len);
+    let mut contract_ids: Vec<Option<&str>> = Vec::with_capacity(len);
+    let mut names: Vec<Option<&str>> = Vec::with_capacity(len);
+    let mut total_supplies: Vec<Option<&str>> = Vec::with_capacity(len);
+    let mut holder_counts: Vec<Option<i32>> = Vec::with_capacity(len);
+
+    for t in tokens {
+        asset_types.push(t.asset_type.as_str());
+        asset_codes.push(t.asset_code.as_deref());
+        issuer_addresses.push(t.issuer_address.as_deref());
+        contract_ids.push(t.contract_id.as_deref());
+        names.push(t.name.as_deref());
+        total_supplies.push(t.total_supply.as_deref());
+        holder_counts.push(t.holder_count);
+    }
+
     let mut conn = executor.acquire().await?;
     sqlx::query(
         r#"INSERT INTO tokens
                (asset_type, asset_code, issuer_address, contract_id, name, total_supply, holder_count)
-           VALUES ($1, $2, $3, $4, $5, $6::numeric, $7)
+           SELECT asset_type, asset_code, issuer_address, contract_id, name, total_supply::numeric, holder_count
+           FROM unnest(
+               $1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::int[]
+           ) AS t(asset_type, asset_code, issuer_address, contract_id, name, total_supply, holder_count)
            ON CONFLICT DO NOTHING"#,
     )
-    .bind(&token.asset_type)
-    .bind(&token.asset_code)
-    .bind(&token.issuer_address)
-    .bind(&token.contract_id)
-    .bind(&token.name)
-    .bind(token.total_supply.as_deref())
-    .bind(token.holder_count)
+    .bind(&asset_types)
+    .bind(&asset_codes)
+    .bind(&issuer_addresses)
+    .bind(&contract_ids)
+    .bind(&names)
+    .bind(&total_supplies)
+    .bind(&holder_counts)
     .execute(&mut *conn)
     .await?;
 
     Ok(())
 }
 
-/// Upsert an NFT into `nfts`.
-///
-/// Uses watermark on `last_seen_ledger` to prevent stale overwrites.
-/// Sets `minted_at_ledger` only on first insert.
-pub async fn upsert_nft(
+/// Batch upsert NFTs into `nfts`.
+/// Uses UNNEST for a single round trip. Watermark on `last_seen_ledger`.
+pub async fn upsert_nfts_batch(
     executor: impl Acquire<'_, Database = sqlx::Postgres>,
-    nft: &Nft,
+    nfts: &[Nft],
 ) -> Result<(), sqlx::Error> {
+    if nfts.is_empty() {
+        return Ok(());
+    }
+    let len = nfts.len();
+    let mut contract_ids = Vec::with_capacity(len);
+    let mut token_ids = Vec::with_capacity(len);
+    let mut collection_names: Vec<Option<&str>> = Vec::with_capacity(len);
+    let mut owner_accounts: Vec<Option<&str>> = Vec::with_capacity(len);
+    let mut names: Vec<Option<&str>> = Vec::with_capacity(len);
+    let mut media_urls: Vec<Option<&str>> = Vec::with_capacity(len);
+    let mut metadatas: Vec<Option<&serde_json::Value>> = Vec::with_capacity(len);
+    let mut minted_at_ledgers: Vec<Option<i64>> = Vec::with_capacity(len);
+    let mut last_seen_ledgers = Vec::with_capacity(len);
+
+    for n in nfts {
+        contract_ids.push(n.contract_id.as_str());
+        token_ids.push(n.token_id.as_str());
+        collection_names.push(n.collection_name.as_deref());
+        owner_accounts.push(n.owner_account.as_deref());
+        names.push(n.name.as_deref());
+        media_urls.push(n.media_url.as_deref());
+        metadatas.push(n.metadata.as_ref());
+        minted_at_ledgers.push(n.minted_at_ledger);
+        last_seen_ledgers.push(n.last_seen_ledger);
+    }
+
     let mut conn = executor.acquire().await?;
     sqlx::query(
         r#"INSERT INTO nfts
                (contract_id, token_id, collection_name, owner_account, name, media_url, metadata, minted_at_ledger, last_seen_ledger)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           SELECT * FROM unnest(
+               $1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::jsonb[], $8::bigint[], $9::bigint[]
+           )
            ON CONFLICT (contract_id, token_id) DO UPDATE SET
                owner_account = EXCLUDED.owner_account,
                name = COALESCE(EXCLUDED.name, nfts.name),
@@ -293,19 +457,45 @@ pub async fn upsert_nft(
                last_seen_ledger = EXCLUDED.last_seen_ledger
            WHERE nfts.last_seen_ledger <= EXCLUDED.last_seen_ledger"#,
     )
-    .bind(&nft.contract_id)
-    .bind(&nft.token_id)
-    .bind(&nft.collection_name)
-    .bind(&nft.owner_account)
-    .bind(&nft.name)
-    .bind(&nft.media_url)
-    .bind(&nft.metadata)
-    .bind(nft.minted_at_ledger)
-    .bind(nft.last_seen_ledger)
+    .bind(&contract_ids)
+    .bind(&token_ids)
+    .bind(&collection_names)
+    .bind(&owner_accounts)
+    .bind(&names)
+    .bind(&media_urls)
+    .bind(&metadatas)
+    .bind(&minted_at_ledgers)
+    .bind(&last_seen_ledgers)
     .execute(&mut *conn)
     .await?;
 
     Ok(())
+}
+
+// ── Single-row wrappers (used by tests) ────────────────────────────────
+
+#[cfg(test)]
+async fn upsert_account_state(
+    executor: impl Acquire<'_, Database = sqlx::Postgres>,
+    account: &Account,
+) -> Result<(), sqlx::Error> {
+    upsert_account_states_batch(executor, std::slice::from_ref(account)).await
+}
+
+#[cfg(test)]
+async fn upsert_nft(
+    executor: impl Acquire<'_, Database = sqlx::Postgres>,
+    nft: &Nft,
+) -> Result<(), sqlx::Error> {
+    upsert_nfts_batch(executor, std::slice::from_ref(nft)).await
+}
+
+#[cfg(test)]
+async fn upsert_liquidity_pool(
+    executor: impl Acquire<'_, Database = sqlx::Postgres>,
+    lp: &LiquidityPool,
+) -> Result<(), sqlx::Error> {
+    upsert_liquidity_pools_batch(executor, std::slice::from_ref(lp)).await
 }
 
 #[cfg(test)]
@@ -758,7 +948,9 @@ mod tests {
             is_sac: None,
             metadata: None,
         };
-        upsert_contract_deployment(&pool, &contract).await.unwrap();
+        upsert_contract_deployments_batch(&pool, &[contract])
+            .await
+            .unwrap();
 
         // Staged interface metadata should have been applied automatically
         let (meta,): (serde_json::Value,) =

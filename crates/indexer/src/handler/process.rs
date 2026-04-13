@@ -1,6 +1,7 @@
 //! Per-ledger processing: parse all stages and persist atomically.
 
 use sqlx::PgPool;
+use std::time::Instant;
 use stellar_xdr::curr::{LedgerCloseMeta, TransactionMeta};
 use tracing::{info, warn};
 
@@ -13,6 +14,8 @@ pub async fn process_ledger(meta: &LedgerCloseMeta, pool: &PgPool) -> Result<(),
     let extracted_ledger = xdr_parser::extract_ledger(meta)?;
     let ledger_sequence = extracted_ledger.sequence;
     let closed_at = extracted_ledger.closed_at;
+
+    let parse_timer = Instant::now();
 
     info!(ledger_sequence, "parsing ledger");
 
@@ -125,7 +128,10 @@ pub async fn process_ledger(meta: &LedgerCloseMeta, pool: &PgPool) -> Result<(),
 
     let all_nfts = xdr_parser::detect_nfts(&all_nft_events);
 
+    let parse_ms = parse_timer.elapsed().as_millis();
+
     // --- Step 4: Atomic database transaction ---
+    let persist_timer = Instant::now();
     let mut db_tx = pool.begin().await?;
 
     persist::persist_ledger(
@@ -148,10 +154,14 @@ pub async fn process_ledger(meta: &LedgerCloseMeta, pool: &PgPool) -> Result<(),
 
     db_tx.commit().await?;
 
+    let persist_ms = persist_timer.elapsed().as_millis();
+
     info!(
         ledger_sequence,
         tx_count = extracted_transactions.len(),
         parse_errors = tx_parse_errors.len(),
+        parse_ms,
+        persist_ms,
         "ledger saved to database"
     );
 
