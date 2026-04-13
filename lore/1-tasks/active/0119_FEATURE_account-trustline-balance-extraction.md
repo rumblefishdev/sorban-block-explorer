@@ -2,7 +2,7 @@
 id: '0119'
 title: 'Indexer: extract trustline balances for accounts'
 type: FEATURE
-status: backlog
+status: active
 related_adr: []
 related_tasks: ['0027', '0048']
 tags: [priority-high, effort-medium, layer-indexer, audit-F7]
@@ -15,6 +15,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Spawned from pipeline audit finding F7 (HIGH severity).'
+  - date: '2026-04-13'
+    status: active
+    who: FilipDz
+    note: 'Activated for implementation'
 ---
 
 # Indexer: extract trustline balances for accounts
