@@ -2,7 +2,7 @@
 id: '0117'
 title: 'Local backfill benchmark: stream from Stellar public S3 to local Postgres'
 type: FEATURE
-status: active
+status: completed
 related_adr: []
 related_tasks: ['0030', '0113']
 tags: [priority-high, effort-medium, layer-backend]
@@ -16,6 +16,14 @@ history:
     status: active
     who: fmazur
     note: 'Activated task'
+  - date: '2026-04-13'
+    status: done
+    who: fmazur
+    note: >
+      Implemented backfill-bench CLI crate. PR #89 merged. Key work: exposed
+      process_ledger from indexer crate, built stream-and-delete flow with
+      reqwest, batch UNNEST persistence with Rust-side COALESCE merge,
+      JoinSet-based concurrency. 7 commits.
 ---
 
 # Local backfill benchmark: stream from Stellar public S3 to local Postgres
@@ -96,14 +104,14 @@ At the end, print summary:
 
 ## Acceptance Criteria
 
-- [ ] CLI binary builds and runs locally
-- [ ] Downloads XDR files from Stellar public S3 (no AWS credentials needed)
-- [ ] Indexes and persists to local PostgreSQL (docker-compose)
-- [ ] Downloaded XDR files deleted from disk after indexing — no accumulation
-- [ ] Progress logging every 10 ledgers
-- [ ] Final report with timing stats
-- [ ] Skips already-indexed ledgers without re-downloading
-- [ ] Successfully indexes 1000 ledgers from a recent range
+- [x] CLI binary builds and runs locally
+- [x] Downloads XDR files from Stellar public S3 (no AWS credentials needed)
+- [x] Indexes and persists to local PostgreSQL (docker-compose)
+- [x] Downloaded XDR files deleted from disk after indexing — no accumulation
+- [x] Progress logging every 10 ledgers
+- [x] Final report with timing stats
+- [x] Skips already-indexed ledgers without re-downloading
+- [x] Successfully indexes 1000 ledgers from a recent range
 
 ## Notes
 
