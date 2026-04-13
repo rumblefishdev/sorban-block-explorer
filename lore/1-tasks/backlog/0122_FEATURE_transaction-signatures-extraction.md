@@ -6,7 +6,7 @@ status: backlog
 related_adr: []
 related_tasks: ['0024', '0046']
 tags: [priority-low, effort-small, layer-indexer, audit-gap]
-milestone: 2
+milestone: 1
 links:
   - docs/audits/2026-04-10-pipeline-data-audit.md
 history:

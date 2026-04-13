@@ -48,3 +48,11 @@ incomplete compared to competitors (StellarExpert, Stellarchain).
 - [ ] Trustline removal correctly removes entry from balances array
 - [ ] Watermark prevents stale trustline data from overwriting newer state
 - [ ] Tests: account with native + 2 trustlines produces correct balances array
+
+## Out of Scope (2026-04-13)
+
+**Contract token balances** (`contract_data` entries for Soroban tokens) are NOT covered by
+this task. F7 in the audit mentions both trustline and contract token balances, but contract
+token balance extraction depends on task 0120 (soroban-native token detection) and requires
+parsing per-contract storage layouts. This should be a separate follow-up task once 0120
+lands.

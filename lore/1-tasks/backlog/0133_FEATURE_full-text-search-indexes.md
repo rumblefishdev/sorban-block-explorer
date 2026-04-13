@@ -6,7 +6,7 @@ status: backlog
 related_adr: []
 related_tasks: ['0053', '0132']
 tags: [priority-medium, effort-medium, layer-db, audit-F22]
-milestone: 2
+milestone: 1
 links:
   - docs/audits/2026-04-10-pipeline-data-audit.md
 history:

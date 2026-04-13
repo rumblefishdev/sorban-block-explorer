@@ -6,7 +6,7 @@ status: backlog
 related_adr: []
 related_tasks: ['0022', '0130']
 tags: [priority-medium, effort-medium, layer-db, audit-F20]
-milestone: 2
+milestone: 1
 links:
   - crates/db/migrations/0002_create_operations.sql
   - docs/audits/2026-04-10-pipeline-data-audit.md

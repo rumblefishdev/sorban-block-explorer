@@ -33,6 +33,12 @@ excludes `void`, `map`, `vec`, `error` — but not numeric types like `i128`, `i
 
 At mainnet scale this will flood the `nfts` table with millions of false-positive records.
 
+**Note (2026-04-13):** The code now has a doc comment (`nft.rs:162-170`) explicitly
+acknowledging this limitation — some NFT contracts (e.g. jamesbachini) use `i128` for
+token IDs, so a blanket numeric exclusion would cause false negatives. A test
+`i128_token_id_not_excluded` (lines 262-277) asserts the current behavior. The bug is
+recognized but intentionally deferred pending a proper fix via WASM spec analysis.
+
 ## Implementation
 
 **Caution:** Some NFT contracts use `i128` as token IDs. A blanket numeric exclusion would
@@ -52,7 +58,15 @@ Add regression tests with i128 data simulating a standard SEP-0041 transfer.
 
 ## Acceptance Criteria
 
-- [ ] `looks_like_token_id()` rejects numeric ScVal types (i128, u128, etc.)
-- [ ] Existing NFT detection tests still pass
+- [ ] NFT detection uses WASM spec analysis (Option 1) to classify contracts before inserting
+      into `nfts` — query `wasm_interface_metadata` for NFT-specific functions (`token_uri`,
+      `owner_of`, etc.) vs SEP-0041 fungible-only functions
+- [ ] Fallback for contracts without WASM metadata: exclude numeric ScVal types (i128, u128,
+      i64, u64) as a conservative default — accept false negatives over false positives
+- [ ] Remove or update test `i128_token_id_not_excluded` — it currently asserts the broken
+      behavior; replace with a test that verifies WASM-classified NFT contracts with i128
+      token IDs are still detected correctly
+- [ ] Existing NFT detection tests still pass (for string/bytes token_id contracts)
 - [ ] New test: SEP-0041 fungible transfer event does NOT produce an NFT record
-- [ ] New test: NFT transfer with string/bytes token_id still detected correctly
+- [ ] New test: NFT contract (WASM-classified) with i128 token_id still detected correctly
+- [ ] New test: unknown contract (no WASM metadata) with i128 data does NOT produce NFT record

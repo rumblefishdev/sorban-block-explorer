@@ -4,9 +4,10 @@ title: 'NFT transfer history: schema + API endpoint'
 type: FEATURE
 status: backlog
 related_adr: []
-related_tasks: ['0051', '0118']
+related_tasks: ['0051', '0118', '0136']
+blocked_by: ['0118', '0136']
 tags: [priority-medium, effort-medium, layer-backend, layer-db, audit-gap]
-milestone: 2
+milestone: 1
 links:
   - docs/audits/2026-04-10-pipeline-data-audit.md
 history:

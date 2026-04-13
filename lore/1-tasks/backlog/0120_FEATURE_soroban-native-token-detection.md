@@ -6,7 +6,7 @@ status: backlog
 related_adr: []
 related_tasks: ['0027', '0049', '0104']
 tags: [priority-medium, effort-medium, layer-indexer, audit-F8]
-milestone: 2
+milestone: 1
 links:
   - crates/xdr-parser/src/state.rs
   - docs/audits/2026-04-10-pipeline-data-audit.md

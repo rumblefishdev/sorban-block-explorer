@@ -37,18 +37,18 @@ criteria. Several technical design requirements have no corresponding backlog ta
 
 ### Key Numbers
 
-| Metric                         | Value                                  |
-| ------------------------------ | -------------------------------------- |
-| Unit tests passing             | 117/117                                |
-| HIGH severity findings         | 2 (F7, F9)                             |
-| MEDIUM severity findings       | 10 (F4,F6,F8,F12,F17-F22)              |
-| LOW severity findings          | 3 (F23, F24, F25)                      |
-| D1 completion                  | ~85%                                   |
-| D1 hard blockers               | 6 (0030, 0036, 0118, 0119, 0130, 0134) |
-| Nullable fields with no plan   | 5                                      |
-| Tech design reqs without tasks | 9 (all now have tasks)                 |
-| New tasks created              | 18 (0118-0135)                         |
-| Intentionally not fixed        | 6 (F4, F6, F17, F23-F25)               |
+| Metric                         | Value                                                                |
+| ------------------------------ | -------------------------------------------------------------------- |
+| Unit tests passing             | 117/117                                                              |
+| HIGH severity findings         | 2 (F7, F9)                                                           |
+| MEDIUM severity findings       | 10 (F4,F6,F8,F12,F17-F22)                                            |
+| LOW severity findings          | 3 (F23, F24, F25)                                                    |
+| D1 completion                  | ~85%                                                                 |
+| D1 hard blockers               | 4 (0118, 0119, 0130, 0134) — 0030 superseded by 0117; 0036 completed |
+| Nullable fields with no plan   | 5                                                                    |
+| Tech design reqs without tasks | 9 (all now have tasks)                                               |
+| New tasks created              | 18 (0118-0135)                                                       |
+| Intentionally not fixed        | 6 (F4, F6, F17, F23-F25)                                             |
 
 > **Note on finding numbers:** Findings are numbered F4-F25. Numbers F1-F3 and F5 were
 > used in internal working notes and consolidated into other findings before this report.
@@ -72,6 +72,12 @@ records from normal token activity.
 
 **Root cause:** The function excludes `void`, `map`, `vec`, `error` but does not exclude
 `i128`/`i64`/`u128` (fungible amounts).
+
+**Current state (2026-04-13):** The code now has a doc comment (lines 162-170) explicitly
+acknowledging this limitation — some NFT contracts (e.g. jamesbachini) use `i128` for token
+IDs, so a blanket exclusion would cause false negatives. A test
+`i128_token_id_not_excluded` confirms the current behavior is intentional pending a proper
+fix via WASM spec analysis. The bug remains unfixed.
 
 **Fix:** Add numeric ScVal types to the exclusion list in `looks_like_token_id()`, or
 require WASM spec analysis to confirm NFT contract type before inserting.
@@ -121,7 +127,7 @@ WASM-based token contracts implementing SEP-0041 are never added to the `tokens`
 
 #### F6: CreateContractHostFn Propagates None as Caller
 
-**File:** `crates/xdr-parser/src/invocation.rs:166-173`
+**File:** `crates/xdr-parser/src/invocation.rs:247-257`
 
 Contract creation invocations have `contract_id = None`, which propagates as
 `caller_account = None` to sub-invocations, breaking the caller chain.
@@ -130,7 +136,7 @@ Contract creation invocations have `contract_id = None`, which propagates as
 
 #### F12: Tokens ON CONFLICT Without Constraint Specification
 
-**File:** `crates/db/src/soroban.rs:260`
+**File:** `crates/db/src/soroban.rs:398`
 
 `ON CONFLICT DO NOTHING` without specifying which constraint. Partial unique indexes may not
 catch all duplicates for future token types.
@@ -139,7 +145,7 @@ catch all duplicates for future token types.
 
 #### F17: NFT minted_at_ledger Immutable After First Insert
 
-**File:** `crates/db/src/soroban.rs:288-294`
+**File:** `crates/db/src/soroban.rs:452-458`
 
 `minted_at_ledger` is only set on INSERT, never updated. Burn-then-remint scenario or
 partial backfill starting after original mint leaves it as NULL permanently.
@@ -181,29 +187,29 @@ partial backfill starting after original mint leaves it as NULL permanently.
 
 ### 3.2 Remaining (D1 scope)
 
-| Requirement                        | Status  | Task | Blocker?                  |
-| ---------------------------------- | ------- | ---- | ------------------------- |
-| Historical backfill Fargate task   | Active  | 0030 | **YES — AC#2**            |
-| CloudWatch dashboards + lag alarm  | Active  | 0036 | **YES — AC#5**            |
-| Fix NFT false positives            | Backlog | 0118 | **YES — before backfill** |
-| Trustline balance extraction       | Backlog | 0119 | **YES — before backfill** |
-| Historical partitions for backfill | Backlog | 0130 | **YES — blocks 0030**     |
-| Envelope/meta ordering validation  | Backlog | 0134 | **YES — data integrity**  |
-| Environment-specific CDK config    | Backlog | 0038 | Risk for AC#4             |
-| Galexie config + testnet valid.    | Backlog | 0041 | Risk for AC#1             |
-| CI workflow optimization           | Backlog | 0112 | No                        |
+| Requirement                        | Status  | Task | Blocker?                                                |
+| ---------------------------------- | ------- | ---- | ------------------------------------------------------- |
+| Historical backfill (local)        | Done    | 0117 | **YES — AC#2** (0030 superseded by 0117 backfill-bench) |
+| CloudWatch dashboards + lag alarm  | Done    | 0036 | AC#5 — completed                                        |
+| Fix NFT false positives            | Backlog | 0118 | **YES — before backfill**                               |
+| Trustline balance extraction       | Backlog | 0119 | **YES — before backfill**                               |
+| Historical partitions for backfill | Backlog | 0130 | **YES — blocks backfill**                               |
+| Envelope/meta ordering validation  | Backlog | 0134 | **YES — data integrity**                                |
+| Environment-specific CDK config    | Backlog | 0038 | Risk for AC#4                                           |
+| Galexie config + testnet valid.    | Backlog | 0041 | Risk for AC#1                                           |
+| CI workflow optimization           | Backlog | 0112 | No                                                      |
 
 ---
 
 ## 4. Deliverable 1 Acceptance Criteria Status
 
-| AC# | Criterion                                                   | Met?       | Notes                                               |
-| --- | ----------------------------------------------------------- | ---------- | --------------------------------------------------- |
-| 1   | S3 consecutive LedgerCloseMeta files matching mainnet times | Partially  | Live ingestion works. Formal validation (0041) TBD. |
-| 2   | RDS ledgers — no gaps from backfill start to current tip    | **No**     | **Blocked by task 0030** — backfill not complete.   |
-| 3   | soroban_events spot-check by known Soroswap/Aquarius hashes | Unverified | Requires manual spot-check. See Section 7.          |
-| 4   | cdk deploy from clean account — no manual steps             | Partially  | Core CDK works. Task 0038 (env config) not done.    |
-| 5   | CloudWatch dashboard + Galexie lag alarm on staging         | **No**     | **Blocked by task 0036** — not implemented.         |
+| AC# | Criterion                                                   | Met?       | Notes                                                                                             |
+| --- | ----------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------- |
+| 1   | S3 consecutive LedgerCloseMeta files matching mainnet times | Partially  | Live ingestion works. Formal validation (0041) TBD.                                               |
+| 2   | RDS ledgers — no gaps from backfill start to current tip    | **No**     | **Blocked by backfill** — tool ready (0117), pre-backfill tasks (0118, 0119, 0130, 0134) pending. |
+| 3   | soroban_events spot-check by known Soroswap/Aquarius hashes | Unverified | Requires manual spot-check. See Section 7.                                                        |
+| 4   | cdk deploy from clean account — no manual steps             | Partially  | Core CDK works. Task 0038 (env config) not done.                                                  |
+| 5   | CloudWatch dashboard + Galexie lag alarm on staging         | **Yes**    | Task 0036 completed. Verify dashboards on staging.                                                |
 
 ---
 
@@ -263,17 +269,17 @@ API (D2, backlog) and frontend (D2, backlog) tasks.
 
 ### 6.1 Requirements Without Backlog Tasks
 
-| Requirement                                    | Tech Design Section | Deliverable | Impact                                      |
-| ---------------------------------------------- | ------------------- | ----------- | ------------------------------------------- |
-| NFT transfer history (GET /nfts/:id/transfers) | 1.3, 2.3            | D2          | Schema gap — no `nft_transfers` table.      |
-| Transaction signatures (signer, weight, hex)   | 1.3                 | D2          | XDR parser does not extract signatures.     |
-| XDR decoding service (on-demand decode)        | 2.2, 5.1            | D2          | 4 estimated days, no task.                  |
-| Pool participants (providers + shares)         | 1.3                 | D2          | No per-provider tracking in schema.         |
-| Token holder_count ongoing updates             | 1.3                 | D2          | Initial detection only, no ongoing updates. |
-| Network TPS computation                        | 1.3                 | D2          | Must be derived. No task.                   |
-| 7-day post-launch monitoring report            | D3 AC#6             | D3          | Contractual obligation — no task.           |
-| Public GitHub repository                       | D3 AC#2             | D3          | Contractual obligation — no task.           |
-| Stellar team read-only IAM access              | D3 AC#3             | D3          | Contractual obligation — no task.           |
+| Requirement                                    | Tech Design Section | Deliverable | Impact                                                                       |
+| ---------------------------------------------- | ------------------- | ----------- | ---------------------------------------------------------------------------- |
+| NFT transfer history (GET /nfts/:id/transfers) | 1.3, 2.3            | D2          | Schema gap — no `nft_transfers` table.                                       |
+| Transaction signatures (signer, weight, hex)   | 1.3                 | D2          | XDR parser does not extract signatures.                                      |
+| XDR decoding service (on-demand decode)        | 2.2, 5.1            | D2          | 4 estimated days, no task.                                                   |
+| Pool participants (providers + shares)         | 1.3                 | D2          | No per-provider tracking in schema.                                          |
+| Token holder_count ongoing updates             | 1.3                 | D2          | Initial detection only, no ongoing updates.                                  |
+| ~~Network TPS computation~~                    | 1.3                 | D2          | **Already covered** by task 0045 (`GET /v1/network/stats` with `tps` field). |
+| 7-day post-launch monitoring report            | D3 AC#6             | D3          | Contractual obligation — no task.                                            |
+| Public GitHub repository                       | D3 AC#2             | D3          | Contractual obligation — no task.                                            |
+| Stellar team read-only IAM access              | D3 AC#3             | D3          | Contractual obligation — no task.                                            |
 
 ### 6.2 Potential Dead Weight in Schema
 
@@ -357,11 +363,11 @@ FROM liquidity_pool_snapshots;
 
 ### 7.2 On AWS Console
 
-| Check | How                                                  | Expected                               |
-| ----- | ---------------------------------------------------- | -------------------------------------- |
-| AC#1  | S3 console -> `stellar-ledger-data/` -> sort by date | Consecutive files with ~5-6s intervals |
-| AC#4  | Run `cdk deploy` on clean staging account            | Complete without manual steps          |
-| AC#5  | CloudWatch console -> Dashboards                     | Blocked by task 0036                   |
+| Check | How                                                  | Expected                                |
+| ----- | ---------------------------------------------------- | --------------------------------------- |
+| AC#1  | S3 console -> `stellar-ledger-data/` -> sort by date | Consecutive files with ~5-6s intervals  |
+| AC#4  | Run `cdk deploy` on clean staging account            | Complete without manual steps           |
+| AC#5  | CloudWatch console -> Dashboards                     | Task 0036 completed — verify on staging |
 
 ### 7.3 In Code
 
@@ -455,14 +461,15 @@ Numbers larger than `i64::MAX` may produce inconsistent formatting. Unlikely edg
 These findings were evaluated and deliberately left without tasks. The cost of fixing
 exceeds the user impact, or the behavior is by design.
 
-| Finding | Severity | Rationale                                                                                                            |
-| ------- | -------- | -------------------------------------------------------------------------------------------------------------------- |
-| F4      | MEDIUM   | By Soroban design — one return_value per host function call, not per auth entry. Common single-auth case is correct. |
-| F6      | MEDIUM   | Edge case — contract creation rarely has sub-invocations. Low user impact.                                           |
-| F17     | MEDIUM   | Minor — minted_at_ledger stays from original mint. Acceptable for explorer.                                          |
-| F23     | LOW      | Code hygiene — duplicated function. Refactor when touched next.                                                      |
-| F24     | LOW      | Horizon does the same — merged accounts shown as last known state.                                                   |
-| F25     | LOW      | Theoretical — numbers > i64::MAX as token IDs extremely unlikely.                                                    |
+| Finding | Severity | Rationale                                                                                                              |
+| ------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
+| F4      | MEDIUM   | By Soroban design — one return_value per host function call, not per auth entry. Common single-auth case is correct.   |
+| F6      | MEDIUM   | Edge case — contract creation rarely has sub-invocations. Low user impact.                                             |
+| F12     | MEDIUM   | Latent risk only — harmless with current SAC-only detection. Fix scoped in task 0120 (soroban-native token detection). |
+| F17     | MEDIUM   | Minor — minted_at_ledger stays from original mint. Acceptable for explorer.                                            |
+| F23     | LOW      | Code hygiene — duplicated function. Refactor when touched next.                                                        |
+| F24     | LOW      | Horizon does the same — merged accounts shown as last known state.                                                     |
+| F25     | LOW      | Theoretical — numbers > i64::MAX as token IDs extremely unlikely.                                                      |
 
 ### 8.5 Security Note
 
@@ -649,8 +656,8 @@ beyond the known `minted_at_ledger` INSERT-only issue.
 2. **Complete task 0119** (trustline balance extraction) — before backfill, dormant accounts won't self-fix
 3. **Complete task 0130** (historical partitions) — before backfill, prevents DEFAULT partition bloat
 4. **Complete task 0134** (envelope/meta validation) — data integrity guard
-5. **Complete task 0030** (historical backfill) — hard blocker for AC#2
-6. **Complete task 0036** (CloudWatch dashboards + alarms) — hard blocker for AC#5
+5. **Run backfill** via backfill-bench (task 0117, tool ready) — hard blocker for AC#2. Task 0030 (Fargate) superseded.
+6. ~~Complete task 0036~~ — **Done.** Verify CloudWatch dashboards exist on staging.
 7. **Run AC#3 spot-check** — manual DB query with known Soroswap/Aquarius hashes
 
 ### 11.2 Before D2 Start

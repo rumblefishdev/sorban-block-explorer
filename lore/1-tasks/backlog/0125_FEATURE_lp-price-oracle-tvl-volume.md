@@ -6,7 +6,7 @@ status: backlog
 related_adr: []
 related_tasks: ['0052', '0077']
 tags: [priority-low, effort-large, layer-indexer, layer-backend, audit-gap]
-milestone: 2
+milestone: 1
 links:
   - docs/audits/2026-04-10-pipeline-data-audit.md
 history:
@@ -46,12 +46,17 @@ Soroban DEX pool support requires per-DEX event parsing adapters.
 
 ### Classic AMM Pools (Phase 1)
 
-1. **Price oracle**: Integrate external price feed (CoinGecko, StellarExpert API, or
+**Architecture decision (resolved by audit Section 9.3):** This MUST be a **scheduled
+enrichment job** (EventBridge cron every 5 min), NOT inline during indexer ingestion.
+Price oracle calls and trade aggregation add latency/failure modes to the critical path.
+
+1. **Enrichment Worker Lambda** (shared with task 0124 or separate): triggered by
+   EventBridge cron (every 5 min for TVL/volume, reuses 0124 Lambda or creates new one).
+2. **Price oracle**: Integrate external price feed (CoinGecko, StellarExpert API, or
    Horizon aggregation endpoint) to get USD prices for pool assets.
-2. **TVL computation**: reserve_a _ price_a + reserve_b _ price_b, updated per snapshot.
-3. **Volume tracking**: Identify `PathPayment` operations that modify pool reserves.
-4. **Fee revenue**: volume \* (fee_bps / 10000). Fee is immutable (set at pool creation).
-5. Decide: inline during indexing or separate scheduled enrichment job?
+3. **TVL computation**: reserve_a _ price_a + reserve_b _ price_b, updated per snapshot.
+4. **Volume tracking**: Identify `PathPayment` operations that modify pool reserves.
+5. **Fee revenue**: volume \* (fee_bps / 10000). Fee is immutable (set at pool creation).
 
 ### Soroban DEX Pools (Phase 2 — separate task recommended)
 
@@ -67,3 +72,5 @@ Soroban DEX pool support requires per-DEX event parsing adapters.
 - [ ] `liquidity_pool_snapshots.volume` populated from trade activity
 - [ ] `liquidity_pool_snapshots.fee_revenue` computed from volume
 - [ ] Chart endpoint (`GET /liquidity-pools/:id/chart`) returns non-null time series
+- [ ] **Scheduled Enrichment Worker Lambda deployed** with EventBridge cron (every 5 min)
+- [ ] Enrichment runs independently of indexer ingestion (no inline price lookups)

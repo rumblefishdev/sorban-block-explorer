@@ -4,9 +4,10 @@ title: 'LP: pool participants and share tracking'
 type: FEATURE
 status: backlog
 related_adr: []
-related_tasks: ['0052', '0077']
+related_tasks: ['0052', '0077', '0136']
+blocked_by: ['0136']
 tags: [priority-low, effort-medium, layer-indexer, layer-db, audit-gap]
-milestone: 2
+milestone: 1
 links:
   - docs/audits/2026-04-10-pipeline-data-audit.md
 history:

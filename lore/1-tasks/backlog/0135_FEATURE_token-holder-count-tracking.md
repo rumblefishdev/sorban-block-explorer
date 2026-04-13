@@ -5,8 +5,9 @@ type: FEATURE
 status: backlog
 related_adr: []
 related_tasks: ['0027', '0049', '0119']
+blocked_by: ['0119']
 tags: [priority-medium, effort-medium, layer-indexer, layer-db, audit-gap]
-milestone: 2
+milestone: 1
 links:
   - docs/audits/2026-04-10-pipeline-data-audit.md
   - docs/architecture/technical-design-general-overview.md
@@ -65,3 +66,15 @@ to be implemented first, since trustline entries are the source of holder state 
 - [ ] Holder count visible in `GET /tokens` list and `GET /tokens/:id` detail
 - [ ] One-time backfill correction after historical ingestion
 - [ ] Test: token with 3 holders shows holder_count = 3
+- [ ] **Parallel backfill safety**: inline increment/decrement MUST be disabled during
+      parallel backfill (concurrent +1/-1 is not safe). Implementation must include a
+      feature flag or config toggle to disable inline updates. Post-backfill one-time
+      recount (AC #4) is the sole source of truth after historical ingestion.
+      (See audit Section 10.3 for details.)
+
+## Out of Scope
+
+**Soroban token holders** are NOT covered by this task. Soroban tokens track balances via
+`ContractData` storage entries, not Stellar trustlines. Per-contract storage layout parsing
+depends on task 0120 (soroban-native token detection). A follow-up task should extend
+holder_count to Soroban tokens once 0120 is implemented.

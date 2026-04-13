@@ -4,9 +4,10 @@ title: 'DB: add missing indexes for planned API query patterns'
 type: FEATURE
 status: backlog
 related_adr: []
-related_tasks: ['0043', '0046', '0050', '0053']
+related_tasks: ['0043', '0046', '0050', '0053', '0136']
+blocked_by: ['0136']
 tags: [priority-medium, effort-small, layer-db, audit-F21]
-milestone: 2
+milestone: 1
 links:
   - docs/audits/2026-04-10-pipeline-data-audit.md
 history:
