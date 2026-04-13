@@ -297,6 +297,7 @@ export class CloudWatchStack extends cdk.Stack {
               new cloudwatch.Metric({
                 namespace: 'SorobanBlockExplorer/Indexer',
                 metricName: 'LastProcessedLedgerSequence',
+                dimensionsMap: { Environment: config.envName },
                 period: cdk.Duration.minutes(1),
                 statistic: cloudwatch.Stats.MAXIMUM,
                 label: 'Last indexed ledger',
@@ -530,7 +531,7 @@ export class CloudWatchStack extends cdk.Stack {
             title: 'RDS free storage (bytes)',
             left: [
               rdsInstance.metricFreeStorageSpace({
-                period: cdk.Duration.minutes(5),
+                period: cdk.Duration.minutes(1),
                 statistic: cloudwatch.Stats.MINIMUM,
                 label: 'Free storage',
               }),

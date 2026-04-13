@@ -2,7 +2,7 @@
 
 use aws_sdk_cloudwatch::{
     Client as CloudWatchClient,
-    types::{MetricDatum, StandardUnit},
+    types::{Dimension, MetricDatum, StandardUnit},
 };
 use sqlx::PgPool;
 use std::time::Instant;
@@ -182,8 +182,15 @@ pub async fn process_ledger(
 /// Publish `LastProcessedLedgerSequence` to CloudWatch.
 /// Best-effort: failures are logged as warnings and do not abort ledger processing.
 async fn publish_ledger_sequence_metric(cw_client: &CloudWatchClient, ledger_sequence: u32) {
+    let env_name = std::env::var("ENV_NAME").unwrap_or_else(|_| "unknown".to_string());
     let datum = MetricDatum::builder()
         .metric_name("LastProcessedLedgerSequence")
+        .dimensions(
+            Dimension::builder()
+                .name("Environment")
+                .value(&env_name)
+                .build(),
+        )
         .value(f64::from(ledger_sequence))
         .unit(StandardUnit::None)
         .build();

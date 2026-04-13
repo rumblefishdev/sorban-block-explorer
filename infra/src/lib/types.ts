@@ -225,9 +225,13 @@ export function validateConfig(config: EnvironmentConfig): void {
     );
   }
 
-  if (config.galexieLagMinutes <= 0) {
+  if (
+    !Number.isInteger(config.galexieLagMinutes) ||
+    config.galexieLagMinutes < 1 ||
+    config.galexieLagMinutes > 100
+  ) {
     errors.push(
-      `galexieLagMinutes must be > 0, got: ${config.galexieLagMinutes}`
+      `galexieLagMinutes must be an integer between 1 and 100, got: ${config.galexieLagMinutes}`
     );
   }
   if (
@@ -235,7 +239,7 @@ export function validateConfig(config: EnvironmentConfig): void {
     config.processorErrorRateThreshold > 1
   ) {
     errors.push(
-      `processorErrorRateThreshold must be between 0 and 1, got: ${config.processorErrorRateThreshold}`
+      `processorErrorRateThreshold must be > 0 and <= 1, got: ${config.processorErrorRateThreshold}`
     );
   }
   if (config.rdsCpuThreshold <= 0 || config.rdsCpuThreshold > 100) {
