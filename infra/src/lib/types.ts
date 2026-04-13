@@ -119,6 +119,23 @@ export interface EnvironmentConfig {
   readonly xraySamplingRate: number;
   /** X-Ray reservoir size — fixed traces/sec guaranteed before sampling kicks in. */
   readonly xrayReservoirSize: number;
+
+  // Observability — CloudWatch alarms (consumed by CloudWatchStack)
+
+  /** Minutes of zero Ledger Processor invocations before the Galexie lag alarm fires. */
+  readonly galexieLagMinutes: number;
+  /** Error rate threshold (0.0–1.0) for the Ledger Processor error-rate alarm. */
+  readonly processorErrorRateThreshold: number;
+  /** RDS CPU utilization % threshold for the RDS CPU alarm (sustained 5 min). */
+  readonly rdsCpuThreshold: number;
+  /** RDS free storage % threshold below which the storage alarm fires. */
+  readonly rdsStorageThresholdPct: number;
+  /** API Gateway 5xx error rate % threshold for the 5xx alarm. */
+  readonly apiGateway5xxThreshold: number;
+  /** Slack workspace ID for AWS Chatbot alarm notifications (e.g. "T01ABCDEF"). */
+  readonly slackWorkspaceId: string;
+  /** Slack channel ID for AWS Chatbot alarm notifications (e.g. "C01ABCDEF"). */
+  readonly slackChannelId: string;
 }
 
 /**
@@ -205,6 +222,54 @@ export function validateConfig(config: EnvironmentConfig): void {
   ) {
     errors.push(
       `xrayReservoirSize must be a non-negative integer, got: ${config.xrayReservoirSize}`
+    );
+  }
+
+  if (config.galexieLagMinutes <= 0) {
+    errors.push(
+      `galexieLagMinutes must be > 0, got: ${config.galexieLagMinutes}`
+    );
+  }
+  if (
+    config.processorErrorRateThreshold <= 0 ||
+    config.processorErrorRateThreshold > 1
+  ) {
+    errors.push(
+      `processorErrorRateThreshold must be between 0 and 1, got: ${config.processorErrorRateThreshold}`
+    );
+  }
+  if (config.rdsCpuThreshold <= 0 || config.rdsCpuThreshold > 100) {
+    errors.push(
+      `rdsCpuThreshold must be between 0 and 100, got: ${config.rdsCpuThreshold}`
+    );
+  }
+  if (
+    config.rdsStorageThresholdPct <= 0 ||
+    config.rdsStorageThresholdPct > 100
+  ) {
+    errors.push(
+      `rdsStorageThresholdPct must be between 0 and 100, got: ${config.rdsStorageThresholdPct}`
+    );
+  }
+  if (
+    config.apiGateway5xxThreshold <= 0 ||
+    config.apiGateway5xxThreshold > 100
+  ) {
+    errors.push(
+      `apiGateway5xxThreshold must be between 0 and 100, got: ${config.apiGateway5xxThreshold}`
+    );
+  }
+  if (
+    !config.slackWorkspaceId ||
+    config.slackWorkspaceId.includes('CHANGE_ME')
+  ) {
+    errors.push(
+      `slackWorkspaceId missing or placeholder: "${config.slackWorkspaceId}"`
+    );
+  }
+  if (!config.slackChannelId || config.slackChannelId.includes('CHANGE_ME')) {
+    errors.push(
+      `slackChannelId missing or placeholder: "${config.slackChannelId}"`
     );
   }
 

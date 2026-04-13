@@ -44,5 +44,12 @@
   "cloudFrontWafRateLimit": 10000,
   "apiWafRateLimit": 2000,
   "xraySamplingRate": 0.05,
-  "xrayReservoirSize": 1
+  "xrayReservoirSize": 1,
+  "galexieLagMinutes": 1,
+  "processorErrorRateThreshold": 0.01,
+  "rdsCpuThreshold": 70,
+  "rdsStorageThresholdPct": 20,
+  "apiGateway5xxThreshold": 0.5,
+  "slackWorkspaceId": "T83HLEDJN",
+  "slackChannelId": "C09JZ0Z0Z0Z"
 }
