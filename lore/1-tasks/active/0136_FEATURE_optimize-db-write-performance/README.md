@@ -2,7 +2,7 @@
 id: '0136'
 title: 'Indexer: optimize DB write performance for backfill (<100ms target)'
 type: FEATURE
-status: backlog
+status: active
 related_adr: []
 related_tasks: ['0117']
 tags: [priority-high, effort-medium, layer-db, layer-indexer]
@@ -22,6 +22,10 @@ history:
       Target: <100ms DB write. Senior feedback: auto-increment for uniques where possible,
       eliminate redundant unique constraints during backfill.
       Context: local backfill is the production path (Lambda deferred).
+  - date: '2026-04-13'
+    status: active
+    who: fmazur
+    note: 'Activated — starting with Phase 0 instrumentation.'
 ---
 
 # Indexer: optimize DB write performance for backfill
