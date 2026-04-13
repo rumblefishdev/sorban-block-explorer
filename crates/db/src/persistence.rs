@@ -439,4 +439,60 @@ mod tests {
             .await
             .unwrap();
     }
+
+    /// UNNEST batch with nullable fields handles NULLs correctly.
+    #[tokio::test]
+    async fn transactions_batch_nullable_fields() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let seq = 88_888_883_i64;
+        let hash = "c".repeat(64);
+
+        sqlx::query("DELETE FROM transactions WHERE hash = $1")
+            .bind(&hash)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM ledgers WHERE sequence = $1")
+            .bind(seq)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        insert_ledger(&pool, &test_ledger(seq)).await.unwrap();
+
+        // All nullable fields set to None
+        let tx = Transaction {
+            id: 0,
+            hash: hash.clone(),
+            ledger_sequence: seq,
+            source_account: "GABC123".to_string(),
+            fee_charged: 100,
+            successful: true,
+            result_code: None,
+            envelope_xdr: "envelope".to_string(),
+            result_xdr: "result".to_string(),
+            result_meta_xdr: None,
+            memo_type: None,
+            memo: None,
+            created_at: Utc::now(),
+            parse_error: None,
+            operation_tree: None,
+        };
+
+        let result = insert_transactions_batch(&pool, &[tx]).await.unwrap();
+        assert_eq!(result.len(), 1, "transaction with all NULLs inserted");
+
+        sqlx::query("DELETE FROM transactions WHERE hash = $1")
+            .bind(&hash)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM ledgers WHERE sequence = $1")
+            .bind(seq)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
 }

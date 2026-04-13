@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Instant;
 use tokio::sync::{Semaphore, mpsc};
+use tokio::task::JoinSet;
 use tracing::{error, info, warn};
 
 const S3_BUCKET_BASE: &str = "s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet";
@@ -83,7 +84,7 @@ async fn downloader(
     std::fs::create_dir_all(TEMP_DIR).expect("failed to create .temp directory");
 
     let semaphore = Arc::new(Semaphore::new(CONCURRENT_DOWNLOADS));
-    let mut handles = Vec::with_capacity((end - start + 1) as usize);
+    let mut tasks = JoinSet::new();
 
     for ledger in start..=end {
         let permit = semaphore
@@ -94,7 +95,7 @@ async fn downloader(
         let tx = tx.clone();
         let stats = stats.clone();
 
-        handles.push(tokio::spawn(async move {
+        tasks.spawn(async move {
             let uri = s3_uri(ledger);
             let dest = local_path(ledger);
 
@@ -137,12 +138,15 @@ async fn downloader(
             // Release permit AFTER channel send — this couples download rate
             // to indexer consumption, preventing unbounded file accumulation.
             drop(permit);
-        }));
+        });
     }
 
-    // Wait for all downloads to finish
-    for handle in handles {
-        let _ = handle.await;
+    // Await tasks as they complete — JoinSet frees handles immediately,
+    // no unbounded Vec<JoinHandle> allocation for large ranges.
+    while let Some(result) = tasks.join_next().await {
+        if let Err(e) = result {
+            warn!(error = %e, "download task panicked");
+        }
     }
 
     // tx is dropped here, closing the channel → indexer will finish

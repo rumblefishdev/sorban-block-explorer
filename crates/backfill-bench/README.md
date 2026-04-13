@@ -70,8 +70,8 @@ Avg file:   187.3 KB
 
 | Range | Ledgers | Period | Avg file size | Description |
 |-------|---------|--------|---------------|-------------|
-| 0 – 50,463,000 | ~50.5M | Sep 2015 – Feb 2024 | 400B – 220KB | Pre-Soroban (classic Stellar) |
-| **50,463,000 – present** | **~11.6M** | **Feb 2024 – present** | **~180 KB** | **Soroban era (Protocol 20+)** |
+| 0 – 50,457,424 | ~50.5M | Sep 2015 – Feb 2024 | 400B – 220KB | Pre-Soroban (classic Stellar) |
+| **50,457,424 – present** | **~11.6M** | **Feb 2024 – present** | **~180 KB** | **Soroban era (Protocol 20+)** |
 
 Soroban smart contracts (Protocol 20) were activated on mainnet at **ledger 50,457,424** (February 20, 2024, 17:00 UTC).
 

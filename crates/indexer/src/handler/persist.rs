@@ -174,7 +174,7 @@ pub async fn persist_ledger(
     //   b) Also apply directly to any soroban_contracts rows that already exist — covers
     //      same-ledger deploys and re-index flows.
     //
-    // upsert_contract_deployment() reads wasm_interface_metadata after each deployment upsert,
+    // upsert_contract_deployments_batch() applies wasm_interface_metadata after each batch upsert,
     // so any contract deployed in a later ledger automatically picks up the staged metadata.
     for iface in contract_interfaces {
         let metadata = serde_json::json!({
