@@ -10,8 +10,41 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      typescript: ${{ steps.filter.outputs.typescript }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/ci.yml'
+            typescript:
+              - 'apps/**'
+              - 'libs/**'
+              - 'web/**'
+              - 'infra/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tsconfig*.json'
+              - 'nx.json'
+              - '.github/workflows/ci.yml'
+
   typescript:
     name: TypeScript (lint, build, typecheck)
+    needs: changes
+    if: |
+      needs.changes.outputs.typescript == 'true' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/master')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,7 +62,11 @@ jobs:
 
   rust:
     name: Rust (fmt, clippy, test, lambda build)
-    runs-on: ubuntu-latest
+    needs: changes
+    if: |
+      needs.changes.outputs.rust == 'true' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/master')
+    runs-on: ubuntu-24.04-arm
     env:
       SQLX_OFFLINE: 'true'
     steps:
@@ -40,6 +77,9 @@ jobs:
           components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: 'ci-${{ runner.arch }}'
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
 
       - name: Install cargo-lambda
         run: pip3 install cargo-lambda
@@ -56,3 +96,12 @@ jobs:
       - run: cargo test -p api --features swagger-ui
 
       - run: cargo lambda build --release --arm64
+
+      - name: Verify Lambda artifacts
+        shell: bash
+        run: |
+          shopt -s failglob
+          echo "=== Lambda bootstrap binaries ==="
+          for bin in target/lambda/*/bootstrap; do
+            echo "$(sha256sum "$bin") $(stat --format='%s bytes' "$bin")"
+          done

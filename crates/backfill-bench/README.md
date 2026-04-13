@@ -24,7 +24,7 @@ cargo run -p backfill-bench -- --start <ledger> --end <ledger>
 Index 1000 recent ledgers:
 
 ```bash
-cargo run -p backfill-bench -- --start 62015000 --end 62015999
+cargo run --release -p backfill-bench -- --start 62016000 --end 62016099
 ```
 
 Index 100 ledgers with explicit database URL:

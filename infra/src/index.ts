@@ -18,3 +18,5 @@ export { CicdStack } from './lib/stacks/cicd-stack.js';
 export type { CicdStackProps } from './lib/stacks/cicd-stack.js';
 export { ObservabilityStack } from './lib/stacks/observability-stack.js';
 export type { ObservabilityStackProps } from './lib/stacks/observability-stack.js';
+export { CloudWatchStack } from './lib/stacks/cloudwatch-stack.js';
+export type { CloudWatchStackProps } from './lib/stacks/cloudwatch-stack.js';
