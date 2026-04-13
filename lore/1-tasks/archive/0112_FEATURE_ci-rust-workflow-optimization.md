@@ -2,7 +2,7 @@
 id: '0112'
 title: 'CI: optimize ci.yml workflow (Rust + TypeScript — arm64, path filter, Nx cache, node_modules cache)'
 type: FEATURE
-status: active
+status: completed
 related_adr: []
 related_tasks: ['0110']
 tags:
@@ -28,6 +28,22 @@ history:
     status: active
     who: FilipDz
     note: 'Activated for implementation'
+  - date: '2026-04-13'
+    status: completed
+    who: FilipDz
+    note: >
+      arm64 runner, dorny/paths-filter per-job gating, Swatinem cache
+      tuning (shared-key with arch, save-if develop), SHA256 artifact
+      verification. Expected ~50% wall-clock reduction on warm cache.
+  - date: '2026-04-13'
+    status: active
+    who: FilipDz
+    note: >-
+      Pre-flight checks all resolved. arm64 GA since Aug 2025 (free for public repos).
+      save-if=develop (master merges <1/month). Cache cleanup: deleted 3 broken
+      staging-ref caches (~992 MB freed, 9 caches / 10.05 GB). Cache hit rate >90%
+      on recent runs. Implementation: single PR with arm64 runner, dorny/paths-filter
+      (SHA-pinned v3.0.3), Swatinem/rust-cache tuning, SHA256 artifact verification.
 ---
 
 # CI: optimize Rust workflow
@@ -70,19 +86,18 @@ artifacts in `target/` so they benefit from the same cache strategy.
 | `cargo test` scope                         | runs full workspace including lambda crates → splitting test/build into 2 jobs causes double-compile. **Don't split.**         |
 | **GH Actions cache size**                  | **9.8 GB / 10 GB (98%)** — 11 active caches. Adding new cache directories will trigger LRU eviction. **Cleanup needed first.** |
 | arm64 runner labels                        | `ubuntu-24.04-arm`, `ubuntu-22.04-arm` — confirmed GA via `actions/partner-runner-images`                                      |
-| arm64 free for THIS public repo in 2026-04 | ⚠️ **uncertain** — see "Pre-flight checks remaining" below                                                                     |
+| arm64 free for THIS public repo in 2026-04 | ✅ GA since Aug 2025 — free for public repos, no billing test needed                                                           |
 | `cargo-lambda` latest version              | v1.9.1 (verified via api.github.com)                                                                                           |
 | `pip3 install cargo-lambda` time           | only 6s in baseline (not 30-60s) → prebuilt-binary swap not worth doing                                                        |
 
 ## Pre-flight checks remaining (block implementation)
 
-These must be resolved **before** opening the implementation PR:
+All resolved ✅ — see worklog for details.
 
-- [ ] **Confirm arm64 runner is free for this public repo as of 2026-04.** Method: 1. Create throwaway workflow on a test branch with `runs-on: ubuntu-24.04-arm` and a 30s job. 2. Note GH Actions billing/minutes used before run. 3. Trigger run, wait for success. 4. Check minutes-used delta. If 0 → free, proceed. If charged → pivot (see below).
-      Sources are ambiguous: 2025-01-16 blog announced free in public preview, but billing docs in 2026-04 do not unambiguously confirm continued free status.
-- [ ] **Decide cache `save-if` branch.** `master` (default) vs `develop` (where work happens). Check rhythm of develop → master merges via `git log master...develop`. If frequent (>1/week) → `master`. If rare → `develop` or both.
-- [ ] **Cache cleanup.** Free up space in the 10 GB cache budget. Either: - Delete old / unused caches via `gh api -X DELETE /repos/.../actions/caches/<id>` - Or shorten `actions/cache` retention (default 7 days idle eviction) - Document size before/after in worklog
-- [ ] **Measure cache hit rate** of current `Swatinem/rust-cache` setup over 5 recent runs. If already >90%, cache tuning ROI is low — focus on arm64 runner.
+- [x] **Confirm arm64 runner is free for this public repo as of 2026-04.** GA since Aug 2025 — free for public repos. No billing test needed.
+- [x] **Decide cache `save-if` branch.** `develop` — master gets <1 merge/month (last merge 2026-03-25, 30+ commits behind). PRs read from develop's cache.
+- [x] **Cache cleanup.** Deleted 3 caches with broken refs (`refs/heads/refs/tags/staging-*`), ~992 MB freed. Before: 12 caches / 11.02 GB. After: 9 caches / 10.05 GB.
+- [x] **Measure cache hit rate** of current `Swatinem/rust-cache` setup. >90% hit rate on 4 recent runs (IDs: 24336031038, 24334621264, 24334409057, 24332808173). Post-cache save 0-16s = small delta = warm cache. Lambda build (~2m 33s avg) is 68% of job time — arm64 native build is the main optimization.
 
 ## Proposed changes (in ROI order, conditional on pre-flight)
 
@@ -180,16 +195,15 @@ runner switch.
 
 ## Coordination with 0110
 
-Task 0110 PR 2 will introduce caching for `deploy-staging.yml` rust steps.
-Decisions to align:
+Task 0110 is **completed** (archived 2026-04-09). 0110 PR 2 pivoted from
+Rust/Nx caching to node_modules only — Rust cache tuning was dropped as
+below noise floor for `deploy-staging.yml` (CDK deploy = 76% of wall-clock).
 
-- Cache key naming convention (`shared-key` format)
-- `cache-directories` list (what extra paths to cache)
-- `save-if` strategy
+Conventions established by 0112 (no conflict with 0110):
 
-**Sequencing:** 0110 PR 2 should land first. 0112 then adopts whatever
-key/directories convention 0110 PR 2 establishes. Avoids two unrelated PRs
-inventing different conventions.
+- `shared-key: "ci-${{ runner.arch }}"` — includes arch for arm64/x86_64 separation
+- No `cache-directories` — on native arm64 there's no zigbuild
+- `save-if: develop` — matches where all work happens
 
 ## Acceptance criteria
 
