@@ -2,7 +2,7 @@
 id: '0135'
 title: 'Indexer: ongoing token holder_count tracking'
 type: FEATURE
-status: backlog
+status: blocked
 related_adr: []
 related_tasks: ['0027', '0049', '0119']
 blocked_by: ['0119']

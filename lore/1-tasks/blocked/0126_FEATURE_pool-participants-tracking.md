@@ -2,7 +2,7 @@
 id: '0126'
 title: 'LP: pool participants and share tracking'
 type: FEATURE
-status: backlog
+status: blocked
 related_adr: []
 related_tasks: ['0052', '0077', '0136']
 blocked_by: ['0136']
