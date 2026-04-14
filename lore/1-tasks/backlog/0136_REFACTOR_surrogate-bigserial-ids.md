@@ -2,7 +2,7 @@
 id: '0136'
 title: 'DB: add surrogate BIGSERIAL IDs to all tables using string PKs'
 type: REFACTOR
-status: active
+status: backlog
 related_adr: []
 related_tasks: ['0121', '0122', '0126']
 tags: [priority-high, effort-large, layer-db]
@@ -19,6 +19,10 @@ history:
     status: active
     who: fmazur
     note: 'Activated task for implementation.'
+  - date: '2026-04-14'
+    status: backlog
+    who: fmazur
+    note: 'Moved back to backlog — deprioritized.'
 ---
 
 # DB: add surrogate BIGSERIAL IDs to all tables using string PKs

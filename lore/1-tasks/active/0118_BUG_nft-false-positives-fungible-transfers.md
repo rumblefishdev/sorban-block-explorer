@@ -2,7 +2,7 @@
 id: '0118'
 title: 'BUG: NFT false positives from fungible token transfers'
 type: BUG
-status: backlog
+status: active
 related_adr: []
 related_tasks: ['0026', '0027']
 tags: [priority-high, effort-small, layer-indexer, audit-F9]
@@ -15,6 +15,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Spawned from pipeline audit finding F9 (HIGH severity).'
+  - date: '2026-04-14'
+    status: active
+    who: fmazur
+    note: 'Activated task for implementation.'
 ---
 
 # BUG: NFT false positives from fungible token transfers
