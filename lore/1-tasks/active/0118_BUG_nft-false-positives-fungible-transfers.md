@@ -5,7 +5,7 @@ type: BUG
 status: active
 related_adr: []
 related_tasks: ['0026', '0027']
-tags: [priority-high, effort-small, layer-indexer, audit-F9]
+tags: [priority-high, effort-medium, layer-indexer, audit-F9]
 milestone: 1
 links:
   - crates/xdr-parser/src/nft.rs
@@ -48,29 +48,60 @@ recognized but intentionally deferred pending a proper fix via WASM spec analysi
 **Caution:** Some NFT contracts use `i128` as token IDs. A blanket numeric exclusion would
 cause false negatives. The fix must distinguish between fungible amounts and NFT token IDs.
 
-Approaches (in order of reliability):
+### Chosen approach: WASM classification + staging table
 
-1. **WASM spec analysis** (best): Use `wasm_interface_metadata` to check if the emitting
-   contract implements NFT-specific functions (e.g., `token_uri`, `owner_of`) vs SEP-0041
-   fungible functions only. Only insert into `nfts` if confirmed NFT contract.
-2. **Heuristic refinement** (fallback): Exclude `i128`/`u128` by default but whitelist
-   contracts known to use numeric token IDs (requires a classification pass).
-3. **Simple numeric exclusion** (quick fix): Exclude all numeric ScVal types. Accepts some
-   false negatives for NFT contracts using numeric IDs.
+**Decision (2026-04-14, fmazur):** Use WASM spec analysis with `nft_candidates` staging
+table to guarantee zero data loss during parallel backfill.
 
-Add regression tests with i128 data simulating a standard SEP-0041 transfer.
+#### Flow
+
+1. On event detection, lookup `wasm_interface_metadata` for the emitting contract
+   (with in-memory `HashMap<contract_id, Classification>` cache per worker process).
+2. **Classified as NFT** (has `token_uri`, `owner_of`) → insert directly into `nfts`
+3. **Classified as fungible** (SEP-0041 only, no NFT functions) → **skip**
+4. **No WASM metadata available** (race condition during parallel backfill, or contract
+   not yet indexed) → insert into **`nft_candidates`** staging table
+5. **Post-backfill resolve:** query `nft_candidates` against `wasm_interface_metadata`,
+   move confirmed NFTs to `nfts`, discard the rest
+
+#### Why staging over direct cleanup
+
+- `nfts` table stays clean — no millions of false positives inflating indexes
+- No expensive mass DELETE + VACUUM after backfill
+- `nft_candidates` is small (only unknown contracts) and disposable
+- Safe for parallel backfill with 4+ workers on different ledger ranges — race
+  conditions on WASM metadata availability are handled gracefully with zero data loss
+
+#### Rejected alternatives
+
+- **Direct cleanup (option 3):** Record everything to `nfts`, DELETE after backfill.
+  Rejected: table bloat, expensive cleanup, dead tuples.
+- **Heuristic refinement:** Exclude `i128`/`u128` + whitelist. Rejected: fragile,
+  requires manual contract classification.
+- **Simple numeric exclusion:** Exclude all numeric ScVal types. Rejected: false
+  negatives for NFT contracts using numeric token IDs.
 
 ## Acceptance Criteria
 
-- [ ] NFT detection uses WASM spec analysis (Option 1) to classify contracts before inserting
-      into `nfts` — query `wasm_interface_metadata` for NFT-specific functions (`token_uri`,
-      `owner_of`, etc.) vs SEP-0041 fungible-only functions
-- [ ] Fallback for contracts without WASM metadata: exclude numeric ScVal types (i128, u128,
-      i64, u64) as a conservative default — accept false negatives over false positives
+- [ ] WASM classification: lookup `wasm_interface_metadata` for NFT-specific functions
+      (`token_uri`, `owner_of`) vs SEP-0041 fungible-only functions
+- [ ] In-memory cache (`HashMap<contract_id, Classification>`) to avoid repeated DB lookups
+- [ ] Classified NFT → insert directly into `nfts`
+- [ ] Classified fungible → skip (no insert)
+- [ ] Unknown contract (no WASM metadata) → insert into `nft_candidates` staging table
+- [ ] Migration: create `nft_candidates` staging table (mirror `nfts` columns + `staged_at`
+      timestamp) — verify actual `nfts` schema from migrations before writing
+- [ ] Post-backfill resolve: manual SQL script (not automated) to move confirmed NFTs
+      from `nft_candidates` to `nfts`, discard fungible false positives. Must run in a
+      single transaction (INSERT + DELETE) to prevent data loss on failure
+- [ ] Retention policy for `nft_candidates`: contracts that remain unresolvable (no WASM
+      metadata after full backfill) should be flagged or purged — table must not grow unbounded
+- [ ] Live indexing path: verify that 2-ledger pattern (WASM upload → deploy) guarantees
+      metadata availability before first transfer event; document any edge cases
 - [ ] Remove or update test `i128_token_id_not_excluded` — it currently asserts the broken
-      behavior; replace with a test that verifies WASM-classified NFT contracts with i128
-      token IDs are still detected correctly
+      behavior
 - [ ] Existing NFT detection tests still pass (for string/bytes token_id contracts)
-- [ ] New test: SEP-0041 fungible transfer event does NOT produce an NFT record
-- [ ] New test: NFT contract (WASM-classified) with i128 token_id still detected correctly
-- [ ] New test: unknown contract (no WASM metadata) with i128 data does NOT produce NFT record
+- [ ] New test: SEP-0041 fungible transfer (i128) + fungible-classified contract → no NFT record
+- [ ] New test: NFT contract (WASM-classified) with i128 token_id → detected correctly
+- [ ] New test: unknown contract (no WASM metadata) with i128 data → goes to `nft_candidates`
+- [ ] New test: resolve step moves NFT candidates to `nfts` after WASM metadata available
