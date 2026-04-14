@@ -29,6 +29,7 @@ export interface EnvironmentConfig {
   readonly indexerLambdaMemory: number;
   readonly indexerLambdaTimeout: number;
   readonly indexerLambdaConcurrency: number;
+  readonly indexerLambdaRetryAttempts: number;
 
   // Ingestion — ECS Fargate (consumed by IngestionStack)
 

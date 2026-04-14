@@ -154,7 +154,7 @@ export class ComputeStack extends cdk.Stack {
     // Retry failed async invocations twice, then send to DLQ.
     new lambda.EventInvokeConfig(this, 'ProcessorInvokeConfig', {
       function: processorFunction,
-      retryAttempts: 2,
+      retryAttempts: config.indexerLambdaRetryAttempts,
       onFailure: new lambdaDestinations.SqsDestination(dlq),
     });
 
@@ -164,11 +164,14 @@ export class ComputeStack extends cdk.Stack {
     //   {hex}--{start}-{end}/{hex}--{start}[-{end}].xdr.zst
     // This suffix MUST match parse_s3_key() in crates/xdr-parser/src/lib.rs.
     // CDK automatically adds Lambda invoke permission for S3.
-    ledgerBucket.addEventNotification(
-      s3.EventType.OBJECT_CREATED,
-      new s3n.LambdaDestination(processorFunction),
-      { suffix: '.xdr.zst' }
-    );
+    // Skip when concurrency=0 — avoids queuing events for a throttled Lambda.
+    if (config.indexerLambdaConcurrency > 0) {
+      ledgerBucket.addEventNotification(
+        s3.EventType.OBJECT_CREATED,
+        new s3n.LambdaDestination(processorFunction),
+        { suffix: '.xdr.zst' }
+      );
+    }
 
     // ---------------------
     // IAM Grants
