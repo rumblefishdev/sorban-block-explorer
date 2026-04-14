@@ -9,8 +9,8 @@ Full Soroban era: ledgers **50,457,424** to **~62,000,000** (~11.6M ledgers).
 - Each Fargate task runs `backfill-bench` for a different ledger range
 - All tasks write to the same RDS PostgreSQL (same VPC, minimal latency)
 - No merge needed — single database, no ID conflicts
-- `nft_candidates` resolve works immediately after backfill (WASM metadata from all
-  workers already in one place)
+- NFT classification uses WASM metadata from `wasm_interface_metadata` — all workers
+  contribute to a shared classification pool in the same RDS
 - 4 connections to RDS is negligible load
 
 **Assumptions:**
@@ -61,7 +61,7 @@ backfill-bench --start <start> --end <end> --database-url $DATABASE_URL
 > Each task downloads partitions from S3 independently. No AWS credentials needed
 > for S3 (public bucket), but tasks need network access to RDS.
 
-## 5. Monitor progress
+## 4. Monitor progress
 
 Each Fargate task logs a summary on completion. Check CloudWatch for skipped/indexed counts.
 
@@ -71,46 +71,49 @@ To check DB progress:
 psql $DATABASE_URL -c "SELECT MIN(sequence), MAX(sequence), COUNT(*) FROM ledgers"
 ```
 
-## 6. Post-backfill: resolve NFT candidates
+## 5. Post-backfill: clean up NFT false positives
 
-After **all 4 workers finish**, run the resolve script to move confirmed NFTs
-from `nft_candidates` staging table to `nfts`:
+After **all 4 workers finish**, remove false-positive NFT records from contracts
+classified as fungible or SAC. During backfill, some transfers may have been inserted
+into `nfts` before WASM metadata was available for classification.
 
 ```sql
 BEGIN;
 
-INSERT INTO nfts (contract_id, token_id, owner, transaction_hash, event_kind,
-                  ledger_sequence, created_at)
-SELECT nc.contract_id, nc.token_id, nc.owner, nc.transaction_hash, nc.event_kind,
-       nc.ledger_sequence, nc.created_at
-FROM nft_candidates nc
-JOIN contracts c ON c.contract_id = nc.contract_id
-JOIN wasm_interface_metadata wim ON wim.wasm_hash = c.wasm_hash
-WHERE wim.metadata @> '{"functions": [{"name": "token_uri"}]}'
-   OR wim.metadata @> '{"functions": [{"name": "owner_of"}]}';
+-- 1. Sanity check: ensure classification is complete
+SELECT COUNT(*) AS unclassified
+FROM soroban_contracts
+WHERE contract_type = 'other'
+  AND contract_id IN (SELECT DISTINCT contract_id FROM nfts);
+-- If >0: stop, investigate unclassified contracts first
 
-DELETE FROM nft_candidates
+-- 2. Remove false positives (fungible + SAC transfers mistakenly in nfts)
+DELETE FROM nfts
 WHERE contract_id IN (
-  SELECT c.contract_id
-  FROM contracts c
-  JOIN wasm_interface_metadata wim ON wim.wasm_hash = c.wasm_hash
+    SELECT contract_id FROM soroban_contracts
+    WHERE contract_type IN ('fungible', 'token')
 );
 
 COMMIT;
+
+-- 3. Reclaim space
+VACUUM ANALYZE nfts;
 ```
 
-> This moves NFT-classified candidates to `nfts` and removes all resolved entries
-> (both NFT and fungible). Candidates with no WASM metadata remain for manual review.
+> The cleanup DELETE only removes records from contracts definitively classified as
+> fungible or SAC. Unclassified contracts (`'other'`) are left untouched — investigate
+> manually before purging.
 
-## 7. Verify
+## 6. Verify
 
 ```bash
 psql $DATABASE_URL -c "
-  SELECT 'nfts' AS table_name, COUNT(*) FROM nfts
-  UNION ALL
-  SELECT 'nft_candidates', COUNT(*) FROM nft_candidates;
+  SELECT contract_type, COUNT(*) AS nft_records
+  FROM nfts n
+  JOIN soroban_contracts c ON c.contract_id = n.contract_id
+  GROUP BY contract_type;
 "
 ```
 
-`nft_candidates` should be near zero. Any remaining entries are contracts without
-WASM metadata — review manually or wait for metadata to become available.
+After cleanup, all records in `nfts` should belong to contracts with
+`contract_type = 'nft'`.

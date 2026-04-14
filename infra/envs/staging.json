@@ -20,7 +20,7 @@
   "galexieCpu": 2048,
   "galexieMemory": 13312,
   "galexieEphemeralStorage": 30,
-  "galexieDesiredCount": 1,
+  "galexieDesiredCount": 0,
   "stellarNetworkPassphrase": "Public Global Stellar Network ; September 2015",
   "ecsLogRetentionDays": 30,
   "galexieStopTimeout": 120,

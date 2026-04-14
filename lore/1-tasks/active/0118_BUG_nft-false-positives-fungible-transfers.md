@@ -48,60 +48,179 @@ recognized but intentionally deferred pending a proper fix via WASM spec analysi
 **Caution:** Some NFT contracts use `i128` as token IDs. A blanket numeric exclusion would
 cause false negatives. The fix must distinguish between fungible amounts and NFT token IDs.
 
-### Chosen approach: WASM classification + staging table
+### Chosen approach: WASM classification + contract_type enrichment + post-backfill cleanup
 
-**Decision (2026-04-14, fmazur):** Use WASM spec analysis with `nft_candidates` staging
-table to guarantee zero data loss during parallel backfill.
+**Decision (2026-04-14, fmazur):** Use WASM spec analysis to enrich existing `contract_type`
+column in `soroban_contracts`. No new tables needed — temporary false positives in `nfts`
+during parallel backfill are cleaned up with a post-backfill DELETE.
+
+#### WASM classification logic
+
+Based on `contractspecv0` function signatures (already extracted and stored in
+`wasm_interface_metadata` JSONB):
+
+```
+IF  has owner_of OR token_uri       → contract_type = 'nft'
+ELIF has decimals AND balance→i128  → contract_type = 'fungible'
+ELSE                                → contract_type = 'other' (unchanged)
+```
+
+Key discriminators (SEP-0050 NFT vs SEP-0041 fungible):
+
+| Function                       | NFT | Fungible |
+| ------------------------------ | :-: | :------: |
+| `owner_of(token_id) → Address` | yes |    no    |
+| `token_uri(token_id) → String` | yes |    no    |
+| `decimals() → u32`             | no  |   yes    |
+| `allowance(...) → i128`        | no  |   yes    |
+
+SACs (Stellar Asset Contracts) have no WASM — already classified as `'token'`.
+
+**Precedence rule:** If a contract implements both NFT and fungible interfaces (dual-interface),
+NFT classification wins. This is the safer choice — avoids data loss (false negatives).
+Fungible transfer events from such contracts may appear as false positives in `nfts`, but
+this is preferable to missing real NFTs.
 
 #### Flow
 
-1. On event detection, lookup `wasm_interface_metadata` for the emitting contract
+1. On event detection, lookup `contract_type` for the emitting contract
    (with in-memory `HashMap<contract_id, Classification>` cache per worker process).
-2. **Classified as NFT** (has `token_uri`, `owner_of`) → insert directly into `nfts`
-3. **Classified as fungible** (SEP-0041 only, no NFT functions) → **skip**
-4. **No WASM metadata available** (race condition during parallel backfill, or contract
-   not yet indexed) → insert into **`nft_candidates`** staging table
-5. **Post-backfill resolve:** query `nft_candidates` against `wasm_interface_metadata`,
-   move confirmed NFTs to `nfts`, discard the rest
+2. **Classified as NFT** (`contract_type = 'nft'`) → insert into `nfts`
+3. **Classified as fungible** (`contract_type = 'fungible'` or `'token'`) → **skip**
+4. **Unclassified** (`contract_type = 'other'`, no WASM metadata yet) → **insert into
+   `nfts`** (temporary false positive, cleaned up post-backfill)
+5. **Post-backfill cleanup:** DELETE from `nfts` where `contract_type IN ('fungible', 'token')`
 
-#### Why staging over direct cleanup
+#### Parallel backfill behavior
 
-- `nfts` table stays clean — no millions of false positives inflating indexes
-- No expensive mass DELETE + VACUUM after backfill
-- `nft_candidates` is small (only unknown contracts) and disposable
-- Safe for parallel backfill with 4+ workers on different ledger ranges — race
-  conditions on WASM metadata availability are handled gracefully with zero data loss
+With 4+ workers on different ledger ranges, race conditions are possible:
+
+1. Worker 3 (ledger 50000) — sees transfer from contract X, no WASM metadata yet →
+   `contract_type = 'other'` → inserts into `nfts` (temporary false positive)
+2. Worker 1 (ledger 10000) — processes WASM upload of contract X → sets
+   `contract_type = 'fungible'`
+3. At this point `soroban_contracts` says `'fungible'`, but the false record from
+   step 1 remains in `nfts`
+4. Subsequent transfers of contract X on workers 2, 4 — see `'fungible'` in cache
+   → skip, no new false positives
+5. Post-backfill cleanup DELETE removes the record from step 1
+
+Temporary false positives are limited because:
+
+- Each contract has one WASM upload and potentially thousands of transfers
+- Only transfers processed **before** the WASM upload is processed are false positives
+- The rest already hit the cache with correct classification
+
+#### Implementation notes
+
+1. **Cache must NOT store `'other'`:** Only cache definitive classifications (`'nft'`,
+   `'fungible'`, `'token'`). If a contract is `'other'` (no WASM metadata yet), always
+   re-query the DB on next encounter. Otherwise a single cache miss at the start of a
+   worker's range causes ALL subsequent transfers for that contract to be false positives
+   — even if another worker has since classified it.
+
+2. **`contract_type` UPDATE path:** `update_contract_interfaces_by_wasm_hash()` in
+   `soroban.rs:175-192` currently only updates `metadata` JSONB — it does NOT set
+   `contract_type`. The `upsert_contract_deployments_batch()` uses COALESCE (first write
+   wins), so it won't overwrite either. Classification must be a separate UPDATE or an
+   extension of `update_contract_interfaces_by_wasm_hash()` that also sets `contract_type`
+   based on the function signatures in the WASM metadata.
+
+3. **Filtering belongs in `persist.rs`, not `process.rs`:** `detect_nft_events()` in
+   `nft.rs` is a pure function in the `xdr-parser` crate (no DB access). Filtering by
+   `contract_type` requires DB lookup, so it must happen in `persist.rs` before
+   `upsert_nfts_batch()` (line 338), not in the parse phase. This preserves the clean
+   parse/persist separation.
+
+4. **Cache lives at worker level, not per-ledger:** `process_ledger()` currently has no
+   persistent state across ledgers — it takes `(meta, pool, cw_client)`. The cache must
+   be held by the caller (worker-level state), passed into `persist_ledger()` as a
+   parameter. This requires a function signature change or a wrapper struct.
+
+5. **Batch cache population:** At backfill scale, lazy per-contract DB queries are too
+   expensive. For each ledger, collect distinct `contract_id`s from NFT event candidates,
+   batch-query their `contract_type`, and populate the cache in one round-trip. Cache hits
+   on subsequent ledgers avoid repeated queries.
+
+#### Post-backfill cleanup script
+
+```sql
+BEGIN;
+-- 1. Sanity check: ensure classification is complete
+SELECT COUNT(*) AS unclassified
+FROM soroban_contracts
+WHERE contract_type = 'other'
+  AND contract_id IN (SELECT DISTINCT contract_id FROM nfts);
+-- If >0: stop, investigate unclassified contracts first
+
+-- 2. Remove false positives
+DELETE FROM nfts
+WHERE contract_id IN (
+    SELECT contract_id FROM soroban_contracts
+    WHERE contract_type IN ('fungible', 'token')
+);
+COMMIT;
+-- 3. Reclaim space
+VACUUM ANALYZE nfts;
+```
+
+#### Why this over a staging table
+
+- **No schema changes** — no new `nft_candidates` table, no migration
+- **Less code** — no resolve logic, no retention policy, no staging table cleanup
+- **Same classification mechanism** — both approaches use WASM spec analysis identically
+- **Acceptable tradeoff** — temporary false positives in `nfts` during backfill only,
+  automatically limited by worker ordering, cleaned up in one DELETE
 
 #### Rejected alternatives
 
-- **Direct cleanup (option 3):** Record everything to `nfts`, DELETE after backfill.
-  Rejected: table bloat, expensive cleanup, dead tuples.
+- **Staging table (`nft_candidates`):** Insert unknowns into separate table, resolve
+  after backfill. Rejected: adds schema complexity and resolve code for marginal benefit
+  over post-backfill DELETE.
 - **Heuristic refinement:** Exclude `i128`/`u128` + whitelist. Rejected: fragile,
   requires manual contract classification.
 - **Simple numeric exclusion:** Exclude all numeric ScVal types. Rejected: false
-  negatives for NFT contracts using numeric token IDs.
+  negatives for NFT contracts using numeric token IDs (e.g. jamesbachini uses `i128`).
 
 ## Acceptance Criteria
 
-- [ ] WASM classification: lookup `wasm_interface_metadata` for NFT-specific functions
-      (`token_uri`, `owner_of`) vs SEP-0041 fungible-only functions
-- [ ] In-memory cache (`HashMap<contract_id, Classification>`) to avoid repeated DB lookups
-- [ ] Classified NFT → insert directly into `nfts`
-- [ ] Classified fungible → skip (no insert)
-- [ ] Unknown contract (no WASM metadata) → insert into `nft_candidates` staging table
-- [ ] Migration: create `nft_candidates` staging table (mirror `nfts` columns + `staged_at`
-      timestamp) — verify actual `nfts` schema from migrations before writing
-- [ ] Post-backfill resolve: manual SQL script (not automated) to move confirmed NFTs
-      from `nft_candidates` to `nfts`, discard fungible false positives. Must run in a
-      single transaction (INSERT + DELETE) to prevent data loss on failure
-- [ ] Retention policy for `nft_candidates`: contracts that remain unresolvable (no WASM
-      metadata after full backfill) should be flagged or purged — table must not grow unbounded
-- [ ] Live indexing path: verify that 2-ledger pattern (WASM upload → deploy) guarantees
-      metadata availability before first transfer event; document any edge cases
+### Classification
+
+- [ ] WASM classification function: inspect `wasm_interface_metadata` JSONB for NFT-specific
+      functions (`owner_of`, `token_uri`) vs SEP-0041 fungible-only (`decimals`, `allowance`)
+- [ ] Enrich `contract_type` in `soroban_contracts`: set `'nft'` or `'fungible'` based on
+      WASM classification (during WASM metadata persist step in `persist.rs`)
+- [ ] In-memory cache (`HashMap<contract_id, Classification>`) per worker to avoid repeated
+      DB lookups — only cache definitive classifications (`'nft'`, `'fungible'`, `'token'`),
+      never cache `'other'` (re-query DB on next encounter)
+- [ ] Batch cache population: collect distinct contract_ids from NFT candidates per ledger,
+      batch-query `contract_type`, populate cache in one round-trip
+- [ ] Cache lives at worker level (not per-ledger) — requires passing state into
+      `persist_ledger()` or wrapping in a struct
+
+### NFT detection filtering
+
+- [ ] Classified NFT (`contract_type = 'nft'`) → insert into `nfts`
+- [ ] Classified fungible (`contract_type = 'fungible'` or `'token'`) → skip (no insert)
+- [ ] Unclassified (`contract_type = 'other'`, no WASM metadata yet) → insert into `nfts`
+      (temporary false positive, accepted during backfill)
+
+### Post-backfill cleanup
+
+- [ ] Manual SQL cleanup script: DELETE from `nfts` where `contract_type IN ('fungible', 'token')`
+      in a single transaction, with sanity check for unclassified contracts first
+- [ ] `VACUUM ANALYZE nfts` after cleanup
+
+### Live indexing
+
+- [ ] Verify that 2-ledger pattern (WASM upload → deploy) guarantees metadata availability
+      before first transfer event; document any edge cases
+
+### Tests
+
 - [ ] Remove or update test `i128_token_id_not_excluded` — it currently asserts the broken
       behavior
 - [ ] Existing NFT detection tests still pass (for string/bytes token_id contracts)
 - [ ] New test: SEP-0041 fungible transfer (i128) + fungible-classified contract → no NFT record
 - [ ] New test: NFT contract (WASM-classified) with i128 token_id → detected correctly
-- [ ] New test: unknown contract (no WASM metadata) with i128 data → goes to `nft_candidates`
-- [ ] New test: resolve step moves NFT candidates to `nfts` after WASM metadata available
+- [ ] New test: unknown contract (no WASM metadata) with i128 data → still inserted into `nfts`
