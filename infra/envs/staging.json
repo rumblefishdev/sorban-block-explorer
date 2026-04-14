@@ -6,7 +6,7 @@
   "natType": "gateway",
   "natGatewayCount": 1,
   "dbInstanceClass": "t4g.micro",
-  "dbAllocatedStorage": 20,
+  "dbAllocatedStorage": 21,
   "dbMultiAz": false,
   "dbDeletionProtection": false,
   "dbBackupRetentionDays": 7,
