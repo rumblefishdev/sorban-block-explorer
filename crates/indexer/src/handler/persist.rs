@@ -246,12 +246,62 @@ pub async fn persist_ledger(
         timings.push(("contract_interfaces", t.elapsed()));
     }
 
-    // 9. Upsert account states — dedup by account_id, keep last
+    // 9. Upsert account states — dedup + merge by account_id
     {
-        let mut deduped: HashMap<&str, _> = HashMap::new();
+        let mut deduped: HashMap<&str, ExtractedAccountState> = HashMap::new();
         for a in account_states {
-            deduped.insert(a.account_id.as_str(), a);
+            match deduped.entry(a.account_id.as_str()) {
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(a.clone());
+                }
+                std::collections::hash_map::Entry::Occupied(mut e) => {
+                    let existing = e.get_mut();
+                    // sequence_number: non-sentinel wins (>= 0 over -1)
+                    if a.sequence_number >= 0 {
+                        existing.sequence_number = a.sequence_number;
+                    }
+                    if a.home_domain.is_some() {
+                        existing.home_domain.clone_from(&a.home_domain);
+                    }
+                    if existing.first_seen_ledger.is_none() {
+                        existing.first_seen_ledger = a.first_seen_ledger;
+                    }
+                    if a.last_seen_ledger > existing.last_seen_ledger {
+                        existing.last_seen_ledger = a.last_seen_ledger;
+                        existing.created_at = a.created_at;
+                    }
+                    // Merge balances: incoming entries override matching (by asset key)
+                    if let (serde_json::Value::Array(ex_arr), serde_json::Value::Array(new_arr)) =
+                        (&mut existing.balances, &a.balances)
+                    {
+                        for new_bal in new_arr {
+                            let new_type = new_bal.get("asset_type");
+                            let new_code = new_bal.get("asset_code");
+                            let new_issuer = new_bal.get("issuer");
+                            ex_arr.retain(|eb| {
+                                eb.get("asset_type") != new_type
+                                    || eb.get("asset_code") != new_code
+                                    || eb.get("issuer") != new_issuer
+                            });
+                            ex_arr.push(new_bal.clone());
+                        }
+                    }
+                    // Combine removed trustlines
+                    existing
+                        .removed_trustlines
+                        .extend(a.removed_trustlines.iter().cloned());
+                }
+            }
         }
+
+        // Collect removed trustlines before converting to domain objects
+        let mut removals: Vec<(&str, &serde_json::Value)> = Vec::new();
+        for a in deduped.values() {
+            for rt in &a.removed_trustlines {
+                removals.push((a.account_id.as_str(), rt));
+            }
+        }
+
         let domain_accounts: Vec<_> = deduped.values().map(|a| convert::to_account(a)).collect();
         let (result, label, dur) = timed!(
             "upsert_accounts",
@@ -259,6 +309,34 @@ pub async fn persist_ledger(
         );
         result?;
         timings.push((label, dur));
+
+        // Remove deleted trustlines from DB (separate batch, skipped if empty)
+        if !removals.is_empty() {
+            let mut acct_ids = Vec::with_capacity(removals.len());
+            let mut asset_types = Vec::with_capacity(removals.len());
+            let mut asset_codes = Vec::with_capacity(removals.len());
+            let mut issuers = Vec::with_capacity(removals.len());
+            for (acct, rt) in &removals {
+                acct_ids.push(*acct);
+                asset_types.push(rt.get("asset_type").and_then(|v| v.as_str()).unwrap_or(""));
+                asset_codes.push(rt.get("asset_code").and_then(|v| v.as_str()).unwrap_or(""));
+                issuers.push(rt.get("issuer").and_then(|v| v.as_str()).unwrap_or(""));
+            }
+            let (result, label, dur) = timed!(
+                "remove_trustlines",
+                db::soroban::remove_trustlines_batch(
+                    &mut **db_tx,
+                    &acct_ids,
+                    &asset_types,
+                    &asset_codes,
+                    &issuers,
+                    ledger_seq as i64
+                )
+                .await
+            );
+            result?;
+            timings.push((label, dur));
+        }
     }
 
     // 10. Upsert liquidity pools — dedup by pool_id, keep last

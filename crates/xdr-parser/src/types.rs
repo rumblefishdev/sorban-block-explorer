@@ -223,6 +223,9 @@ pub struct ExtractedAccountState {
     pub last_seen_ledger: u32,
     pub sequence_number: i64,
     pub balances: serde_json::Value,
+    /// Trustlines removed in this change set. Each entry is `{asset_type, asset_code, issuer}`.
+    /// Tracked separately from `balances` to avoid marker pollution on INSERT.
+    pub removed_trustlines: Vec<serde_json::Value>,
     pub home_domain: Option<String>,
     pub created_at: i64,
 }

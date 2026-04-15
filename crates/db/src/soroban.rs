@@ -226,8 +226,25 @@ pub async fn upsert_account_states_batch(
            )
            ON CONFLICT (account_id) DO UPDATE SET
                last_seen_ledger = EXCLUDED.last_seen_ledger,
-               sequence_number = EXCLUDED.sequence_number,
-               balances = EXCLUDED.balances,
+               sequence_number = CASE
+                   WHEN EXCLUDED.sequence_number >= 0 THEN EXCLUDED.sequence_number
+                   ELSE accounts.sequence_number
+               END,
+               balances = (
+                   SELECT COALESCE(jsonb_agg(b), '[]'::jsonb) FROM (
+                       SELECT e.value AS b
+                       FROM jsonb_array_elements(accounts.balances) e(value)
+                       WHERE NOT EXISTS (
+                           SELECT 1 FROM jsonb_array_elements(EXCLUDED.balances) n(value)
+                           WHERE n.value->>'asset_type' = e.value->>'asset_type'
+                             AND COALESCE(n.value->>'asset_code', '') = COALESCE(e.value->>'asset_code', '')
+                             AND COALESCE(n.value->>'issuer', '') = COALESCE(e.value->>'issuer', '')
+                       )
+                       UNION ALL
+                       SELECT n.value AS b
+                       FROM jsonb_array_elements(EXCLUDED.balances) n(value)
+                   ) sub
+               ),
                home_domain = COALESCE(EXCLUDED.home_domain, accounts.home_domain)
            WHERE accounts.last_seen_ledger <= EXCLUDED.last_seen_ledger"#,
     )
@@ -237,6 +254,49 @@ pub async fn upsert_account_states_batch(
     .bind(&sequence_numbers)
     .bind(&balances)
     .bind(&home_domains)
+    .execute(&mut *conn)
+    .await?;
+
+    Ok(())
+}
+
+/// Batch remove specific trustline entries from the `balances` JSONB array.
+///
+/// Each row in the parallel arrays identifies one trustline to remove from one account.
+/// Skipped entirely when the input is empty (common case).
+pub async fn remove_trustlines_batch(
+    executor: impl Acquire<'_, Database = sqlx::Postgres>,
+    account_ids: &[&str],
+    asset_types: &[&str],
+    asset_codes: &[&str],
+    issuers: &[&str],
+    ledger_sequence: i64,
+) -> Result<(), sqlx::Error> {
+    if account_ids.is_empty() {
+        return Ok(());
+    }
+    let mut conn = executor.acquire().await?;
+    sqlx::query(
+        r#"UPDATE accounts SET balances = (
+               SELECT COALESCE(jsonb_agg(b), '[]'::jsonb)
+               FROM jsonb_array_elements(accounts.balances) b
+               WHERE NOT EXISTS (
+                   SELECT 1 FROM unnest($1::text[], $2::text[], $3::text[], $4::text[])
+                       AS r(acct, atype, acode, aissuer)
+                   WHERE r.acct = accounts.account_id
+                     AND b.value->>'asset_type' = r.atype
+                     AND COALESCE(b.value->>'asset_code', '') = r.acode
+                     AND COALESCE(b.value->>'issuer', '') = r.aissuer
+               )
+           )
+           WHERE account_id = ANY($1)
+             AND last_seen_ledger <= $5"#,
+    )
+    .bind(account_ids)
+    .bind(asset_types)
+    .bind(asset_codes)
+    .bind(issuers)
+    .bind(ledger_sequence)
     .execute(&mut *conn)
     .await?;
 
@@ -524,7 +584,7 @@ mod tests {
             first_seen_ledger: last_seen,
             last_seen_ledger: last_seen,
             sequence_number: 1,
-            balances: json!([{"asset_type": "native", "balance": 1000}]),
+            balances: json!([{"asset_type": "native", "balance": "0.0001000"}]),
             home_domain: None,
         }
     }
@@ -667,6 +727,170 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(first, 100, "first_seen_ledger must not be overwritten");
+
+        sqlx::query("DELETE FROM accounts WHERE account_id = $1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// 0119: Trustline-only upsert preserves existing native balance via JSONB merge.
+    #[tokio::test]
+    async fn trustline_upsert_preserves_native() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let id = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4";
+        sqlx::query("DELETE FROM accounts WHERE account_id = $1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Insert account with native balance at ledger 100
+        let account = test_account(id, 100);
+        upsert_account_state(&pool, &account).await.unwrap();
+
+        // Trustline-only update at ledger 200 (sequence_number = -1 sentinel)
+        let trustline_update = Account {
+            account_id: id.to_string(),
+            first_seen_ledger: 200,
+            last_seen_ledger: 200,
+            sequence_number: -1,
+            balances: json!([{"asset_type": "credit_alphanum4", "asset_code": "USDC", "issuer": "GISSUER", "balance": "0.0005000"}]),
+            home_domain: None,
+        };
+        upsert_account_state(&pool, &trustline_update)
+            .await
+            .unwrap();
+
+        let (balances, seq): (serde_json::Value, i64) =
+            sqlx::query_as("SELECT balances, sequence_number FROM accounts WHERE account_id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let arr = balances.as_array().unwrap();
+        assert_eq!(arr.len(), 2, "should have native + USDC");
+        assert!(
+            arr.iter().any(|b| b["asset_type"] == "native"),
+            "native preserved"
+        );
+        assert!(arr.iter().any(|b| b["asset_code"] == "USDC"), "USDC added");
+        assert_eq!(seq, 1, "sequence_number preserved (sentinel -1 ignored)");
+
+        sqlx::query("DELETE FROM accounts WHERE account_id = $1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// 0119: remove_trustlines_batch removes a specific trustline from balances.
+    #[tokio::test]
+    async fn remove_trustlines_batch_removes_entry() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let id = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA5";
+        sqlx::query("DELETE FROM accounts WHERE account_id = $1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Insert account with native + USDC
+        let account = Account {
+            balances: json!([
+                {"asset_type": "native", "balance": "0.0001000"},
+                {"asset_type": "credit_alphanum4", "asset_code": "USDC", "issuer": "GISSUER", "balance": "0.0005000"}
+            ]),
+            ..test_account(id, 100)
+        };
+        upsert_account_state(&pool, &account).await.unwrap();
+
+        // Remove USDC trustline
+        remove_trustlines_batch(
+            &pool,
+            &[id],
+            &["credit_alphanum4"],
+            &["USDC"],
+            &["GISSUER"],
+            100,
+        )
+        .await
+        .unwrap();
+
+        let (balances,): (serde_json::Value,) =
+            sqlx::query_as("SELECT balances FROM accounts WHERE account_id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let arr = balances.as_array().unwrap();
+        assert_eq!(arr.len(), 1, "only native should remain");
+        assert_eq!(arr[0]["asset_type"], "native");
+
+        sqlx::query("DELETE FROM accounts WHERE account_id = $1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// 0119: Watermark still blocks stale writes with JSONB merge SQL.
+    #[tokio::test]
+    async fn watermark_with_jsonb_merge() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let id = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA6";
+        sqlx::query("DELETE FROM accounts WHERE account_id = $1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Insert at ledger 200 with USDC
+        let newer = Account {
+            last_seen_ledger: 200,
+            balances: json!([
+                {"asset_type": "native", "balance": "0.0002000"},
+                {"asset_type": "credit_alphanum4", "asset_code": "USDC", "issuer": "G1", "balance": "0.0000999"}
+            ]),
+            ..test_account(id, 200)
+        };
+        upsert_account_state(&pool, &newer).await.unwrap();
+
+        // Attempt stale write at ledger 50
+        let older = Account {
+            last_seen_ledger: 50,
+            balances: json!([{"asset_type": "native", "balance": "0.0000001"}]),
+            ..test_account(id, 50)
+        };
+        upsert_account_state(&pool, &older).await.unwrap();
+
+        let (balances, last): (serde_json::Value, i64) =
+            sqlx::query_as("SELECT balances, last_seen_ledger FROM accounts WHERE account_id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        assert_eq!(last, 200, "watermark should block stale write");
+        let arr = balances.as_array().unwrap();
+        assert_eq!(
+            arr.len(),
+            2,
+            "balances should not be overwritten by stale data"
+        );
+        assert!(
+            arr.iter().any(|b| b["asset_code"] == "USDC"),
+            "USDC preserved"
+        );
 
         sqlx::query("DELETE FROM accounts WHERE account_id = $1")
             .bind(id)
