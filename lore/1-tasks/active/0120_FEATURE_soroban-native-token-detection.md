@@ -2,7 +2,7 @@
 id: '0120'
 title: 'Indexer: detect Soroban-native tokens (non-SAC)'
 type: FEATURE
-status: backlog
+status: active
 related_adr: []
 related_tasks: ['0027', '0049', '0104']
 tags: [priority-medium, effort-medium, layer-indexer, audit-F8]
@@ -15,6 +15,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Spawned from pipeline audit finding F8 (MEDIUM severity).'
+  - date: '2026-04-15'
+    status: active
+    who: FilipDz
+    note: 'Activated for implementation'
 ---
 
 # Indexer: detect Soroban-native tokens (non-SAC)
