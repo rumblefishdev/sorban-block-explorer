@@ -6,7 +6,7 @@
   "natType": "gateway",
   "natGatewayCount": 1,
   "dbInstanceClass": "t4g.micro",
-  "dbAllocatedStorage": 21,
+  "dbAllocatedStorage": 40,
   "dbMultiAz": false,
   "dbDeletionProtection": false,
   "dbBackupRetentionDays": 7,
@@ -49,7 +49,7 @@
   "galexieLagMinutes": 2,
   "processorErrorRateThreshold": 0.05,
   "rdsCpuThreshold": 85,
-  "rdsStorageThresholdPct": 15,
+  "rdsStorageThresholdPct": 60,
   "apiGateway5xxThreshold": 2.0,
   "slackWorkspaceId": "T83HLEDJN",
   "slackChannelId": "C0ASK8JR10U"
