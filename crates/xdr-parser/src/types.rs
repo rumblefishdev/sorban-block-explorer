@@ -4,7 +4,7 @@
 //! Field names match DB column names (snake_case).
 
 /// Extracted ledger data, maps to the `ledgers` table.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ExtractedLedger {
     /// Ledger sequence number (PK).
     pub sequence: u32,
@@ -21,7 +21,7 @@ pub struct ExtractedLedger {
 }
 
 /// Extracted transaction data, maps to the `transactions` table.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ExtractedTransaction {
     /// SHA-256 hash of the TransactionEnvelope, hex-encoded (64 chars).
     /// This is the public lookup key.
@@ -36,12 +36,6 @@ pub struct ExtractedTransaction {
     pub successful: bool,
     /// Transaction result code string (e.g., "txSuccess", "txFailed").
     pub result_code: String,
-    /// Full transaction envelope, base64-encoded.
-    pub envelope_xdr: String,
-    /// Transaction result, base64-encoded.
-    pub result_xdr: String,
-    /// Transaction result metadata, base64-encoded. Nullable.
-    pub result_meta_xdr: Option<String>,
     /// Nested invocation tree JSON for direct rendering of the call graph.
     /// Populated externally by the persistence layer after calling `extract_invocations`.
     pub operation_tree: Option<serde_json::Value>,
@@ -58,7 +52,7 @@ pub struct ExtractedTransaction {
 /// Extracted Soroban event data, maps to the `soroban_events` table.
 ///
 /// Produced by `extract_events` from `SorobanTransactionMeta.events`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ExtractedEvent {
     /// Parent transaction hash, hex-encoded. Resolved to `transaction_id` FK at persistence time.
     pub transaction_hash: String,
@@ -81,7 +75,7 @@ pub struct ExtractedEvent {
 /// Extracted Soroban invocation data, maps to the `soroban_invocations` table.
 ///
 /// Produced by `extract_invocations` — one row per node in the invocation tree.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ExtractedInvocation {
     /// Parent transaction hash, hex-encoded. Resolved to `transaction_id` FK at persistence time.
     pub transaction_hash: String,
@@ -114,7 +108,7 @@ pub struct ExtractedInvocation {
 ///
 /// Produced by `extract_contract_interfaces` when LedgerEntryChanges contain
 /// new `ContractCodeEntry` items. Stored in `soroban_contracts.metadata` JSONB.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ExtractedContractInterface {
     /// SHA-256 hash of the WASM bytecode, hex-encoded (64 chars).
     pub wasm_hash: String,
@@ -147,7 +141,7 @@ pub struct FunctionParam {
 /// An NFT-related event detected during event extraction.
 ///
 /// Produced by `detect_nft_events` for consumption by task 0027 (NFT state derivation).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct NftEvent {
     /// Parent transaction hash, hex-encoded.
     pub transaction_hash: String,
@@ -171,7 +165,7 @@ pub struct NftEvent {
 ///
 /// Produced by `extract_ledger_entry_changes`. One row per `LedgerEntryChange`
 /// found in `tx_changes_before`, per-operation changes, and `tx_changes_after`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ExtractedLedgerEntryChange {
     /// Parent transaction hash, hex-encoded. Resolved to `transaction_id` FK at persistence time.
     pub transaction_hash: String,
@@ -199,7 +193,7 @@ pub struct ExtractedLedgerEntryChange {
 ///
 /// Produced by `extract_contract_deployments` when a new contract instance
 /// appears in ledger entry changes. Maps to `soroban_contracts` table.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ExtractedContractDeployment {
     pub contract_id: String,
     pub wasm_hash: Option<String>,
@@ -214,7 +208,7 @@ pub struct ExtractedContractDeployment {
 /// Extracted account state from LedgerEntryChanges.
 ///
 /// Produced by `extract_account_states`. Maps to `accounts` table.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ExtractedAccountState {
     pub account_id: String,
     /// Set on account creation only. `None` for updates.
@@ -230,7 +224,7 @@ pub struct ExtractedAccountState {
 /// Extracted liquidity pool state from LedgerEntryChanges.
 ///
 /// Produced by `extract_liquidity_pools`. Maps to `liquidity_pools` table.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ExtractedLiquidityPool {
     pub pool_id: String,
     pub asset_a: serde_json::Value,
@@ -249,7 +243,7 @@ pub struct ExtractedLiquidityPool {
 /// Liquidity pool snapshot, appended on each pool change.
 ///
 /// Produced alongside `ExtractedLiquidityPool`. Maps to `liquidity_pool_snapshots`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ExtractedLiquidityPoolSnapshot {
     pub pool_id: String,
     pub ledger_sequence: u32,
@@ -264,7 +258,7 @@ pub struct ExtractedLiquidityPoolSnapshot {
 /// Detected token from contract deployments or classic assets.
 ///
 /// Produced by `detect_tokens`. Maps to `tokens` table.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ExtractedToken {
     /// "classic", "sac", or "soroban".
     pub asset_type: String,
@@ -279,7 +273,7 @@ pub struct ExtractedToken {
 /// Detected NFT from events and ledger entry changes.
 ///
 /// Produced by `detect_nfts`. Maps to `nfts` table.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ExtractedNft {
     pub contract_id: String,
     pub token_id: String,
@@ -302,7 +296,7 @@ pub struct ExtractedNft {
 /// - `op_type` → `type` (`type` is a Rust keyword)
 /// - `source_account: None` → persistence layer must substitute the transaction source account
 ///   (DB column is `NOT NULL`; `None` means no per-operation override)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ExtractedOperation {
     /// Parent transaction hash, hex-encoded (64 chars). Used to resolve the
     /// surrogate `transaction_id` FK at persistence time.

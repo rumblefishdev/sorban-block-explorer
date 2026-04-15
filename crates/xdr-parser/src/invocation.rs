@@ -8,7 +8,7 @@
 //!
 //! The invocation tree is extracted from **auth entries** (`SorobanAuthorizationEntry.
 //! root_invocation` in the transaction envelope), not from diagnostic events in
-//! `result_meta_xdr`. Auth entries represent the authorization call graph and are the
+//! result metadata. Auth entries represent the authorization call graph and are the
 //! only reliably available **structured** tree in Soroban transactions.
 //!
 //! **Limitation:** Invocations that do not require caller authorization (e.g. read-only

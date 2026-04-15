@@ -19,6 +19,4 @@ pub struct Operation {
     /// DDL column: `type`.
     #[serde(rename = "type")]
     pub op_type: String,
-    /// Type-specific details stored as JSONB.
-    pub details: serde_json::Value,
 }

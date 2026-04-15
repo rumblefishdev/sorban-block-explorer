@@ -20,12 +20,6 @@ pub struct Transaction {
     pub successful: bool,
     /// Transaction result code string.
     pub result_code: Option<String>,
-    /// Full transaction envelope, base64-encoded.
-    pub envelope_xdr: String,
-    /// Transaction result, base64-encoded.
-    pub result_xdr: String,
-    /// Transaction result metadata, base64-encoded.
-    pub result_meta_xdr: Option<String>,
     /// Memo type: "text", "id", "hash", "return", or None.
     pub memo_type: Option<String>,
     /// Memo value.
@@ -34,8 +28,4 @@ pub struct Transaction {
     pub created_at: DateTime<Utc>,
     /// True if XDR parsing failed.
     pub parse_error: Option<bool>,
-    /// Pre-computed Soroban invocation call tree as JSONB.
-    /// Populated asynchronously after transaction insert by the ingestion pipeline.
-    /// NULL for non-Soroban transactions.
-    pub operation_tree: Option<serde_json::Value>,
 }

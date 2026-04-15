@@ -28,11 +28,7 @@ const FUTURE_MONTHS: u32 = 3;
 const OPERATIONS_RANGE_SIZE: i64 = 10_000_000;
 
 /// Tables with monthly time-based partitions.
-const TIME_PARTITIONED_TABLES: &[&str] = &[
-    "soroban_invocations",
-    "soroban_events",
-    "liquidity_pool_snapshots",
-];
+const TIME_PARTITIONED_TABLES: &[&str] = &["soroban_invocations", "liquidity_pool_snapshots"];
 
 // ───────────────────────── Handler ─────────────────────────
 
@@ -377,7 +373,7 @@ mod tests {
     #[test]
     fn parse_partition_month_valid() {
         assert_eq!(
-            parse_partition_month("soroban_events_y2026m04"),
+            parse_partition_month("soroban_invocations_y2026m04"),
             Some(NaiveDate::from_ymd_opt(2026, 4, 1).unwrap())
         );
         assert_eq!(
@@ -388,7 +384,7 @@ mod tests {
 
     #[test]
     fn parse_partition_month_invalid() {
-        assert_eq!(parse_partition_month("soroban_events_default"), None);
+        assert_eq!(parse_partition_month("soroban_invocations_default"), None);
         assert_eq!(parse_partition_month("random_name"), None);
     }
 
@@ -444,18 +440,34 @@ mod tests {
     fn months_to_create_fills_gap() {
         // Existing: only Apr 2026. Today: Apr 2026.
         // Should create: 2024-02 through 2026-07 minus 2026-04 = 26 months
-        let existing = vec!["soroban_events_y2026m04".to_string()];
+        let existing = vec!["soroban_invocations_y2026m04".to_string()];
         let today = NaiveDate::from_ymd_opt(2026, 4, 15).unwrap();
-        let missing = months_to_create("soroban_events", &existing, today);
+        let missing = months_to_create("soroban_invocations", &existing, today);
 
         // Should not include the existing partition
-        assert!(!missing.iter().any(|(n, _)| n == "soroban_events_y2026m04"));
+        assert!(
+            !missing
+                .iter()
+                .any(|(n, _)| n == "soroban_invocations_y2026m04")
+        );
         // Should include Soroban start
-        assert!(missing.iter().any(|(n, _)| n == "soroban_events_y2024m02"));
+        assert!(
+            missing
+                .iter()
+                .any(|(n, _)| n == "soroban_invocations_y2024m02")
+        );
         // Should include 3 months ahead (Jul 2026)
-        assert!(missing.iter().any(|(n, _)| n == "soroban_events_y2026m07"));
+        assert!(
+            missing
+                .iter()
+                .any(|(n, _)| n == "soroban_invocations_y2026m07")
+        );
         // Should NOT include Aug 2026 (4 months ahead)
-        assert!(!missing.iter().any(|(n, _)| n == "soroban_events_y2026m08"));
+        assert!(
+            !missing
+                .iter()
+                .any(|(n, _)| n == "soroban_invocations_y2026m08")
+        );
     }
 
     #[test]
@@ -463,9 +475,9 @@ mod tests {
         // today=2024-03-01, future=3 → need 2024-02 through 2024-06
         let today = NaiveDate::from_ymd_opt(2024, 3, 1).unwrap();
         let existing: Vec<String> = (2..=6)
-            .map(|m| format!("soroban_events_y2024m{m:02}"))
+            .map(|m| format!("soroban_invocations_y2024m{m:02}"))
             .collect();
-        let missing = months_to_create("soroban_events", &existing, today);
+        let missing = months_to_create("soroban_invocations", &existing, today);
         assert!(missing.is_empty());
     }
 
@@ -474,11 +486,11 @@ mod tests {
         // today=2024-03-01, existing covers 02-05 → missing only 2024-06
         let today = NaiveDate::from_ymd_opt(2024, 3, 1).unwrap();
         let existing: Vec<String> = (2..=5)
-            .map(|m| format!("soroban_events_y2024m{m:02}"))
+            .map(|m| format!("soroban_invocations_y2024m{m:02}"))
             .collect();
-        let missing = months_to_create("soroban_events", &existing, today);
+        let missing = months_to_create("soroban_invocations", &existing, today);
         assert_eq!(missing.len(), 1);
-        assert_eq!(missing[0].0, "soroban_events_y2024m06");
+        assert_eq!(missing[0].0, "soroban_invocations_y2024m06");
     }
 
     // ── Decision logic tests: operations_ranges_to_create ──

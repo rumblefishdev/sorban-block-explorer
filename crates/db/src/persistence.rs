@@ -7,10 +7,7 @@
 //! - No delete-then-reinsert patterns (preserves ON DELETE CASCADE children)
 
 use domain::{
-    ledger::Ledger,
-    operation::Operation,
-    soroban::{SorobanEvent, SorobanInvocation},
-    transaction::Transaction,
+    ledger::Ledger, operation::Operation, soroban::SorobanInvocation, transaction::Transaction,
 };
 use sqlx::Acquire;
 
@@ -68,14 +65,10 @@ pub async fn insert_transactions_batch(
     let mut fees_charged = Vec::with_capacity(len);
     let mut successfuls = Vec::with_capacity(len);
     let mut result_codes: Vec<Option<&str>> = Vec::with_capacity(len);
-    let mut envelope_xdrs = Vec::with_capacity(len);
-    let mut result_xdrs = Vec::with_capacity(len);
-    let mut result_meta_xdrs: Vec<Option<&str>> = Vec::with_capacity(len);
     let mut memo_types: Vec<Option<&str>> = Vec::with_capacity(len);
     let mut memos: Vec<Option<&str>> = Vec::with_capacity(len);
     let mut created_ats = Vec::with_capacity(len);
     let mut parse_errors: Vec<Option<bool>> = Vec::with_capacity(len);
-    let mut operation_trees: Vec<Option<&serde_json::Value>> = Vec::with_capacity(len);
 
     for tx in transactions {
         hashes.push(tx.hash.as_str());
@@ -84,26 +77,20 @@ pub async fn insert_transactions_batch(
         fees_charged.push(tx.fee_charged);
         successfuls.push(tx.successful);
         result_codes.push(tx.result_code.as_deref());
-        envelope_xdrs.push(tx.envelope_xdr.as_str());
-        result_xdrs.push(tx.result_xdr.as_str());
-        result_meta_xdrs.push(tx.result_meta_xdr.as_deref());
         memo_types.push(tx.memo_type.as_deref());
         memos.push(tx.memo.as_deref());
         created_ats.push(tx.created_at);
         parse_errors.push(tx.parse_error);
-        operation_trees.push(tx.operation_tree.as_ref());
     }
 
     let mut conn = executor.acquire().await?;
     let rows = sqlx::query_as::<_, (String, i64)>(
         r#"INSERT INTO transactions
                (hash, ledger_sequence, source_account, fee_charged, successful,
-                result_code, envelope_xdr, result_xdr, result_meta_xdr,
-                memo_type, memo, created_at, parse_error, operation_tree)
+                result_code, memo_type, memo, created_at, parse_error)
            SELECT * FROM unnest(
                $1::text[], $2::bigint[], $3::text[], $4::bigint[], $5::bool[],
-               $6::text[], $7::text[], $8::text[], $9::text[],
-               $10::text[], $11::text[], $12::timestamptz[], $13::bool[], $14::jsonb[]
+               $6::text[], $7::text[], $8::text[], $9::timestamptz[], $10::bool[]
            )
            ON CONFLICT (hash) DO UPDATE SET hash = EXCLUDED.hash
            RETURNING hash, id"#,
@@ -114,14 +101,10 @@ pub async fn insert_transactions_batch(
     .bind(&fees_charged)
     .bind(&successfuls)
     .bind(&result_codes)
-    .bind(&envelope_xdrs)
-    .bind(&result_xdrs)
-    .bind(&result_meta_xdrs)
     .bind(&memo_types)
     .bind(&memos)
     .bind(&created_ats)
     .bind(&parse_errors)
-    .bind(&operation_trees)
     .fetch_all(&mut *conn)
     .await?;
 
@@ -147,22 +130,20 @@ pub async fn insert_operations_batch(
     let mut application_orders = Vec::with_capacity(len);
     let mut source_accounts = Vec::with_capacity(len);
     let mut types = Vec::with_capacity(len);
-    let mut details = Vec::with_capacity(len);
 
     for op in operations {
         transaction_ids.push(op.transaction_id);
         application_orders.push(op.application_order);
         source_accounts.push(op.source_account.as_str());
         types.push(op.op_type.as_str());
-        details.push(&op.details);
     }
 
     let mut conn = executor.acquire().await?;
     sqlx::query(
         r#"INSERT INTO operations
-               (transaction_id, application_order, source_account, type, details)
+               (transaction_id, application_order, source_account, type)
            SELECT * FROM unnest(
-               $1::bigint[], $2::smallint[], $3::text[], $4::text[], $5::jsonb[]
+               $1::bigint[], $2::smallint[], $3::text[], $4::text[]
            )
            ON CONFLICT ON CONSTRAINT uq_operations_tx_order DO NOTHING"#,
     )
@@ -170,67 +151,6 @@ pub async fn insert_operations_batch(
     .bind(&application_orders)
     .bind(&source_accounts)
     .bind(&types)
-    .bind(&details)
-    .execute(&mut *conn)
-    .await?;
-
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Events (immutable, batch)
-// ---------------------------------------------------------------------------
-
-/// Batch insert events for a transaction. Skips duplicates.
-/// Uses `UNNEST` to insert all rows in a single round trip.
-pub async fn insert_events_batch(
-    executor: impl Acquire<'_, Database = sqlx::Postgres>,
-    events: &[SorobanEvent],
-) -> Result<(), sqlx::Error> {
-    if events.is_empty() {
-        return Ok(());
-    }
-
-    let len = events.len();
-    let mut transaction_ids = Vec::with_capacity(len);
-    let mut contract_ids: Vec<Option<&str>> = Vec::with_capacity(len);
-    let mut event_types = Vec::with_capacity(len);
-    let mut topics = Vec::with_capacity(len);
-    let mut data = Vec::with_capacity(len);
-    let mut event_indices = Vec::with_capacity(len);
-    let mut ledger_sequences = Vec::with_capacity(len);
-    let mut created_ats = Vec::with_capacity(len);
-
-    for event in events {
-        transaction_ids.push(event.transaction_id);
-        contract_ids.push(event.contract_id.as_deref());
-        event_types.push(event.event_type.as_str());
-        topics.push(&event.topics);
-        data.push(&event.data);
-        event_indices.push(event.event_index);
-        ledger_sequences.push(event.ledger_sequence);
-        created_ats.push(event.created_at);
-    }
-
-    let mut conn = executor.acquire().await?;
-    sqlx::query(
-        r#"INSERT INTO soroban_events
-               (transaction_id, contract_id, event_type, topics, data,
-                event_index, ledger_sequence, created_at)
-           SELECT * FROM unnest(
-               $1::bigint[], $2::text[], $3::text[], $4::jsonb[], $5::jsonb[],
-               $6::smallint[], $7::bigint[], $8::timestamptz[]
-           )
-           ON CONFLICT ON CONSTRAINT uq_events_tx_index DO NOTHING"#,
-    )
-    .bind(&transaction_ids)
-    .bind(&contract_ids)
-    .bind(&event_types)
-    .bind(&topics)
-    .bind(&data)
-    .bind(&event_indices)
-    .bind(&ledger_sequences)
-    .bind(&created_ats)
     .execute(&mut *conn)
     .await?;
 
@@ -256,8 +176,6 @@ pub async fn insert_invocations_batch(
     let mut contract_ids: Vec<Option<&str>> = Vec::with_capacity(len);
     let mut caller_accounts: Vec<Option<&str>> = Vec::with_capacity(len);
     let mut function_names = Vec::with_capacity(len);
-    let mut function_args: Vec<Option<&serde_json::Value>> = Vec::with_capacity(len);
-    let mut return_values: Vec<Option<&serde_json::Value>> = Vec::with_capacity(len);
     let mut successfuls = Vec::with_capacity(len);
     let mut invocation_indices = Vec::with_capacity(len);
     let mut ledger_sequences = Vec::with_capacity(len);
@@ -268,8 +186,6 @@ pub async fn insert_invocations_batch(
         contract_ids.push(inv.contract_id.as_deref());
         caller_accounts.push(inv.caller_account.as_deref());
         function_names.push(inv.function_name.as_str());
-        function_args.push(inv.function_args.as_ref());
-        return_values.push(inv.return_value.as_ref());
         successfuls.push(inv.successful);
         invocation_indices.push(inv.invocation_index);
         ledger_sequences.push(inv.ledger_sequence);
@@ -280,12 +196,10 @@ pub async fn insert_invocations_batch(
     sqlx::query(
         r#"INSERT INTO soroban_invocations
                (transaction_id, contract_id, caller_account, function_name,
-                function_args, return_value, successful,
-                invocation_index, ledger_sequence, created_at)
+                successful, invocation_index, ledger_sequence, created_at)
            SELECT * FROM unnest(
                $1::bigint[], $2::text[], $3::text[], $4::text[],
-               $5::jsonb[], $6::jsonb[], $7::bool[],
-               $8::smallint[], $9::bigint[], $10::timestamptz[]
+               $5::bool[], $6::smallint[], $7::bigint[], $8::timestamptz[]
            )
            ON CONFLICT ON CONSTRAINT uq_invocations_tx_index DO NOTHING"#,
     )
@@ -293,8 +207,6 @@ pub async fn insert_invocations_batch(
     .bind(&contract_ids)
     .bind(&caller_accounts)
     .bind(&function_names)
-    .bind(&function_args)
-    .bind(&return_values)
     .bind(&successfuls)
     .bind(&invocation_indices)
     .bind(&ledger_sequences)
@@ -344,14 +256,10 @@ mod tests {
             fee_charged: 100,
             successful: true,
             result_code: None,
-            envelope_xdr: "envelope".to_string(),
-            result_xdr: "result".to_string(),
-            result_meta_xdr: None,
             memo_type: None,
             memo: None,
             created_at: Utc::now(),
             parse_error: Some(false),
-            operation_tree: None,
         }
     }
 
@@ -471,14 +379,10 @@ mod tests {
             fee_charged: 100,
             successful: true,
             result_code: None,
-            envelope_xdr: "envelope".to_string(),
-            result_xdr: "result".to_string(),
-            result_meta_xdr: None,
             memo_type: None,
             memo: None,
             created_at: Utc::now(),
             parse_error: None,
-            operation_tree: None,
         };
 
         let result = insert_transactions_batch(&pool, &[tx]).await.unwrap();

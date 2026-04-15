@@ -7,7 +7,7 @@ use tracing::{info, warn};
 use super::HandlerError;
 use super::convert;
 use xdr_parser::types::{
-    ExtractedAccountState, ExtractedContractDeployment, ExtractedContractInterface, ExtractedEvent,
+    ExtractedAccountState, ExtractedContractDeployment, ExtractedContractInterface,
     ExtractedInvocation, ExtractedLedger, ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot,
     ExtractedNft, ExtractedOperation, ExtractedToken, ExtractedTransaction,
 };
@@ -21,9 +21,7 @@ pub async fn persist_ledger(
     ledger: &ExtractedLedger,
     transactions: &[ExtractedTransaction],
     operations: &[(String, Vec<ExtractedOperation>)],
-    events: &[(String, Vec<ExtractedEvent>)],
     invocations: &[(String, Vec<ExtractedInvocation>)],
-    operation_trees: &[(String, serde_json::Value)],
     contract_interfaces: &[ExtractedContractInterface],
     contract_deployments: &[ExtractedContractDeployment],
     account_states: &[ExtractedAccountState],
@@ -88,16 +86,9 @@ pub async fn persist_ledger(
         timings.push((label, dur));
     }
 
-    // 3b. Ensure all referenced contracts exist (FK constraint on soroban_events/invocations)
+    // 3b. Ensure all referenced contracts exist (FK constraint on soroban_invocations, nfts)
     {
         let mut contract_ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
-        for (_tx_hash, evts) in events {
-            for e in evts {
-                if let Some(ref cid) = e.contract_id {
-                    contract_ids.insert(cid.as_str());
-                }
-            }
-        }
         for (_tx_hash, invs) in invocations {
             for inv in invs {
                 if let Some(ref cid) = inv.contract_id {
@@ -105,28 +96,13 @@ pub async fn persist_ledger(
                 }
             }
         }
+        for n in nfts {
+            contract_ids.insert(n.contract_id.as_str());
+        }
         let cids: Vec<&str> = contract_ids.into_iter().collect();
         let (result, label, dur) = timed!(
             "ensure_contracts",
             db::soroban::ensure_contracts_exist_batch(&mut **db_tx, &cids).await
-        );
-        result?;
-        timings.push((label, dur));
-    }
-
-    // 4. Insert events — flatten all transactions into a single batch
-    {
-        let mut all_events = Vec::new();
-        for (tx_hash, evts) in events {
-            let Some(&tx_id) = hash_to_id.get(tx_hash.as_str()) else {
-                warn!(tx_hash, "no transaction_id found for events — skipping");
-                continue;
-            };
-            all_events.extend(evts.iter().map(|e| convert::to_event(e, tx_id)));
-        }
-        let (result, label, dur) = timed!(
-            "insert_events",
-            db::persistence::insert_events_batch(&mut **db_tx, &all_events).await
         );
         result?;
         timings.push((label, dur));
@@ -148,29 +124,6 @@ pub async fn persist_ledger(
         let (result, label, dur) = timed!(
             "insert_invocations",
             db::persistence::insert_invocations_batch(&mut **db_tx, &all_invs).await
-        );
-        result?;
-        timings.push((label, dur));
-    }
-
-    // 6. Update operation trees — single batch UPDATE
-    {
-        let mut ids = Vec::with_capacity(operation_trees.len());
-        let mut trees = Vec::with_capacity(operation_trees.len());
-        for (tx_hash, tree) in operation_trees {
-            let Some(&tx_id) = hash_to_id.get(tx_hash.as_str()) else {
-                warn!(
-                    tx_hash,
-                    "no transaction_id found for operation_tree — skipping"
-                );
-                continue;
-            };
-            ids.push(tx_id);
-            trees.push(tree);
-        }
-        let (result, label, dur) = timed!(
-            "update_op_trees",
-            db::soroban::update_operation_trees_batch(&mut **db_tx, &ids, &trees).await
         );
         result?;
         timings.push((label, dur));
@@ -344,7 +297,7 @@ pub async fn persist_ledger(
         timings.push((label, dur));
     }
 
-    // Log per-query breakdown
+    // Log per-query breakdown with timings
     let total: std::time::Duration = timings.iter().map(|(_, d)| *d).sum();
     let breakdown: Vec<String> = timings
         .iter()
@@ -355,6 +308,24 @@ pub async fn persist_ledger(
         total_ms = format!("{:.1}", total.as_secs_f64() * 1000.0),
         "persist breakdown: {}",
         breakdown.join(" | ")
+    );
+
+    // Log row counts per table
+    let invocation_count: usize = invocations.iter().map(|(_, v)| v.len()).sum();
+    let op_count: usize = operations.iter().map(|(_, v)| v.len()).sum();
+
+    info!(
+        ledger_seq,
+        txs = transactions.len(),
+        ops = op_count,
+        invocations = invocation_count,
+        contracts = contract_deployments.len(),
+        accounts = account_states.len(),
+        pools = liquidity_pools.len(),
+        snapshots = pool_snapshots.len(),
+        tokens = tokens.len(),
+        nfts = nfts.len(),
+        "persist row counts"
     );
 
     Ok(())

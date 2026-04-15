@@ -36,9 +36,7 @@ pub async fn process_ledger(
 
     // Per-transaction parsing (stages 0025, 0026, 0027)
     let mut all_operations = Vec::new();
-    let mut all_events = Vec::new();
     let mut all_invocations = Vec::new();
-    let mut all_operation_trees = Vec::new();
     let mut all_contract_interfaces = Vec::new();
     let mut all_ledger_entry_changes = Vec::new();
     let mut all_nft_events = Vec::new();
@@ -77,7 +75,6 @@ pub async fn process_ledger(
             let events = xdr_parser::extract_events(tm, &ext_tx.hash, ledger_sequence, closed_at);
             let nft_events = xdr_parser::detect_nft_events(&events);
             all_nft_events.extend(nft_events);
-            all_events.push((ext_tx.hash.clone(), events));
 
             if let Some(env) = envelope {
                 let inner = xdr_parser::envelope::inner_transaction(env);
@@ -91,9 +88,6 @@ pub async fn process_ledger(
                     ext_tx.successful,
                 );
                 all_invocations.push((ext_tx.hash.clone(), inv_result.invocations));
-                if let Some(tree) = inv_result.operation_tree {
-                    all_operation_trees.push((ext_tx.hash.clone(), tree));
-                }
             }
 
             let interfaces = xdr_parser::extract_contract_interfaces(tm);
@@ -148,9 +142,7 @@ pub async fn process_ledger(
         &extracted_ledger,
         &extracted_transactions,
         &all_operations,
-        &all_events,
         &all_invocations,
-        &all_operation_trees,
         &all_contract_interfaces,
         &all_contract_deployments,
         &all_account_states,

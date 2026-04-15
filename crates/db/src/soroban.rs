@@ -39,31 +39,6 @@ pub async fn ensure_contracts_exist_batch(
     Ok(())
 }
 
-/// Batch update `transactions.operation_tree` for multiple transactions.
-/// Uses UPDATE FROM UNNEST for a single round trip.
-pub async fn update_operation_trees_batch(
-    executor: impl Acquire<'_, Database = sqlx::Postgres>,
-    transaction_ids: &[i64],
-    operation_trees: &[&serde_json::Value],
-) -> Result<(), sqlx::Error> {
-    if transaction_ids.is_empty() {
-        return Ok(());
-    }
-    let mut conn = executor.acquire().await?;
-    sqlx::query(
-        r#"UPDATE transactions t
-           SET operation_tree = u.tree
-           FROM unnest($1::bigint[], $2::jsonb[]) AS u(id, tree)
-           WHERE t.id = u.id"#,
-    )
-    .bind(transaction_ids)
-    .bind(operation_trees)
-    .execute(&mut *conn)
-    .await?;
-
-    Ok(())
-}
-
 /// Batch upsert contract deployments into `soroban_contracts`.
 /// Uses UNNEST for a single round trip.
 pub async fn upsert_contract_deployments_batch(

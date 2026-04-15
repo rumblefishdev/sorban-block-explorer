@@ -10,14 +10,14 @@ use domain::{
     nft::Nft,
     operation::Operation,
     pool::{LiquidityPool, LiquidityPoolSnapshot},
-    soroban::{SorobanContract, SorobanEvent, SorobanInvocation},
+    soroban::{SorobanContract, SorobanInvocation},
     token::Token,
     transaction::Transaction,
 };
 use xdr_parser::types::{
-    ExtractedAccountState, ExtractedContractDeployment, ExtractedEvent, ExtractedInvocation,
-    ExtractedLedger, ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot, ExtractedNft,
-    ExtractedOperation, ExtractedToken, ExtractedTransaction,
+    ExtractedAccountState, ExtractedContractDeployment, ExtractedInvocation, ExtractedLedger,
+    ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot, ExtractedNft, ExtractedOperation,
+    ExtractedToken, ExtractedTransaction,
 };
 
 fn unix_to_datetime(ts: i64) -> DateTime<Utc> {
@@ -44,14 +44,10 @@ pub fn to_transaction(e: &ExtractedTransaction) -> Transaction {
         fee_charged: e.fee_charged,
         successful: e.successful,
         result_code: Some(e.result_code.clone()),
-        envelope_xdr: e.envelope_xdr.clone(),
-        result_xdr: e.result_xdr.clone(),
-        result_meta_xdr: e.result_meta_xdr.clone(),
         memo_type: e.memo_type.clone(),
         memo: e.memo.clone(),
         created_at: unix_to_datetime(e.created_at),
         parse_error: Some(e.parse_error),
-        operation_tree: e.operation_tree.clone(),
     }
 }
 
@@ -69,21 +65,6 @@ pub fn to_operation(
             .clone()
             .unwrap_or_else(|| tx_source_account.to_string()),
         op_type: e.op_type.clone(),
-        details: e.details.clone(),
-    }
-}
-
-pub fn to_event(e: &ExtractedEvent, transaction_id: i64) -> SorobanEvent {
-    SorobanEvent {
-        id: 0,
-        transaction_id,
-        contract_id: e.contract_id.clone(),
-        event_type: e.event_type.clone(),
-        topics: e.topics.clone(),
-        data: e.data.clone(),
-        event_index: e.event_index as i16,
-        ledger_sequence: e.ledger_sequence as i64,
-        created_at: unix_to_datetime(e.created_at),
     }
 }
 
@@ -94,8 +75,6 @@ pub fn to_invocation(e: &ExtractedInvocation, transaction_id: i64) -> SorobanInv
         contract_id: e.contract_id.clone(),
         caller_account: e.caller_account.clone(),
         function_name: e.function_name.clone().unwrap_or_default(),
-        function_args: Some(e.function_args.clone()),
-        return_value: Some(e.return_value.clone()),
         successful: e.successful,
         invocation_index: e.invocation_index as i16,
         ledger_sequence: e.ledger_sequence as i64,

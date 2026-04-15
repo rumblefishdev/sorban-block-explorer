@@ -40,39 +40,10 @@ pub struct SorobanInvocation {
     pub caller_account: Option<String>,
     /// Function name invoked.
     pub function_name: String,
-    /// ScVal-decoded function arguments as JSONB.
-    pub function_args: Option<serde_json::Value>,
-    /// ScVal-decoded return value as JSONB.
-    pub return_value: Option<serde_json::Value>,
     /// Whether this invocation succeeded.
     pub successful: bool,
     /// Zero-based depth-first index of this node in the invocation tree (dedup key).
     pub invocation_index: i16,
-    /// Parent ledger sequence number.
-    pub ledger_sequence: i64,
-    /// Timestamp for partitioning.
-    pub created_at: DateTime<Utc>,
-}
-
-/// Soroban event record as stored in PostgreSQL.
-///
-/// Partitioned by `created_at`. Composite PK: `(id, created_at)`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SorobanEvent {
-    /// Surrogate primary key (BIGSERIAL).
-    pub id: i64,
-    /// Parent transaction (FK to transactions.id, CASCADE).
-    pub transaction_id: i64,
-    /// Contract that emitted the event (FK to soroban_contracts.contract_id).
-    pub contract_id: Option<String>,
-    /// Event class: "contract", "system", or "diagnostic".
-    pub event_type: String,
-    /// ScVal-decoded topic values as JSONB array.
-    pub topics: serde_json::Value,
-    /// ScVal-decoded event data payload as JSONB.
-    pub data: serde_json::Value,
-    /// Zero-based index of this event within the transaction (dedup key).
-    pub event_index: i16,
     /// Parent ledger sequence number.
     pub ledger_sequence: i64,
     /// Timestamp for partitioning.
