@@ -302,7 +302,7 @@ pub async fn persist_ledger(
             }
         }
 
-        let domain_accounts: Vec<_> = deduped.values().map(|a| convert::to_account(a)).collect();
+        let domain_accounts: Vec<_> = deduped.values().map(convert::to_account).collect();
         let (result, label, dur) = timed!(
             "upsert_accounts",
             db::soroban::upsert_account_states_batch(&mut **db_tx, &domain_accounts).await
