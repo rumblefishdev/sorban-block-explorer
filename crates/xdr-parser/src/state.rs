@@ -251,10 +251,16 @@ pub fn extract_account_states(
                 });
 
                 // Dedup: remove existing entry for same asset, then add new
-                let new_code = trustline_entry.get("asset_code");
-                let new_issuer = trustline_entry.get("issuer");
+                let new_code = trustline_entry.get("asset_code").cloned();
+                let new_issuer = trustline_entry.get("issuer").cloned();
                 entry.trustline_balances.retain(|tb| {
-                    tb.get("asset_code") != new_code || tb.get("issuer") != new_issuer
+                    tb.get("asset_code") != new_code.as_ref()
+                        || tb.get("issuer") != new_issuer.as_ref()
+                });
+                // Cancel any prior removal for the same asset (remove-then-recreate in same tx)
+                entry.removed_trustlines.retain(|rt| {
+                    rt.get("asset_code") != new_code.as_ref()
+                        || rt.get("issuer") != new_issuer.as_ref()
                 });
                 entry.trustline_balances.push(trustline_entry);
 
@@ -978,6 +984,47 @@ mod tests {
         let balances = accounts[0].balances.as_array().unwrap();
         assert!(balances.is_empty()); // creation was cancelled by removal
         assert_eq!(accounts[0].removed_trustlines.len(), 1);
+    }
+
+    #[test]
+    fn recreate_cancels_prior_removal_same_tx() {
+        let changes = vec![
+            // First: trustline removed
+            make_change(
+                "trustline",
+                "removed",
+                json!({
+                    "account_id": "GABC",
+                    "asset": { "type": "credit_alphanum4", "code": "USDC", "issuer": "G1" },
+                }),
+                None,
+            ),
+            // Then: trustline re-created
+            make_change(
+                "trustline",
+                "created",
+                json!({
+                    "account_id": "GABC",
+                    "asset": { "type": "credit_alphanum4", "code": "USDC", "issuer": "G1" },
+                }),
+                Some(json!({
+                    "account_id": "GABC",
+                    "asset": { "type": "credit_alphanum4", "code": "USDC", "issuer": "G1" },
+                    "balance": 700,
+                    "limit": 10000,
+                    "flags": 1,
+                })),
+            ),
+        ];
+
+        let accounts = extract_account_states(&changes);
+        assert_eq!(accounts.len(), 1);
+        let balances = accounts[0].balances.as_array().unwrap();
+        assert_eq!(balances.len(), 1);
+        assert_eq!(balances[0]["asset_code"], "USDC");
+        assert_eq!(balances[0]["balance"], "0.0000700");
+        // Removal should be cancelled — trustline was re-created
+        assert!(accounts[0].removed_trustlines.is_empty());
     }
 
     // -- Liquidity Pool Tests --

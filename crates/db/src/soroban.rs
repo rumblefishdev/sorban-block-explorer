@@ -272,6 +272,12 @@ pub async fn remove_trustlines_batch(
     issuers: &[&str],
     ledger_sequence: i64,
 ) -> Result<(), sqlx::Error> {
+    debug_assert!(
+        account_ids.len() == asset_types.len()
+            && account_ids.len() == asset_codes.len()
+            && account_ids.len() == issuers.len(),
+        "remove_trustlines_batch: all input slices must have the same length"
+    );
     if account_ids.is_empty() {
         return Ok(());
     }

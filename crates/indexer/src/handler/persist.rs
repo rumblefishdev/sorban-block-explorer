@@ -294,11 +294,24 @@ pub async fn persist_ledger(
             }
         }
 
-        // Collect removed trustlines before converting to domain objects
+        // Collect removed trustlines before converting to domain objects.
+        // Skip removals whose asset still exists in the final merged balances
+        // (handles cross-tx remove-then-recreate within the same ledger).
         let mut removals: Vec<(&str, &serde_json::Value)> = Vec::new();
         for a in deduped.values() {
+            let final_balances = match &a.balances {
+                serde_json::Value::Array(arr) => arr.as_slice(),
+                _ => &[],
+            };
             for rt in &a.removed_trustlines {
-                removals.push((a.account_id.as_str(), rt));
+                let still_present = final_balances.iter().any(|bal| {
+                    bal.get("asset_type") == rt.get("asset_type")
+                        && bal.get("asset_code") == rt.get("asset_code")
+                        && bal.get("issuer") == rt.get("issuer")
+                });
+                if !still_present {
+                    removals.push((a.account_id.as_str(), rt));
+                }
             }
         }
 
