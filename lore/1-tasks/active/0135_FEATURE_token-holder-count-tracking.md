@@ -2,10 +2,9 @@
 id: '0135'
 title: 'Indexer: ongoing token holder_count tracking'
 type: FEATURE
-status: blocked
+status: active
 related_adr: []
 related_tasks: ['0027', '0049', '0119']
-blocked_by: ['0119']
 tags: [priority-medium, effort-medium, layer-indexer, layer-db, audit-gap]
 milestone: 1
 links:
@@ -16,6 +15,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Spawned from pipeline audit — tech design requires holder_count on token list/detail but no mechanism populates it. Always NULL.'
+  - date: '2026-04-16'
+    status: active
+    who: FilipDz
+    note: 'Activated — blocker 0119 (trustline extraction) completed.'
 ---
 
 # Indexer: ongoing token holder_count tracking
