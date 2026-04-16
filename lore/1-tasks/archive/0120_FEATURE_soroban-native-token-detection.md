@@ -2,9 +2,9 @@
 id: '0120'
 title: 'Indexer: detect Soroban-native tokens (non-SAC)'
 type: FEATURE
-status: active
+status: completed
 related_adr: []
-related_tasks: ['0027', '0049', '0104']
+related_tasks: ['0027', '0049', '0104', '0124']
 tags: [priority-medium, effort-medium, layer-indexer, audit-F8]
 milestone: 1
 links:
@@ -19,6 +19,14 @@ history:
     status: active
     who: FilipDz
     note: 'Activated for implementation'
+  - date: '2026-04-16'
+    status: done
+    who: FilipDz
+    note: >
+      DB-only detection via CTE after metadata merge. is_sep41_compliant helper
+      in state.rs, detect_soroban_tokens_from_metadata SQL in soroban.rs,
+      wired as step 8.5 in persist.rs. 3 unit + 5 integration tests.
+      Name/symbol deferred to task 0124.
 ---
 
 # Indexer: detect Soroban-native tokens (non-SAC)
@@ -48,8 +56,8 @@ classification.
 
 ## Acceptance Criteria
 
-- [ ] Contracts implementing SEP-0041 interface are classified as `contract_type = "token"`
-- [ ] Corresponding `tokens` row created with `asset_type = "soroban"` and `contract_id`
-- [ ] Token name/symbol populated from contract metadata when available
-- [ ] Existing SAC token detection unchanged
-- [ ] Test: WASM contract with SEP-0041 functions detected as token
+- [x] Contracts implementing SEP-0041 interface are classified as `contract_type = "token"`
+- [x] Corresponding `tokens` row created with `asset_type = "soroban"` and `contract_id`
+- [ ] ~~Token name/symbol populated from contract metadata when available~~ — deferred to task 0124 (metadata contains function signatures, not actual values)
+- [x] Existing SAC token detection unchanged
+- [x] Test: WASM contract with SEP-0041 functions detected as token

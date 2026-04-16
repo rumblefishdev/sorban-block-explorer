@@ -461,6 +461,7 @@ pub async fn upsert_tokens_batch(
            FROM unnest(
                $1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::int[]
            ) AS t(asset_type, asset_code, issuer_address, contract_id, name, total_supply, holder_count)
+           -- Unscoped: handles mixed asset_type batches (sac, classic)
            ON CONFLICT DO NOTHING"#,
     )
     .bind(&asset_types)
@@ -474,6 +475,65 @@ pub async fn upsert_tokens_batch(
     .await?;
 
     Ok(())
+}
+
+/// Detect Soroban-native tokens from contract metadata after interface merge.
+///
+/// Finds non-SAC contracts whose metadata contains all 10 SEP-0041 required functions,
+/// updates `contract_type` to `"token"`, and inserts a `tokens` row with
+/// `asset_type = 'soroban'`.
+///
+/// NOTE: The function list in the SQL must stay in sync with `SEP41_REQUIRED_FUNCTIONS`
+/// in `crates/xdr-parser/src/state.rs`.
+///
+/// Dual-scoped for parallel worker safety:
+/// - `contract_ids`: catches contracts deployed in this ledger
+/// - `wasm_hashes`: catches contracts whose WASM was uploaded in this ledger
+///   (metadata applied by `update_contract_interfaces_by_wasm_hash`)
+///
+/// Returns the number of newly detected tokens.
+pub async fn detect_soroban_tokens_from_metadata(
+    executor: impl Acquire<'_, Database = sqlx::Postgres>,
+    contract_ids: &[&str],
+    wasm_hashes: &[&str],
+) -> Result<u64, sqlx::Error> {
+    if contract_ids.is_empty() && wasm_hashes.is_empty() {
+        return Ok(0);
+    }
+
+    let mut conn = executor.acquire().await?;
+    let result = sqlx::query(
+        r#"WITH detected AS (
+               SELECT contract_id
+               FROM soroban_contracts
+               WHERE (contract_id = ANY($1) OR wasm_hash = ANY($2))
+                 AND is_sac = false
+                 AND contract_type = 'other'
+                 AND metadata->'functions' IS NOT NULL
+                 AND (
+                     SELECT COUNT(DISTINCT f->>'name')
+                     FROM jsonb_array_elements(metadata->'functions') f
+                     WHERE f->>'name' IN ('allowance','approve','balance','burn','burn_from',
+                                          'decimals','name','symbol','transfer','transfer_from')
+                 ) = 10
+           ),
+           updated AS (
+               UPDATE soroban_contracts
+               SET contract_type = 'token'
+               FROM detected
+               WHERE soroban_contracts.contract_id = detected.contract_id
+               RETURNING soroban_contracts.contract_id
+           )
+           INSERT INTO tokens (asset_type, contract_id)
+           SELECT 'soroban', contract_id FROM updated
+           ON CONFLICT (contract_id) WHERE asset_type = 'soroban' DO NOTHING"#,
+    )
+    .bind(contract_ids)
+    .bind(wasm_hashes)
+    .execute(&mut *conn)
+    .await?;
+
+    Ok(result.rows_affected())
 }
 
 /// Batch upsert NFTs into `nfts`.
@@ -1206,5 +1266,230 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+    }
+
+    // -- SEP-0041 Soroban Token Detection Tests (0120) --
+
+    fn sep41_metadata() -> serde_json::Value {
+        json!({
+            "functions": [
+                {"name": "allowance", "doc": "", "inputs": [], "outputs": []},
+                {"name": "approve", "doc": "", "inputs": [], "outputs": []},
+                {"name": "balance", "doc": "", "inputs": [], "outputs": []},
+                {"name": "burn", "doc": "", "inputs": [], "outputs": []},
+                {"name": "burn_from", "doc": "", "inputs": [], "outputs": []},
+                {"name": "decimals", "doc": "", "inputs": [], "outputs": []},
+                {"name": "name", "doc": "", "inputs": [], "outputs": []},
+                {"name": "symbol", "doc": "", "inputs": [], "outputs": []},
+                {"name": "transfer", "doc": "", "inputs": [], "outputs": []},
+                {"name": "transfer_from", "doc": "", "inputs": [], "outputs": []}
+            ]
+        })
+    }
+
+    fn non_token_metadata() -> serde_json::Value {
+        json!({
+            "functions": [
+                {"name": "swap", "doc": "", "inputs": [], "outputs": []},
+                {"name": "deposit", "doc": "", "inputs": [], "outputs": []}
+            ]
+        })
+    }
+
+    fn test_contract(
+        cid: &str,
+        wasm_hash: Option<&str>,
+        is_sac: bool,
+        contract_type: &str,
+        metadata: Option<serde_json::Value>,
+    ) -> domain::soroban::SorobanContract {
+        domain::soroban::SorobanContract {
+            contract_id: cid.to_string(),
+            wasm_hash: wasm_hash.map(str::to_string),
+            deployer_account: Some("GDEPLOYER".to_string()),
+            deployed_at_ledger: Some(100),
+            contract_type: Some(contract_type.to_string()),
+            is_sac: Some(is_sac),
+            metadata,
+        }
+    }
+
+    async fn cleanup_contract(pool: &sqlx::PgPool, cid: &str) {
+        sqlx::query("DELETE FROM tokens WHERE contract_id = $1")
+            .bind(cid)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM soroban_contracts WHERE contract_id = $1")
+            .bind(cid)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    /// 0120: Contract with SEP-0041 functions is detected as soroban token.
+    #[tokio::test]
+    async fn detect_soroban_token_from_metadata() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let cid = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD120";
+        cleanup_contract(&pool, cid).await;
+
+        let c = test_contract(
+            cid,
+            Some(&"aa".repeat(32)),
+            false,
+            "other",
+            Some(sep41_metadata()),
+        );
+        upsert_contract_deployments_batch(&pool, std::slice::from_ref(&c))
+            .await
+            .unwrap();
+
+        let detected = detect_soroban_tokens_from_metadata(&pool, &[cid], &[])
+            .await
+            .unwrap();
+        assert_eq!(detected, 1, "should detect 1 soroban token");
+
+        let (ct,): (Option<String>,) =
+            sqlx::query_as("SELECT contract_type FROM soroban_contracts WHERE contract_id = $1")
+                .bind(cid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(ct.as_deref(), Some("token"));
+
+        let (at,): (String,) =
+            sqlx::query_as("SELECT asset_type FROM tokens WHERE contract_id = $1")
+                .bind(cid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(at, "soroban");
+
+        cleanup_contract(&pool, cid).await;
+    }
+
+    /// 0120: Non-token contract is NOT detected.
+    #[tokio::test]
+    async fn non_token_contract_not_detected() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let cid = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAE120";
+        cleanup_contract(&pool, cid).await;
+
+        let c = test_contract(
+            cid,
+            Some(&"bb".repeat(32)),
+            false,
+            "other",
+            Some(non_token_metadata()),
+        );
+        upsert_contract_deployments_batch(&pool, std::slice::from_ref(&c))
+            .await
+            .unwrap();
+
+        let detected = detect_soroban_tokens_from_metadata(&pool, &[cid], &[])
+            .await
+            .unwrap();
+        assert_eq!(detected, 0, "non-token contract should not be detected");
+
+        cleanup_contract(&pool, cid).await;
+    }
+
+    /// 0120: SAC contract is NOT re-detected as soroban token.
+    #[tokio::test]
+    async fn sac_not_detected_as_soroban() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let cid = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAF120";
+        cleanup_contract(&pool, cid).await;
+
+        let c = test_contract(cid, None, true, "token", Some(sep41_metadata()));
+        upsert_contract_deployments_batch(&pool, std::slice::from_ref(&c))
+            .await
+            .unwrap();
+
+        let detected = detect_soroban_tokens_from_metadata(&pool, &[cid], &[])
+            .await
+            .unwrap();
+        assert_eq!(detected, 0, "SAC should not be re-detected");
+
+        cleanup_contract(&pool, cid).await;
+    }
+
+    /// 0120: Detection via wasm_hash (cross-ledger 2-ledger pattern).
+    #[tokio::test]
+    async fn detect_via_wasm_hash() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let cid = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAG120";
+        let wasm = &"cc".repeat(32);
+        cleanup_contract(&pool, cid).await;
+
+        // Worker A deploys contract (no metadata yet)
+        let c = test_contract(cid, Some(wasm), false, "other", None);
+        upsert_contract_deployments_batch(&pool, std::slice::from_ref(&c))
+            .await
+            .unwrap();
+
+        // Worker B uploads WASM — applies metadata to existing contract
+        update_contract_interfaces_by_wasm_hash(&pool, wasm, &sep41_metadata())
+            .await
+            .unwrap();
+
+        // Detection scoped by wasm_hash (worker B has no contract_ids)
+        let detected = detect_soroban_tokens_from_metadata(&pool, &[], &[wasm.as_str()])
+            .await
+            .unwrap();
+        assert_eq!(detected, 1, "should detect via wasm_hash");
+
+        let (ct,): (Option<String>,) =
+            sqlx::query_as("SELECT contract_type FROM soroban_contracts WHERE contract_id = $1")
+                .bind(cid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(ct.as_deref(), Some("token"));
+
+        cleanup_contract(&pool, cid).await;
+    }
+
+    /// 0120: Idempotent — running detection twice does not fail or duplicate.
+    #[tokio::test]
+    async fn detect_soroban_token_idempotent() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let cid = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH120";
+        cleanup_contract(&pool, cid).await;
+
+        let c = test_contract(
+            cid,
+            Some(&"dd".repeat(32)),
+            false,
+            "other",
+            Some(sep41_metadata()),
+        );
+        upsert_contract_deployments_batch(&pool, std::slice::from_ref(&c))
+            .await
+            .unwrap();
+
+        let first = detect_soroban_tokens_from_metadata(&pool, &[cid], &[])
+            .await
+            .unwrap();
+        assert_eq!(first, 1);
+
+        // Second run: contract_type is now "token", so WHERE contract_type = 'other' skips it
+        let second = detect_soroban_tokens_from_metadata(&pool, &[cid], &[])
+            .await
+            .unwrap();
+        assert_eq!(second, 0, "idempotent — already detected");
+
+        cleanup_contract(&pool, cid).await;
     }
 }

@@ -246,6 +246,36 @@ pub async fn persist_ledger(
         timings.push(("contract_interfaces", t.elapsed()));
     }
 
+    // 8.5 Detect Soroban-native tokens (SEP-0041) from merged metadata.
+    //
+    // After step 7 (contract deployments) and step 8 (interface metadata), every contract
+    // in this batch should have its metadata populated. Check for SEP-0041 compliance and
+    // classify matching contracts as tokens.
+    //
+    // Dual-scoped for parallel worker safety:
+    //   - contract_ids: detects contracts deployed in this ledger
+    //   - wasm_hashes: detects contracts whose WASM was uploaded in this ledger
+    //     (metadata was applied to already-deployed contracts by update_contract_interfaces_by_wasm_hash)
+    {
+        let cids: Vec<&str> = contract_deployments
+            .iter()
+            .map(|d| d.contract_id.as_str())
+            .collect();
+        let whashes: Vec<&str> = contract_interfaces
+            .iter()
+            .map(|i| i.wasm_hash.as_str())
+            .collect();
+        let (result, label, dur) = timed!(
+            "detect_soroban_tokens",
+            db::soroban::detect_soroban_tokens_from_metadata(&mut **db_tx, &cids, &whashes).await
+        );
+        let detected = result?;
+        if detected > 0 {
+            info!(count = detected, "detected SEP-0041 soroban tokens");
+        }
+        timings.push((label, dur));
+    }
+
     // 9. Upsert account states — dedup + merge by account_id
     {
         let mut deduped: HashMap<&str, ExtractedAccountState> = HashMap::new();

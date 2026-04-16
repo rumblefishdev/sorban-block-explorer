@@ -7,8 +7,9 @@
 use serde_json::Value;
 
 use crate::types::{
-    ExtractedAccountState, ExtractedContractDeployment, ExtractedLedgerEntryChange,
-    ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot, ExtractedNft, ExtractedToken, NftEvent,
+    ContractFunction, ExtractedAccountState, ExtractedContractDeployment,
+    ExtractedLedgerEntryChange, ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot,
+    ExtractedNft, ExtractedToken, NftEvent,
 };
 
 // ---------------------------------------------------------------------------
@@ -460,10 +461,34 @@ pub fn extract_liquidity_pools(
 // Step 5: Token Detection
 // ---------------------------------------------------------------------------
 
-/// Detect tokens from contract deployments.
+/// All 10 SEP-0041 functions required for Soroban token detection.
+const SEP41_REQUIRED_FUNCTIONS: &[&str] = &[
+    "allowance",
+    "approve",
+    "balance",
+    "burn",
+    "burn_from",
+    "decimals",
+    "name",
+    "symbol",
+    "transfer",
+    "transfer_from",
+];
+
+/// Check whether a set of contract functions satisfies the SEP-0041 token interface.
 ///
-/// SAC deployments produce "sac" tokens. Other deployments with token-like
-/// interfaces could produce "soroban" tokens (heuristic-based).
+/// Returns `true` if all 10 required functions are present.
+/// Extra functions are allowed (superset is OK).
+pub fn is_sep41_compliant(functions: &[ContractFunction]) -> bool {
+    SEP41_REQUIRED_FUNCTIONS
+        .iter()
+        .all(|req| functions.iter().any(|f| f.name == *req))
+}
+
+/// Detect tokens from contract deployments (SAC only).
+///
+/// Soroban-native token detection is handled DB-side by
+/// `detect_soroban_tokens_from_metadata` in `crates/db/src/soroban.rs`.
 pub fn detect_tokens(deployments: &[ExtractedContractDeployment]) -> Vec<ExtractedToken> {
     let mut tokens = Vec::new();
 
@@ -1098,6 +1123,79 @@ mod tests {
 
         let tokens = detect_tokens(&deployments);
         assert!(tokens.is_empty());
+    }
+
+    // -- SEP-0041 Compliance Tests --
+
+    fn make_func(name: &str) -> ContractFunction {
+        ContractFunction {
+            name: name.to_string(),
+            doc: String::new(),
+            inputs: vec![],
+            outputs: vec![],
+        }
+    }
+
+    #[test]
+    fn sep41_all_required_functions() {
+        let funcs: Vec<_> = [
+            "allowance",
+            "approve",
+            "balance",
+            "burn",
+            "burn_from",
+            "decimals",
+            "name",
+            "symbol",
+            "transfer",
+            "transfer_from",
+        ]
+        .iter()
+        .map(|n| make_func(n))
+        .collect();
+        assert!(is_sep41_compliant(&funcs));
+    }
+
+    #[test]
+    fn sep41_missing_function_not_compliant() {
+        // All except "burn" — should fail
+        let funcs: Vec<_> = [
+            "allowance",
+            "approve",
+            "balance",
+            "burn_from",
+            "decimals",
+            "name",
+            "symbol",
+            "transfer",
+            "transfer_from",
+        ]
+        .iter()
+        .map(|n| make_func(n))
+        .collect();
+        assert!(!is_sep41_compliant(&funcs));
+    }
+
+    #[test]
+    fn sep41_superset_is_compliant() {
+        let funcs: Vec<_> = [
+            "allowance",
+            "approve",
+            "balance",
+            "burn",
+            "burn_from",
+            "decimals",
+            "name",
+            "symbol",
+            "transfer",
+            "transfer_from",
+            "mint",
+            "clawback",
+        ]
+        .iter()
+        .map(|n| make_func(n))
+        .collect();
+        assert!(is_sep41_compliant(&funcs));
     }
 
     // -- NFT Detection Tests --
