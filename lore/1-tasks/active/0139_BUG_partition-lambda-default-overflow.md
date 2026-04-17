@@ -96,13 +96,18 @@ Recommended combo:
 
 2. **Self-heal in Lambda** — when `CREATE TABLE ... PARTITION OF` fails with
    SQLSTATE for "partition constraint violation by default" (check exact code),
-   fall back to:
+   fall back to the following SQL, all in a single transaction:
 
-   - `CREATE TABLE <name> (LIKE operations INCLUDING ALL)` (standalone)
-   - `WITH moved AS (DELETE FROM operations_default WHERE <range> RETURNING *)
-INSERT INTO <name> SELECT * FROM moved`
-   - `ALTER TABLE operations ATTACH PARTITION <name> FOR VALUES FROM ... TO ...`
-     All in a single transaction.
+   ```sql
+   CREATE TABLE <name> (LIKE operations INCLUDING ALL);
+
+   WITH moved AS (
+     DELETE FROM operations_default WHERE <range> RETURNING *
+   )
+   INSERT INTO <name> SELECT * FROM moved;
+
+   ALTER TABLE operations ATTACH PARTITION <name> FOR VALUES FROM ... TO ...;
+   ```
 
 3. **Alarm fix** — switch `OperationsRangeHigh` to a metric based on actual
    row-level usage queried directly against RDS (CloudWatch custom metric from
