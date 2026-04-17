@@ -64,7 +64,7 @@ but a reordering (same count, wrong order) would produce silently corrupt data.
 
 - [ ] Length assertion: indexer fails loudly if envelope count != meta count
 - [ ] Hash cross-check: each envelope's computed hash (using `SHA256(network_id ||
-  ENVELOPE_TYPE_TX || tx_body)`) matches its result pair hash — this is **required**,
+    ENVELOPE_TYPE_TX || tx_body)`) matches its result pair hash — this is **required**,
       not optional, because length assertion alone cannot detect reordering (same count,
       wrong order) which produces silently corrupt data
 - [ ] Network passphrase passed into extraction pipeline from config (needed for hash)

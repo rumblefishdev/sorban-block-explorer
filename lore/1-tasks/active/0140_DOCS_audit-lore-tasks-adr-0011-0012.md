@@ -211,11 +211,11 @@ Research dirs (README.md): `0002`, `0007`, `0008`.
 - [x] Bucket 5 archive flag on 22 tasks
 - [x] Bucket 6 wiki banners on 2 files
 - [x] Bucket 7 ADR metadata populated (0011, 0012, 0008)
-- [ ] Bucket 8 new tasks 0141/0142 created
-- [ ] Bucket 9 cleanup task for 0118 format spawned
-- [ ] `lore/README.md` regenerated
-- [ ] Commit split + PR to develop
-- [ ] 0143 in-scope decision made (historical-state-query API) — in-scope, deferred, or skip
+- [x] Bucket 8 new tasks 0141/0142 created
+- [x] Bucket 9 cleanup task for 0118 format spawned (0144)
+- [x] `lore/README.md` regenerated
+- [x] Commit split + PR to develop ([#96](https://github.com/rumblefishdev/soroban-block-explorer/pull/96))
+- [x] 0143 in-scope decision made — deferred to 0141 (decision: revisit after ADR 0012 accepted)
 
 ## Notes
 
