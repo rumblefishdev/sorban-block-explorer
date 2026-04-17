@@ -2,10 +2,11 @@
 id: '0131'
 title: 'DB: fix operations partition strategy (transaction_id range useless at scale)'
 type: REFACTOR
-status: backlog
-related_adr: []
-related_tasks: ['0022', '0130']
-tags: [priority-medium, effort-medium, layer-db, audit-F20]
+status: superseded
+related_adr: ['0012']
+related_tasks: ['0022', '0130', '0140', '0142']
+tags:
+  [priority-medium, effort-medium, layer-db, audit-F20, superseded-by-adr-0012]
 milestone: 1
 links:
   - crates/db/migrations/0002_create_operations.sql
@@ -15,6 +16,15 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Spawned from pipeline audit finding F20 (MEDIUM).'
+  - date: '2026-04-17'
+    status: superseded
+    who: stkrolikiewicz
+    by: ['0012']
+    note: >
+      Superseded by ADR 0012 — operations table repartitioned by RANGE(created_at),
+      aligned with soroban_events/soroban_invocations. Decision locked in ADR §"Why
+      operations partitions by created_at". Implementation absorbed by 0142 (schema
+      migration). See 0140 for audit rationale.
 ---
 
 # DB: fix operations partition strategy
