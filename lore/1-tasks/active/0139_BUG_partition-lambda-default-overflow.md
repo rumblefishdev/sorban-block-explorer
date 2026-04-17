@@ -3,9 +3,9 @@ id: '0139'
 title: 'Partition Lambda fails when indexer outpaces range creation (default overflow)'
 type: BUG
 status: active
-related_adr: []
-related_tasks: ['0022', '0131']
-tags: [priority-high, effort-small, layer-infra]
+related_adr: ['0012']
+related_tasks: ['0022', '0131', '0140']
+tags: [priority-high, effort-small, layer-infra, pending-adr-0012-review]
 milestone: 1
 links:
   - crates/db-partition-mgmt/src/main.rs
@@ -23,6 +23,19 @@ history:
     status: active
     who: stkrolikiewicz
     note: 'Activated. Scope: daily cron + Lambda self-heal + alarm fix, all in one task.'
+  - date: '2026-04-17'
+    status: active
+    who: stkrolikiewicz
+    note: >
+      Audit per task 0140 — ADR 0012 affects referenced schema/flow (see body
+      for OLD patterns). This task is NOT hard-blocked by the migration (logic
+      is schema-adjacent, not schema-gated). Verify target tables/flow against
+      ADR 0012 before implementing.
+---
+
+> **⚠ Post-ADR 0012 re-read required (audit 2026-04-17, [task 0140](0140_DOCS_audit-lore-tasks-adr-0011-0012.md)):**
+> Body below references pre-ADR-0012 patterns (flow, schema, upsert, partitioning). [ADR 0012](../../2-adrs/0012_zero-upsert-schema-full-fk-graph.md) supersedes the schema and ingestion flow but this task is not hard-blocked by the migration — verify target table/column/flow references against ADR 0012 before implementing.
+
 ---
 
 # Partition Lambda fails when indexer outpaces range creation
@@ -87,7 +100,7 @@ Recommended combo:
 
    - `CREATE TABLE <name> (LIKE operations INCLUDING ALL)` (standalone)
    - `WITH moved AS (DELETE FROM operations_default WHERE <range> RETURNING *)
- INSERT INTO <name> SELECT * FROM moved`
+INSERT INTO <name> SELECT * FROM moved`
    - `ALTER TABLE operations ATTACH PARTITION <name> FOR VALUES FROM ... TO ...`
      All in a single transaction.
 

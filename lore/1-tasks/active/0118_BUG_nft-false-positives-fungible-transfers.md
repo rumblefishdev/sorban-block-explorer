@@ -3,9 +3,16 @@ id: '0118'
 title: 'BUG: NFT false positives from fungible token transfers'
 type: BUG
 status: active
-related_adr: []
-related_tasks: ['0026', '0027']
-tags: [priority-high, effort-medium, layer-indexer, audit-F9]
+related_adr: ['0012']
+related_tasks: ['0026', '0027', '0140']
+tags:
+  [
+    priority-high,
+    effort-medium,
+    layer-indexer,
+    audit-F9,
+    pending-adr-0012-review,
+  ]
 milestone: 1
 links:
   - crates/xdr-parser/src/nft.rs
@@ -19,6 +26,19 @@ history:
     status: active
     who: fmazur
     note: 'Activated task for implementation.'
+  - date: '2026-04-17'
+    status: active
+    who: stkrolikiewicz
+    note: >
+      Audit per task 0140 — ADR 0012 affects referenced schema/flow (see body
+      for OLD patterns). This task is NOT hard-blocked by the migration (logic
+      is schema-adjacent, not schema-gated). Verify target tables/flow against
+      ADR 0012 before implementing.
+---
+
+> **⚠ Post-ADR 0012 re-read required (audit 2026-04-17, [task 0140](0140_DOCS_audit-lore-tasks-adr-0011-0012.md)):**
+> Body below references pre-ADR-0012 patterns (flow, schema, upsert, partitioning). [ADR 0012](../../2-adrs/0012_zero-upsert-schema-full-fk-graph.md) supersedes the schema and ingestion flow but this task is not hard-blocked by the migration — verify target table/column/flow references against ADR 0012 before implementing.
+
 ---
 
 # BUG: NFT false positives from fungible token transfers

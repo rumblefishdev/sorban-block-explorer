@@ -3,9 +3,10 @@ id: '0077'
 title: 'Frontend: Liquidity Pools list and detail pages'
 type: FEATURE
 status: backlog
-related_adr: []
-related_tasks: []
-tags: [priority-medium, effort-large, layer-frontend-pages]
+related_adr: ['0012']
+related_tasks: ['0140']
+tags:
+  [priority-medium, effort-large, layer-frontend-pages, pending-adr-0012-review]
 milestone: 2
 links: []
 history:
@@ -13,6 +14,18 @@ history:
     status: backlog
     who: fmazur
     note: 'Task created'
+  - date: '2026-04-17'
+    status: backlog
+    who: stkrolikiewicz
+    note: >
+      Audit per task 0140 — ADR 0012 changes underlying data sources referenced
+      in body. Verify response shapes / field sources against ADR 0012 before
+      implementing. Not hard-blocked by schema migration.
+---
+
+> **⚠ Post-ADR 0012 re-read required (audit 2026-04-17, [task 0140](../active/0140_DOCS_audit-lore-tasks-adr-0011-0012.md)):**
+> Body below references pre-ADR-0012 patterns (response shapes / DB sources / JSONB columns). [ADR 0012](../../2-adrs/0012_zero-upsert-schema-full-fk-graph.md) supersedes the schema and ingestion flow but this task is not hard-blocked by the migration — verify target source of truth against ADR 0012 before implementing.
+
 ---
 
 # Frontend: Liquidity Pools list and detail pages

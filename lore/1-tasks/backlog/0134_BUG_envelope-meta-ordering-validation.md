@@ -3,8 +3,8 @@ id: '0134'
 title: 'BUG: add envelope/meta ordering validation in indexer'
 type: BUG
 status: backlog
-related_adr: []
-related_tasks: ['0024', '0029']
+related_adr: ['0012']
+related_tasks: ['0024', '0029', '0140']
 tags: [priority-medium, effort-small, layer-indexer, audit-F18]
 milestone: 1
 links:
@@ -17,6 +17,12 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Spawned from pipeline audit finding F18 (MEDIUM). Silent data corruption risk from envelope/meta mismatch.'
+  - date: '2026-04-17'
+    status: backlog
+    who: stkrolikiewicz
+    note: >
+      Audit per task 0140 — parser-level check, schema-agnostic under ADR 0012.
+      Linked to 0012 for traceability only; no body changes needed.
 ---
 
 # BUG: add envelope/meta ordering validation in indexer
@@ -58,7 +64,7 @@ but a reordering (same count, wrong order) would produce silently corrupt data.
 
 - [ ] Length assertion: indexer fails loudly if envelope count != meta count
 - [ ] Hash cross-check: each envelope's computed hash (using `SHA256(network_id ||
-    ENVELOPE_TYPE_TX || tx_body)`) matches its result pair hash — this is **required**,
+  ENVELOPE_TYPE_TX || tx_body)`) matches its result pair hash — this is **required**,
       not optional, because length assertion alone cannot detect reordering (same count,
       wrong order) which produces silently corrupt data
 - [ ] Network passphrase passed into extraction pipeline from config (needed for hash)
