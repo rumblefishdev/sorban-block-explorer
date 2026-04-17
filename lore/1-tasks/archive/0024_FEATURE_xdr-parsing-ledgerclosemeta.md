@@ -3,9 +3,10 @@ id: '0024'
 title: 'XDR parsing: LedgerCloseMeta deserialization, ledger and transaction extraction'
 type: FEATURE
 status: completed
-related_adr: ['0004']
-related_tasks: ['0001', '0002', '0016']
-tags: [priority-high, effort-large, layer-indexing, rust]
+related_adr: ['0004', '0012']
+related_tasks: ['0001', '0002', '0016', '0140']
+tags:
+  [priority-high, effort-large, layer-indexing, rust, superseded-by-adr-0012]
 milestone: 1
 links:
   - docs/architecture/indexing-pipeline/indexing-pipeline-overview.md
@@ -31,6 +32,14 @@ history:
       8 source files, 10 unit tests. V0/V1/V2 LedgerCloseMeta,
       fee-bump source correct, nullable result_meta_xdr, i64 timestamps.
       Codex review: 9 fixes applied.
+  - date: '2026-04-17'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Flagged per task 0140 audit — implementation pattern superseded by ADR 0012
+      (zero-upsert schema, insert-only history tables, S3 offload, activity
+      projections, created_at partitioning). Body retained as historical record;
+      do not use as reference for new work — consult ADR 0012 instead.
 ---
 
 # XDR parsing: LedgerCloseMeta deserialization, ledger and transaction extraction

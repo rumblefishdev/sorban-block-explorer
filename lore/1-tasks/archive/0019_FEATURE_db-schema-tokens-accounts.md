@@ -3,9 +3,9 @@ id: '0019'
 title: 'DB schema: tokens and accounts tables'
 type: FEATURE
 status: completed
-related_adr: ['0005']
-related_tasks: ['0011', '0015', '0092']
-tags: [priority-medium, effort-small, layer-database]
+related_adr: ['0005', '0012']
+related_tasks: ['0011', '0015', '0092', '0140']
+tags: [priority-medium, effort-small, layer-database, superseded-by-adr-0012]
 milestone: 1
 links: []
 history:
@@ -29,6 +29,14 @@ history:
       DEFAULT 0 for holder_count. Updated task spec to match actual design
       (partial unique indexes, no FK to ledgers). Verified on fresh Postgres.
       All 9 acceptance criteria met.
+  - date: '2026-04-17'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Flagged per task 0140 audit — implementation pattern superseded by ADR 0012
+      (zero-upsert schema, insert-only history tables, S3 offload, activity
+      projections, created_at partitioning). Body retained as historical record;
+      do not use as reference for new work — consult ADR 0012 instead.
 ---
 
 # DB schema: tokens and accounts tables

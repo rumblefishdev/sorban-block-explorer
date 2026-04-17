@@ -3,9 +3,9 @@ id: '0022'
 title: 'Partition management automation'
 type: FEATURE
 status: completed
-related_adr: []
-related_tasks: ['0017', '0018', '0020']
-tags: [priority-medium, effort-medium, layer-database]
+related_adr: ['0012']
+related_tasks: ['0017', '0018', '0020', '0140']
+tags: [priority-medium, effort-medium, layer-database, superseded-by-adr-0012]
 milestone: 1
 links:
   - docs/architecture/database-schema/database-schema-overview.md
@@ -25,6 +25,14 @@ history:
       Implemented partition management Lambda (crates/db-partition-mgmt),
       CDK PartitionStack with EventBridge monthly schedule and CloudWatch
       alarms, operator pruning runbook. 6 unit tests, all passing.
+  - date: '2026-04-17'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Flagged per task 0140 audit — implementation pattern superseded by ADR 0012
+      (zero-upsert schema, insert-only history tables, S3 offload, activity
+      projections, created_at partitioning). Body retained as historical record;
+      do not use as reference for new work — consult ADR 0012 instead.
 ---
 
 # Partition management automation

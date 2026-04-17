@@ -3,9 +3,9 @@ id: '0011'
 title: 'Domain types: token, account, NFT models'
 type: FEATURE
 status: completed
-related_adr: []
-related_tasks: ['0012']
-tags: [priority-high, effort-small, layer-domain]
+related_adr: ['0012']
+related_tasks: ['0012', '0140']
+tags: [priority-high, effort-small, layer-domain, superseded-by-adr-0012]
 milestone: 1
 links: []
 history:
@@ -23,6 +23,14 @@ history:
     note: >
       Implemented AssetType, Token, Account, Nft interfaces + NumericString
       alias. All fields DDL-aligned, verified against Stellar/Soroban docs.
+  - date: '2026-04-17'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Flagged per task 0140 audit — implementation pattern superseded by ADR 0012
+      (zero-upsert schema, insert-only history tables, S3 offload, activity
+      projections, created_at partitioning). Body retained as historical record;
+      do not use as reference for new work — consult ADR 0012 instead.
 ---
 
 # Domain types: token, account, NFT models

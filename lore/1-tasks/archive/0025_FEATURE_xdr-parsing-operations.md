@@ -3,9 +3,10 @@ id: '0025'
 title: 'XDR parsing: operation extraction and INVOKE_HOST_FUNCTION details'
 type: FEATURE
 status: completed
-related_adr: ['0004', '0005']
-related_tasks: ['0002', '0024', '0017', '0092']
-tags: [priority-high, effort-medium, layer-indexing, rust]
+related_adr: ['0004', '0005', '0012']
+related_tasks: ['0002', '0024', '0017', '0092', '0140']
+tags:
+  [priority-high, effort-medium, layer-indexing, rust, superseded-by-adr-0012]
 milestone: 1
 links: []
 history:
@@ -36,6 +37,14 @@ history:
       Review fixes: transaction_hash FK field, signer key value (was discriminant),
       safe u32 cast, envelope module kept pub(crate).
       "Unknown op type" AC N/A — Rust exhaustive match enforces compile-time safety.
+  - date: '2026-04-17'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Flagged per task 0140 audit — implementation pattern superseded by ADR 0012
+      (zero-upsert schema, insert-only history tables, S3 offload, activity
+      projections, created_at partitioning). Body retained as historical record;
+      do not use as reference for new work — consult ADR 0012 instead.
 ---
 
 # XDR parsing: operation extraction and INVOKE_HOST_FUNCTION details

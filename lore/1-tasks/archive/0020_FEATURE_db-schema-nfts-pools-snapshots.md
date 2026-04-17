@@ -3,9 +3,9 @@ id: '0020'
 title: 'DB schema: NFTs, liquidity pools, and pool snapshots tables'
 type: FEATURE
 status: completed
-related_adr: ['0005']
-related_tasks: ['0012', '0015', '0092', '0102']
-tags: [priority-medium, effort-medium, layer-database]
+related_adr: ['0005', '0012']
+related_tasks: ['0012', '0015', '0092', '0102', '0140']
+tags: [priority-medium, effort-medium, layer-database, superseded-by-adr-0012]
 milestone: 1
 links: []
 history:
@@ -27,6 +27,14 @@ history:
       instead of BIGSERIAL id; wider VARCHAR columns (256 vs 100/128);
       fee_bps NOT NULL; NUMERIC without precision (not 28,7);
       snapshots partitioned with UNIQUE constraint on (pool_id, ledger_sequence, created_at).
+  - date: '2026-04-17'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Flagged per task 0140 audit — implementation pattern superseded by ADR 0012
+      (zero-upsert schema, insert-only history tables, S3 offload, activity
+      projections, created_at partitioning). Body retained as historical record;
+      do not use as reference for new work — consult ADR 0012 instead.
 ---
 
 # DB schema: NFTs, liquidity pools, and pool snapshots tables

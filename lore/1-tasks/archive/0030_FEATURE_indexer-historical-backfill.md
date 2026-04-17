@@ -3,11 +3,22 @@ id: '0030'
 title: 'Indexer: historical backfill Fargate task'
 type: FEATURE
 status: superseded
-related_adr: ['0005']
+related_adr: ['0005', '0012']
 related_tasks:
-  ['0001', '0029', '0028', '0092', '0118', '0119', '0130', '0134', '0135']
+  [
+    '0001',
+    '0029',
+    '0028',
+    '0092',
+    '0118',
+    '0119',
+    '0130',
+    '0134',
+    '0135',
+    '0140',
+  ]
 blocked_by: ['0118', '0119', '0130', '0134']
-tags: [priority-medium, effort-medium, layer-indexing]
+tags: [priority-medium, effort-medium, layer-indexing, superseded-by-adr-0012]
 milestone: 1
 links:
   - docs/architecture/indexing-pipeline/indexing-pipeline-overview.md
@@ -38,6 +49,14 @@ history:
       Postgres using the same process_ledger pipeline. Fargate infrastructure not
       needed. Audit pre-backfill blockers (0118, 0119, 0130, 0134) still apply to
       running backfill-bench.
+  - date: '2026-04-17'
+    status: superseded
+    who: stkrolikiewicz
+    note: >
+      Flagged per task 0140 audit — implementation pattern superseded by ADR 0012
+      (zero-upsert schema, insert-only history tables, S3 offload, activity
+      projections, created_at partitioning). Body retained as historical record;
+      do not use as reference for new work — consult ADR 0012 instead.
 ---
 
 # Indexer: historical backfill Fargate task

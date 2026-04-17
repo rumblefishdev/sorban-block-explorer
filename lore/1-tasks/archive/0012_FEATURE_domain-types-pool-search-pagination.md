@@ -3,9 +3,9 @@ id: '0012'
 title: 'Domain types: liquidity pool, search, pagination, network stats models'
 type: FEATURE
 status: completed
-related_adr: []
-related_tasks: []
-tags: [priority-high, effort-small, layer-domain]
+related_adr: ['0012']
+related_tasks: ['0140']
+tags: [priority-high, effort-small, layer-domain, superseded-by-adr-0012]
 milestone: 1
 links: []
 history:
@@ -25,6 +25,14 @@ history:
       Build, lint, typecheck all pass. Key emerged decision: typed
       PoolAsset instead of raw JsonValue, added totalTrustlines from
       Horizon API review.
+  - date: '2026-04-17'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Flagged per task 0140 audit — implementation pattern superseded by ADR 0012
+      (zero-upsert schema, insert-only history tables, S3 offload, activity
+      projections, created_at partitioning). Body retained as historical record;
+      do not use as reference for new work — consult ADR 0012 instead.
 ---
 
 # Domain types: liquidity pool, search, pagination, network stats models

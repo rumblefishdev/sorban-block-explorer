@@ -3,9 +3,10 @@ id: '0104'
 title: 'Persist contract interface metadata via wasm_hash→contract_id join'
 type: FEATURE
 status: completed
-related_adr: ['0004']
-related_tasks: ['0026', '0029']
-tags: [priority-medium, effort-small, layer-indexing, rust]
+related_adr: ['0004', '0012']
+related_tasks: ['0026', '0029', '0140']
+tags:
+  [priority-medium, effort-small, layer-indexing, rust, superseded-by-adr-0012]
 milestone: 1
 links: []
 history:
@@ -21,6 +22,14 @@ history:
       5 files changed (+migration 0009 staging table). 3 new integration tests.
       Migration 0008: partial index on wasm_hash. Migration 0009: wasm_interface_metadata
       staging table for 2-ledger install+deploy pattern. PR #78.
+  - date: '2026-04-17'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Flagged per task 0140 audit — implementation pattern superseded by ADR 0012
+      (zero-upsert schema, insert-only history tables, S3 offload, activity
+      projections, created_at partitioning). Body retained as historical record;
+      do not use as reference for new work — consult ADR 0012 instead.
 ---
 
 # Persist contract interface metadata via wasm_hash→contract_id join

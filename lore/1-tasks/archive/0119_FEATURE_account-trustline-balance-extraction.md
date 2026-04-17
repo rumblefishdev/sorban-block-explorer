@@ -3,9 +3,16 @@ id: '0119'
 title: 'Indexer: extract trustline balances for accounts'
 type: FEATURE
 status: completed
-related_adr: []
-related_tasks: ['0027', '0048']
-tags: [priority-high, effort-medium, layer-indexer, audit-F7]
+related_adr: ['0012']
+related_tasks: ['0027', '0048', '0140']
+tags:
+  [
+    priority-high,
+    effort-medium,
+    layer-indexer,
+    audit-F7,
+    superseded-by-adr-0012,
+  ]
 milestone: 1
 links:
   - crates/xdr-parser/src/state.rs
@@ -27,6 +34,14 @@ history:
       6 unit tests + 3 integration tests added. Key decisions: -1 sentinel
       for sequence_number on trustline-only updates, JSONB merge SQL for
       concurrent-safe balance array updates, pool_share trustlines skipped.
+  - date: '2026-04-17'
+    status: done
+    who: stkrolikiewicz
+    note: >
+      Flagged per task 0140 audit — implementation pattern superseded by ADR 0012
+      (zero-upsert schema, insert-only history tables, S3 offload, activity
+      projections, created_at partitioning). Body retained as historical record;
+      do not use as reference for new work — consult ADR 0012 instead.
 ---
 
 # Indexer: extract trustline balances for accounts

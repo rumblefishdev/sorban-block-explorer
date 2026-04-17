@@ -4,9 +4,9 @@ title: 'Research: Drizzle ORM with PostgreSQL partitioning and advanced features
 type: RESEARCH
 status: completed
 assignee: 'stkrolikiewicz'
-related_adr: []
-related_tasks: ['0008', '0009', '0010', '0011', '0012']
-tags: [priority-high, effort-small, layer-research]
+related_adr: ['0012']
+related_tasks: ['0008', '0009', '0010', '0011', '0012', '0140']
+tags: [priority-high, effort-small, layer-research, superseded-by-adr-0012]
 milestone: 1
 links: []
 history:
@@ -26,6 +26,14 @@ history:
       verified against drizzle-orm 0.45.1 / drizzle-kit 0.31.10.
       4 research notes, 1 synthesis, 14 archived sources.
       All 9 acceptance criteria met. PR #17.
+  - date: '2026-04-17'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Flagged per task 0140 audit — implementation pattern superseded by ADR 0012
+      (zero-upsert schema, insert-only history tables, S3 offload, activity
+      projections, created_at partitioning). Body retained as historical record;
+      do not use as reference for new work — consult ADR 0012 instead.
 ---
 
 # Research: Drizzle ORM with PostgreSQL partitioning and advanced features

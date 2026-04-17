@@ -3,9 +3,9 @@ id: '0028'
 title: 'Indexer: idempotent write logic and ledger-sequence watermarks'
 type: FEATURE
 status: completed
-related_adr: ['0005']
-related_tasks: ['0029', '0092']
-tags: [priority-high, effort-medium, layer-indexing]
+related_adr: ['0005', '0012']
+related_tasks: ['0029', '0092', '0140']
+tags: [priority-high, effort-medium, layer-indexing, superseded-by-adr-0012]
 milestone: 1
 links: []
 history:
@@ -29,6 +29,14 @@ history:
       3 watermark enforcement, 1 first_seen immutability, 1 pool watermark).
       Persistence layer uses domain types. Removed xdr-parser dependency from
       db crate. Bug fix: contract_type COALESCE order corrected.
+  - date: '2026-04-17'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Flagged per task 0140 audit — implementation pattern superseded by ADR 0012
+      (zero-upsert schema, insert-only history tables, S3 offload, activity
+      projections, created_at partitioning). Body retained as historical record;
+      do not use as reference for new work — consult ADR 0012 instead.
 ---
 
 # Indexer: idempotent write logic and ledger-sequence watermarks

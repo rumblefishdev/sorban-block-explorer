@@ -3,9 +3,9 @@ id: '0018'
 title: 'DB schema: Soroban tables (contracts, invocations, events)'
 type: FEATURE
 status: done
-related_adr: ['0005']
-related_tasks: ['0016', '0010', '0092']
-tags: [priority-high, effort-medium, layer-database]
+related_adr: ['0005', '0012']
+related_tasks: ['0016', '0010', '0092', '0140']
+tags: [priority-high, effort-medium, layer-database, superseded-by-adr-0012]
 milestone: 1
 links: []
 history:
@@ -29,6 +29,14 @@ history:
       event_interpretations removed — Event Interpreter Lambda dropped from architecture.
       All acceptance criteria verified against fresh PG 16.
       3 emerged design decisions (composite PKs, UTC partition bounds, extra FK indexes).
+  - date: '2026-04-17'
+    status: done
+    who: stkrolikiewicz
+    note: >
+      Flagged per task 0140 audit — implementation pattern superseded by ADR 0012
+      (zero-upsert schema, insert-only history tables, S3 offload, activity
+      projections, created_at partitioning). Body retained as historical record;
+      do not use as reference for new work — consult ADR 0012 instead.
 ---
 
 # DB schema: Soroban tables (contracts, invocations, events)

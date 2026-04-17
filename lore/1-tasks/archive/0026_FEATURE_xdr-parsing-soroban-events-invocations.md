@@ -3,9 +3,10 @@ id: '0026'
 title: 'XDR parsing: Soroban events, invocation tree, contract interface extraction'
 type: FEATURE
 status: completed
-related_adr: ['0004', '0005']
-related_tasks: ['0002', '0024', '0025', '0018', '0003']
-tags: [priority-high, effort-large, layer-indexing, rust]
+related_adr: ['0004', '0005', '0012']
+related_tasks: ['0002', '0024', '0025', '0018', '0003', '0140']
+tags:
+  [priority-high, effort-large, layer-indexing, rust, superseded-by-adr-0012]
 milestone: 1
 links:
   - docs/architecture/xdr-parsing/xdr-parsing-overview.md
@@ -30,6 +31,14 @@ history:
       decoding, contract interface extraction from WASM, NFT event detection.
       74 tests passing. Copilot review fixes: JSONB merge on upsert,
       Option<String> for NFT address validation, sym type check.
+  - date: '2026-04-17'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Flagged per task 0140 audit — implementation pattern superseded by ADR 0012
+      (zero-upsert schema, insert-only history tables, S3 offload, activity
+      projections, created_at partitioning). Body retained as historical record;
+      do not use as reference for new work — consult ADR 0012 instead.
 ---
 
 # XDR parsing: Soroban events, invocation tree, contract interface extraction

@@ -3,9 +3,10 @@ id: '0029'
 title: 'Indexer: Ledger Processor Lambda handler'
 type: FEATURE
 status: done
-related_adr: ['0004', '0005']
-related_tasks: ['0024', '0025', '0026', '0027', '0028', '0092']
-tags: [priority-high, effort-medium, layer-indexing, rust]
+related_adr: ['0004', '0005', '0012']
+related_tasks: ['0024', '0025', '0026', '0027', '0028', '0092', '0140']
+tags:
+  [priority-high, effort-medium, layer-indexing, rust, superseded-by-adr-0012]
 milestone: 1
 links:
   - docs/architecture/indexing-pipeline/indexing-pipeline-overview.md
@@ -31,6 +32,14 @@ history:
       refactored db crate to accept Acquire trait for transaction support.
       All 4 parsing stages wired in correct order. Atomic DB transaction
       per ledger. Full workspace builds cleanly.
+  - date: '2026-04-17'
+    status: done
+    who: stkrolikiewicz
+    note: >
+      Flagged per task 0140 audit — implementation pattern superseded by ADR 0012
+      (zero-upsert schema, insert-only history tables, S3 offload, activity
+      projections, created_at partitioning). Body retained as historical record;
+      do not use as reference for new work — consult ADR 0012 instead.
 ---
 
 # Indexer: Ledger Processor Lambda handler

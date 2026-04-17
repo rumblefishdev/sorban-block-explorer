@@ -3,9 +3,9 @@ id: '0016'
 title: 'DB schema: ledgers and transactions tables'
 type: FEATURE
 status: completed
-related_adr: []
-related_tasks: ['0015', '0009']
-tags: [priority-high, effort-medium, layer-database]
+related_adr: ['0012']
+related_tasks: ['0015', '0009', '0140']
+tags: [priority-high, effort-medium, layer-database, superseded-by-adr-0012]
 milestone: 1
 links: []
 history:
@@ -27,6 +27,14 @@ history:
       aligned to spec, duplicate idx_hash removed (UNIQUE covers it),
       ledger_sequence NOT NULL enforced, migration naming convention
       NNNN_descriptive_name.sql established.
+  - date: '2026-04-17'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Flagged per task 0140 audit — implementation pattern superseded by ADR 0012
+      (zero-upsert schema, insert-only history tables, S3 offload, activity
+      projections, created_at partitioning). Body retained as historical record;
+      do not use as reference for new work — consult ADR 0012 instead.
 ---
 
 # DB schema: ledgers and transactions tables

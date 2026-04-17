@@ -3,8 +3,20 @@ id: '0008'
 title: 'Error envelope and pagination shape for the HTTP API'
 status: accepted
 deciders: [stkrolikiewicz]
-related_tasks: ['0042', '0043', '0046', '0047', '0050', '0051', '0053', '0057']
-related_adrs: ['0005']
+related_tasks:
+  [
+    '0042',
+    '0043',
+    '0046',
+    '0047',
+    '0050',
+    '0051',
+    '0053',
+    '0057',
+    '0140',
+    '0142',
+  ]
+related_adrs: ['0005', '0012']
 tags: [layer-backend, scope-api-contract]
 links: []
 history:
@@ -12,6 +24,16 @@ history:
     status: accepted
     who: stkrolikiewicz
     note: 'ADR created alongside task 0042 (OpenAPI infrastructure). Shapes defined in crates/api/src/openapi/schemas.rs.'
+  - date: '2026-04-17'
+    status: accepted
+    who: stkrolikiewicz
+    note: >
+      Audit per task 0140 — ADR 0012 promotes tokens.id/nfts.id from SERIAL to BIGSERIAL.
+      Cursor encoding uses row IDs on some endpoints; verify cursor stability during the
+      migration (task 0142). If cursors encode the pre-migration ID, post-migration
+      cursors must not collide with historical ones. Mitigation: include entity discriminator
+      in cursor or invalidate outstanding cursors at cutover. Decision deferred to 0142
+      implementation; ADR itself remains accepted.
 ---
 
 # ADR 0008: Error envelope and pagination shape for the HTTP API

@@ -1,5 +1,12 @@
 # Architecture Snapshot: Rust Backend (2026-04-01)
 
+> **⚠ Pre-ADR 0012 snapshot.** This document describes the backend stack and data access
+> patterns as of 2026-04-01, BEFORE [ADR 0012](../../2-adrs/0012_zero-upsert-schema-full-fk-graph.md)
+> (zero-upsert schema, S3 offload, activity projections, `created_at` partitioning on
+> `operations`). Backend stack (axum, sqlx, utoipa) is still valid post-ADR 0012; DB access
+> patterns and response-source mapping described below are NOT. Refresh after ADR 0012
+> lands and schema migration (task 0142) completes. Audited 2026-04-17 per task 0140.
+
 > Created as part of task 0093 (backlog cleanup after ADR 0005).
 
 ## Backend Stack (per ADR 0005, research 0092)

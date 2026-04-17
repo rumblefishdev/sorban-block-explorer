@@ -3,7 +3,8 @@ id: '0011'
 title: 'S3 offload: lightweight DB schema with parsed JSON on S3'
 status: superseded
 deciders: [fmazur]
-related_tasks: []
+related_tasks:
+  - '0140' # audit task
 related_adrs: ['0004', '0005', '0012']
 tags: [database, s3, architecture, cost-optimization]
 links: []

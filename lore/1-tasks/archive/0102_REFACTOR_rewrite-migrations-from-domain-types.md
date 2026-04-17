@@ -3,9 +3,10 @@ id: '0102'
 title: 'Rewrite ALL SQL migrations to derive from domain types'
 type: REFACTOR
 status: completed
-related_adr: ['0005']
-related_tasks: ['0101', '0018', '0019', '0020']
-tags: [priority-high, effort-medium, layer-database, rust]
+related_adr: ['0005', '0012']
+related_tasks: ['0101', '0018', '0019', '0020', '0140']
+tags:
+  [priority-high, effort-medium, layer-database, rust, superseded-by-adr-0012]
 milestone: 1
 links: []
 history:
@@ -30,6 +31,14 @@ history:
       Added operation_tree to Transaction struct. Dropped stale DEFAULTs
       (parse_error, holder_count); kept is_sac DEFAULT for upsert safety.
       Verified on staging. Closed task 0020. PR #63 merged.
+  - date: '2026-04-17'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Flagged per task 0140 audit — implementation pattern superseded by ADR 0012
+      (zero-upsert schema, insert-only history tables, S3 offload, activity
+      projections, created_at partitioning). Body retained as historical record;
+      do not use as reference for new work — consult ADR 0012 instead.
 ---
 
 # Rewrite ALL SQL migrations to derive from domain types

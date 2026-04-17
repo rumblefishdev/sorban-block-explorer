@@ -3,7 +3,68 @@ id: '0012'
 title: 'Zero-upsert DB schema with full FK graph, activity projections, and complete index strategy'
 status: proposed
 deciders: [fmazur]
-related_tasks: []
+related_tasks:
+  # Audit & umbrella tasks
+  - '0140'
+  - '0141'
+  - '0142'
+  # Supersedes (moved to archive as status: superseded)
+  - '0131'
+  # Banner + blocked_by 0142 (pending ADR acceptance + migration)
+  - '0045'
+  - '0046'
+  - '0047'
+  - '0048'
+  - '0049'
+  - '0050'
+  - '0051'
+  - '0052'
+  - '0053'
+  - '0116'
+  - '0121'
+  - '0122'
+  - '0124'
+  - '0125'
+  - '0126'
+  - '0130'
+  - '0132'
+  - '0133'
+  - '0135'
+  - '0136'
+  - '0138'
+  # Banner only (logic schema-adjacent, not hard-blocked)
+  - '0073'
+  - '0077'
+  - '0118'
+  - '0120'
+  - '0123'
+  - '0139'
+  # Linked only (parser-neutral)
+  - '0134'
+  # Archive — flagged as implementation superseded (historical record)
+  - '0010'
+  - '0011'
+  - '0012'
+  - '0016'
+  - '0017'
+  - '0018'
+  - '0019'
+  - '0020'
+  - '0022'
+  - '0024'
+  - '0025'
+  - '0026'
+  - '0028'
+  - '0029'
+  - '0030'
+  - '0102'
+  - '0104'
+  - '0117'
+  - '0119'
+  # Research dirs (archived, notes describe pre-ADR-0012 patterns)
+  - '0002'
+  - '0007'
+  - '0008'
 related_adrs: ['0004', '0005', '0011']
 tags:
   [

@@ -3,9 +3,9 @@ id: '0117'
 title: 'Local backfill benchmark: stream from Stellar public S3 to local Postgres'
 type: FEATURE
 status: completed
-related_adr: []
-related_tasks: ['0030', '0113']
-tags: [priority-high, effort-medium, layer-backend]
+related_adr: ['0012']
+related_tasks: ['0030', '0113', '0140']
+tags: [priority-high, effort-medium, layer-backend, superseded-by-adr-0012]
 links: []
 history:
   - date: '2026-04-09'
@@ -24,6 +24,14 @@ history:
       process_ledger from indexer crate, built stream-and-delete flow with
       reqwest, batch UNNEST persistence with Rust-side COALESCE merge,
       JoinSet-based concurrency. 7 commits.
+  - date: '2026-04-17'
+    status: done
+    who: stkrolikiewicz
+    note: >
+      Flagged per task 0140 audit — implementation pattern superseded by ADR 0012
+      (zero-upsert schema, insert-only history tables, S3 offload, activity
+      projections, created_at partitioning). Body retained as historical record;
+      do not use as reference for new work — consult ADR 0012 instead.
 ---
 
 # Local backfill benchmark: stream from Stellar public S3 to local Postgres

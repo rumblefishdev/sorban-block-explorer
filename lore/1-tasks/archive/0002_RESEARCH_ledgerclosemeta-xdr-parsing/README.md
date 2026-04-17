@@ -3,9 +3,9 @@ id: '0002'
 title: 'Research: LedgerCloseMeta structure and Rust XDR parsing'
 type: RESEARCH
 status: completed
-related_adr: ['0002', '0004']
-related_tasks: ['0001', '0005', '0024', '0025', '0026', '0027']
-tags: [priority-high, effort-medium, layer-research]
+related_adr: ['0002', '0004', '0012']
+related_tasks: ['0001', '0005', '0024', '0025', '0026', '0027', '0140']
+tags: [priority-high, effort-medium, layer-research, superseded-by-adr-0012]
 milestone: 1
 links:
   - https://github.com/stellar/rs-stellar-xdr
@@ -51,6 +51,14 @@ history:
       Post-factum alignment with ADR-0004 (Rust-only XDR parsing).
       Updated title, links, and content to reflect accepted ADRs 0002/0004.
       TS SDK references annotated as historical — research findings unchanged.
+  - date: '2026-04-17'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Flagged per task 0140 audit — implementation pattern superseded by ADR 0012
+      (zero-upsert schema, insert-only history tables, S3 offload, activity
+      projections, created_at partitioning). Body retained as historical record;
+      do not use as reference for new work — consult ADR 0012 instead.
 ---
 
 # Research: LedgerCloseMeta structure and Rust XDR parsing

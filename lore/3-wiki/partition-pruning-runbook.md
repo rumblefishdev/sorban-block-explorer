@@ -1,5 +1,14 @@
 # Partition Pruning Runbook
 
+> **⚠ Partial pre-ADR 0012 content.** The section **"Operations Table (transaction_id range)"**
+> at the bottom describes the pre-ADR-0012 partition scheme (range by `transaction_id`,
+> `operations_p0` / `operations_p1` naming). [ADR 0012](../2-adrs/0012_zero-upsert-schema-full-fk-graph.md)
+> repartitions `operations` by `RANGE(created_at)`, aligning with `soroban_events` /
+> `soroban_invocations`. Post-migration (task 0142) the Operations section must be rewritten
+> to monthly-partition naming (`operations_y2026m04`, etc.) — same detach/drop procedure as
+> the soroban_events section above. Other sections are schema-agnostic and remain valid.
+> Audited 2026-04-17 per task 0140.
+
 Partitions are created automatically. **Dropping partitions is a manual operation** that requires operator review.
 
 ## When to Consider Pruning

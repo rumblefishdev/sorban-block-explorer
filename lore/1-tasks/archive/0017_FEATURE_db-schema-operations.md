@@ -3,9 +3,9 @@ id: '0017'
 title: 'DB schema: operations table with transaction_id partitioning'
 type: FEATURE
 status: completed
-related_adr: ['0005']
-related_tasks: ['0016', '0009', '0092']
-tags: [priority-high, effort-small, layer-database]
+related_adr: ['0005', '0012']
+related_tasks: ['0016', '0009', '0092', '0140']
+tags: [priority-high, effort-small, layer-database, superseded-by-adr-0012]
 milestone: 1
 links: []
 history:
@@ -29,6 +29,14 @@ history:
       1 SQL file, 6 columns, 3 indexes, 1 partition.
       All 13 acceptance criteria verified (partitioning, cascade, GIN, source_account).
       Two columns added vs original spec: application_order, source_account.
+  - date: '2026-04-17'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Flagged per task 0140 audit — implementation pattern superseded by ADR 0012
+      (zero-upsert schema, insert-only history tables, S3 offload, activity
+      projections, created_at partitioning). Body retained as historical record;
+      do not use as reference for new work — consult ADR 0012 instead.
 ---
 
 # DB schema: operations table with transaction_id partitioning
