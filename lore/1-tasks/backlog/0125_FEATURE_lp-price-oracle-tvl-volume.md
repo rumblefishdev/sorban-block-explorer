@@ -3,9 +3,18 @@ id: '0125'
 title: 'LP analytics: price oracle, TVL, volume, and fee revenue'
 type: FEATURE
 status: backlog
-related_adr: []
-related_tasks: ['0052', '0077']
-tags: [priority-low, effort-large, layer-indexer, layer-backend, audit-gap]
+related_adr: ['0012']
+related_tasks: ['0052', '0077', '0140', '0142']
+blocked_by: ['0142']
+tags:
+  [
+    priority-low,
+    effort-large,
+    layer-indexer,
+    layer-backend,
+    audit-gap,
+    pending-adr-0012-rewrite,
+  ]
 milestone: 1
 links:
   - docs/audits/2026-04-10-pipeline-data-audit.md
@@ -14,6 +23,18 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Spawned from pipeline audit — LP tvl/volume/fee_revenue columns exist but are likely always NULL without external pricing.'
+  - date: '2026-04-17'
+    status: backlog
+    who: stkrolikiewicz
+    note: >
+      Audit per task 0140 — ADR 0012 supersedes the underlying schema/flow
+      patterns referenced in body. Blocked by 0142 (schema migration). Body
+      must be re-read against ADR 0012 before implementing.
+---
+
+> **⚠ Post-ADR 0012 re-read required (audit 2026-04-17, [task 0140](../active/0140_DOCS_audit-lore-tasks-adr-0011-0012.md)):**
+> Body below references pre-ADR-0012 patterns (schema / flow / JSONB / upsert / `transaction_id` partitioning). [ADR 0012](../../2-adrs/0012_zero-upsert-schema-full-fk-graph.md) supersedes with zero-upsert history tables, activity projections, S3 offload, and `created_at` partitioning. Blocked by 0142 (schema migration) — do not implement until migration lands and this task is re-aligned.
+
 ---
 
 # LP analytics: price oracle, TVL, volume, and fee revenue
@@ -54,7 +75,7 @@ Price oracle calls and trade aggregation add latency/failure modes to the critic
    EventBridge cron (every 5 min for TVL/volume, reuses 0124 Lambda or creates new one).
 2. **Price oracle**: Integrate external price feed (CoinGecko, StellarExpert API, or
    Horizon aggregation endpoint) to get USD prices for pool assets.
-3. **TVL computation**: reserve_a _ price_a + reserve_b _ price_b, updated per snapshot.
+3. **TVL computation**: reserve*a * price*a + reserve_b * price_b, updated per snapshot.
 4. **Volume tracking**: Identify `PathPayment` operations that modify pool reserves.
 5. **Fee revenue**: volume \* (fee_bps / 10000). Fee is immutable (set at pool creation).
 

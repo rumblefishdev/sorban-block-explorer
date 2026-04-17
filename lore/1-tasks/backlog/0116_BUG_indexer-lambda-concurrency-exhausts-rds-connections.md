@@ -3,9 +3,20 @@ id: '0116'
 title: 'BUG: indexer Lambda concurrency exhausts RDS connections — blocks deploy migrations'
 type: BUG
 status: backlog
-related_adr: []
-related_tasks: ['0113', '0034']
-tags: [bug, indexer, rds, lambda, staging, priority-high, effort-small]
+related_adr: ['0012']
+related_tasks: ['0113', '0034', '0140', '0142']
+blocked_by: ['0142']
+tags:
+  [
+    bug,
+    indexer,
+    rds,
+    lambda,
+    staging,
+    priority-high,
+    effort-small,
+    pending-adr-0012-rewrite,
+  ]
 links:
   - infra/src/lib/stacks/compute-stack.ts
   - crates/db/src/pool.rs
@@ -14,6 +25,18 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Discovered during staging deploy after indexer fix (0113) went live. Unrestricted indexer concurrency saturated t4g.micro max_connections (74/87), migration Lambda got pool timeout.'
+  - date: '2026-04-17'
+    status: backlog
+    who: stkrolikiewicz
+    note: >
+      Audit per task 0140 — ADR 0012 supersedes the underlying schema/flow
+      patterns referenced in body. Blocked by 0142 (schema migration). Body
+      must be re-read against ADR 0012 before implementing.
+---
+
+> **⚠ Post-ADR 0012 re-read required (audit 2026-04-17, [task 0140](../active/0140_DOCS_audit-lore-tasks-adr-0011-0012.md)):**
+> Body below references pre-ADR-0012 patterns (schema / flow / JSONB / upsert / `transaction_id` partitioning). [ADR 0012](../../2-adrs/0012_zero-upsert-schema-full-fk-graph.md) supersedes with zero-upsert history tables, activity projections, S3 offload, and `created_at` partitioning. Blocked by 0142 (schema migration) — do not implement until migration lands and this task is re-aligned.
+
 ---
 
 # BUG: indexer Lambda concurrency exhausts RDS connections

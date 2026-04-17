@@ -3,9 +3,17 @@ id: '0133'
 title: 'DB: add full-text search indexes for tokens, accounts, NFTs'
 type: FEATURE
 status: backlog
-related_adr: []
-related_tasks: ['0053', '0132']
-tags: [priority-medium, effort-medium, layer-db, audit-F22]
+related_adr: ['0012']
+related_tasks: ['0053', '0132', '0140', '0142']
+blocked_by: ['0142']
+tags:
+  [
+    priority-medium,
+    effort-medium,
+    layer-db,
+    audit-F22,
+    pending-adr-0012-rewrite,
+  ]
 milestone: 1
 links:
   - docs/audits/2026-04-10-pipeline-data-audit.md
@@ -14,6 +22,18 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Spawned from pipeline audit finding F22 (MEDIUM). Global search (task 0053) depends on this.'
+  - date: '2026-04-17'
+    status: backlog
+    who: stkrolikiewicz
+    note: >
+      Audit per task 0140 — ADR 0012 supersedes the underlying schema/flow
+      patterns referenced in body. Blocked by 0142 (schema migration). Body
+      must be re-read against ADR 0012 before implementing.
+---
+
+> **⚠ Post-ADR 0012 re-read required (audit 2026-04-17, [task 0140](../active/0140_DOCS_audit-lore-tasks-adr-0011-0012.md)):**
+> Body below references pre-ADR-0012 patterns (schema / flow / JSONB / upsert / `transaction_id` partitioning). [ADR 0012](../../2-adrs/0012_zero-upsert-schema-full-fk-graph.md) supersedes with zero-upsert history tables, activity projections, S3 offload, and `created_at` partitioning. Blocked by 0142 (schema migration) — do not implement until migration lands and this task is re-aligned.
+
 ---
 
 # DB: add full-text search indexes for tokens, accounts, NFTs

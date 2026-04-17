@@ -2,10 +2,19 @@
 id: '0135'
 title: 'Indexer: ongoing token holder_count tracking'
 type: FEATURE
-status: active
-related_adr: []
-related_tasks: ['0027', '0049', '0119']
-tags: [priority-medium, effort-medium, layer-indexer, layer-db, audit-gap]
+status: blocked
+related_adr: ['0012']
+related_tasks: ['0027', '0049', '0119', '0140', '0142']
+blocked_by: ['0142']
+tags:
+  [
+    priority-medium,
+    effort-medium,
+    layer-indexer,
+    layer-db,
+    audit-gap,
+    pending-adr-0012-rewrite,
+  ]
 milestone: 1
 links:
   - docs/audits/2026-04-10-pipeline-data-audit.md
@@ -19,6 +28,19 @@ history:
     status: active
     who: FilipDz
     note: 'Activated — blocker 0119 (trustline extraction) completed.'
+  - date: '2026-04-17'
+    status: blocked
+    who: stkrolikiewicz
+    by: ['0142']
+    note: >
+      Audit per task 0140 — ADR 0012 replaces inline holder_count tracking with
+      token_supply_snapshots history + token_current_supply projection. Blocked
+      by 0142 (schema migration). Re-read body against ADR 0012 before implementing.
+---
+
+> **⚠ Post-ADR 0012 re-read required (audit 2026-04-17, [task 0140](../active/0140_DOCS_audit-lore-tasks-adr-0011-0012.md)):**
+> ADR 0012 replaces inline `holder_count` updates with `token_supply_snapshots` (history) + `token_current_supply` (projection). Current body describes the pre-ADR inline increment/decrement approach. [ADR 0012](../../2-adrs/0012_zero-upsert-schema-full-fk-graph.md) supersedes. Blocked by 0142 (schema migration).
+
 ---
 
 # Indexer: ongoing token holder_count tracking
