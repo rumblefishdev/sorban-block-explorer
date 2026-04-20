@@ -3,7 +3,7 @@ id: '0147'
 title: 'Live Galexie onPut lambda: raw XDR → parsed ledger JSON.zst on S3'
 type: FEATURE
 status: backlog
-related_adr: ['0012', '0027']
+related_adr: ['0012', '0027', '0028']
 related_tasks: ['0146', '0145', '0044', '0029']
 blocked_by: ['0146']
 tags:
@@ -14,6 +14,7 @@ tags:
     effort-medium,
     adr-0012,
     adr-0027,
+    adr-0028,
     lambda,
     live-path,
   ]
@@ -21,6 +22,7 @@ milestone: 1
 links:
   - lore/2-adrs/0012_lightweight-bridge-db-schema-revision.md
   - lore/2-adrs/0027_post-surrogate-schema-and-endpoint-realizability.md
+  - lore/2-adrs/0028_parsed-ledger-artifact-v1-shape.md
 history:
   - date: '2026-04-20'
     status: backlog

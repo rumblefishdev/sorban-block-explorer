@@ -1,6 +1,6 @@
 ---
 id: '0028'
-title: 'ParsedLedgerArtifact v1 — canonical shape of parsed_ledger_{seq}.json'
+title: 'ParsedLedgerArtifact v1 — canonical shape of parsed_ledger_{seq}.json.zst'
 status: proposed
 deciders: [stkrolikiewicz]
 related_tasks: ['0146', '0145', '0147']
@@ -20,7 +20,7 @@ history:
       excluded, not nulled.
 ---
 
-# ADR 0028: ParsedLedgerArtifact v1 — canonical shape of `parsed_ledger_{seq}.json`
+# ADR 0028: ParsedLedgerArtifact v1 — canonical shape of `parsed_ledger_{seq}.json.zst`
 
 **Related:**
 
@@ -79,30 +79,30 @@ rolling volume, TVL) are **not** in the artifact. Out-of-band pipelines
 intentionally partial where enrichment is deferred. This keeps the
 artifact deterministic, testable, and re-emittable.
 
-Consequence: 10 DB columns (`tokens.{name, total_supply, holder_count,
-description, icon_url, home_page}`, `nfts.{collection_name, name,
-media_url, metadata}`, `liquidity_pool_snapshots.{tvl, volume,
-fee_revenue}`) are written by separate pipelines, not by the DB
+Consequence: 13 DB columns (`tokens.{name, total_supply, holder_count,
+description, icon_url, home_page}` — 6; `nfts.{collection_name, name,
+media_url, metadata}` — 4; `liquidity_pool_snapshots.{tvl, volume,
+fee_revenue}` — 3) are written by separate pipelines, not by the DB
 ingester reading this artifact. Each is tracked by a dedicated task
 (0124, 0125, 0135, future NFT-metadata-enrichment).
 
 ### Encoding conventions
 
-| Domain type                                | JSON type                   | Notes                                             |
-| ------------------------------------------ | --------------------------- | ------------------------------------------------- |
-| Account ID (G-address)                     | string (56 chars)           | StrKey `G…`                                       |
-| Muxed account (M-address)                  | string (69 chars) or `null` | StrKey `M…`; `null` when not muxed                |
-| Contract ID                                | string (56 chars)           | StrKey `C…`                                       |
-| SHA-256 hash                               | string (64 chars)           | lowercase hex                                     |
-| Pool ID (32-byte)                          | string (64 chars)           | lowercase hex                                     |
-| XDR blob (envelope/result/meta)            | string                      | base64 (Stellar convention)                       |
-| Classic fixed-point amount `NUMERIC(28,7)` | string                      | decimal with 7 fractional digits preserved        |
-| Soroban raw i128 amount `NUMERIC(39,0)`    | string                      | decimal integer, no fraction                      |
-| Ledger sequence                            | number (u32)                | JSON integer                                      |
-| Unix timestamp (seconds)                   | number (i64)                | seconds since epoch, UTC                          |
-| Memo value                                 | string or `null`            | encoding varies by `memo_type`; see §transactions |
-| ScVal-decoded                              | JSON value                  | produced by `xdr_parser::scval_to_typed_json`     |
-| Enum discriminator                         | string                      | lowercase snake_case                              |
+| Domain type                                | JSON type                   | Notes                                                                                                                                                                               |
+| ------------------------------------------ | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Account ID (G-address)                     | string (56 chars)           | StrKey `G…`                                                                                                                                                                         |
+| Muxed account (M-address)                  | string (69 chars) or `null` | StrKey `M…`; `null` when not muxed                                                                                                                                                  |
+| Contract ID                                | string (56 chars)           | StrKey `C…`                                                                                                                                                                         |
+| SHA-256 hash                               | string (64 chars)           | lowercase hex                                                                                                                                                                       |
+| Pool ID (32-byte)                          | string (64 chars)           | lowercase hex                                                                                                                                                                       |
+| XDR blob (envelope/result/meta)            | string                      | base64 (Stellar convention)                                                                                                                                                         |
+| Classic fixed-point amount `NUMERIC(28,7)` | string                      | decimal with 7 fractional digits preserved                                                                                                                                          |
+| Soroban raw i128 amount `NUMERIC(39,0)`    | string                      | decimal integer, no fraction                                                                                                                                                        |
+| Ledger sequence                            | number (u32)                | JSON integer                                                                                                                                                                        |
+| Unix timestamp (seconds)                   | number (i64)                | seconds since epoch, UTC                                                                                                                                                            |
+| Memo value                                 | string or `null`            | encoding varies by `memo_type`; see §transactions                                                                                                                                   |
+| ScVal-decoded                              | JSON value                  | produced by `xdr_parser::scval_to_typed_json`                                                                                                                                       |
+| Enum/discriminator value                   | string                      | casing is field-specific; Stellar/XDR/parser-derived enums keep emitted casing (e.g. `PAYMENT`, `INVOKE_HOST_FUNCTION`, `txSUCCESS`); ADR-introduced enums use lowercase snake_case |
 
 ### Identity resolution boundary
 
@@ -325,7 +325,7 @@ Flat list with `parent_index` — avoids nested objects, mirrors ADR 0027
   "depth":            0,
   "contract_id":      "C…" | null,
   "caller_account":   "G…" | null,
-  "function_name":    string | null,
+  "function_name":    string,
   "function_args":    ScVal-decoded JSON,
   "return_value":     ScVal-decoded JSON | null,
   "successful":       true
@@ -335,10 +335,13 @@ Flat list with `parent_index` — avoids nested objects, mirrors ADR 0027
 Root invocations: `parent_index: null`, `depth: 0`. `depth` is
 redundant with `parent_index` but kept for read-side convenience.
 
-**Known mismatch**: ADR 0027 §10 declares `function_name NOT NULL`.
-`ExtractedInvocation.function_name` is `Option<String>` (None for
-contract-creation invocations). Artifact faithfully carries `null`;
-ingester decides policy (substitute sentinel, or skip row).
+**`function_name` is always present.** Parser emits sentinel strings
+`"createContract"` / `"createContractV2"` for contract-creation
+invocations (`crates/xdr-parser/src/invocation.rs:251,267`). No
+nullability mismatch with ADR 0027 §10 `NOT NULL`. Despite the
+`Option<String>` typing on `ExtractedInvocation.function_name`, the
+`None` branch is never taken in practice; the artifact builder may
+assert this at serialization time.
 
 ### `transactions[].ledger_entry_changes[]`
 
@@ -765,11 +768,20 @@ ADR 0027 §13 requires `event_order SMALLINT NOT NULL`. Parser
 index is safe: parser emits events in ledger order (deterministic);
 determinism test ensures stable ordering.
 
-### Why `function_name: string | null` despite DB `NOT NULL`
+### Why `invocations[].function_name` is non-null
 
-`ExtractedInvocation.function_name: Option<String>` (None for
-contract-creation invocations). Artifact faithfully carries `null`;
-ingester resolves (substitute sentinel or skip row).
+Earlier drafts flagged a mismatch: `ExtractedInvocation.function_name`
+is typed `Option<String>`, suggesting `None` was possible for
+contract-creation invocations. Actual parser behaviour
+(`crates/xdr-parser/src/invocation.rs:251,267`) emits the sentinels
+`"createContract"` and `"createContractV2"` for those paths — the
+`None` branch is never taken. Artifact types `function_name: string`
+without the null option; ADR 0027 §10 `NOT NULL` is satisfied without
+ingester sentinel substitution.
+
+`operations[].function_name` remains `string | null` because per ADR
+0018 it is emitted only for `INVOKE_HOST_FUNCTION`; null for other op
+types.
 
 ---
 
@@ -884,8 +896,6 @@ those columns.
   for forensic replay.
 - Additive-only v1 discipline requires reviewer vigilance — tempting
   "small fixes" that rename fields must be flagged as version bumps.
-- Parser/DB `function_name` nullability mismatch leaked into this ADR
-  as a known issue — ingester handles.
 - `tokens`, `nfts`, `liquidity_pool_snapshots` will show partially
   populated rows during the transition window (v1 artifact ingester
   running, enrichment pipelines not yet deployed). Each enrichment

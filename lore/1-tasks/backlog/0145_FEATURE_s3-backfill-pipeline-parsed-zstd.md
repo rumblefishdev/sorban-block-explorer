@@ -3,7 +3,7 @@ id: '0145'
 title: 'Backfill runner: public Stellar S3 → parsed JSON.zst on our S3'
 type: FEATURE
 status: backlog
-related_adr: ['0012', '0027']
+related_adr: ['0012', '0027', '0028']
 related_tasks: ['0146', '0147', '0117', '0140', '0141', '0142']
 blocked_by: ['0146']
 tags:
@@ -15,12 +15,14 @@ tags:
     backfill,
     adr-0012,
     adr-0027,
+    adr-0028,
     onboarding,
   ]
 milestone: 1
 links:
   - lore/2-adrs/0012_lightweight-bridge-db-schema-revision.md
   - lore/2-adrs/0027_post-surrogate-schema-and-endpoint-realizability.md
+  - lore/2-adrs/0028_parsed-ledger-artifact-v1-shape.md
 history:
   - date: '2026-04-17'
     status: backlog

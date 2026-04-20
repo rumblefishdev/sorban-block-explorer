@@ -3,7 +3,7 @@ id: '0146'
 title: 'Shared parsed-ledger artifact core (model + builder + JSON + zstd + key layout)'
 type: FEATURE
 status: active
-related_adr: ['0012', '0027']
+related_adr: ['0012', '0027', '0028']
 related_tasks: ['0145', '0147', '0117']
 tags:
   [
@@ -12,6 +12,7 @@ tags:
     effort-medium,
     adr-0012,
     adr-0027,
+    adr-0028,
     foundation,
     parser,
   ]
@@ -19,6 +20,7 @@ milestone: 1
 links:
   - lore/2-adrs/0012_lightweight-bridge-db-schema-revision.md
   - lore/2-adrs/0027_post-surrogate-schema-and-endpoint-realizability.md
+  - lore/2-adrs/0028_parsed-ledger-artifact-v1-shape.md
 history:
   - date: '2026-04-20'
     status: backlog
@@ -55,9 +57,8 @@ history:
 Introduce a single, reusable module that takes a decoded `LedgerCloseMeta`
 and produces a canonical `parsed_ledger_{seq}.json.zst` artifact. Both the
 live Galexie onPut lambda (task 0147) and the offline backfill runner
-(task 0145) consume this module. No I/O, no AWS, no DB — build + serialize
-
-- compress + S3 key layout.
+(task 0145) consume this module. No I/O, no AWS, no DB — build, serialize,
+compress, and S3 key layout.
 
 This task has two deliverables:
 
@@ -114,8 +115,9 @@ module docs.
   DB storage choice, not a wire format.
 - **Empty arrays preserved** (not omitted) for stable field presence across
   ledgers and versions.
-- **`schema_version` marker** on the root artifact so consumers can refuse
-  unknown versions.
+- **`ledger_metadata.schema_version` marker** so consumers can refuse
+  unknown versions (placed inside `ledger_metadata`, not root, so future
+  v2 can extend root with new sections without moving the version tag).
 
 Both data origins — live events from Galexie and historical ledgers from
 the public Stellar archive — must emit byte-identical artifacts. If parser
