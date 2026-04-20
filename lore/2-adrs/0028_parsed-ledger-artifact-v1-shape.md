@@ -20,7 +20,7 @@ history:
       excluded, not nulled.
 ---
 
-# ADR 0028: ParsedLedgerArtifact v1 — canonical shape of parsed*ledger*{seq}.json
+# ADR 0028: ParsedLedgerArtifact v1 — canonical shape of `parsed_ledger_{seq}.json`
 
 **Related:**
 
