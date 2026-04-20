@@ -9,3 +9,7 @@ fmazur:
 FilipDz:
   name: 'Filip Dziubek'
   role: 'developer'
+
+karolkow:
+  name: 'Karol Kowalczyk'
+  role: 'developer'
