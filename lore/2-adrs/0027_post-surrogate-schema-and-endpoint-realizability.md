@@ -1,9 +1,9 @@
 ---
 id: '0027'
 title: 'Post-surrogate schema snapshot + endpoint realizability (post ADR 0011–0026)'
-status: proposed
+status: accepted
 deciders: [fmazur]
-related_tasks: []
+related_tasks: ['0140']
 related_adrs:
   [
     '0011',
@@ -31,6 +31,10 @@ history:
     status: proposed
     who: fmazur
     note: 'ADR created — consolidated final schema after ADR 0026 surrogate account id, full DDL, per-endpoint SQL with JOINs, Mermaid ERD'
+  - date: 2026-04-20
+    status: accepted
+    who: fmazur
+    note: 'Accepted upon landing task 0140 — DDL migrations 0001_extensions through 0007_account_balances produce this schema from scratch; verified on clean DB (18 tables, 59 indexes, 13 CHECK constraints, 34 FKs, partial UNIQUE for native-XLM, generated TSVECTOR on soroban_contracts)'
 ---
 
 # ADR 0027: Post-surrogate schema snapshot + endpoint realizability (post ADR 0011–0026)
@@ -48,10 +52,11 @@ history:
 
 ## Status
 
-`proposed` — **verification snapshot**, not a new decision. Captures
-the final schema after ADR 0026 supersedes ADR 0025 on account
-identity. Proves 22/22 endpoint realizability end-to-end against the
-new shape.
+`accepted` — **authoritative schema snapshot**. Captures the final
+shape after ADR 0026 supersedes ADR 0025 on account identity. Proves
+22/22 endpoint realizability end-to-end. Materialised by DDL
+migrations `0001_extensions.sql` … `0007_account_balances.sql`
+(landed under task 0140).
 
 Supersedes ADR 0025 as the reference snapshot.
 

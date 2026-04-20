@@ -1,57 +1,50 @@
-//! Liquidity pool domain types matching the `liquidity_pools` and
-//! `liquidity_pool_snapshots` PostgreSQL tables.
+//! Liquidity-pool domain types matching the `liquidity_pools`,
+//! `liquidity_pool_snapshots`, and `lp_positions` PostgreSQL tables.
+//!
+//! Schema: ADR 0027 Part I §14, §15, §16. Pool identity + asset pair is
+//! fully typed (no JSONB); reserves live in the partitioned snapshots table.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Liquidity pool record as stored in PostgreSQL.
-///
-/// Unpartitioned current-state entity. Updated via watermark-guarded upserts
-/// (`last_updated_ledger`).
+/// Pool identity + asset pair + fee (ADR 0027 §14).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LiquidityPool {
-    /// Pool hash identifier (64 chars). Primary key.
-    pub pool_id: String,
-    /// First reserve asset as JSONB.
-    pub asset_a: serde_json::Value,
-    /// Second reserve asset as JSONB.
-    pub asset_b: serde_json::Value,
-    /// Fee in basis points.
+    /// 32 B pool hash.
+    pub pool_id: Vec<u8>,
+    pub asset_a_type: String,
+    pub asset_a_code: Option<String>,
+    pub asset_a_issuer_id: Option<i64>,
+    pub asset_b_type: String,
+    pub asset_b_code: Option<String>,
+    pub asset_b_issuer_id: Option<i64>,
     pub fee_bps: i32,
-    /// Current reserves as JSONB.
-    pub reserves: serde_json::Value,
-    /// Total pool share tokens outstanding (NUMERIC as string).
-    pub total_shares: String,
-    /// Total value locked (NUMERIC as string).
-    pub tvl: Option<String>,
-    /// Ledger at which the pool was created (FK to ledgers.sequence).
     pub created_at_ledger: i64,
-    /// Most recent ledger with pool state change. Watermark.
-    pub last_updated_ledger: i64,
 }
 
-/// Liquidity pool snapshot as stored in PostgreSQL.
-///
-/// Append-only time-series table, partitioned by `created_at`.
-/// Composite PK: `(id, created_at)`. Unique on `(pool_id, ledger_sequence, created_at)`.
+/// Per-ledger pool state snapshot (ADR 0027 §15). Partitioned on `created_at`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LiquidityPoolSnapshot {
-    /// Surrogate primary key (BIGSERIAL).
     pub id: i64,
-    /// Parent pool (FK to liquidity_pools.pool_id).
-    pub pool_id: String,
-    /// Ledger sequence at snapshot time.
+    pub pool_id: Vec<u8>,
     pub ledger_sequence: i64,
-    /// Snapshot timestamp for partitioning.
-    pub created_at: DateTime<Utc>,
-    /// Reserves at snapshot time as JSONB.
-    pub reserves: serde_json::Value,
-    /// Total pool shares at snapshot time (NUMERIC as string).
+    /// NUMERIC(28,7) as decimal string.
+    pub reserve_a: String,
+    pub reserve_b: String,
     pub total_shares: String,
-    /// Total value locked at snapshot time (NUMERIC as string).
     pub tvl: Option<String>,
-    /// Trading volume in the snapshot period (NUMERIC as string).
     pub volume: Option<String>,
-    /// Fee revenue in the snapshot period (NUMERIC as string).
     pub fee_revenue: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// LP participant / shares row (ADR 0027 §16).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LpPosition {
+    pub pool_id: Vec<u8>,
+    pub account_id: i64,
+    /// NUMERIC(28,7) as decimal string.
+    pub shares: String,
+    pub first_deposit_ledger: i64,
+    pub last_updated_ledger: i64,
 }
