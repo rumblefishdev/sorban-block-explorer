@@ -3,14 +3,22 @@ id: '0146'
 title: 'Shared parsed-ledger artifact core (model + builder + JSON + zstd + key layout)'
 type: FEATURE
 status: active
-related_adr: ['0012']
+related_adr: ['0012', '0027']
 related_tasks: ['0145', '0147', '0117']
 tags:
-  [layer-backend, priority-high, effort-medium, adr-0012, foundation, parser]
+  [
+    layer-backend,
+    priority-high,
+    effort-medium,
+    adr-0012,
+    adr-0027,
+    foundation,
+    parser,
+  ]
 milestone: 1
-blocks: ['0145', '0147']
 links:
-  - lore/2-adrs/0012_zero-upsert-schema-full-fk-graph.md
+  - lore/2-adrs/0012_lightweight-bridge-db-schema-revision.md
+  - lore/2-adrs/0027_post-surrogate-schema-and-endpoint-realizability.md
 history:
   - date: '2026-04-20'
     status: backlog
@@ -28,6 +36,16 @@ history:
       (target ~2 working days) so 0147 and 0145 can run in parallel. Base
       branch refactor/lore-0140-adr-0027-schema; cut only after fmazur's Rust
       persistence rewrite lands.
+  - date: '2026-04-20'
+    status: active
+    who: stkrolikiewicz
+    note: >
+      Scope expansion after ADR review. ADR 0012 mentions parsed_ledger_{seq}.json
+      but does not define its structure; ADR 0027 (accepted) defines DB schema but
+      not the S3 artifact shape. This task therefore DEFINES the artifact shape
+      and will spawn ADR 0028 formalizing ParsedLedgerArtifact v1. Not pure
+      composition — a real design decision load-bearing for live lambda (0147),
+      backfill (0145), and the future DB ingester.
 ---
 
 # Shared parsed-ledger artifact core
@@ -35,13 +53,23 @@ history:
 ## Summary
 
 Introduce a single, reusable module that takes a decoded `LedgerCloseMeta`
-and produces the canonical ADR 0012 `parsed_ledger_{seq}.json.zst` artifact.
-Both the live Galexie onPut lambda (task 0147) and the offline backfill
-runner (task 0145) consume this module. No I/O, no AWS, no DB — pure build +
-serialize + compress + S3 key layout.
+and produces a canonical `parsed_ledger_{seq}.json.zst` artifact. Both the
+live Galexie onPut lambda (task 0147) and the offline backfill runner
+(task 0145) consume this module. No I/O, no AWS, no DB — build + serialize
 
-This is the foundation task. Its public API must be frozen quickly (target
-~2 working days) so 0147 and 0145 can run in parallel without contract churn.
+- compress + S3 key layout.
+
+This task has two deliverables:
+
+1. **Rust implementation** — `crates/xdr-parser::artifact` submodule with
+   the public API frozen for parallel consumption.
+2. **ADR 0028** formalizing the `ParsedLedgerArtifact v1` JSON shape.
+   Neither ADR 0012 (proposed) nor ADR 0027 (accepted) defines the artifact
+   structure — only that "one JSON file per ledger on S3" exists. This task
+   picks the shape and records the decision.
+
+Foundation task. Public API must be frozen quickly (target ~2 working days)
+so 0147 and 0145 can run in parallel without contract churn.
 
 ## Status: Active
 
@@ -61,8 +89,34 @@ lookup index. The Rust persistence rewrite against the new schema is the
 next in-flight piece (33 expected compile errors in
 `crates/db/src/{persistence,soroban}.rs` mark the follow-up surface).
 
-Under ADR 0012 a single `parsed_ledger_{seq}.json.zst` per ledger lives in
-our S3 bucket. The indexer DB becomes a thin index pointing into those files.
+### Artifact shape: no authoritative source yet
+
+ADR 0012 (`proposed`) mentions only _"one JSON file per ledger on S3,
+`parsed_ledger_{sequence}.json`, write-once, immutable"_ — no field-level
+breakdown. ADR 0027 (`accepted`) defines DB schema and endpoint realizability
+but refers to S3 payload fields only descriptively (Part III §E3 and §E14 list
+what S3 must carry: memo, signatures, fee-bump feeSource, op raw params, XDR
+blobs, diagnostic events, full event `topics[1..N]` and raw data). Neither
+ADR captures a concrete serialized structure.
+
+This task therefore defines the shape. Because the decision binds the live
+lambda (0147), backfill (0145), and every future DB ingester for the full
+artifact corpus, it is promoted to its own ADR (0028) rather than buried in
+module docs.
+
+### Shape principles (to be formalized in ADR 0028)
+
+- **Public-readable identities**: StrKey (`G…`/`C…`) for accounts and
+  contracts in JSON — not the DB surrogate `BIGINT` ids from ADR 0026.
+  Consumers (including the DB ingester) resolve StrKey → surrogate at write
+  time.
+- **Hashes as hex strings (64 chars)** in JSON — ADR 0024's BYTEA(32) is a
+  DB storage choice, not a wire format.
+- **Empty arrays preserved** (not omitted) for stable field presence across
+  ledgers and versions.
+- **`schema_version` marker** on the root artifact so consumers can refuse
+  unknown versions.
+
 Both data origins — live events from Galexie and historical ledgers from
 the public Stellar archive — must emit byte-identical artifacts. If parser
 logic forks between live path and backfill path, we will eventually diff
@@ -78,15 +132,18 @@ fix later.
    next to the types it composes (`ExtractedLedger`, `ExtractedTransaction`,
    etc.) and avoids a workspace-level crate split for what is effectively
    one builder + serializer.
-2. **`ParsedLedgerArtifact` struct** — mirrors ADR 0012 §"File structure"
-   exactly: `ledger_metadata`, `transactions[]` (hash, source_account,
-   memo_type, memo, result_code, signatures, envelope_xdr, result_xdr,
+2. **`ParsedLedgerArtifact` struct + ADR 0028 shape spec** — defined by
+   this task (no prior authoritative source). Root composition:
+   `ledger_metadata`, `transactions[]` (hash, source_account, memo_type,
+   memo, result_code, signatures, envelope_xdr, result_xdr,
    result_meta_xdr, operation_tree, operations[], events[], invocations[]),
    `wasm_uploads[]`, `contract_metadata[]`, `token_metadata[]`,
-   `nft_metadata[]`. Derives `Serialize`, `Deserialize`, `Debug`.
+   `nft_metadata[]`. StrKey for accounts/contracts, hex for hashes. Derives
+   `Serialize`, `Deserialize`, `Debug`. Shape recorded in ADR 0028 drafted
+   as part of PR 1.
 3. **Schema version tag** — `ledger_metadata.schema_version: "v1"`. Required
    so downstream consumers can refuse unknown versions and we can re-emit
-   safely if the shape changes post-0141.
+   safely if the shape changes. Version semantics defined in ADR 0028.
 4. **Public builder** —
    `pub fn build_parsed_ledger_artifact(meta: &LedgerCloseMeta) -> Result<ParsedLedgerArtifact, ParseError>`.
    Reuses existing `extract_*` functions already exported from `xdr-parser`.
@@ -135,12 +192,14 @@ has landed on `refactor/lore-0140-adr-0027-schema`. If still in flight,
 align on a sync point before branch cut. Do not branch off a moving
 target.
 
-### Step 2 — Model
+### Step 2 — Model + ADR 0028 draft
 
-Define `ParsedLedgerArtifact` + nested types. Map 1:1 to ADR 0012 §"File
-structure". Reuse existing `Extracted*` where shapes match; introduce
-artifact-local wrappers only where the JSON shape diverges from DB-oriented
-fields.
+Define `ParsedLedgerArtifact` + nested types. Derive the shape from what
+extract\__ functions produce + what consumers need (ADR 0027 Part III lists
+per-endpoint S3 dependencies as ground truth for required fields). Do NOT
+reuse `Extracted_` directly — those are DB-schema-oriented (snake_case DB
+column names, DB surrogate semantics). Artifact-local types use StrKey and
+hex. Draft ADR 0028 alongside: shape, field conventions, versioning rule.
 
 ### Step 3 — Builder
 
@@ -168,11 +227,13 @@ Golden fixtures picked from real mainnet ledgers (not synthesized) so any
 drift from real XDR shape is caught. Fixtures small enough to commit
 (<100 KB each after zstd).
 
-### Step 7 — Freeze API + publish
+### Step 7 — Freeze API + publish + promote ADR 0028
 
-Tag the public API as frozen in PR description. 0147 and 0145 unblock.
-Any shape change after freeze requires coordinated update across all three
-tasks — documented, not silent.
+Tag the public API as frozen in PR description. Promote ADR 0028 from
+`proposed` to `accepted` (it was drafted in Step 2 and refined through
+PRs 2/3). 0147 and 0145 unblock. Any shape change after freeze requires a
+new ADR (0028 revision or supersede) and coordinated re-emit across all
+three tasks — documented, not silent.
 
 ## Acceptance Criteria
 
@@ -181,8 +242,10 @@ tasks — documented, not silent.
       `compress_artifact_zstd`, `parsed_ledger_s3_key`.
 - [ ] Public API compiles cleanly with no `anyhow` leakage; local
       `ArtifactError` type wraps domain errors.
-- [ ] Artifact JSON matches ADR 0012 §"File structure" byte-for-byte on 5
-      golden fixtures covering diverse ledger content.
+- [ ] Artifact JSON matches ADR 0028 spec byte-for-byte on 5 golden
+      fixtures covering diverse ledger content.
+- [ ] ADR 0028 drafted, accepted upon task completion. Covers: root
+      structure, field naming, StrKey/hex conventions, versioning rule.
 - [ ] `ledger_metadata.schema_version == "v1"` present in every artifact.
 - [ ] Deterministic serialization — re-running builder + serializer on the
       same `LedgerCloseMeta` produces byte-identical output.
@@ -197,9 +260,13 @@ tasks — documented, not silent.
 - **API freeze discipline** — the whole point of this task is a stable
   contract. If scope changes land after freeze, 0147 and 0145 both have to
   rebase. Keep the surface small.
-- **Shape vs ADR 0012 proposed state** — ADR 0012 is proposed, 0141 may
-  still move. `schema_version: "v1"` covers re-emit; no versioned structs
-  yet (YAGNI).
+- **Shape decision is load-bearing** — ADR 0028 locks the JSON structure
+  for the lifetime of the v1 corpus. Change requires a new ADR plus
+  re-emit of the whole corpus (millions of ledgers). Draft ADR 0028
+  carefully; get at least one independent review before the PR 1 freeze.
+- **ADR 0012/0027 alignment** — ADR 0012 stays `proposed`, ADR 0027 is
+  accepted. ADR 0028 sits downstream of both and describes the S3 side
+  that ADR 0027 treats only as dependencies.
 - **Golden fixtures drift** — mainnet XDR is append-only but new
   operation types can appear. Fixture set is representative, not
   exhaustive; refresh when new op types hit mainnet.

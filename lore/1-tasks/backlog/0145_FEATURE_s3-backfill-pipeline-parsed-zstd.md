@@ -3,7 +3,7 @@ id: '0145'
 title: 'Backfill runner: public Stellar S3 → parsed JSON.zst on our S3'
 type: FEATURE
 status: backlog
-related_adr: ['0012']
+related_adr: ['0012', '0027']
 related_tasks: ['0146', '0147', '0117', '0140', '0141', '0142']
 blocked_by: ['0146']
 tags:
@@ -14,11 +14,13 @@ tags:
     effort-large,
     backfill,
     adr-0012,
+    adr-0027,
     onboarding,
   ]
 milestone: 1
 links:
-  - lore/2-adrs/0012_zero-upsert-schema-full-fk-graph.md
+  - lore/2-adrs/0012_lightweight-bridge-db-schema-revision.md
+  - lore/2-adrs/0027_post-surrogate-schema-and-endpoint-realizability.md
 history:
   - date: '2026-04-17'
     status: backlog
@@ -64,8 +66,10 @@ contract.
 
 ## Context
 
-ADR 0012 §"S3 offload" defines one `parsed_ledger_{sequence}.json.zst`
-per ledger in our S3 bucket. Task 0117 (archived) benchmarked streaming
+ADR 0012's S3-offload principle specifies one
+`parsed_ledger_{sequence}.json.zst` per ledger in our S3 bucket; the
+concrete artifact shape is defined by task 0146 (and formalized in
+ADR 0028). Task 0117 (archived) benchmarked streaming
 ledgers from the public Stellar S3 bucket through the existing Rust
 parser. That benchmark wrote to PostgreSQL; this task replaces the
 persist step with an S3 artifact upload.
