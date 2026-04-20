@@ -87,7 +87,7 @@ Recommended combo:
 
    - `CREATE TABLE <name> (LIKE operations INCLUDING ALL)` (standalone)
    - `WITH moved AS (DELETE FROM operations_default WHERE <range> RETURNING *)
- INSERT INTO <name> SELECT * FROM moved`
+INSERT INTO <name> SELECT * FROM moved`
    - `ALTER TABLE operations ATTACH PARTITION <name> FOR VALUES FROM ... TO ...`
      All in a single transaction.
 
