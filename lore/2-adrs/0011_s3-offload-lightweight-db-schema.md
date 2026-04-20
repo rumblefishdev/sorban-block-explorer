@@ -1,7 +1,7 @@
 ---
 id: '0011'
 title: 'S3 offload: lightweight DB schema with parsed JSON on S3'
-status: superseded
+status: proposed
 deciders: [fmazur]
 related_tasks: []
 related_adrs: ['0004', '0005', '0012']
@@ -12,11 +12,6 @@ history:
     status: proposed
     who: fmazur
     note: 'ADR created — going through tables one by one'
-  - date: 2026-04-17
-    status: superseded
-    who: fmazur
-    by: '0012'
-    note: 'Superseded by ADR 0012 — per-block reconstructability and full FK integrity require a zero-upsert design with dedicated history tables. S3 offload principles from this ADR are inherited and preserved in 0012.'
 ---
 
 # ADR 0011: S3 offload — lightweight DB schema with parsed JSON on S3
