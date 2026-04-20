@@ -5,6 +5,7 @@
 //! keep compiling unchanged, but the body is empty until the ADR 0027
 //! write-path is wired in the follow-up task.
 
+use tracing::warn;
 use xdr_parser::types::{
     ExtractedAccountState, ExtractedContractDeployment, ExtractedContractInterface, ExtractedEvent,
     ExtractedInvocation, ExtractedLedger, ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot,
@@ -35,10 +36,15 @@ pub async fn persist_ledger(
 ) -> Result<(), HandlerError> {
     // TODO(adr-0027-writes): wire new write-path against the ADR 0027 schema.
     // Body intentionally empty — indexer parses but does not persist until the
-    // follow-up task replaces this stub.
+    // follow-up task replaces this stub. Warn at WARN level so operators don't
+    // mistake the unchanged "ledger saved to database" log downstream (or the
+    // LastProcessedLedgerSequence CloudWatch metric) for real persistence.
+    warn!(
+        ledger_sequence = ledger.sequence,
+        "persist_ledger is a no-op — persistence disabled until the ADR-0027 write-path lands"
+    );
     let _ = (
         db_tx,
-        ledger,
         transactions,
         operations,
         events,
