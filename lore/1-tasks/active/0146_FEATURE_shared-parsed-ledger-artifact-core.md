@@ -2,7 +2,7 @@
 id: '0146'
 title: 'Shared parsed-ledger artifact core (model + builder + JSON + zstd + key layout)'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0012']
 related_tasks: ['0145', '0147', '0117']
 tags:
@@ -20,6 +20,14 @@ history:
       the live Galexie lambda (0147) and the backfill runner (0145). Introduced
       so live + backfill cannot diverge on parsed JSON shape. Must freeze public
       API early — 0147 and 0145 block on it, run in parallel once API is locked.
+  - date: '2026-04-20'
+    status: active
+    who: stkrolikiewicz
+    note: >
+      Promoted to active. Starting foundation work — freeze public API quickly
+      (target ~2 working days) so 0147 and 0145 can run in parallel. Base
+      branch refactor/lore-0140-adr-0027-schema; cut only after fmazur's Rust
+      persistence rewrite lands.
 ---
 
 # Shared parsed-ledger artifact core
@@ -35,11 +43,11 @@ serialize + compress + S3 key layout.
 This is the foundation task. Its public API must be frozen quickly (target
 ~2 working days) so 0147 and 0145 can run in parallel without contract churn.
 
-## Status: Backlog
+## Status: Active
 
-**Current state:** not started. Base branch `refactor/lore-0140-adr-0027-schema`
-must be stable (fmazur's Rust persistence rewrite against ADR 0027 landed)
-before branch cut.
+**Current state:** activated 2026-04-20, not yet started. Base branch
+`refactor/lore-0140-adr-0027-schema` must be stable (fmazur's Rust
+persistence rewrite against ADR 0027 landed) before branch cut.
 
 ## Context
 
