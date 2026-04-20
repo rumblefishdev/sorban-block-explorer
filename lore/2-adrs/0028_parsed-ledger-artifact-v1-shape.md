@@ -152,17 +152,24 @@ the contract for the DB ingester:
 | `account_balances_current` | `account_states[].balances[]` where `asset_type ≠ "pool"`                                                                                                                           | upsert with watermark on `last_updated_ledger` per PK                      |
 | `account_balance_history`  | `account_states[].balances[]` where `asset_type ≠ "pool"`                                                                                                                           | `INSERT … ON CONFLICT DO NOTHING`; one row per observed change             |
 
-Column-level derivations (same artifact, single-row):
+Column-level derivations (within a single artifact):
 
-| ADR 0027 column         | Derivation                                                                          |
-| ----------------------- | ----------------------------------------------------------------------------------- |
-| `soroban_events.topic0` | first element of `events[].topics[]`, lifted as text — one JSON path access per row |
+| ADR 0027 column / consumer field                                                                                                                                                                                                                                  | Derivation source                                                                                                                        |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `transactions.ledger_sequence`, `operations.ledger_sequence`, `soroban_events.ledger_sequence`, `soroban_invocations.ledger_sequence`, `liquidity_pool_snapshots.ledger_sequence`                                                                                 | `ledger_metadata.sequence` (root)                                                                                                        |
+| `transactions.created_at`, `operations.created_at`, `soroban_events.created_at`, `soroban_invocations.created_at`, `liquidity_pool_snapshots.created_at`, `transaction_participants.created_at`, `nft_ownership.created_at`, `account_balance_history.created_at` | `ledger_metadata.closed_at` (root) converted to TIMESTAMPTZ                                                                              |
+| `transactions.operation_count`                                                                                                                                                                                                                                    | `transactions[i].operations.length`                                                                                                      |
+| `transactions.has_soroban`                                                                                                                                                                                                                                        | `transactions[i].operations.any(op_type == "INVOKE_HOST_FUNCTION")` — ingester populates so partial index `idx_tx_has_soroban` is filled |
+| `soroban_events.topic0`                                                                                                                                                                                                                                           | first element of `events[].topics[]`, lifted as text (one JSON-path access per row)                                                      |
+| `nft_ownership.event_order`                                                                                                                                                                                                                                       | 0-based index of entry within the `nft_events[]` array                                                                                   |
+| `is_fee_bump` (consumer display, not a DB column)                                                                                                                                                                                                                 | `transactions[i].inner_tx_hash IS NOT NULL`                                                                                              |
+| `invocation.depth` (consumer display, not a DB column)                                                                                                                                                                                                            | walk `invocations[].parent_index` chain from each node                                                                                   |
 
 Cross-ledger derivation:
 
-| ADR 0027 column                             | Derivation                                                                                                                     |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `soroban_contracts.wasm_uploaded_at_ledger` | lookup `wasm_uploads[].uploaded_at_ledger` from a prior artifact whose `wasm_uploads[]` first contained the target `wasm_hash` |
+| ADR 0027 column                             | Derivation                                                                                                                                                                                         |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `soroban_contracts.wasm_uploaded_at_ledger` | ingester records `ledger_metadata.sequence` on first observation of a given `wasm_hash` in `wasm_uploads[]`; a later contract deploy referencing that hash reads the recorded value at INSERT time |
 
 ### `ledger_metadata`
 
@@ -196,19 +203,15 @@ the root with new sections without moving the version tag.
 ```json
 {
   "hash":                 "64hex",
-  "ledger_sequence":      53795300,
   "application_order":    0,
   "source_account":       "G…",
   "source_account_muxed": "M…" | null,
   "fee_account":          "G…" | null,
   "fee_account_muxed":    "M…" | null,
-  "is_fee_bump":          false,
   "inner_tx_hash":        "64hex" | null,
   "fee_charged":          100,
   "successful":           true,
   "result_code":          "txSUCCESS",
-  "operation_count":      3,
-  "has_soroban":          true,
   "memo_type":            "text" | "id" | "hash" | "return" | "none",
   "memo":                 string | null,
   "envelope_xdr":         "base64",
@@ -251,16 +254,13 @@ When true, sub-arrays (`operations`, `events`, `invocations`,
 derived by the task 0146 builder from parser-accessible data):
 
 - `application_order` — 0-based tx index within the ledger.
-- `operation_count` — `operations.len()`.
-- `has_soroban` — true if any `operations[].op_type == "INVOKE_HOST_FUNCTION"`.
 - `source_account_muxed`, `fee_account`, `fee_account_muxed`,
-  `inner_tx_hash`, `is_fee_bump` — derived from the
-  `TransactionEnvelope` returned by `extract_envelopes`; the builder
-  matches on `TxV0` / `TxV1` / `TxFeeBump` variants and extracts
-  MuxedAccount / inner-tx fields.
+  `inner_tx_hash` — derived from the `TransactionEnvelope` returned by
+  `extract_envelopes`; the builder matches on `TxV0` / `TxV1` /
+  `TxFeeBump` variants and extracts MuxedAccount / inner-tx fields.
 
-`ledger_sequence` is redundant with `ledger_metadata.sequence` but
-mirrors ADR 0027 §3's per-tx column for trivial DB ingest.
+**Fields derived at ingest (not in artifact)**: `ledger_sequence`,
+`is_fee_bump`, `operation_count`, `has_soroban` — see Derivation map.
 
 ### `transactions[].operations[]`
 
@@ -326,7 +326,6 @@ Flat list with `parent_index` — avoids nested objects, mirrors ADR 0027
 {
   "invocation_index": 0,
   "parent_index":     null | u32,
-  "depth":            0,
   "contract_id":      "C…" | null,
   "caller_account":   "G…" | null,
   "function_name":    string,
@@ -336,8 +335,10 @@ Flat list with `parent_index` — avoids nested objects, mirrors ADR 0027
 }
 ```
 
-Root invocations: `parent_index: null`, `depth: 0`. `depth` is
-redundant with `parent_index` but kept for read-side convenience.
+Root invocations have `parent_index: null`. Consumers needing a
+depth value reconstruct it with a single O(N) walk over
+`parent_index` chain from each node — not in ADR 0027 §10 schema,
+not carried in the artifact.
 
 **`function_name` is always present.** Parser emits sentinel strings
 `"createContract"` / `"createContractV2"` for contract-creation
@@ -455,11 +456,10 @@ NOTHING`; first sighting sets the column.
 
 ```json
 {
-  "pool_id":         "64hex",
-  "ledger_sequence": u32,
-  "reserve_a":       "0.0000000",
-  "reserve_b":       "0.0000000",
-  "total_shares":    "0.0000000"
+  "pool_id": "64hex",
+  "reserve_a": "0.0000000",
+  "reserve_b": "0.0000000",
+  "total_shares": "0.0000000"
 }
 ```
 
@@ -497,9 +497,8 @@ ledger order; task 0146's determinism test asserts stable ordering.
 
 ```json
 {
-  "wasm_hash":          "64hex",
-  "wasm_byte_len":      12345,
-  "uploaded_at_ledger": u32,
+  "wasm_hash":     "64hex",
+  "wasm_byte_len": 12345,
   "functions": [
     {
       "name":    "transfer",
@@ -511,10 +510,11 @@ ledger order; task 0146's determinism test asserts stable ordering.
 }
 ```
 
-`uploaded_at_ledger` duplicates `ledger_metadata.sequence` for the
-emitting ledger; carried inline so the DB ingester can populate
-`soroban_contracts.wasm_uploaded_at_ledger` on a later deploy without
-maintaining a stateful lookup table in the Lambda (see §Rationale).
+`soroban_contracts.wasm_uploaded_at_ledger` is populated at ingest
+from `ledger_metadata.sequence` of the artifact in which the
+`wasm_hash` first appears — see Derivation map. No per-entry
+`uploaded_at_ledger` field in the artifact; the enclosing ledger IS
+the answer.
 
 ### `contract_metadata[]`
 
@@ -714,25 +714,38 @@ carried in the artifact: consumers with the flat list + `parent_index`
 can reconstruct it trivially, and the DB has no `operation_tree`
 column.
 
-### Why `topic0` is NOT a separate artifact field
+### Why trivially-derivable fields are excluded from the artifact
 
-ADR 0027 §9 includes `soroban_events.topic0 TEXT` but does not index it
-(no `idx_events_topic0`). The column serves two purposes: historically
-as a discriminator for which rows populate `transfer_{from,to,amount}`,
-and as a display/audit column. Both are handled without a dedicated
-artifact field:
+The artifact omits fields whose value is either a **constant copy from
+`ledger_metadata`** or an **O(1)/O(N) simple derivation from sibling
+artifact data**, unless pre-extraction enables a genuine hot-path query
+optimisation (such as populating an indexed DB column that would
+otherwise require JSON-path parsing at insert time).
 
-- Transfer fields are already pre-derived in `events[].{transfer_from,
-transfer_to, transfer_amount}` by the parser; ingester doesn't need
-  `topic0` to decide whether to populate them.
-- `topic0` as a display column is trivially derivable from `topics[0]`
-  at ingest (one JSON path access per row).
+Applying this rule:
 
-Unlike `operations[].{asset_code, asset_issuer, pool_id}` (ADR 0027 §5
-indexed filter columns where pre-extraction avoids JSON-path scans in
-hot queries), `topic0` is not indexed — pre-extraction adds no query
-value. Removing it saves ~30 bytes/event × ~3 events/tx × ~200 tx
-avg/ledger × 10M+ ledgers ≈ ~180 GB pre-compression across the corpus.
+- **Removed**: `transactions[].{ledger_sequence, is_fee_bump,
+operation_count}`, `transactions[].invocations[].depth`,
+  `events[].topic0`, `liquidity_pool_snapshots[].ledger_sequence`,
+  `wasm_uploads[].uploaded_at_ledger`. Each is either a root copy, a
+  null check, an array length, or a single JSON-path access.
+- **Removed**: `has_soroban` (O(N) scan over operations) — same rule
+  class; ingester populates the indexed DB column by scanning
+  `operations[]` at INSERT time. The partial index `idx_tx_has_soroban`
+  depends on the DB column being populated, not on the artifact
+  carrying the boolean.
+- **Kept**: `operations[].{asset_code, asset_issuer, pool_id}`,
+  `events[].{transfer_from, transfer_to, transfer_amount}`, and
+  `operations[].transfer_amount`. These require domain knowledge
+  (per-op-type field dispatch inside `details` JSON) or avoid
+  per-insert JSON-path scans for indexed filter columns — genuine
+  pre-extraction value.
+
+Aggregate saving across the corpus (10M+ ledgers, avg ~200 tx/ledger):
+~5 KB/ledger pre-compression → ~50 GB total, ~15-20 GB post-zstd. More
+importantly: cleaner contract for external consumers, fewer "looks
+redundant, is it really the same?" questions during review, and
+principled rule that scales as new fields are proposed.
 
 ### Why artifact carries full XDR blobs AND extracted fields
 
@@ -767,18 +780,6 @@ Emitting them as redundant sections would:
 Keeping them derivable at ingest centralises the derivation rule and
 matches ADR 0027's view that these tables are optimisations, not
 independent data.
-
-### Why `wasm_uploads[].uploaded_at_ledger` is inline
-
-ADR 0027 §8 `wasm_interface_metadata` has no `uploaded_at_ledger`
-column, but ADR 0027 §7 `soroban_contracts.wasm_uploaded_at_ledger`
-must be populated. DB ingester options:
-
-- **Stateful tracking** in Lambda: maintain a map `wasm_hash → ledger`.
-  Complex under parallel ingest.
-- **Inline**: 8 bytes per entry, trivial ingester logic.
-
-Inline wins.
 
 ### Why `event_order` is array-index-derived
 
