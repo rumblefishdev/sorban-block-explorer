@@ -152,6 +152,12 @@ the contract for the DB ingester:
 | `account_balances_current` | `account_states[].balances[]` where `asset_type ≠ "pool"`                                                                                                                           | upsert with watermark on `last_updated_ledger` per PK                      |
 | `account_balance_history`  | `account_states[].balances[]` where `asset_type ≠ "pool"`                                                                                                                           | `INSERT … ON CONFLICT DO NOTHING`; one row per observed change             |
 
+Column-level derivations (same artifact, single-row):
+
+| ADR 0027 column         | Derivation                                                                          |
+| ----------------------- | ----------------------------------------------------------------------------------- |
+| `soroban_events.topic0` | first element of `events[].topics[]`, lifted as text — one JSON path access per row |
+
 Cross-ledger derivation:
 
 | ADR 0027 column                             | Derivation                                                                                                                     |
@@ -295,7 +301,6 @@ decoding `details`.
   "event_index":     0,
   "event_type":      "contract" | "system" | "diagnostic",
   "contract_id":     "C…" | null,
-  "topic0":          string | null,
   "topics":          [ ScVal-decoded JSON, ... ],
   "data":            ScVal-decoded JSON,
   "transfer_from":   "G…" | null,
@@ -304,14 +309,13 @@ decoding `details`.
 }
 ```
 
-`topic0` is the first topic's symbol name lifted to scalar (matches ADR
-0027 `soroban_events.topic0`).
-
 `transfer_from` / `transfer_to` / `transfer_amount` are populated only
-when `topic0 IN ('transfer', 'mint', 'burn')` per ADR 0018.
-`transfer_amount` here is `NUMERIC(39,0)` — Soroban raw i128 decimal,
-no fraction (distinct from `operations[].transfer_amount` which is
-classic fixed-point).
+when the first topic is `"transfer"`, `"mint"`, or `"burn"` per ADR 0018. `transfer_amount` here is `NUMERIC(39,0)` — Soroban raw i128
+decimal, no fraction (distinct from `operations[].transfer_amount`
+which is classic fixed-point).
+
+ADR 0027 §9 `soroban_events.topic0` is populated by the DB ingester
+from `topics[0]` at insert time (see Derivation map).
 
 ### `transactions[].invocations[]`
 
@@ -710,10 +714,25 @@ carried in the artifact: consumers with the flat list + `parent_index`
 can reconstruct it trivially, and the DB has no `operation_tree`
 column.
 
-### Why `topic0` lifted to scalar
+### Why `topic0` is NOT a separate artifact field
 
-Redundant with `topics[0]` but directly indexable. Matches ADR 0027
-`soroban_events.topic0` column; DB ingester reads one field.
+ADR 0027 §9 includes `soroban_events.topic0 TEXT` but does not index it
+(no `idx_events_topic0`). The column serves two purposes: historically
+as a discriminator for which rows populate `transfer_{from,to,amount}`,
+and as a display/audit column. Both are handled without a dedicated
+artifact field:
+
+- Transfer fields are already pre-derived in `events[].{transfer_from,
+transfer_to, transfer_amount}` by the parser; ingester doesn't need
+  `topic0` to decide whether to populate them.
+- `topic0` as a display column is trivially derivable from `topics[0]`
+  at ingest (one JSON path access per row).
+
+Unlike `operations[].{asset_code, asset_issuer, pool_id}` (ADR 0027 §5
+indexed filter columns where pre-extraction avoids JSON-path scans in
+hot queries), `topic0` is not indexed — pre-extraction adds no query
+value. Removing it saves ~30 bytes/event × ~3 events/tx × ~200 tx
+avg/ledger × 10M+ ledgers ≈ ~180 GB pre-compression across the corpus.
 
 ### Why artifact carries full XDR blobs AND extracted fields
 
