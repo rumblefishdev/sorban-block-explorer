@@ -45,7 +45,7 @@ Write the schema change in `.up.sql` and its reverse in `.down.sql`.
 
 ## Initial schema (ADR 0027)
 
-The 0001-0007 migrations produce the schema defined by ADR 0027 (post-surrogate snapshot). Pre-ADR migrations (the previous 0001-0009 chain) were wiped under task 0140 and archived to `.trash/migrations-pre-adr-0027/`.
+The 0001-0007 migrations produce the schema defined by ADR 0027 (post-surrogate snapshot). Pre-ADR migrations (the previous 0001-0009 chain) were wiped under task 0140 and archived locally to `.trash/migrations-pre-adr-0027/`. `.trash/` is git-ignored (per project deletion policy), so the authoritative record of the old chain is git history itself — inspect any commit before `89f4335` to recover the pre-ADR migrations.
 
 | #    | File                                   | Tables                                                                                     |
 | ---- | -------------------------------------- | ------------------------------------------------------------------------------------------ |

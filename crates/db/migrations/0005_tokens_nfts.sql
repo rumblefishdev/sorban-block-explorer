@@ -9,6 +9,10 @@
 --   13. nft_ownership   (partitioned history)
 
 -- 11. tokens (ADR 0027 §11)
+-- Identity is enforced by ck_tokens_identity (which columns must be NOT NULL
+-- for each asset_type) plus per-asset_type partial UNIQUE indexes. The CHECK
+-- closes the NULL-in-UNIQUE loophole — PostgreSQL treats NULLs as distinct,
+-- so without it the partial uniques would admit duplicate logical tokens.
 CREATE TABLE tokens (
     id              SERIAL        PRIMARY KEY,
     asset_type      VARCHAR(20)   NOT NULL,
@@ -21,11 +25,23 @@ CREATE TABLE tokens (
     description     TEXT,
     icon_url        VARCHAR(1024),
     home_page       VARCHAR(256),
-    CONSTRAINT ck_tokens_asset_type CHECK (asset_type IN ('native', 'classic', 'sac', 'soroban'))
+    CONSTRAINT ck_tokens_asset_type CHECK (asset_type IN ('native', 'classic', 'sac', 'soroban')),
+    CONSTRAINT ck_tokens_identity CHECK (
+        (asset_type = 'native'
+            AND asset_code IS NULL     AND issuer_id IS NULL     AND contract_id IS NULL)
+     OR (asset_type = 'classic'
+            AND asset_code IS NOT NULL AND issuer_id IS NOT NULL AND contract_id IS NULL)
+     OR (asset_type = 'sac'
+            AND asset_code IS NOT NULL AND issuer_id IS NOT NULL AND contract_id IS NOT NULL)
+     OR (asset_type = 'soroban'
+            AND issuer_id IS NULL      AND contract_id IS NOT NULL)
+    )
 );
+CREATE UNIQUE INDEX uidx_tokens_native        ON tokens ((asset_type))
+    WHERE asset_type = 'native';
 CREATE UNIQUE INDEX uidx_tokens_classic_asset ON tokens (asset_code, issuer_id)
     WHERE asset_type IN ('classic', 'sac');
-CREATE UNIQUE INDEX uidx_tokens_soroban ON tokens (contract_id)
+CREATE UNIQUE INDEX uidx_tokens_soroban       ON tokens (contract_id)
     WHERE asset_type IN ('soroban', 'sac');
 CREATE INDEX idx_tokens_type      ON tokens (asset_type);
 CREATE INDEX idx_tokens_code_trgm ON tokens USING GIN (asset_code gin_trgm_ops);
