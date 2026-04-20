@@ -2,7 +2,7 @@
 id: '0148'
 title: 'Remove legacy write-path helpers; stub persist_ledger for ADR 0027 rewrite'
 type: REFACTOR
-status: active
+status: completed
 related_adr: ['0011', '0018', '0024', '0026', '0027']
 related_tasks: ['0140']
 tags: [layer-backend, layer-db, priority-high, effort-small, cleanup, adr-0027]
@@ -35,6 +35,18 @@ history:
     status: active
     who: fmazur
     note: 'Activated task — promoted from backlog to active, set as current task.'
+  - date: '2026-04-20'
+    status: completed
+    who: fmazur
+    note: >
+      Implemented — moved crates/db/src/{persistence,soroban}.rs and
+      crates/indexer/src/handler/convert.rs to .trash/ (~1891 loc). Stubbed
+      persist_ledger body (signature unchanged). Dropped dangling module
+      declarations in db/src/lib.rs and handler/mod.rs. Pruned crates/db/
+      Cargo.toml (unused domain dep + dev-deps removed, serde_json
+      feature-gated). Workspace green — cargo check, cargo clippy
+      --all-targets -- -D warnings, cargo build --workspace, npm run db:reset,
+      npm run db:prepare all pass. Pre-push hook passes without --no-verify.
 ---
 
 # Remove legacy write-path helpers; stub persist_ledger for ADR 0027 rewrite
@@ -143,16 +155,68 @@ Commit the regenerated `.sqlx/` offline cache.
 
 ## Acceptance Criteria
 
-- [ ] Three helper files moved to `.trash/legacy-write-path-pre-adr-0027/`
-- [ ] `crates/db/src/lib.rs` no longer exports `persistence` or `soroban`
-- [ ] `crates/indexer/src/handler/mod.rs` no longer declares `convert`
+- [x] Three helper files moved to `.trash/legacy-write-path-pre-adr-0027/`
+- [x] `crates/db/src/lib.rs` no longer exports `persistence` or `soroban`
+- [x] `crates/indexer/src/handler/mod.rs` no longer declares `convert`
       (still declares `persist`)
-- [ ] `persist_ledger` keeps its signature; body is a stub returning `Ok(())`
-- [ ] `process_ledger` and `backfill-bench` compile unchanged
-- [ ] `cargo check --workspace` green
-- [ ] `cargo clippy --all-targets -- -D warnings` green
-- [ ] `npm run db:prepare` succeeds; updated `.sqlx/` committed
-- [ ] Pre-push hook passes without `--no-verify`
+- [x] `persist_ledger` keeps its signature; body is a stub returning `Ok(())`
+- [x] `process_ledger` and `backfill-bench` compile unchanged
+- [x] `cargo check --workspace` green
+- [x] `cargo clippy --all-targets -- -D warnings` green
+- [x] `npm run db:prepare` succeeds; `.sqlx/` not needed (no `sqlx::query!()`
+      macros remain after helper removal — only runtime `sqlx::query()` calls)
+- [x] Pre-push hook passes without `--no-verify`
+
+## Implementation Notes
+
+- Moved to `.trash/legacy-write-path-pre-adr-0027/`:
+  - `crates/db/src/persistence.rs` (498 loc)
+  - `crates/db/src/soroban.rs` (1210 loc)
+  - `crates/indexer/src/handler/convert.rs` (183 loc)
+- `crates/indexer/src/handler/persist.rs` — body emptied; signature (14 params)
+  unchanged so `process_ledger` and `backfill-bench` still compile. Unused
+  `use db::persistence::…`, `use db::soroban::…`, and `use super::convert`
+  dropped; only `xdr_parser::types::Extracted*` + `super::HandlerError` remain.
+- `crates/db/src/lib.rs` — removed `pub mod persistence;` and `pub mod soroban;`.
+- `crates/indexer/src/handler/mod.rs` — removed `mod convert;`; `mod persist;`
+  retained.
+- `crates/db/Cargo.toml` — pruned to match the new surface: dropped
+  `domain = { path = "../domain" }` (unused), dropped the entire
+  `[dev-dependencies]` block (the `#[cfg(test)]` modules lived in the removed
+  files), and made `serde_json` optional via the `aws-secrets` feature (only
+  `secrets.rs` uses it).
+
+## Design Decisions
+
+### From Plan
+
+1. **Keep `persist_ledger`, delete helpers.** Only the three helper modules
+   have zero callers after the stub; `persist_ledger` itself stays because
+   `process_ledger` and `backfill-bench` still call it. Follow-up task fills
+   the body against the ADR 0027 schema.
+2. **Empty body over `unimplemented!()`.** `unimplemented!()` would panic at
+   runtime — that would break the indexer Lambda even though parsing is fine.
+   Returning `Ok(())` lets the pipeline parse and log end-to-end, just with
+   no DB writes.
+
+### Emerged
+
+3. **Pruned `crates/db/Cargo.toml` unused deps.** Not in the original plan.
+   After removing `persistence.rs` / `soroban.rs`, the `db` crate no longer
+   uses `domain` or `serde_json` outside the `aws-secrets` feature, and
+   `[dev-dependencies]` only existed for the `#[cfg(test)]` modules that went
+   to `.trash/`. rust-analyzer was surfacing the dangling deps as errors on
+   `lib.rs`. Cleanup: dropped `domain`, gated `serde_json` behind
+   `aws-secrets`, removed `[dev-dependencies]`.
+
+## Issues Encountered
+
+- **`npm run db:prepare` emits `warning: no queries found`.** Not an error —
+  after removing the helper modules, the workspace has zero `sqlx::query!()`
+  macro callsites. Only runtime `sqlx::query()` remains (in
+  `db-partition-mgmt` and `backfill-bench::ledger_exists`), and runtime
+  queries don't use the offline cache. `.sqlx/` does not exist in the repo;
+  no commit needed. The acceptance criterion was adjusted to reflect this.
 
 ## Out of Scope
 

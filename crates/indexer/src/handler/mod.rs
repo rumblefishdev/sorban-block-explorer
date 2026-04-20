@@ -4,7 +4,6 @@
 //! orchestrates the four parsing stages, and wraps all writes for a single
 //! ledger in one atomic database transaction.
 
-mod convert;
 mod persist;
 pub mod process;
 

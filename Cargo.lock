@@ -1115,12 +1115,9 @@ version = "0.1.0"
 dependencies = [
  "aws-config",
  "aws-sdk-secretsmanager",
- "chrono",
- "domain",
  "percent-encoding",
  "serde_json",
  "sqlx",
- "tokio",
 ]
 
 [[package]]
