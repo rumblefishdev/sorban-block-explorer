@@ -4,7 +4,7 @@ title: 'Lightweight bridge DB schema — revision of ADR 0011'
 status: proposed
 deciders: [fmazur]
 related_tasks: []
-related_adrs: ['0011']
+related_adrs: ['0011', '0029']
 tags: [database, schema, s3, partitioning, performance]
 links: []
 history:
@@ -12,6 +12,15 @@ history:
     status: proposed
     who: fmazur
     note: 'ADR created — corrections on top of ADR 0011 after 5 independent senior reviews'
+  - date: '2026-04-21'
+    status: proposed
+    who: stkrolikiewicz
+    note: >
+      Partially superseded by ADR 0029. Schema corrections and column
+      conventions from this ADR fed into ADR 0027 and survive there;
+      the "parsed_ledger_{sequence}.json on our S3" side of the offload
+      principle is abandoned — read-time XDR fetch from the public
+      Stellar archive (task 0150) replaces it.
 ---
 
 # ADR 0012: Lightweight bridge DB schema — revision of ADR 0011

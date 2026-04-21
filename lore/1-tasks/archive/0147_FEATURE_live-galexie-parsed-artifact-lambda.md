@@ -2,10 +2,10 @@
 id: '0147'
 title: 'Live Galexie onPut lambda: raw XDR → parsed ledger JSON.zst on S3'
 type: FEATURE
-status: backlog
-related_adr: ['0012', '0027', '0028']
-related_tasks: ['0146', '0145', '0044', '0029']
-blocked_by: ['0146']
+status: superseded
+related_adr: ['0012', '0027', '0028', '0029']
+related_tasks: ['0146', '0145', '0044', '0029', '0149', '0033']
+blocked_by: []
 tags:
   [
     layer-infra,
@@ -33,6 +33,20 @@ history:
       JSON.zst artifacts as backfill so the corpus on S3 is single-format,
       single-source-of-truth, regardless of which path produced a given
       ledger.
+  - date: '2026-04-21'
+    status: superseded
+    who: stkrolikiewicz
+    by: ['0149']
+    note: >
+      Archived as superseded by ADR 0029 architectural pivot. The existing
+      indexer lambda (task 0033, deployed) already subscribes to the Galexie
+      bucket's onPut and calls `indexer::handler::process::process_ledger` →
+      `persist_ledger`. Once task 0149 fills `persist_ledger` against the
+      ADR 0027 schema, the existing lambda writes to DB directly — no
+      artifact emission, no separate "artifact-producer" lambda required.
+      The motivating artifact-emission scope of this task no longer exists;
+      any remaining infra tweaks (DLQ, concurrency, alarms) are trivial
+      chore work, not a standalone FEATURE task.
 ---
 
 # Live Galexie onPut lambda — raw XDR → parsed ledger JSON.zst

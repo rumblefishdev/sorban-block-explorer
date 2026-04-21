@@ -2,9 +2,9 @@
 id: '0146'
 title: 'Shared parsed-ledger artifact core (model + builder + JSON + zstd + key layout)'
 type: FEATURE
-status: active
-related_adr: ['0012', '0027', '0028']
-related_tasks: ['0145', '0147', '0117', '0126', '0135']
+status: superseded
+related_adr: ['0012', '0027', '0028', '0029']
+related_tasks: ['0145', '0147', '0117', '0126', '0135', '0149', '0150']
 tags:
   [
     layer-backend,
@@ -48,6 +48,19 @@ history:
       and will spawn ADR 0028 formalizing ParsedLedgerArtifact v1. Not pure
       composition — a real design decision load-bearing for live lambda (0147),
       backfill (0145), and the future DB ingester.
+  - date: '2026-04-21'
+    status: superseded
+    who: stkrolikiewicz
+    by: ['0149', '0150']
+    note: >
+      Archived as superseded by ADR 0029. Team meeting 2026-04-21 pivoted the
+      architecture: no parsed-ledger S3 bucket on our side. Write path goes
+      directly to ADR 0027 DB (task 0149); read path fetches raw XDR from
+      public Stellar archive on demand (task 0150). The entire artifact
+      concept (shape, builder, serializer, compressor, S3 key layout) has no
+      consumer in the new design. ADR 0028 superseded; `xdr-parser::artifact`
+      scaffold removed as part of this PR. Design archaeology preserved in
+      git history (PR #100 + its commit chain).
 ---
 
 # Shared parsed-ledger artifact core

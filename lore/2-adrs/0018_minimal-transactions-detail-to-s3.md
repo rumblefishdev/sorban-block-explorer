@@ -4,7 +4,7 @@ title: 'Minimal transactions and operations tables; token_transfers removed — 
 status: proposed
 deciders: [fmazur]
 related_tasks: []
-related_adrs: ['0011', '0012', '0013', '0014', '0015', '0016', '0017']
+related_adrs: ['0011', '0012', '0013', '0014', '0015', '0016', '0017', '0029']
 tags:
   [
     database,
@@ -32,6 +32,16 @@ history:
     status: proposed
     who: fmazur
     note: 'Extended to remove token_transfers entirely; 3 columns added to soroban_events (transfer_from, transfer_to, transfer_amount) with partial indexes; projected net saving ~420–920 GB at mainnet'
+  - date: '2026-04-21'
+    status: proposed
+    who: stkrolikiewicz
+    note: >
+      Partially superseded by ADR 0029. The per-column field-extraction
+      decisions (which fields stay in DB light columns vs which are
+      heavy) still hold and inform the ADR 0027 schema. What changes is
+      WHERE the heavy fields live at read time — no longer our S3
+      bucket; instead, fetched from the public Stellar archive on
+      demand (task 0150) when endpoints E3 / E14 need them.
 ---
 
 # ADR 0018: Minimal `transactions` and `operations` tables; `token_transfers` removed — detail fields offloaded to S3
