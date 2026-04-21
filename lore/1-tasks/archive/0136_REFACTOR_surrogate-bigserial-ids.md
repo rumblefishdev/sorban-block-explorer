@@ -2,14 +2,15 @@
 id: '0136'
 title: 'DB: add surrogate BIGSERIAL IDs to all tables using string PKs'
 type: REFACTOR
-status: backlog
-related_adr: []
-related_tasks: ['0121', '0122', '0126']
-tags: [priority-high, effort-large, layer-db]
+status: superseded
+related_adr: ['0024', '0026', '0027']
+related_tasks: ['0121', '0122', '0126', '0140']
+tags: [layer-db, superseded]
 milestone: 1
 links:
-  - crates/db/migrations/
-  - crates/db/src/soroban.rs
+  - lore/2-adrs/0024_hashes-bytea-binary-storage.md
+  - lore/2-adrs/0026_accounts-surrogate-bigint-id.md
+  - lore/2-adrs/0027_post-surrogate-schema-and-endpoint-realizability.md
 history:
   - date: '2026-04-13'
     status: backlog
@@ -23,6 +24,33 @@ history:
     status: backlog
     who: fmazur
     note: 'Moved back to backlog — deprioritized.'
+  - date: '2026-04-21'
+    status: superseded
+    who: stkrolikiewicz
+    by: ['0140']
+    note: >
+      Archived as superseded. Six-table scope took three different paths
+      across the ADR 0013-0027 chain; no remaining work:
+
+      - accounts — BIGSERIAL surrogate landed via ADR 0026 implemented by
+        task 0140 on refactor/lore-0140-adr-0027-schema.
+      - nfts — `id SERIAL PK` with composite UNIQUE in ADR 0027 §12
+        (also landed in task 0140).
+      - soroban_contracts — explicitly DEFERRED per ADR 0026 §166 and
+        ADR 0027 Part V #7 ("symmetric surrogate — smaller win since
+        contracts are orders of magnitude rarer than accounts; skipped
+        for now"). No active task.
+      - liquidity_pools, wasm_interface_metadata — superseded by ADR 0024
+        (`BYTEA(32)` binary storage); 32-byte fixed-width PK is the
+        performance fix, not a BIGSERIAL surrogate.
+      - ledgers — `sequence BIGINT PK` retained (already integer; no
+        VARCHAR performance concern to solve). Not re-planned.
+
+      Task 0126 still lists this as `blocked_by: ['0136']` — that blocker
+      is now void. Real prerequisite for 0126 is a parser extension to
+      emit pool_share trustlines (skipped today at
+      `crates/xdr-parser/src/state.rs:225-226`), not a DB-level refactor.
+      Team decision pending on 0126 rescope.
 ---
 
 # DB: add surrogate BIGSERIAL IDs to all tables using string PKs
