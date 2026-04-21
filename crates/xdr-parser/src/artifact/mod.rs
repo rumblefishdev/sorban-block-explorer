@@ -200,17 +200,21 @@ pub struct BalanceArtifact {
     pub asset_type: BalanceAssetType,
     pub asset_code: Option<String>,
     pub issuer_address: Option<String>,
-    pub pool_id: Option<String>,
     pub balance: String,
     pub last_updated_ledger: u32,
 }
 
+/// Balance asset types carried in `account_states[].balances[]`.
+///
+/// Pool-share trustlines are NOT represented here — parser
+/// `extract_account_states` skips them (see `state.rs:225-226`), and
+/// `lp_positions` population is out of scope for artifact v1 pending
+/// task 0126.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BalanceAssetType {
     Native,
     Classic,
-    Pool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -144,13 +144,13 @@ ADR 0027 has 18 tables. Ten map directly to the 10 root sections above.
 Five are **derived at ingest time** from artifact data. This table is
 the contract for the DB ingester:
 
-| ADR 0027 table             | Derivation source                                                                                                                                                                   | Rule                                                                       |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `transaction_hash_index`   | `transactions[].hash` + `ledger_metadata.{sequence, closed_at}`                                                                                                                     | one row per tx; 1:1 mapping                                                |
-| `transaction_participants` | UNION over `transactions[]`: `source_account`, `fee_account`, `operations[].{source_account, destination}`, `invocations[].caller_account`, `events[].{transfer_from, transfer_to}` | `INSERT … ON CONFLICT DO NOTHING` per `(tx, account)`                      |
-| `lp_positions`             | `account_states[].balances[]` where `asset_type = "pool"`                                                                                                                           | upsert with watermark on `last_updated_ledger` per `(pool_id, account_id)` |
-| `account_balances_current` | `account_states[].balances[]` where `asset_type ≠ "pool"`                                                                                                                           | upsert with watermark on `last_updated_ledger` per PK                      |
-| `account_balance_history`  | `account_states[].balances[]` where `asset_type ≠ "pool"`                                                                                                                           | `INSERT … ON CONFLICT DO NOTHING`; one row per observed change             |
+| ADR 0027 table             | Derivation source                                                                                                                                                                                                         | Rule                                                           |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `transaction_hash_index`   | `transactions[].hash` + `ledger_metadata.{sequence, closed_at}`                                                                                                                                                           | one row per tx; 1:1 mapping                                    |
+| `transaction_participants` | UNION over `transactions[]`: `source_account`, `fee_account`, `operations[].{source_account, destination}`, `invocations[].caller_account`, `events[].{transfer_from, transfer_to}`                                       | `INSERT … ON CONFLICT DO NOTHING` per `(tx, account)`          |
+| `account_balances_current` | `account_states[].balances[]`                                                                                                                                                                                             | upsert with watermark on `last_updated_ledger` per PK          |
+| `account_balance_history`  | `account_states[].balances[]`                                                                                                                                                                                             | `INSERT … ON CONFLICT DO NOTHING`; one row per observed change |
+| `lp_positions`             | **NOT populated by artifact v1** — parser `extract_account_states` explicitly skips `pool_share` trustlines (`crates/xdr-parser/src/state.rs:225-226`); out of scope for M1 absent a parser extension (task 0126 blocked) | —                                                              |
 
 Column-level derivations (within a single artifact):
 
@@ -254,10 +254,15 @@ When true, sub-arrays (`operations`, `events`, `invocations`,
 derived by the task 0146 builder from parser-accessible data):
 
 - `application_order` — 0-based tx index within the ledger.
-- `source_account_muxed`, `fee_account`, `fee_account_muxed`,
-  `inner_tx_hash` — derived from the `TransactionEnvelope` returned by
-  `extract_envelopes`; the builder matches on `TxV0` / `TxV1` /
-  `TxFeeBump` variants and extracts MuxedAccount / inner-tx fields.
+- `source_account_muxed`, `fee_account`, `fee_account_muxed` — derived
+  from the `TransactionEnvelope` returned by `extract_envelopes`; the
+  builder matches on `TxV0` / `TxV1` / `TxFeeBump` variants and
+  extracts MuxedAccount fields.
+- `inner_tx_hash` — for fee-bump transactions (`TxFeeBump` variant),
+  the builder computes SHA-256 over the XDR encoding of the inner
+  transaction envelope (`FeeBumpTransactionInnerTx::Tx` branch). The
+  parser crate already depends on `sha2` and `stellar-xdr` so no new
+  deps. Null for non-fee-bump transactions.
 
 **Fields derived at ingest (not in artifact)**: `ledger_sequence`,
 `is_fee_bump`, `operation_count`, `has_soroban` — see Derivation map.
@@ -391,26 +396,33 @@ eliminates future parser ambiguity.
 #### `account_states[].balances[]` shape
 
 Identity rules match ADR 0027 §17 `account_balances_current` CHECK
-constraint plus the pool-share special case:
+constraint:
 
-| `asset_type` | `asset_code` | `issuer_address`  | `pool_id`      | routes to                                                      |
-| ------------ | ------------ | ----------------- | -------------- | -------------------------------------------------------------- |
-| `native`     | `null`       | `null`            | `null`         | `account_balances_current`                                     |
-| `classic`    | required     | required (G-addr) | `null`         | `account_balances_current` (covers SAC classic-side trustline) |
-| `pool`       | `null`       | `null`            | required (hex) | `lp_positions`                                                 |
+| `asset_type` | `asset_code` | `issuer_address`  | routes to                                                      |
+| ------------ | ------------ | ----------------- | -------------------------------------------------------------- |
+| `native`     | `null`       | `null`            | `account_balances_current`                                     |
+| `classic`    | required     | required (G-addr) | `account_balances_current` (covers SAC classic-side trustline) |
 
 ```json
 {
-  "asset_type":          "native" | "classic" | "pool",
+  "asset_type":          "native" | "classic",
   "asset_code":          string | null,
   "issuer_address":      "G…" | null,
-  "pool_id":             "64hex" | null,
   "balance":             "0.0000000",
   "last_updated_ledger": u32
 }
 ```
 
 `balance` is `NUMERIC(28,7)` (classic fixed-point stroops).
+
+**Pool-share trustlines are NOT in `balances[]`** despite being
+structurally trustline ledger entries in Stellar. Parser
+`extract_account_states` explicitly skips them
+(`crates/xdr-parser/src/state.rs:225-226`) because they do not map to
+`account_balances_current` (which has no `pool_id` column); `lp_positions`
+tracks them instead. See the Derivation map — `lp_positions` is out of
+scope for ADR 0028 v1 pending task 0126 (`pool-participants-tracking`,
+blocked) which extends the parser with a dedicated extraction path.
 
 **Pure Soroban token balances (per-account contract storage)** are
 **out of scope for v1**. Task 0138 (`contract-token-balance-extraction`,
@@ -904,9 +916,14 @@ those columns.
   5 documented ingest-time derivations.
 - Every parser-produced field has a home; every non-parser field is
   explicitly excluded and attributed to its out-of-band pipeline.
-- 18/18 ADR 0027 tables covered: 10 direct, 5 derived (Derivation
-  map), and the enrichment columns on `tokens`, `nfts`,
-  `liquidity_pool_snapshots` explicitly owned by named follow-up tasks.
+- 17/18 ADR 0027 tables covered: 10 direct, 4 derived (Derivation
+  map: `transaction_hash_index`, `transaction_participants`,
+  `account_balances_current`, `account_balance_history`), 3
+  enrichment-dependent (`tokens`, `nfts`, `liquidity_pool_snapshots`
+  partial columns owned by tasks 0124/0125/0135 + future NFT metadata
+  task). The remaining **`lp_positions` is explicitly out of scope for
+  v1** — parser does not emit pool-share trustlines today (skipped at
+  `state.rs:225-226`); blocked by task 0126.
 
 ### Negative
 
@@ -920,6 +937,16 @@ those columns.
   populated rows during the transition window (v1 artifact ingester
   running, enrichment pipelines not yet deployed). Each enrichment
   task must handle the `NULL → value` `UPDATE` path cleanly.
+- `lp_positions` remains empty for the M1 window (endpoint E19 "pool
+  participants" returns no rows). Closing requires task 0126
+  unblock: parser extension to emit pool-share trustlines + an
+  additive artifact v1 amendment (new section or re-allowed
+  `asset_type = "pool"` in `balances[]`).
+- `transactions.inner_tx_hash` is populated by the artifact builder
+  via SHA-256 of the inner transaction XDR encoding (see §transactions
+  builder-computed fields). If the PR 2/3 builder implementation
+  defers the hash computation, rows start NULL; the UI fee-bump
+  detail link depends on it, so treat as a PR 2/3 acceptance criterion.
 
 ---
 
