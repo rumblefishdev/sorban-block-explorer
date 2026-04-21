@@ -1,10 +1,10 @@
 ---
 id: '0028'
 title: 'ParsedLedgerArtifact v1 — canonical shape of parsed_ledger_{seq}.json.zst'
-status: proposed
+status: superseded
 deciders: [stkrolikiewicz]
 related_tasks: ['0146', '0145', '0147', '0126', '0135']
-related_adrs: ['0011', '0012', '0018', '0023', '0024', '0026', '0027']
+related_adrs: ['0011', '0012', '0018', '0023', '0024', '0026', '0027', '0029']
 tags: [s3, artifact, schema, parser, foundation]
 links: []
 history:
@@ -18,6 +18,17 @@ history:
       against `xdr-parser` source to confirm parser actually produces it from
       a single `LedgerCloseMeta`; fields the parser always emits as None are
       excluded, not nulled.
+  - date: '2026-04-21'
+    status: superseded
+    who: stkrolikiewicz
+    by: ['0029']
+    note: >
+      Superseded wholesale by ADR 0029 after the 2026-04-21 team meeting
+      pivoted architecture away from parsed-ledger S3 artifacts. No bucket,
+      no artifact format — write path goes directly to ADR 0027 DB (task
+      0149); read path fetches raw XDR from public Stellar archive on
+      demand (task 0150). The shape spec here has no consumer in the new
+      architecture; kept in the repo as design archaeology.
 ---
 
 # ADR 0028: ParsedLedgerArtifact v1 — canonical shape of `parsed_ledger_{seq}.json.zst`
