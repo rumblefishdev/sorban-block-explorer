@@ -7,7 +7,15 @@ related_adr: ['0027', '0029']
 related_tasks: ['0149', '0145']
 blocked_by: []
 tags:
-  [layer-backend, layer-api, priority-high, effort-medium, adr-0029, read-path]
+  [
+    layer-backend,
+    layer-api,
+    priority-high,
+    effort-medium,
+    adr-0029,
+    read-path,
+    draft,
+  ]
 milestone: 1
 links:
   - lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md
@@ -22,6 +30,17 @@ history:
       or E14 (/contracts/:id/events) need heavy fields (memo, signatures,
       XDR blobs, full event topics + data), fetch raw .xdr.zst from the
       public Stellar archive at request time and parse in-process.
+  - date: '2026-04-21'
+    status: backlog
+    who: stkrolikiewicz
+    note: >
+      Marked DRAFT. Scope, acceptance criteria, and open questions here
+      are a starting point only — expected to be revised after task 0149
+      (write-path) completes. 0149 will finalise which fields actually
+      live in the ADR 0027 DB vs which genuinely need XDR fetch at read
+      time; it may also surface parser extensions (e.g. for 0126 /
+      0138) that shift the read-path scope. Don't treat this task body
+      as frozen; re-read and update when 0149 lands.
 ---
 
 # API-side XDR fetch + parse for E3 and E14 heavy fields
@@ -40,12 +59,21 @@ This replaces the read-path component of the abandoned ADR 0028
 artifact architecture. No parsed-ledger bucket on our side — the public
 archive is the authoritative source at request time.
 
-## Status: Backlog
+## Status: Backlog — DRAFT
 
-**Current state:** spec only. Implementation can start after task 0149
-(write path) lands — needs DB rows to look up ledger_sequence from
-tx hash or contract_id. Not a hard block; the XDR fetcher can be
-built and unit-tested in isolation.
+**Current state:** spec is a **draft** starting point, not a frozen
+contract. Expected to be revised after task 0149 (write-path)
+completes. 0149 finalises which fields live in the ADR 0027 DB
+vs which genuinely need XDR fetch at read time; until then, the
+list of heavy fields below should be treated as an upper bound.
+Additional parser extensions from tasks 0126 (LP participants) or
+0138 (Soroban per-account balances) may further reduce what this
+task needs to fetch from XDR.
+
+Implementation can in principle start in parallel with 0149 (the
+XDR fetcher + key construction are independent), but refining
+scope — and therefore acceptance criteria — is gated on 0149
+merge.
 
 ## Context
 
