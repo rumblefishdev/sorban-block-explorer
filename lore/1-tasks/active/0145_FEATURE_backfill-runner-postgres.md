@@ -57,6 +57,15 @@ history:
       concurrency, native AWS SDK, retry/resume, subcommands. Crate renamed
       `s3-backfill-pipeline` → `backfill-runner`; task slug renamed
       `s3-backfill-pipeline-parsed-zstd` → `backfill-runner-postgres`.
+  - date: '2026-04-21'
+    status: active
+    who: karolkow
+    note: >
+      Scope trim: dropping the optional local watermark file. DB-based resume
+      (single `SELECT sequence FROM ledgers` at startup) is the sole resume
+      mechanism — the `ledgers` table is already the source of truth and the
+      startup query is cheap enough that a side-channel file adds complexity
+      without payoff. Step 6 collapses into Step 4's resume logic.
 ---
 
 # Backfill runner: public Stellar S3 → Postgres (ADR 0027)
@@ -148,8 +157,9 @@ counterpart (0147) is being re-evaluated separately.
    Postgres connection via the shared `db::pool`.
 8. **Resume** — on startup, query the `ledgers` table for existing
    sequences in the requested range (single scan), build a
-   `HashSet<u32>`, and skip those in the range planner. Optional local
-   watermark file for fast warm-start. No separate state store.
+   `HashSet<u32>`, and skip those in the range planner. No separate
+   state store, no watermark file — the `ledgers` table is the sole
+   source of truth.
 9. **Retry** — per-ledger retry with exponential backoff (3 attempts
    default) around S3 fetch. Parse errors are not retried — they
    indicate a data-shape bug and should surface immediately. Persist
@@ -223,11 +233,10 @@ fetch → decompress → deserialize_batch → `process_ledger` per
 `tokio_retry` or hand-rolled exponential backoff around fetch.
 No retry on parse / persist.
 
-### Step 6 — Resume + watermark
+### Step 6 — Resume
 
-Cold start: sequence-set query. Warm start: local watermark file
-(highest contiguous sequence). Planner consults both. No race —
-single writer.
+Sequence-set query at startup (see Step 4). No watermark file, no
+side-channel state — the `ledgers` table is the only resume source.
 
 ### Step 7 — Observability + README
 

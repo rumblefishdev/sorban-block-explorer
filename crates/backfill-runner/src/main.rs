@@ -15,12 +15,6 @@ mod status;
 use clap::{Parser, Subcommand};
 use tracing::error;
 
-/// Default worker count. TODO: tune after measurement run (see README).
-const DEFAULT_WORKERS: usize = 4;
-
-/// Default chunk size (ledgers per worker job).
-const DEFAULT_CHUNK_SIZE: u32 = 100;
-
 #[derive(Parser)]
 #[command(name = "backfill-runner", version, about)]
 struct Cli {
@@ -28,12 +22,7 @@ struct Cli {
     command: Command,
 
     /// PostgreSQL connection string.
-    #[arg(
-        long,
-        env = "DATABASE_URL",
-        // default_value = "postgres://postgres:postgres@127.0.0.1:5432/soroban_block_explorer",
-        global = true
-    )]
+    #[arg(long, env = "DATABASE_URL", global = true)]
     database_url: String,
 }
 
@@ -49,12 +38,8 @@ enum Command {
         #[arg(long)]
         end: u32,
 
-        /// Number of concurrent worker tasks.
-        #[arg(long, default_value_t = DEFAULT_WORKERS)]
-        workers: usize,
-
-        /// Ledgers per worker job.
-        #[arg(long, default_value_t = DEFAULT_CHUNK_SIZE)]
+        /// Number of ledgers to process in each worker job (reserved).
+        #[arg(long, default_value_t = 100)]
         chunk_size: u32,
     },
 
@@ -80,9 +65,8 @@ async fn main() {
         Command::Run {
             start,
             end,
-            workers,
             chunk_size,
-        } => run::execute(&cli.database_url, start, end, workers, chunk_size).await,
+        } => run::execute(&cli.database_url, start, end, chunk_size).await,
         Command::Status { start, end } => status::execute(&cli.database_url, start, end).await,
     };
 

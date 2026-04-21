@@ -66,4 +66,42 @@ mod tests {
             "v1.1/stellar/ledgers/pubnet/FC4DB5FF--62016000-62079999/FC4D8B46--62026937.xdr.zst"
         );
     }
+
+    /// First Soroban-era ledger (Protocol 20 go-live, 2024-02-20). Guards
+    /// against off-by-one in the hex math at a known-good real sequence.
+    #[test]
+    fn soroban_start_ledger_partition() {
+        let p = Partition::from_ledger(50_457_424);
+        assert_eq!(p.start, 50_432_000);
+        assert_eq!(p.end, 50_495_999);
+        assert_eq!(p.hex, "FCFE77FF");
+    }
+
+    /// A sequence exactly on a partition boundary must land in the new
+    /// partition (start == seq), not the previous one.
+    #[test]
+    fn partition_boundary_start_is_inclusive() {
+        let p = Partition::from_ledger(62_016_000);
+        assert_eq!(p.start, 62_016_000);
+        assert_eq!(p.end, 62_079_999);
+    }
+
+    /// A sequence at the last slot of a partition must stay in that
+    /// partition, not roll forward.
+    #[test]
+    fn partition_boundary_end_is_inclusive() {
+        let p = Partition::from_ledger(62_079_999);
+        assert_eq!(p.start, 62_016_000);
+        assert_eq!(p.end, 62_079_999);
+    }
+
+    /// Adjacent ledgers that straddle a partition boundary must produce
+    /// different partitions — catches modular-arithmetic regressions.
+    #[test]
+    fn adjacent_ledgers_across_boundary_differ() {
+        let prev = Partition::from_ledger(62_015_999);
+        let next = Partition::from_ledger(62_016_000);
+        assert_ne!(prev, next);
+        assert_eq!(prev.end + 1, next.start);
+    }
 }

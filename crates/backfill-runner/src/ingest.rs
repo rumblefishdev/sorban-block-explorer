@@ -47,3 +47,75 @@ pub async fn ingest_ledger(
     );
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    //! End-to-end: public S3 fetch → parse → persist → re-run idempotency.
+    //!
+    //! Double-gated. Skips cleanly when either the DB or the public archive
+    //! is unreachable, so `cargo test -p backfill-runner` stays green on
+    //! workstations without network or Postgres. Exercised in anger via
+    //! Step 8 (staging dry-run) in the task plan.
+    //!
+    //! Run locally:
+    //!   DATABASE_URL=postgres://postgres:postgres@localhost:5432/soroban_block_explorer \
+    //!       cargo test -p backfill-runner --lib -- --test-threads=1 --nocapture
+    //!
+    //! Assumes the staging DB has ADR 0027 migrations applied and partitions
+    //! provisioned (or default partitions present) for the Soroban-era range.
+    use super::*;
+    use sqlx::PgPool;
+
+    /// First Soroban-era ledger — stable, small, always present in the archive.
+    const E2E_SEQ: u32 = 50_457_424;
+
+    #[tokio::test]
+    async fn ingest_real_ledger_is_idempotent() {
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("DATABASE_URL unset — skipping E2E ingest test");
+            return;
+        };
+        let pool = match PgPool::connect(&url).await {
+            Ok(p) => p,
+            Err(err) => {
+                eprintln!("DATABASE_URL unreachable ({err}) — skipping E2E ingest test");
+                return;
+            }
+        };
+        let client = crate::source::build_client().await;
+
+        // Probe S3 first so a network-blocked workstation skips cleanly
+        // instead of failing inside the ingest pipeline.
+        match crate::source::fetch_ledger_with_retry(&client, E2E_SEQ, 1).await {
+            Ok(_) => {}
+            Err(err) => {
+                eprintln!("public S3 unreachable ({err}) — skipping E2E ingest test");
+                return;
+            }
+        }
+
+        ingest_ledger(&client, &pool, E2E_SEQ)
+            .await
+            .expect("first ingest must succeed");
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ledgers WHERE sequence = $1")
+            .bind(i64::from(E2E_SEQ))
+            .fetch_one(&pool)
+            .await
+            .expect("count query");
+        assert_eq!(count, 1, "ledger row must exist after ingest");
+
+        // Replay must be a no-op (existence check in process_ledger).
+        ingest_ledger(&client, &pool, E2E_SEQ)
+            .await
+            .expect("replay ingest must be idempotent, not error");
+
+        let count_after: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM ledgers WHERE sequence = $1")
+                .bind(i64::from(E2E_SEQ))
+                .fetch_one(&pool)
+                .await
+                .expect("count query");
+        assert_eq!(count_after, 1, "replay must not duplicate the ledger row");
+    }
+}

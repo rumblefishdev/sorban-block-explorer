@@ -30,4 +30,12 @@ pub enum BackfillError {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
+
+    /// Command-line argument validation failed.
+    #[error("invalid argument: {0}")]
+    InvalidArgument(String),
+
+    /// The requested sequence range is invalid (e.g. start > end).
+    #[error("invalid sequence range: {0}")]
+    InvalidRange(String),
 }
