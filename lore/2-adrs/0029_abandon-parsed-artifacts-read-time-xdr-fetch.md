@@ -120,7 +120,7 @@ scaffold).
    ```
 
 6. **Caching is deferred.** Add cache only if measured hot-path latency
-   proves insufficient. Spawn task 0151 at that point, not before.
+   proves insufficient. Spawn a dedicated cache task (ID assigned at spawn time) at that point, not before.
 
 7. **Production backfill gated on read-path validation.** The
    production run of task 0145 (not its implementation) waits for task
@@ -209,7 +209,7 @@ public archive at request time. Task 0150 carries that specific work.
   baseline p95 will be measurably higher than a DB-only endpoint.
 - **Rate limits and egress accounting shift upstream.** High-traffic
   detail endpoints hit the public bucket repeatedly. If sustained
-  traffic or cost proves material, task 0151 (cache layer) is the
+  traffic or cost proves material, a dedicated cache task (cache layer) is the
   follow-up.
 - **Lost work on ADR 0028 and task 0146.** The artifact shape spec
   and the scaffold are not reusable in the new architecture. Value
@@ -265,9 +265,9 @@ load.
 concerns and consistency questions. Defers rather than removes the
 complexity of ADR 0028.
 
-**Decision:** DEFERRED — treat as a potential implementation of task
-0151 (cache layer) once measurement justifies; not committed as the
-default approach.
+**Decision:** DEFERRED — treat as a potential implementation of the
+dedicated cache-layer follow-up task (ID assigned at spawn) once
+measurement justifies; not committed as the default approach.
 
 ---
 
@@ -281,7 +281,7 @@ default approach.
 | 2               | Task 0150 — API-side XDR fetcher + `extract_*` invocation for E3 / E14                                           |
 | 3               | Integration test: live Galexie ingest of a sample range; API endpoint checks pass for light **and** heavy fields |
 | 4               | Production backfill run (task 0145 execution, not implementation)                                                |
-| 5 (conditional) | Task 0151 cache layer if measured latency requires                                                               |
+| 5 (conditional) | Cache-layer task (ID assigned at spawn) if measured latency requires                                             |
 
 Phases 1 and 2 run in parallel. Phase 4 is gated on Phase 3
 completion. Karol's rescope of 0145 (commit `ebb307c`) is consistent
@@ -307,7 +307,7 @@ partition_start` for partition directories per
    does the API set before returning "heavy fields temporarily
    unavailable"? Task 0150 open.
 3. **Observability**: metrics on public-archive GET latency, parse
-   time, cache hit rate (once 0151 lands). Scope in 0150.
+   time, cache hit rate (once the cache task lands). Scope in 0150.
 4. **Lost enrichment insurance**: without a parsed corpus, a parser
    bug discovered in production requires re-running ingest against the
    public archive. Acceptable given the archive is upstream-authoritative;

@@ -141,8 +141,9 @@ Per ADR 0027 Part III:
 
 ### Out of scope
 
-- **Cache layer** — deferred to task 0151 (to be spawned only if
-  measured hot-path latency is unacceptable).
+- **Cache layer** — deferred to a dedicated follow-up task (to be
+  spawned only if measured hot-path latency is unacceptable; ID
+  assigned at spawn time).
 - **Any write-path work** — task 0149 owns `persist_ledger`.
 - **Light-field endpoints** — endpoints E1/E2/E4-E13/E15-E22 remain
   DB-only and are unaffected by this task.
@@ -196,7 +197,7 @@ Per ADR 0027 Part III:
 
 - **Public S3 availability** = E3 and E14 availability. Two of 22
   endpoints depend on upstream uptime. Other 20 endpoints unaffected.
-- **Cache follow-up**: task 0151 spawned only after measurement shows
+- **Cache follow-up**: dedicated follow-up task spawned only after measurement shows
   need. Do not pre-engineer.
 - **Design archaeology**: earlier artifact-based approach (ADR 0028 +
   task 0146) is documented in PR #100 + git history; the shape-level
