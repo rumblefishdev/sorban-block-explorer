@@ -218,6 +218,15 @@ async fn run_all_steps(
 ) -> Result<(), HandlerError> {
     let ledger_sequence = staged.ledger_sequence;
 
+    // Async commit — skip the per-commit fsync wait. Safe for this indexer
+    // because the S3 event source + Lambda retry policy provides end-to-end
+    // durability: a crash between COMMIT and fsync simply re-delivers the
+    // ledger event and we re-ingest idempotently. Saves the commit-fsync
+    // latency (~5–15 ms on typical disks) from every ledger.
+    sqlx::query("SET LOCAL synchronous_commit = off")
+        .execute(&mut **db_tx)
+        .await?;
+
     let t = Instant::now();
     let account_ids = write::upsert_accounts(db_tx, staged).await?;
     timings.accounts_ms = t.elapsed().as_millis();

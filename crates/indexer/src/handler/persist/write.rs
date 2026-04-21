@@ -526,12 +526,11 @@ pub(super) async fn insert_operations(
             continue;
         }
 
-        // `operations.pool_id` → `liquidity_pools.pool_id` FK must hold, but a
-        // backfill starting mid-stream can see DEPOSIT/WITHDRAW ops targeting
-        // pools created in un-indexed earlier ledgers. Nullify pool_id when
-        // the referenced pool is not present (neither pre-existing nor just
-        // upserted this ledger). The op row stays; the pool lookup column
-        // simply turns NULL for those historical references.
+        // `operations.pool_id` → `liquidity_pools.pool_id` FK must hold, but
+        // a backfill starting mid-stream can see DEPOSIT/WITHDRAW ops
+        // targeting pools created in un-indexed earlier ledgers. Nullify
+        // pool_id when the referenced pool is not present; the op row stays,
+        // only the FK link turns NULL for historical references.
         sqlx::query(
             r#"
             INSERT INTO operations (
@@ -1448,36 +1447,105 @@ async fn append_balance_history(
     if rows.is_empty() {
         return Ok(());
     }
+    // Partition by identity class — the partial unique indexes
+    // (uidx_abh_native / uidx_abh_credit) are disjoint, so each class gets
+    // its own INSERT with ON CONFLICT DO NOTHING against the matching index.
+    // Replaces the prior anti-join (which scanned account_balance_history
+    // per row) with a direct unique-index lookup — O(log n) instead of O(n).
+    let (natives, credits): (Vec<&BalanceRow>, Vec<&BalanceRow>) =
+        rows.iter().partition(|r| r.asset_type == "native");
+
+    append_balance_history_native(db_tx, &natives, account_ids).await?;
+    append_balance_history_credit(db_tx, &credits, account_ids).await?;
+    Ok(())
+}
+
+async fn append_balance_history_native(
+    db_tx: &mut Transaction<'_, Postgres>,
+    rows: &[&BalanceRow],
+    account_ids: &HashMap<String, i64>,
+) -> Result<(), HandlerError> {
+    if rows.is_empty() {
+        return Ok(());
+    }
     for chunk in rows.chunks(CHUNK_SIZE) {
         let mut accts: Vec<i64> = Vec::with_capacity(chunk.len());
         let mut ls: Vec<i64> = Vec::with_capacity(chunk.len());
-        let mut types: Vec<String> = Vec::with_capacity(chunk.len());
-        let mut codes: Vec<Option<String>> = Vec::with_capacity(chunk.len());
-        let mut issuers: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
         let mut bals: Vec<String> = Vec::with_capacity(chunk.len());
         let mut ca: Vec<DateTime<Utc>> = Vec::with_capacity(chunk.len());
 
         for r in chunk {
-            accts.push(resolve_id(account_ids, &r.account_str_key, "abh.account")?);
-            ls.push(r.last_updated_ledger);
-            types.push(r.asset_type.clone());
-            codes.push(r.asset_code.clone());
-            issuers.push(resolve_opt_id(
+            accts.push(resolve_id(
                 account_ids,
-                r.issuer_str_key.as_deref(),
-                "abh.issuer",
+                &r.account_str_key,
+                "abh.native.account",
             )?);
+            ls.push(r.last_updated_ledger);
             bals.push(r.balance.clone());
             ca.push(r.created_at);
         }
 
-        // account_balance_history is partitioned; no single natural UNIQUE,
-        // but the two partial uidx (native + credit) give us per-shape
-        // idempotency. Rely on ON CONFLICT DO NOTHING with a constraint-less
-        // form: each inserted row matches either uidx_abh_native or
-        // uidx_abh_credit (never both). Because those are unique indexes (not
-        // constraints), we can't use ON CONFLICT by constraint name — so we
-        // route through a WHERE NOT EXISTS anti-join instead.
+        sqlx::query(
+            r#"
+            INSERT INTO account_balance_history
+                (account_id, ledger_sequence, asset_type, asset_code, issuer_id, balance, created_at)
+            SELECT acct, ls, 'native', NULL, NULL, bal::NUMERIC(28,7), ca
+              FROM UNNEST($1::BIGINT[], $2::BIGINT[], $3::TEXT[], $4::TIMESTAMPTZ[])
+                AS t(acct, ls, bal, ca)
+            ON CONFLICT (account_id, ledger_sequence, created_at) WHERE asset_type = 'native'
+            DO NOTHING
+            "#,
+        )
+        .bind(&accts)
+        .bind(&ls)
+        .bind(&bals)
+        .bind(&ca)
+        .execute(&mut **db_tx)
+        .await?;
+    }
+    Ok(())
+}
+
+async fn append_balance_history_credit(
+    db_tx: &mut Transaction<'_, Postgres>,
+    rows: &[&BalanceRow],
+    account_ids: &HashMap<String, i64>,
+) -> Result<(), HandlerError> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    for chunk in rows.chunks(CHUNK_SIZE) {
+        let mut accts: Vec<i64> = Vec::with_capacity(chunk.len());
+        let mut ls: Vec<i64> = Vec::with_capacity(chunk.len());
+        let mut types: Vec<String> = Vec::with_capacity(chunk.len());
+        let mut codes: Vec<String> = Vec::with_capacity(chunk.len());
+        let mut issuers: Vec<i64> = Vec::with_capacity(chunk.len());
+        let mut bals: Vec<String> = Vec::with_capacity(chunk.len());
+        let mut ca: Vec<DateTime<Utc>> = Vec::with_capacity(chunk.len());
+
+        for r in chunk {
+            let Some(code) = r.asset_code.as_ref() else {
+                continue;
+            };
+            let Some(issuer_key) = r.issuer_str_key.as_ref() else {
+                continue;
+            };
+            accts.push(resolve_id(
+                account_ids,
+                &r.account_str_key,
+                "abh.credit.account",
+            )?);
+            ls.push(r.last_updated_ledger);
+            types.push(r.asset_type.clone());
+            codes.push(code.clone());
+            issuers.push(resolve_id(account_ids, issuer_key, "abh.credit.issuer")?);
+            bals.push(r.balance.clone());
+            ca.push(r.created_at);
+        }
+        if accts.is_empty() {
+            continue;
+        }
+
         sqlx::query(
             r#"
             INSERT INTO account_balance_history
@@ -1486,15 +1554,9 @@ async fn append_balance_history(
               FROM UNNEST(
                 $1::BIGINT[], $2::BIGINT[], $3::VARCHAR[], $4::VARCHAR[], $5::BIGINT[], $6::TEXT[], $7::TIMESTAMPTZ[]
               ) AS t(acct, ls, ty, code, issuer, bal, ca)
-             WHERE NOT EXISTS (
-                SELECT 1 FROM account_balance_history h
-                 WHERE h.account_id     = t.acct
-                   AND h.ledger_sequence = t.ls
-                   AND h.created_at     = t.ca
-                   AND h.asset_type     = t.ty
-                   AND (h.asset_code    IS NOT DISTINCT FROM t.code)
-                   AND (h.issuer_id     IS NOT DISTINCT FROM t.issuer)
-             )
+            ON CONFLICT (account_id, ledger_sequence, asset_code, issuer_id, created_at)
+              WHERE asset_type <> 'native'
+            DO NOTHING
             "#,
         )
         .bind(&accts)

@@ -525,12 +525,27 @@ impl Staged {
         }
 
         // --- events flatten + transfer topic parse -------------------------
+        //
+        // Filter out event_type = "diagnostic". Per Stellar docs these are
+        // debug-only traces (fn_call / fn_return / core_metrics / log /
+        // error / host_fn_failed) emitted by the Soroban host VM and by
+        // stellar-core's InvokeHostFunctionOpFrame; they are explicitly
+        // "not hashed into the ledger, and therefore are not part of the
+        // protocol" and "not useful for most users". ADR 0027 routes them
+        // to S3 (advanced tx detail via E3), not to `soroban_events`.
+        // On a mainnet sample they are ~85 % of event volume and dominate
+        // events_ms in persist_ledger. Keep "contract" and "system".
         let mut event_rows: Vec<EventRow> = Vec::new();
+        let mut diagnostic_dropped = 0usize;
         for (tx_hash, evs) in events {
             let Some(&created_at) = tx_created_at.get(tx_hash) else {
                 continue;
             };
             for ev in evs {
+                if ev.event_type == "diagnostic" {
+                    diagnostic_dropped += 1;
+                    continue;
+                }
                 let topic0 = ev
                     .topics
                     .as_array()
@@ -555,6 +570,14 @@ impl Staged {
                     created_at,
                 });
             }
+        }
+        if diagnostic_dropped > 0 {
+            tracing::debug!(
+                ledger_sequence = ledger.sequence,
+                diagnostic_dropped,
+                persisted = event_rows.len(),
+                "staged events (diagnostic filtered — S3 lane per ADR 0027)"
+            );
         }
 
         // --- invocations flatten -------------------------------------------

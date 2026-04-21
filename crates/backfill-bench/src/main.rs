@@ -41,6 +41,11 @@ struct Args {
     /// Delete partition files after indexing
     #[arg(long, default_value_t = false)]
     cleanup: bool,
+
+    /// Fail the run (exit 1) if per-ledger p95 exceeds this many milliseconds.
+    /// Unset = report only, never fail. Task 0149 SLO is 150.
+    #[arg(long)]
+    assert_p95_ms: Option<u128>,
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +195,9 @@ struct IndexStats {
 }
 
 /// Index ledgers in [range_start, range_end] from a downloaded partition.
+/// Appends per-ledger wall-clock durations (in ms) to `latencies_ms` so the
+/// caller can aggregate percentiles across the whole run.
+#[allow(clippy::too_many_arguments)]
 async fn index_partition(
     partition: &Partition,
     range_start: u32,
@@ -197,6 +205,7 @@ async fn index_partition(
     pool: &PgPool,
     global_timer: &Instant,
     global_indexed: &mut usize,
+    latencies_ms: &mut Vec<u128>,
     cleanup: bool,
 ) -> Result<IndexStats, Box<dyn std::error::Error>> {
     let mut indexed = 0usize;
@@ -227,7 +236,12 @@ async fn index_partition(
         let xdr_bytes = xdr_parser::decompress_zstd(&compressed)?;
         let batch = xdr_parser::deserialize_batch(&xdr_bytes)?;
         for ledger_meta in batch.ledger_close_metas.iter() {
+            // Measure parse + persist wall-clock per ledger — the per-ledger
+            // SLO in task 0149 is defined over this envelope, matching what
+            // the indexer Lambda does in production.
+            let t = Instant::now();
             indexer::handler::process::process_ledger(ledger_meta, pool, None).await?;
+            latencies_ms.push(t.elapsed().as_millis());
         }
 
         if cleanup {
@@ -250,6 +264,50 @@ async fn index_partition(
     }
 
     Ok(IndexStats { indexed, skipped })
+}
+
+// ---------------------------------------------------------------------------
+// Percentiles
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+struct LatencyStats {
+    count: usize,
+    min_ms: u128,
+    max_ms: u128,
+    p50_ms: u128,
+    p95_ms: u128,
+    p99_ms: u128,
+    mean_ms: f64,
+}
+
+/// Nearest-rank percentile over a caller-sorted slice.
+fn percentile(sorted_asc: &[u128], p: f64) -> u128 {
+    if sorted_asc.is_empty() {
+        return 0;
+    }
+    let n = sorted_asc.len() as f64;
+    // Clamp to [1, len] so p=0 maps to first and p=100 maps to last.
+    let rank = ((p / 100.0 * n).ceil() as usize).clamp(1, sorted_asc.len());
+    sorted_asc[rank - 1]
+}
+
+fn summarize(latencies_ms: &[u128]) -> Option<LatencyStats> {
+    if latencies_ms.is_empty() {
+        return None;
+    }
+    let mut sorted = latencies_ms.to_vec();
+    sorted.sort_unstable();
+    let sum: u128 = sorted.iter().sum();
+    Some(LatencyStats {
+        count: sorted.len(),
+        min_ms: *sorted.first().unwrap(),
+        max_ms: *sorted.last().unwrap(),
+        p50_ms: percentile(&sorted, 50.0),
+        p95_ms: percentile(&sorted, 95.0),
+        p99_ms: percentile(&sorted, 99.0),
+        mean_ms: sum as f64 / sorted.len() as f64,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -334,6 +392,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut total_indexed = 0usize;
     let mut total_skipped = 0usize;
     let mut total_download_secs = 0.0f64;
+    let mut latencies_ms: Vec<u128> = Vec::with_capacity(total_range);
 
     // ── Pipeline: download N+1 while indexing N ───────────────────────
     // Download first partition (cold start — must wait)
@@ -373,6 +432,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &pool,
             &idx_timer,
             &mut total_indexed,
+            &mut latencies_ms,
             args.cleanup,
         )
         .await?;
@@ -427,6 +487,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Download time:    {:.1}s", total_download_secs);
     info!("Index time:       {:.1}s", idx_elapsed.as_secs_f64());
     info!("Avg per ledger:   {avg_ms:.0} ms (index only)");
+
+    // ── Per-ledger latency percentiles (task 0149 SLO: p95 ≤ 150ms) ─────
+    if let Some(stats) = summarize(&latencies_ms) {
+        info!("=== Per-ledger latency ===");
+        info!("Samples:          {}", stats.count);
+        info!("min:              {:>4} ms", stats.min_ms);
+        info!("mean:             {:>4.0} ms", stats.mean_ms);
+        info!("p50:              {:>4} ms", stats.p50_ms);
+        info!("p95:              {:>4} ms", stats.p95_ms);
+        info!("p99:              {:>4} ms", stats.p99_ms);
+        info!("max:              {:>4} ms", stats.max_ms);
+
+        if let Some(threshold) = args.assert_p95_ms {
+            if stats.p95_ms > threshold {
+                error!(
+                    p95_ms = stats.p95_ms,
+                    threshold_ms = threshold,
+                    "p95 latency exceeds SLO — exiting non-zero"
+                );
+                std::process::exit(1);
+            } else {
+                info!(
+                    p95_ms = stats.p95_ms,
+                    threshold_ms = threshold,
+                    "p95 within SLO"
+                );
+            }
+        }
+    } else {
+        warn!("no ledgers measured — skipping latency summary");
+    }
 
     Ok(())
 }
