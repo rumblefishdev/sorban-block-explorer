@@ -292,12 +292,17 @@ merge.
 
 ## Open questions
 
-1. **Public archive key-construction**: Galexie filenames encode
-   `{hex_prefix}--{start}-{end}.xdr.zst` where the hex prefix is
-   derived from the batch number. Task 0150 needs a deterministic
-   forward map (`ledger_sequence → batch key`) or a narrow S3 list;
-   `xdr-parser` already has the reverse parse (`parse_s3_key`) —
-   verify symmetry during 0150 scoping.
+1. **Public archive key-construction**: Galexie/public-archive keys
+   use a partition directory + file naming scheme. The 8-char hex
+   component is derived from reverse ledger ordering (`u32::MAX -
+ledger` per `xdr-parser::parse_s3_key` docs; `u32::MAX -
+partition_start` for partition directories per
+   `backfill-bench::Partition::from_ledger`), while the file name
+   carries the `{start}[-{end}].xdr.zst` range. Task 0150 needs a
+   deterministic forward map
+   (`ledger_sequence → partition_dir/file_key`) or a narrow S3 list;
+   `xdr-parser` already has the reverse parse — verify symmetry
+   during 0150 scoping.
 2. **Timeout and fallback for public S3 GET**: what p99 latency budget
    does the API set before returning "heavy fields temporarily
    unavailable"? Task 0150 open.

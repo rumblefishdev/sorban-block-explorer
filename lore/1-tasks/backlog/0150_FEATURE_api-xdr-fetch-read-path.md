@@ -106,15 +106,21 @@ Per ADR 0027 Part III:
    mode against `aws-public-blockchain`. Reuse `xdr-parser` primitives
    (`decompress_zstd`, `deserialize_batch`) rather than reimplementing.
 3. **Ledger-sequence → S3 key mapping** — Galexie filenames are
-   `{hex_prefix}--{start}[-{end}].xdr.zst` where the hex prefix is
-   derived from the batch number. `xdr-parser::parse_s3_key` already
-   parses this format in reverse; task needs the forward direction.
+   `{hex_prefix}--{start}[-{end}].xdr.zst` where the hex prefix
+   follows the repo's existing reversed/XOR convention:
+   `u32::MAX - ledger` for file keys, `u32::MAX - partition_start`
+   for partition (folder) keys. See
+   `crates/xdr-parser/src/lib.rs::parse_s3_key` docs and
+   `crates/backfill-bench/src/main.rs::Partition::from_ledger` for
+   the existing implementations. `parse_s3_key` already parses this
+   format in reverse; task needs the forward direction using the
+   same formula.
    Options:
-   - Deterministic construction from `ledger_sequence` if the
-     hex-prefix formula is documented or reverse-engineerable.
-   - Narrow S3 `ListObjectsV2` query per request if direct
-     construction is not feasible.
-     Pick one during scoping.
+   - Deterministic construction from `ledger_sequence` /
+     `partition_start` using the documented existing convention.
+   - Narrow S3 `ListObjectsV2` query per request only as a fallback
+     if a batch file contains a variable `-{end}` suffix that the
+     forward map alone cannot resolve.
 4. **Per-endpoint extractors** — thin wrappers that call the right
    `xdr-parser::extract_*` functions for each endpoint's payload:
    - E3: `extract_transactions` (memo, result_code), envelope-level
@@ -164,10 +170,15 @@ Per ADR 0027 Part III:
 
 ## Open questions
 
-1. **Key construction**: can we forward-derive the Galexie hex prefix
-   from `ledger_sequence` deterministically, or does the API need a
-   per-request S3 list? Affects latency budget materially. Scope
-   early.
+1. **Key construction**: implement the forward mapping using the
+   existing repo convention (`u32::MAX - ledger` for file keys,
+   `u32::MAX - partition_start` for partition directories; see
+   `xdr-parser::parse_s3_key` and `backfill-bench::Partition`). Add
+   unit tests that verify round-trip symmetry with
+   `xdr-parser::parse_s3_key`. An S3 list fallback remains open if
+   any observed batch file has a variable `-{end}` suffix the
+   forward map cannot reconstruct deterministically. Affects latency
+   budget materially; scope early.
 2. **Timeout budget**: what p99 latency does the API promise for E3
    and E14? Determines aggressive-vs-conservative timeout configuration
    on the public S3 GET.
