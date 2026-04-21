@@ -2,7 +2,7 @@
 id: '0151'
 title: 'Implement ADR 0030: soroban_contracts surrogate BIGINT id + migrate 5 FK tables'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0026', '0027', '0030']
 related_tasks: ['0149']
 tags:
@@ -35,6 +35,15 @@ history:
       Replaces the earlier 0150_PERF task — diagnostic-event filter in 0149
       already captured the majority of the perf win; contract surrogate is the
       clean next lever and fits an ADR-shaped design.
+  - date: '2026-04-21'
+    status: active
+    who: fmazur
+    note: >
+      Activating — starting ADR 0030 implementation (soroban_contracts
+      surrogate BIGINT id + 5 FK table migration). Task 0149 landed on
+      develop via PR #101, so the write-path this task extends
+      (register_referenced_contracts, upsert_accounts pattern) is now in
+      place.
 ---
 
 # Implement ADR 0030: `soroban_contracts` surrogate BIGINT id + migrate 5 FK tables
