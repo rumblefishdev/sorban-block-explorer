@@ -3,11 +3,17 @@
 //! `aws-public-blockchain` is a public bucket — requests are unsigned.
 //! We stream `.xdr.zst` objects directly into memory; no local scratch dir.
 
+use std::time::Duration;
+
 use aws_config::BehaviorVersion;
 use aws_sdk_s3::{Client, config::Region, error::SdkError, operation::get_object::GetObjectError};
+use tracing::warn;
 
 use crate::error::BackfillError;
 use crate::partition;
+
+/// Initial backoff between fetch retries. Doubles each attempt.
+const RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
 
 /// Build an unsigned S3 client pinned to `us-east-1` (bucket region).
 pub async fn build_client() -> Client {
@@ -48,4 +54,27 @@ pub async fn fetch_ledger(client: &Client, seq: u32) -> Result<Vec<u8>, Backfill
             key,
             source: Box::new(e),
         })
+}
+
+/// Fetch with exponential backoff. Retries transient S3 failures; surfaces
+/// `S3NotFound` immediately (archive gap, not a transient error).
+pub async fn fetch_ledger_with_retry(
+    client: &Client,
+    seq: u32,
+    attempts: u32,
+) -> Result<Vec<u8>, BackfillError> {
+    let mut delay = RETRY_BASE_DELAY;
+    for attempt in 1..=attempts {
+        match fetch_ledger(client, seq).await {
+            Ok(bytes) => return Ok(bytes),
+            Err(err @ BackfillError::S3NotFound { .. }) => return Err(err),
+            Err(err) if attempt == attempts => return Err(err),
+            Err(err) => {
+                warn!(seq, attempt, error = %err, "s3 fetch failed, retrying");
+                tokio::time::sleep(delay).await;
+                delay = delay.saturating_mul(2);
+            }
+        }
+    }
+    unreachable!("retry loop exits via return")
 }

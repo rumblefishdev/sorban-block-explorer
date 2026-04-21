@@ -30,9 +30,4 @@ pub enum BackfillError {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
-
-    /// Run finished but some sequences were absent from the public archive.
-    /// Not fatal per-ledger — aggregated at the end so the runner exits non-zero.
-    #[error("{} sequences missing from archive", .0.len())]
-    MissingLedgers(Vec<u32>),
 }

@@ -10,6 +10,9 @@ use tracing::info;
 use crate::error::BackfillError;
 use crate::source;
 
+/// Number of S3 fetch attempts per ledger before surfacing the error.
+pub const FETCH_ATTEMPTS: u32 = 3;
+
 /// Fetch, decompress, deserialize, and persist one ledger sequence.
 pub async fn ingest_ledger(
     client: &S3Client,
@@ -17,7 +20,7 @@ pub async fn ingest_ledger(
     seq: u32,
 ) -> Result<(), BackfillError> {
     let fetch_start = Instant::now();
-    let compressed = source::fetch_ledger(client, seq).await?;
+    let compressed = source::fetch_ledger_with_retry(client, seq, FETCH_ATTEMPTS).await?;
     let fetch_ms = fetch_start.elapsed().as_millis();
 
     let parse_start = Instant::now();

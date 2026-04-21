@@ -7,11 +7,13 @@
 mod error;
 mod ingest;
 mod partition;
+mod resume;
 mod run;
 mod source;
+mod status;
 
 use clap::{Parser, Subcommand};
-use tracing::{error, info};
+use tracing::error;
 
 /// Default worker count. TODO: tune after measurement run (see README).
 const DEFAULT_WORKERS: usize = 4;
@@ -81,10 +83,7 @@ async fn main() {
             workers,
             chunk_size,
         } => run::execute(&cli.database_url, start, end, workers, chunk_size).await,
-        Command::Status { start, end } => {
-            info!(start, end, "status subcommand — Phase D stub");
-            todo!("Phase D: status subcommand")
-        }
+        Command::Status { start, end } => status::execute(&cli.database_url, start, end).await,
     };
 
     if let Err(err) = result {
