@@ -77,7 +77,7 @@ pub async fn execute(
         }
 
         processed += 1;
-        if processed % PROGRESS_EVERY == 0 || processed == pending_total {
+        if processed.is_multiple_of(PROGRESS_EVERY) || processed == pending_total {
             log_progress(processed, gaps, pending_total, run_start.elapsed());
         }
     }
