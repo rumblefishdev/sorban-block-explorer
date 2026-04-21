@@ -788,6 +788,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "backfill-runner"
+version = "0.1.0"
+dependencies = [
+ "aws-config",
+ "aws-sdk-s3",
+ "chrono",
+ "clap",
+ "db",
+ "indexer",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "xdr-parser",
+]
+
+[[package]]
 name = "base16ct"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

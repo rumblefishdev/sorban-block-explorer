@@ -1,0 +1,23 @@
+[package]
+name = "backfill-runner"
+version = "0.1.0"
+edition = "2024"
+description = "Production-grade Stellar pubnet backfill runner — public S3 → Postgres via parse-and-persist"
+
+[[bin]]
+name = "backfill-runner"
+path = "src/main.rs"
+
+[dependencies]
+indexer = { path = "../indexer" }
+xdr-parser = { path = "../xdr-parser" }
+db = { path = "../db" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "signal"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+sqlx = { workspace = true }
+clap = { version = "4", features = ["derive", "env"] }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+aws-config = { workspace = true }
+aws-sdk-s3 = "1"

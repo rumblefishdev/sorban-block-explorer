@@ -9,6 +9,7 @@ members = [
     "crates/db-partition-mgmt",
     "crates/domain",
     "crates/backfill-bench",
+    "crates/backfill-runner",
 ]
 
 [workspace.dependencies]
