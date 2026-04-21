@@ -253,6 +253,45 @@ async fn index_partition(
 }
 
 // ---------------------------------------------------------------------------
+// Local DEFAULT partition bootstrap
+// ---------------------------------------------------------------------------
+
+/// Create a DEFAULT partition on each partitioned table if one doesn't exist.
+/// Idempotent — `CREATE TABLE IF NOT EXISTS` per table.
+async fn ensure_local_default_partitions(
+    pool: &PgPool,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    const TABLES: &[&str] = &[
+        "transactions",
+        "operations",
+        "transaction_participants",
+        "soroban_events",
+        "soroban_invocations",
+        "nft_ownership",
+        "liquidity_pool_snapshots",
+        "account_balance_history",
+    ];
+    for table in TABLES {
+        let ddl =
+            format!("CREATE TABLE IF NOT EXISTS {table}_default PARTITION OF {table} DEFAULT");
+        if let Err(err) = sqlx::query(&ddl).execute(pool).await {
+            // 42P07 = duplicate_table. If it exists under a slightly different
+            // form (e.g. attached range partitions already own the slice), skip.
+            let code = match &err {
+                sqlx::Error::Database(db) => db.code().map(|c| c.into_owned()),
+                _ => None,
+            };
+            if code.as_deref() != Some("42P07") {
+                warn!(table, error = %err, "default-partition bootstrap failed");
+            }
+        } else {
+            info!(table, "local DEFAULT partition ensured");
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -282,6 +321,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let pool = db::pool::create_pool(&args.database_url)?;
     info!("connected to database");
+
+    // Partition-management Lambda is the authoritative partition provisioner
+    // in production; it currently covers only 3 of the 8 partitioned tables
+    // (see task 0149 Out of Scope). Locally we bootstrap DEFAULT partitions
+    // on the remaining tables so backfill-bench can exercise the write-path
+    // end-to-end without provisioning every monthly range by hand.
+    ensure_local_default_partitions(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
     let mut total_indexed = 0usize;
     let mut total_skipped = 0usize;

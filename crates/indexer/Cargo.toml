@@ -29,4 +29,5 @@ chrono = { workspace = true }
 thiserror = { workspace = true }
 sqlx = { workspace = true }
 stellar-xdr = { workspace = true }
+hex = { workspace = true }
 percent-encoding = "2"
