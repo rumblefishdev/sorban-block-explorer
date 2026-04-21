@@ -2,7 +2,7 @@
 id: '0145'
 title: 'Backfill runner: public Stellar S3 → parsed JSON.zst on our S3'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0012', '0027', '0028']
 related_tasks: ['0146', '0147', '0117', '0140', '0141', '0142']
 blocked_by: ['0146']
@@ -42,6 +42,11 @@ history:
       idempotent upload, resume. Shape suitable as an onboarding task —
       self-contained, no schema decisions required. Parallel with live
       lambda (0147) once 0146 API is frozen.
+  - date: '2026-04-21'
+    status: active
+    who: karolkow
+    note: >
+      Activated. Picking up the runner work.
 ---
 
 # Backfill runner: public Stellar S3 → parsed JSON.zst on our S3
