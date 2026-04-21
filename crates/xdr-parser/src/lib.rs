@@ -19,7 +19,6 @@ pub mod state;
 pub mod transaction;
 pub mod types;
 
-pub mod artifact;
 pub mod envelope;
 mod xdr_limits;
 
