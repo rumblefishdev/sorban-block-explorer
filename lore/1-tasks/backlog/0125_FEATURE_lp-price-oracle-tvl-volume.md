@@ -54,7 +54,7 @@ Price oracle calls and trade aggregation add latency/failure modes to the critic
    EventBridge cron (every 5 min for TVL/volume, reuses 0124 Lambda or creates new one).
 2. **Price oracle**: Integrate external price feed (CoinGecko, StellarExpert API, or
    Horizon aggregation endpoint) to get USD prices for pool assets.
-3. **TVL computation**: reserve_a _ price_a + reserve_b _ price_b, updated per snapshot.
+3. **TVL computation**: reserve*a * price*a + reserve_b * price_b, updated per snapshot.
 4. **Volume tracking**: Identify `PathPayment` operations that modify pool reserves.
 5. **Fee revenue**: volume \* (fee_bps / 10000). Fee is immutable (set at pool creation).
 

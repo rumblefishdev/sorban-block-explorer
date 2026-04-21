@@ -1,29 +1,36 @@
-//! NFT domain type matching the `nfts` PostgreSQL table.
+//! NFT domain types matching the `nfts` and `nft_ownership` PostgreSQL tables.
+//!
+//! Schema: ADR 0027 Part I §12, §13. `nfts` gains a surrogate SERIAL PK;
+//! identity is still `(contract_id, token_id)` (UNIQUE). Ownership history
+//! lives in the partitioned `nft_ownership` table.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// NFT record as stored in PostgreSQL.
-///
-/// Composite PK: `(contract_id, token_id)`. Derived-state entity with
-/// `last_seen_ledger` watermark for concurrency-safe upserts.
+/// Current NFT state (ADR 0027 §12).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Nft {
-    /// Parent contract (FK to soroban_contracts.contract_id).
+    pub id: i32,
     pub contract_id: String,
-    /// Token identifier within the contract (up to 256 chars).
     pub token_id: String,
-    /// Collection name (optional, contracts vary).
     pub collection_name: Option<String>,
-    /// Current owner account address.
-    pub owner_account: Option<String>,
-    /// Display name.
     pub name: Option<String>,
-    /// Media URL (image, video, etc.).
     pub media_url: Option<String>,
-    /// Flexible NFT metadata as JSONB.
     pub metadata: Option<serde_json::Value>,
-    /// Ledger at which the NFT was minted.
     pub minted_at_ledger: Option<i64>,
-    /// Most recent ledger with NFT state change. Watermark.
-    pub last_seen_ledger: i64,
+    pub current_owner_id: Option<i64>,
+    pub current_owner_ledger: Option<i64>,
+}
+
+/// Per-transfer ownership record (ADR 0027 §13). Partitioned on `created_at`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NftOwnership {
+    pub nft_id: i32,
+    pub transaction_id: i64,
+    pub owner_id: Option<i64>,
+    /// "mint" | "transfer" | "burn".
+    pub event_type: String,
+    pub ledger_sequence: i64,
+    pub event_order: i16,
+    pub created_at: DateTime<Utc>,
 }

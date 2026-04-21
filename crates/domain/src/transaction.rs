@@ -1,41 +1,43 @@
-//! Transaction domain type matching the `transactions` PostgreSQL table.
+//! Transaction-family domain types matching the `transactions`,
+//! `transaction_hash_index`, and `transaction_participants` PostgreSQL tables.
+//!
+//! Schema: ADR 0027 Part I §3, §4, §6.
+//! Heavy fields (memo, signatures, XDR, diagnostic events, operation tree)
+//! live in S3 per ADR 0011/0018 — they are not in these structs.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Transaction record as stored in PostgreSQL.
+/// Transaction core row (ADR 0027 §3). Partitioned monthly on `created_at`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
-    /// Surrogate primary key (BIGSERIAL).
     pub id: i64,
-    /// SHA-256 hash of the TransactionEnvelope, hex-encoded (64 chars).
-    pub hash: String,
-    /// Parent ledger sequence number.
+    pub hash: Vec<u8>,
     pub ledger_sequence: i64,
-    /// Transaction source account (G... or M... address).
-    pub source_account: String,
-    /// Actual fee charged in stroops.
+    pub application_order: i16,
+    pub source_id: i64,
     pub fee_charged: i64,
-    /// Whether the transaction succeeded.
+    pub inner_tx_hash: Option<Vec<u8>>,
     pub successful: bool,
-    /// Transaction result code string.
-    pub result_code: Option<String>,
-    /// Full transaction envelope, base64-encoded.
-    pub envelope_xdr: String,
-    /// Transaction result, base64-encoded.
-    pub result_xdr: String,
-    /// Transaction result metadata, base64-encoded.
-    pub result_meta_xdr: Option<String>,
-    /// Memo type: "text", "id", "hash", "return", or None.
-    pub memo_type: Option<String>,
-    /// Memo value.
-    pub memo: Option<String>,
-    /// Timestamp derived from ledger close time.
+    pub operation_count: i16,
+    pub has_soroban: bool,
+    pub parse_error: bool,
     pub created_at: DateTime<Utc>,
-    /// True if XDR parsing failed.
-    pub parse_error: Option<bool>,
-    /// Pre-computed Soroban invocation call tree as JSONB.
-    /// Populated asynchronously after transaction insert by the ingestion pipeline.
-    /// NULL for non-Soroban transactions.
-    pub operation_tree: Option<serde_json::Value>,
+}
+
+/// Hash → (ledger, created_at) lookup (ADR 0027 §4).
+/// Unpartitioned, feeds `/transactions/:hash` routing preflight.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionHashIndex {
+    pub hash: Vec<u8>,
+    pub ledger_sequence: i64,
+    pub created_at: DateTime<Utc>,
+}
+
+/// `(account, transaction)` edge (ADR 0027 §6). Partitioned on `created_at`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionParticipant {
+    pub transaction_id: i64,
+    pub account_id: i64,
+    pub created_at: DateTime<Utc>,
 }

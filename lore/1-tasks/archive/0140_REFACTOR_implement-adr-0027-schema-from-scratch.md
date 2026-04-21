@@ -2,7 +2,7 @@
 id: '0140'
 title: 'DB: implement ADR 0027 schema from scratch (wipe existing migrations)'
 type: REFACTOR
-status: active
+status: completed
 related_adr:
   [
     '0011',
@@ -37,6 +37,20 @@ history:
     status: active
     who: fmazur
     note: 'Activated task — promoted from backlog to active, set as current task.'
+  - date: '2026-04-20'
+    status: completed
+    who: fmazur
+    note: >
+      Landed ADR 0027 schema from scratch. 7 migrations (0001_extensions →
+      0007_account_balances) produce 18 tables, 59 indexes, 13 CHECK constraints,
+      34 FKs, 8 partitioned tables; verified on clean DB via `npm run db:reset`.
+      Domain crate rewritten (crates/domain/src/) — 9 modules, 16 structs aligned
+      with ADR 0027 (surrogate account ids, BYTEA hashes, typed token metadata,
+      per-table balance/ownership history splits). ADR 0027 promoted
+      proposed → accepted. Cargo build — domain + xdr-parser green; db/api/
+      indexer/db-migrate/db-partition-mgmt fail with 33 schema-mismatch errors in
+      crates/db/src/{persistence,soroban}.rs (expected per plan; Rust persistence
+      rewrite deferred).
 ---
 
 # DB: implement ADR 0027 schema from scratch (wipe existing migrations)
@@ -150,18 +164,51 @@ Close **0136** as superseded in the same PR (its surrogate-ID work is absorbed h
 
 ## Acceptance Criteria
 
-- [ ] Existing `crates/db/migrations/0001–0009` moved to `.trash/`
-- [ ] New migrations produce the exact ADR 0027 schema (18 tables, all indexes, all
+- [x] Existing `crates/db/migrations/0001–0009` moved to `.trash/`
+- [x] New migrations produce the exact ADR 0027 schema (18 tables, all indexes, all
       CHECK constraints, partial UNIQUE indexes, generated columns, partitioning)
-- [ ] `pg_trgm` extension created before any GIN trigram index
-- [ ] FK dependency order respected across migration files
-- [ ] `npm run db:reset` succeeds on a clean database
-- [ ] `npm run db:prepare` runs to completion; `.sqlx/` regenerated and committed
-- [ ] Cargo build status documented — either green (trivial renames applied) or the
+- [x] `pg_trgm` extension created before any GIN trigram index
+- [x] FK dependency order respected across migration files
+- [x] `npm run db:reset` succeeds on a clean database
+- [x] Cargo build status documented — either green (trivial renames applied) or the
       list of failing `sqlx::query!()` sites is handed to the follow-up task
-- [ ] Task 0136 marked superseded (history entry + move to archive)
-- [ ] Follow-up tasks spawned for Rust persistence + API layer updates
-- [ ] Decision on bootstrap partitions (this migration vs Lambda) documented
+- [x] Decision on bootstrap partitions (this migration vs Lambda) documented
+
+## Implementation Notes
+
+- Old `crates/db/migrations/0001–0009` → `.trash/migrations-pre-adr-0027/`.
+- 7 new migrations (DDL verbatim from ADR 0027 Part I):
+  - `0001_extensions.sql` — `pg_trgm`
+  - `0002_identity_and_ledgers.sql` — `ledgers`, `accounts`, `wasm_interface_metadata`, `soroban_contracts`
+  - `0003_transactions_and_operations.sql` — `transactions`, `transaction_hash_index`, `operations`, `transaction_participants`
+  - `0004_soroban_activity.sql` — `soroban_events`, `soroban_invocations`
+  - `0005_tokens_nfts.sql` — `tokens`, `nfts`, `nft_ownership`
+  - `0006_liquidity_pools.sql` — `liquidity_pools`, `liquidity_pool_snapshots`, `lp_positions` + deferred `fk_ops_pool_id`
+  - `0007_account_balances.sql` — `account_balances_current`, `account_balance_history`
+- Clean DB verify: 18 tables, 59 indexes, 13 CHECK, 34 FK, 8 partitioned parents, `soroban_contracts.search_vector` generated TSVECTOR, partial UNIQUE indexes for native-XLM rows, `pg_trgm` GIN indexes on `tokens.asset_code` and `nfts.name`.
+- `crates/domain/src/` rewritten from scratch (old files → `.trash/domain-pre-adr-0027/`): 9 modules (`account`, `balance` [new], `ledger`, `nft`, `operation`, `pool`, `soroban`, `token`, `transaction`) with 16 structs. Hashes as `Vec<u8>`, account FKs as `i64` (surrogate), typed NUMERIC as `String`.
+- `MIGRATIONS.md` reset marker: 0001-0007 irreversible.
+- ADR 0027 promoted `proposed` → `accepted` (history entry).
+
+## Issues Encountered
+
+- **Cargo build red below `crates/domain`.** `crates/db/src/{persistence,soroban}.rs` has 33 compile errors grouping into 4 categories: (1) fields moved to S3 per ADR 0011/0018 (`envelope_xdr`, `memo`, `result_*`, `operation_tree`, `SorobanEvent.{topics,data}`, `SorobanInvocation.{function_args,return_value}`, `Operation.details`), (2) StrKey→surrogate renames (`source_account`→`source_id` and siblings), (3) BYTEA hash type changes (`Vec<u8>` no longer has `as_str()`), (4) table restructures (`Account.balances` split out, `LiquidityPool` fields moved to snapshots). Expected per plan; `db:prepare` / `.sqlx/` regen cannot run until persistence is rewritten — deferred to a Rust follow-up (not spawned under this task per user instruction).
+- **Partition Lambda inconsistent with ADR 0027.** `crates/db-partition-mgmt` covers 3 of 8 partitioned tables (`soroban_invocations`, `soroban_events`, `liquidity_pool_snapshots`) and partitions `operations` by `transaction_id`, but ADR 0027 partitions `operations` by `created_at`. A Lambda update is required but kept out of this task's scope.
+
+## Design Decisions
+
+### From Plan
+
+1. **Wipe-and-recreate rather than ALTER chain.** No production data yet, so clean migrations producing the ADR 0027 target are simpler than threading surrogate IDs through nine existing migrations.
+2. **Seven-file split by FK-dependency cluster.** Exactly the layout proposed in the task plan; `0002` creates all identity/reference tables needed as FK targets by `0003–0007`.
+3. **Parent-only partitioning; partitions Lambda-managed.** Current-month and historical partitions stay with `crates/db-partition-mgmt` rather than being inlined into migrations.
+
+### Emerged
+
+4. **Deferred FK `operations.pool_id → liquidity_pools(pool_id)`.** The task's proposed layout places `operations` in `0003` and `liquidity_pools` in `0006`, but `operations.pool_id` points at `liquidity_pools`. Added as `ALTER TABLE operations ADD CONSTRAINT fk_ops_pool_id …` at the end of `0006` rather than reshuffling the file order. The `CHECK (octet_length(pool_id) = 32)` in `0003` guards the column until the FK attaches.
+5. **Domain crate rewritten in a separate step before migrations.** User asked mid-task to rewrite `crates/domain/src/` from scratch before touching SQL; old files moved to `.trash/domain-pre-adr-0027/`. A new `balance.rs` module was added for `account_balances_current` / `account_balance_history`.
+6. **Three acceptance-criteria items removed on request:** `db:prepare` + `.sqlx/` regen (technically blocked by the Rust follow-up), "task 0136 marked superseded", and "follow-up tasks spawned". The underlying work is not done; the AC was trimmed so task scope matches what was actually completed. `0136` remains in backlog; Rust persistence + API layer rewrite and Partition Lambda update remain to be scoped in future tasks.
+7. **Branch split strategy for tokens.** `asset_type` CHECK now admits four values (`native`, `classic`, `sac`, `soroban`) — matches ADR 0027 §11 verbatim (prior schema only used three).
 
 ## Notes
 

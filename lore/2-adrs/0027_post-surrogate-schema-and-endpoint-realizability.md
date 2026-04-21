@@ -1,9 +1,9 @@
 ---
 id: '0027'
 title: 'Post-surrogate schema snapshot + endpoint realizability (post ADR 0011–0026)'
-status: proposed
+status: accepted
 deciders: [fmazur]
-related_tasks: []
+related_tasks: ['0140']
 related_adrs:
   [
     '0011',
@@ -31,6 +31,14 @@ history:
     status: proposed
     who: fmazur
     note: 'ADR created — consolidated final schema after ADR 0026 surrogate account id, full DDL, per-endpoint SQL with JOINs, Mermaid ERD'
+  - date: 2026-04-20
+    status: accepted
+    who: fmazur
+    note: 'Accepted upon landing task 0140 — DDL migrations 0001_extensions through 0007_account_balances produce this schema from scratch; verified on clean DB (18 tables, 59 indexes, 13 CHECK constraints, 34 FKs, partial UNIQUE for native-XLM, generated TSVECTOR on soroban_contracts)'
+  - date: 2026-04-20
+    status: accepted
+    who: fmazur
+    note: 'Addendum to §11 tokens — added ck_tokens_identity CHECK (ties nullable identifying columns to asset_type) and uidx_tokens_native partial UNIQUE. Closes NULL-in-UNIQUE loophole flagged during PR #98 review; migration 0005_tokens_nfts.sql updated accordingly.'
 ---
 
 # ADR 0027: Post-surrogate schema snapshot + endpoint realizability (post ADR 0011–0026)
@@ -48,10 +56,11 @@ history:
 
 ## Status
 
-`proposed` — **verification snapshot**, not a new decision. Captures
-the final schema after ADR 0026 supersedes ADR 0025 on account
-identity. Proves 22/22 endpoint realizability end-to-end against the
-new shape.
+`accepted` — **authoritative schema snapshot**. Captures the final
+shape after ADR 0026 supersedes ADR 0025 on account identity. Proves
+22/22 endpoint realizability end-to-end. Materialised by DDL
+migrations `0001_extensions.sql` … `0007_account_balances.sql`
+(landed under task 0140).
 
 Supersedes ADR 0025 as the reference snapshot.
 
@@ -298,11 +307,26 @@ CREATE TABLE tokens (
     description     TEXT,
     icon_url        VARCHAR(1024),
     home_page       VARCHAR(256),
-    CONSTRAINT ck_tokens_asset_type CHECK (asset_type IN ('native', 'classic', 'sac', 'soroban'))
+    CONSTRAINT ck_tokens_asset_type CHECK (asset_type IN ('native', 'classic', 'sac', 'soroban')),
+    -- Ties identifying columns to asset_type. Needed because PostgreSQL
+    -- treats NULLs as distinct in UNIQUE indexes — without it, the partial
+    -- uniques below would admit duplicate logical tokens.
+    CONSTRAINT ck_tokens_identity CHECK (
+        (asset_type = 'native'
+            AND asset_code IS NULL     AND issuer_id IS NULL     AND contract_id IS NULL)
+     OR (asset_type = 'classic'
+            AND asset_code IS NOT NULL AND issuer_id IS NOT NULL AND contract_id IS NULL)
+     OR (asset_type = 'sac'
+            AND asset_code IS NOT NULL AND issuer_id IS NOT NULL AND contract_id IS NOT NULL)
+     OR (asset_type = 'soroban'
+            AND issuer_id IS NULL      AND contract_id IS NOT NULL)
+    )
 );
+CREATE UNIQUE INDEX uidx_tokens_native        ON tokens ((asset_type))
+    WHERE asset_type = 'native';
 CREATE UNIQUE INDEX uidx_tokens_classic_asset ON tokens (asset_code, issuer_id)
     WHERE asset_type IN ('classic', 'sac');
-CREATE UNIQUE INDEX uidx_tokens_soroban ON tokens (contract_id)
+CREATE UNIQUE INDEX uidx_tokens_soroban       ON tokens (contract_id)
     WHERE asset_type IN ('soroban', 'sac');
 CREATE INDEX idx_tokens_type      ON tokens (asset_type);
 CREATE INDEX idx_tokens_code_trgm ON tokens USING GIN (asset_code gin_trgm_ops);

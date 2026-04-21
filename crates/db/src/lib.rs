@@ -3,9 +3,7 @@
 //! Provides sqlx PgPool configuration, migration embedding, and query functions.
 
 pub mod migrate;
-pub mod persistence;
 pub mod pool;
 
 #[cfg(feature = "aws-secrets")]
 pub mod secrets;
-pub mod soroban;
