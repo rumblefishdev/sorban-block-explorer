@@ -13,7 +13,19 @@ use stellar_xdr::curr::LedgerCloseMeta;
 use crate::error::ParseError;
 
 /// Schema version marker placed in `ledger_metadata.schema_version`.
-pub const SCHEMA_VERSION: &str = "v1";
+///
+/// Serializes as the string `"v1"`. Add new variants for future breaking
+/// changes; the artifact versioning rules in ADR 0028 require a new ADR and
+/// re-emit for any incompatible shape change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SchemaVersion {
+    #[serde(rename = "v1")]
+    V1,
+}
+
+/// Current schema version constant — mirrors the only value of
+/// [`SchemaVersion`]. Retained for ergonomic comparisons and log output.
+pub const SCHEMA_VERSION: SchemaVersion = SchemaVersion::V1;
 
 /// Default zstd compression level for artifact serialization.
 pub const DEFAULT_ZSTD_LEVEL: i32 = 3;
@@ -42,7 +54,7 @@ pub struct ParsedLedgerArtifact {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LedgerMetadata {
-    pub schema_version: String,
+    pub schema_version: SchemaVersion,
     pub sequence: u32,
     pub hash: String,
     pub closed_at: i64,
@@ -58,7 +70,7 @@ pub struct LedgerMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionArtifact {
     pub hash: String,
-    pub application_order: u16,
+    pub application_order: u32,
     pub source_account: String,
     pub source_account_muxed: Option<String>,
     pub fee_account: Option<String>,
@@ -98,7 +110,7 @@ pub struct Signature {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationArtifact {
-    pub application_order: u16,
+    pub application_order: u32,
     pub op_type: String,
     pub source_account: Option<String>,
     pub source_account_muxed: Option<String>,
@@ -118,7 +130,7 @@ pub struct EventArtifact {
     pub event_index: u32,
     pub event_type: EventType,
     pub contract_id: Option<String>,
-    pub topics: serde_json::Value,
+    pub topics: Vec<serde_json::Value>,
     pub data: serde_json::Value,
     pub transfer_from: Option<String>,
     pub transfer_to: Option<String>,
@@ -384,7 +396,7 @@ pub enum ArtifactError {
 impl std::fmt::Display for ArtifactError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Parse(e) => write!(f, "parse: {}", e.message),
+            Self::Parse(e) => write!(f, "parse: {e}"),
             Self::Serialize(e) => write!(f, "serialize: {e}"),
             Self::Compress(e) => write!(f, "compress: {e}"),
         }
@@ -421,6 +433,13 @@ impl From<std::io::Error> for ArtifactError {
 /// functions already exported from this crate. Partial failures on a
 /// per-tx basis surface as `transactions[i].parse_error = true`; a
 /// top-level `Err` indicates the ledger could not be processed at all.
+///
+/// # Panics
+///
+/// Currently panics with `todo!()`. Scaffolded as part of task 0146
+/// PR 1 (frozen public API); real implementation follows in PR 2/3.
+/// Downstream consumers (tasks 0145, 0147) can compile against this
+/// signature but MUST NOT invoke it at runtime until PR 3 merges.
 pub fn build_parsed_ledger_artifact(
     _meta: &LedgerCloseMeta,
 ) -> Result<ParsedLedgerArtifact, ParseError> {
@@ -431,11 +450,21 @@ pub fn build_parsed_ledger_artifact(
 ///
 /// Deterministic: the same input produces byte-identical output. No
 /// pretty printing, no trailing newline.
+///
+/// # Panics
+///
+/// Currently panics with `todo!()`. See
+/// [`build_parsed_ledger_artifact`] for the scaffolding rationale.
 pub fn serialize_artifact_json(_artifact: &ParsedLedgerArtifact) -> Result<Vec<u8>, ArtifactError> {
     todo!("ADR 0028 serializer — implemented in PR 2 (task 0146)")
 }
 
 /// Compress JSON bytes with zstd at `DEFAULT_ZSTD_LEVEL`.
+///
+/// # Panics
+///
+/// Currently panics with `todo!()`. See
+/// [`build_parsed_ledger_artifact`] for the scaffolding rationale.
 pub fn compress_artifact_zstd(_json: &[u8]) -> Result<Vec<u8>, ArtifactError> {
     todo!("zstd compression — implemented in PR 2 (task 0146)")
 }
@@ -444,6 +473,11 @@ pub fn compress_artifact_zstd(_json: &[u8]) -> Result<Vec<u8>, ArtifactError> {
 ///
 /// Layout: `parsed-ledgers/v1/{partition_start}-{partition_end}/parsed_ledger_{seq}.json.zst`
 /// with 64k-ledger partitions.
+///
+/// # Panics
+///
+/// Currently panics with `todo!()`. See
+/// [`build_parsed_ledger_artifact`] for the scaffolding rationale.
 pub fn parsed_ledger_s3_key(_sequence: u32) -> String {
     todo!("S3 key layout — implemented in PR 2 (task 0146)")
 }
