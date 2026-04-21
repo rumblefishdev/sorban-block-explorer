@@ -3,7 +3,7 @@ id: '0028'
 title: 'ParsedLedgerArtifact v1 — canonical shape of parsed_ledger_{seq}.json.zst'
 status: proposed
 deciders: [stkrolikiewicz]
-related_tasks: ['0146', '0145', '0147']
+related_tasks: ['0146', '0145', '0147', '0126', '0135']
 related_adrs: ['0011', '0012', '0018', '0023', '0024', '0026', '0027']
 tags: [s3, artifact, schema, parser, foundation]
 links: []

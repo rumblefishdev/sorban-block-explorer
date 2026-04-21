@@ -4,7 +4,7 @@ title: 'Shared parsed-ledger artifact core (model + builder + JSON + zstd + key 
 type: FEATURE
 status: active
 related_adr: ['0012', '0027', '0028']
-related_tasks: ['0145', '0147', '0117']
+related_tasks: ['0145', '0147', '0117', '0126', '0135']
 tags:
   [
     layer-backend,
