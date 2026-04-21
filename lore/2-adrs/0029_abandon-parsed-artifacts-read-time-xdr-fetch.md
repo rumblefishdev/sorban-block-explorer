@@ -273,15 +273,15 @@ default approach.
 
 ## Sequencing implications
 
-| Phase           | Work                                                                                                             | Owner                       |
-| --------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------- |
-| 0               | Accept ADR 0029; cancel tasks 0146 + 0147; remove `xdr-parser::artifact` scaffold; spawn task 0150               | coordination                |
-| 1               | Task 0149 — implement `persist_ledger` body against ADR 0027 schema                                              | Filip                       |
-| 2               | Task 0145 implementation — `crates/backfill-runner/` Postgres sink CLI, coexisting with `backfill-bench`         | Karol                       |
-| 2               | Task 0150 — API-side XDR fetcher + `extract_*` invocation for E3 / E14                                           | TBD (Stanisław recommended) |
-| 3               | Integration test: live Galexie ingest of a sample range; API endpoint checks pass for light **and** heavy fields | team                        |
-| 4               | Production backfill run (task 0145 execution, not implementation)                                                | operator                    |
-| 5 (conditional) | Task 0151 cache layer if measured latency requires                                                               | —                           |
+| Phase           | Work                                                                                                             |
+| --------------- | ---------------------------------------------------------------------------------------------------------------- |
+| 0               | Accept ADR 0029; cancel tasks 0146 + 0147; remove `xdr-parser::artifact` scaffold; spawn task 0150               |
+| 1               | Task 0149 — implement `persist_ledger` body against ADR 0027 schema                                              |
+| 2               | Task 0145 implementation — `crates/backfill-runner/` Postgres sink CLI, coexisting with `backfill-bench`         |
+| 2               | Task 0150 — API-side XDR fetcher + `extract_*` invocation for E3 / E14                                           |
+| 3               | Integration test: live Galexie ingest of a sample range; API endpoint checks pass for light **and** heavy fields |
+| 4               | Production backfill run (task 0145 execution, not implementation)                                                |
+| 5 (conditional) | Task 0151 cache layer if measured latency requires                                                               |
 
 Phases 1 and 2 run in parallel. Phase 4 is gated on Phase 3
 completion. Karol's rescope of 0145 (commit `ebb307c`) is consistent
