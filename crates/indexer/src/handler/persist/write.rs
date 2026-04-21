@@ -133,14 +133,27 @@ pub(super) async fn upsert_wasm_metadata(
 }
 
 // ---------------------------------------------------------------------------
-// 3. soroban_contracts — upsert
+// 3. soroban_contracts — upsert, returning StrKey → surrogate id map (ADR 0030)
 // ---------------------------------------------------------------------------
 
-pub(super) async fn upsert_contracts(
+/// Upsert every contract StrKey referenced in this ledger and return the
+/// StrKey → `soroban_contracts.id` map. Mirrors `upsert_accounts`.
+///
+/// Two passes:
+///   1. Rich rows from `staged.contract_rows` — carry deployment/WASM metadata.
+///      `ON CONFLICT DO UPDATE` rewrites no-op columns so `RETURNING` fires
+///      on both insert and replay paths.
+///   2. Referenced-only contract StrKeys from ops/events/invocations/
+///      tokens/nfts that weren't deployed this ledger. Bare-row upsert with
+///      the same no-op `DO UPDATE` trick so `RETURNING` populates the map.
+pub(super) async fn upsert_contracts_returning_id(
     db_tx: &mut Transaction<'_, Postgres>,
     staged: &Staged,
     account_ids: &HashMap<String, i64>,
-) -> Result<(), HandlerError> {
+) -> Result<HashMap<String, i64>, HandlerError> {
+    let mut out: HashMap<String, i64> = HashMap::new();
+
+    // Pass 1 — rich rows with metadata.
     for chunk in staged.contract_rows.chunks(CHUNK_SIZE) {
         let mut contract_ids: Vec<String> = Vec::with_capacity(chunk.len());
         let mut wasm_hashes: Vec<Option<Vec<u8>>> = Vec::with_capacity(chunk.len());
@@ -166,7 +179,7 @@ pub(super) async fn upsert_contracts(
             metadatas.push(r.metadata.clone());
         }
 
-        sqlx::query(
+        let rows: Vec<(i64, String)> = sqlx::query_as(
             r#"
             INSERT INTO soroban_contracts (
                 contract_id, wasm_hash, wasm_uploaded_at_ledger, deployer_id,
@@ -183,6 +196,7 @@ pub(super) async fn upsert_contracts(
                 contract_type = COALESCE(EXCLUDED.contract_type, soroban_contracts.contract_type),
                 is_sac = soroban_contracts.is_sac OR EXCLUDED.is_sac,
                 metadata = COALESCE(EXCLUDED.metadata, soroban_contracts.metadata)
+            RETURNING id, contract_id
             "#,
         )
         .bind(&contract_ids)
@@ -193,32 +207,21 @@ pub(super) async fn upsert_contracts(
         .bind(&types)
         .bind(&sacs)
         .bind(&metadatas)
-        .execute(&mut **db_tx)
+        .fetch_all(&mut **db_tx)
         .await?;
+
+        for (id, key) in rows {
+            out.insert(key, id);
+        }
     }
 
-    // A second pass registers contract_ids referenced by ops/events/invocations
-    // that weren't deployed this ledger — they may have been deployed in a
-    // previous ledger we didn't ingest, in which case a bare row keeps the FK
-    // satisfied without fabricating metadata.
-    register_referenced_contracts(db_tx, staged).await?;
-
-    Ok(())
-}
-
-async fn register_referenced_contracts(
-    db_tx: &mut Transaction<'_, Postgres>,
-    staged: &Staged,
-) -> Result<(), HandlerError> {
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for row in &staged.contract_rows {
-        seen.insert(row.contract_id.clone());
-    }
+    // Pass 2 — referenced-only StrKeys (not deployed this ledger).
     let mut extras: Vec<String> = Vec::new();
     let mut consider = |cid: Option<&String>| {
         if let Some(c) = cid
             && !c.is_empty()
-            && seen.insert(c.clone())
+            && !out.contains_key(c.as_str())
+            && !extras.iter().any(|e| e == c)
         {
             extras.push(c.clone());
         }
@@ -239,24 +242,32 @@ async fn register_referenced_contracts(
         consider(Some(&row.contract_id));
     }
     if extras.is_empty() {
-        return Ok(());
+        return Ok(out);
     }
 
     for chunk in extras.chunks(CHUNK_SIZE) {
         let cids: Vec<String> = chunk.to_vec();
-        sqlx::query(
+        // No-op `DO UPDATE SET contract_id = EXCLUDED.contract_id` ensures
+        // `RETURNING` fires on both insert and replay (ON CONFLICT DO NOTHING
+        // suppresses RETURNING for the conflicting row).
+        let rows: Vec<(i64, String)> = sqlx::query_as(
             r#"
             INSERT INTO soroban_contracts (contract_id, is_sac)
             SELECT cid, false
               FROM UNNEST($1::VARCHAR[]) AS t(cid)
-            ON CONFLICT (contract_id) DO NOTHING
+            ON CONFLICT (contract_id) DO UPDATE SET contract_id = EXCLUDED.contract_id
+            RETURNING id, contract_id
             "#,
         )
         .bind(&cids)
-        .execute(&mut **db_tx)
+        .fetch_all(&mut **db_tx)
         .await?;
+
+        for (id, key) in rows {
+            out.insert(key, id);
+        }
     }
-    Ok(())
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -473,6 +484,7 @@ pub(super) async fn insert_operations(
     db_tx: &mut Transaction<'_, Postgres>,
     staged: &Staged,
     account_ids: &HashMap<String, i64>,
+    contract_ids: &HashMap<String, i64>,
     tx_ids: &HashMap<String, i64>,
 ) -> Result<(), HandlerError> {
     if staged.op_rows.is_empty() {
@@ -484,7 +496,7 @@ pub(super) async fn insert_operations(
         let mut op_type_vec: Vec<String> = Vec::with_capacity(chunk.len());
         let mut source_id_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
         let mut dest_id_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
-        let mut contract_vec: Vec<Option<String>> = Vec::with_capacity(chunk.len());
+        let mut contract_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
         let mut asset_code_vec: Vec<Option<String>> = Vec::with_capacity(chunk.len());
         let mut asset_issuer_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
         let mut pool_id_vec: Vec<Option<Vec<u8>>> = Vec::with_capacity(chunk.len());
@@ -509,7 +521,11 @@ pub(super) async fn insert_operations(
                 r.destination_str_key.as_deref(),
                 "op.destination",
             )?);
-            contract_vec.push(r.contract_id.clone());
+            contract_vec.push(resolve_contract_opt_id(
+                contract_ids,
+                r.contract_id.as_deref(),
+                "op.contract",
+            )?);
             asset_code_vec.push(r.asset_code.clone());
             asset_issuer_vec.push(resolve_opt_id(
                 account_ids,
@@ -550,7 +566,7 @@ pub(super) async fn insert_operations(
                 t.ledger_sequence, t.created_at
               FROM UNNEST(
                 $1::BIGINT[], $2::SMALLINT[], $3::VARCHAR[], $4::BIGINT[], $5::BIGINT[],
-                $6::VARCHAR[], $7::VARCHAR[], $8::BIGINT[], $9::BYTEA[], $10::TEXT[],
+                $6::BIGINT[], $7::VARCHAR[], $8::BIGINT[], $9::BYTEA[], $10::TEXT[],
                 $11::BIGINT[], $12::TIMESTAMPTZ[]
               )
                 AS t(tx_id, app_order, op_type, source_id, dest_id,
@@ -585,6 +601,7 @@ pub(super) async fn insert_events(
     db_tx: &mut Transaction<'_, Postgres>,
     staged: &Staged,
     account_ids: &HashMap<String, i64>,
+    contract_ids: &HashMap<String, i64>,
     tx_ids: &HashMap<String, i64>,
 ) -> Result<(), HandlerError> {
     if staged.event_rows.is_empty() {
@@ -592,7 +609,7 @@ pub(super) async fn insert_events(
     }
     for chunk in staged.event_rows.chunks(CHUNK_SIZE) {
         let mut tx_id_vec: Vec<i64> = Vec::with_capacity(chunk.len());
-        let mut contract_vec: Vec<Option<String>> = Vec::with_capacity(chunk.len());
+        let mut contract_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
         let mut type_vec: Vec<String> = Vec::with_capacity(chunk.len());
         let mut topic0_vec: Vec<Option<String>> = Vec::with_capacity(chunk.len());
         let mut index_vec: Vec<i16> = Vec::with_capacity(chunk.len());
@@ -607,7 +624,11 @@ pub(super) async fn insert_events(
                 continue;
             };
             tx_id_vec.push(tx_id);
-            contract_vec.push(r.contract_id.clone());
+            contract_vec.push(resolve_contract_opt_id(
+                contract_ids,
+                r.contract_id.as_deref(),
+                "event.contract",
+            )?);
             type_vec.push(r.event_type.clone());
             topic0_vec.push(r.topic0.clone());
             index_vec.push(r.event_index);
@@ -641,7 +662,7 @@ pub(super) async fn insert_events(
                    CASE WHEN amt IS NULL THEN NULL ELSE amt::NUMERIC(39,0) END,
                    ledger_sequence, created_at
               FROM UNNEST(
-                $1::BIGINT[], $2::VARCHAR[], $3::VARCHAR[], $4::TEXT[], $5::SMALLINT[],
+                $1::BIGINT[], $2::BIGINT[], $3::VARCHAR[], $4::TEXT[], $5::SMALLINT[],
                 $6::BIGINT[], $7::BIGINT[], $8::TEXT[], $9::BIGINT[], $10::TIMESTAMPTZ[]
               ) AS t(tx_id, contract_id, event_type, topic0, event_index,
                      from_id, to_id, amt, ledger_sequence, created_at)
@@ -672,6 +693,7 @@ pub(super) async fn insert_invocations(
     db_tx: &mut Transaction<'_, Postgres>,
     staged: &Staged,
     account_ids: &HashMap<String, i64>,
+    contract_ids: &HashMap<String, i64>,
     tx_ids: &HashMap<String, i64>,
 ) -> Result<(), HandlerError> {
     if staged.inv_rows.is_empty() {
@@ -679,7 +701,7 @@ pub(super) async fn insert_invocations(
     }
     for chunk in staged.inv_rows.chunks(CHUNK_SIZE) {
         let mut tx_id_vec: Vec<i64> = Vec::with_capacity(chunk.len());
-        let mut contract_vec: Vec<Option<String>> = Vec::with_capacity(chunk.len());
+        let mut contract_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
         let mut caller_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
         let mut fname_vec: Vec<String> = Vec::with_capacity(chunk.len());
         let mut success_vec: Vec<bool> = Vec::with_capacity(chunk.len());
@@ -692,7 +714,11 @@ pub(super) async fn insert_invocations(
                 continue;
             };
             tx_id_vec.push(tx_id);
-            contract_vec.push(r.contract_id.clone());
+            contract_vec.push(resolve_contract_opt_id(
+                contract_ids,
+                r.contract_id.as_deref(),
+                "invocation.contract",
+            )?);
             caller_vec.push(resolve_opt_id(
                 account_ids,
                 r.caller_str_key.as_deref(),
@@ -716,7 +742,7 @@ pub(super) async fn insert_invocations(
                 invocation_index, ledger_sequence, created_at
             )
             SELECT * FROM UNNEST(
-                $1::BIGINT[], $2::VARCHAR[], $3::BIGINT[], $4::VARCHAR[], $5::BOOL[],
+                $1::BIGINT[], $2::BIGINT[], $3::BIGINT[], $4::VARCHAR[], $5::BOOL[],
                 $6::SMALLINT[], $7::BIGINT[], $8::TIMESTAMPTZ[]
             )
             ON CONFLICT ON CONSTRAINT uq_soroban_invocations_tx_index DO NOTHING
@@ -744,6 +770,7 @@ pub(super) async fn upsert_tokens(
     db_tx: &mut Transaction<'_, Postgres>,
     staged: &Staged,
     account_ids: &HashMap<String, i64>,
+    contract_ids: &HashMap<String, i64>,
 ) -> Result<(), HandlerError> {
     if staged.token_rows.is_empty() {
         return Ok(());
@@ -767,9 +794,9 @@ pub(super) async fn upsert_tokens(
     }
 
     upsert_tokens_native(db_tx, &native).await?;
-    upsert_tokens_classic_like(db_tx, &classic, "classic", account_ids).await?;
-    upsert_tokens_classic_like(db_tx, &sac, "sac", account_ids).await?;
-    upsert_tokens_soroban(db_tx, &soroban).await?;
+    upsert_tokens_classic_like(db_tx, &classic, "classic", account_ids, contract_ids).await?;
+    upsert_tokens_classic_like(db_tx, &sac, "sac", account_ids, contract_ids).await?;
+    upsert_tokens_soroban(db_tx, &soroban, contract_ids).await?;
 
     Ok(())
 }
@@ -807,6 +834,7 @@ async fn upsert_tokens_classic_like(
     rows: &[&TokenRow],
     asset_type: &str,
     account_ids: &HashMap<String, i64>,
+    contract_ids: &HashMap<String, i64>,
 ) -> Result<(), HandlerError> {
     if rows.is_empty() {
         return Ok(());
@@ -814,7 +842,7 @@ async fn upsert_tokens_classic_like(
     for chunk in rows.chunks(CHUNK_SIZE) {
         let mut codes: Vec<String> = Vec::with_capacity(chunk.len());
         let mut issuers: Vec<i64> = Vec::with_capacity(chunk.len());
-        let mut contracts: Vec<Option<String>> = Vec::with_capacity(chunk.len());
+        let mut contracts: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
         let mut names: Vec<Option<String>> = Vec::with_capacity(chunk.len());
         let mut supplies: Vec<Option<String>> = Vec::with_capacity(chunk.len());
         let mut holders: Vec<Option<i32>> = Vec::with_capacity(chunk.len());
@@ -829,7 +857,11 @@ async fn upsert_tokens_classic_like(
             let issuer_id = resolve_id(account_ids, issuer_key, "token.issuer")?;
             codes.push(code.clone());
             issuers.push(issuer_id);
-            contracts.push(r.contract_id.clone());
+            contracts.push(resolve_contract_opt_id(
+                contract_ids,
+                r.contract_id.as_deref(),
+                "token.contract",
+            )?);
             names.push(r.name.clone());
             supplies.push(r.total_supply.clone());
             holders.push(r.holder_count);
@@ -843,7 +875,7 @@ async fn upsert_tokens_classic_like(
             INSERT INTO tokens (asset_type, asset_code, issuer_id, contract_id, name, total_supply, holder_count)
             SELECT '{asset_type}', code, issuer_id, contract_id, name,
                    CASE WHEN supply IS NULL THEN NULL ELSE supply::NUMERIC(28,7) END, holder_count
-              FROM UNNEST($1::VARCHAR[], $2::BIGINT[], $3::VARCHAR[], $4::VARCHAR[], $5::TEXT[], $6::INTEGER[])
+              FROM UNNEST($1::VARCHAR[], $2::BIGINT[], $3::BIGINT[], $4::VARCHAR[], $5::TEXT[], $6::INTEGER[])
                 AS t(code, issuer_id, contract_id, name, supply, holder_count)
             ON CONFLICT (asset_code, issuer_id)
               WHERE asset_type IN ('classic', 'sac')
@@ -870,12 +902,13 @@ async fn upsert_tokens_classic_like(
 async fn upsert_tokens_soroban(
     db_tx: &mut Transaction<'_, Postgres>,
     rows: &[&TokenRow],
+    contract_ids: &HashMap<String, i64>,
 ) -> Result<(), HandlerError> {
     if rows.is_empty() {
         return Ok(());
     }
     for chunk in rows.chunks(CHUNK_SIZE) {
-        let mut contracts: Vec<String> = Vec::with_capacity(chunk.len());
+        let mut contracts: Vec<i64> = Vec::with_capacity(chunk.len());
         let mut names: Vec<Option<String>> = Vec::with_capacity(chunk.len());
         let mut supplies: Vec<Option<String>> = Vec::with_capacity(chunk.len());
         let mut holders: Vec<Option<i32>> = Vec::with_capacity(chunk.len());
@@ -884,7 +917,11 @@ async fn upsert_tokens_soroban(
             let Some(cid) = r.contract_id.as_ref() else {
                 continue;
             };
-            contracts.push(cid.clone());
+            contracts.push(resolve_contract_id(
+                contract_ids,
+                cid,
+                "token.soroban.contract",
+            )?);
             names.push(r.name.clone());
             supplies.push(r.total_supply.clone());
             holders.push(r.holder_count);
@@ -897,7 +934,7 @@ async fn upsert_tokens_soroban(
             INSERT INTO tokens (asset_type, contract_id, name, total_supply, holder_count)
             SELECT 'soroban', contract_id, name,
                    CASE WHEN supply IS NULL THEN NULL ELSE supply::NUMERIC(28,7) END, holder_count
-              FROM UNNEST($1::VARCHAR[], $2::TEXT[], $3::TEXT[], $4::INTEGER[])
+              FROM UNNEST($1::BIGINT[], $2::TEXT[], $3::TEXT[], $4::INTEGER[])
                 AS t(contract_id, name, supply, holder_count)
             ON CONFLICT (contract_id)
               WHERE asset_type IN ('soroban', 'sac')
@@ -925,12 +962,13 @@ pub(super) async fn upsert_nfts_and_ownership(
     db_tx: &mut Transaction<'_, Postgres>,
     staged: &Staged,
     account_ids: &HashMap<String, i64>,
+    contract_ids: &HashMap<String, i64>,
     tx_ids: &HashMap<String, i64>,
 ) -> Result<(), HandlerError> {
     // 12a. nfts (watermark-guarded on current_owner_ledger)
     if !staged.nft_rows.is_empty() {
         for chunk in staged.nft_rows.chunks(CHUNK_SIZE) {
-            let mut contracts: Vec<String> = Vec::with_capacity(chunk.len());
+            let mut contracts: Vec<i64> = Vec::with_capacity(chunk.len());
             let mut token_ids: Vec<String> = Vec::with_capacity(chunk.len());
             let mut collections: Vec<Option<String>> = Vec::with_capacity(chunk.len());
             let mut names: Vec<Option<String>> = Vec::with_capacity(chunk.len());
@@ -941,7 +979,11 @@ pub(super) async fn upsert_nfts_and_ownership(
             let mut owner_ledgers: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
 
             for r in chunk {
-                contracts.push(r.contract_id.clone());
+                contracts.push(resolve_contract_id(
+                    contract_ids,
+                    &r.contract_id,
+                    "nft.contract",
+                )?);
                 token_ids.push(r.token_id.clone());
                 collections.push(r.collection_name.clone());
                 names.push(r.name.clone());
@@ -963,7 +1005,7 @@ pub(super) async fn upsert_nfts_and_ownership(
                     metadata, minted_at_ledger, current_owner_id, current_owner_ledger
                 )
                 SELECT * FROM UNNEST(
-                    $1::VARCHAR[], $2::VARCHAR[], $3::VARCHAR[], $4::VARCHAR[], $5::TEXT[],
+                    $1::BIGINT[], $2::VARCHAR[], $3::VARCHAR[], $4::VARCHAR[], $5::TEXT[],
                     $6::JSONB[], $7::BIGINT[], $8::BIGINT[], $9::BIGINT[]
                 )
                 ON CONFLICT (contract_id, token_id) DO UPDATE SET
@@ -999,7 +1041,7 @@ pub(super) async fn upsert_nfts_and_ownership(
     // 12b. nft_ownership (empty until parser catches up)
     if !staged.nft_ownership_rows.is_empty() {
         for chunk in staged.nft_ownership_rows.chunks(CHUNK_SIZE) {
-            let mut contracts: Vec<String> = Vec::with_capacity(chunk.len());
+            let mut contracts: Vec<i64> = Vec::with_capacity(chunk.len());
             let mut token_ids: Vec<String> = Vec::with_capacity(chunk.len());
             let mut tx_id_vec: Vec<i64> = Vec::with_capacity(chunk.len());
             let mut owners: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
@@ -1012,7 +1054,11 @@ pub(super) async fn upsert_nfts_and_ownership(
                 let Some(tx_id) = tx_ids.get(&r.tx_hash_hex).copied() else {
                     continue;
                 };
-                contracts.push(r.contract_id.clone());
+                contracts.push(resolve_contract_id(
+                    contract_ids,
+                    &r.contract_id,
+                    "nft_ownership.contract",
+                )?);
                 token_ids.push(r.token_id.clone());
                 tx_id_vec.push(tx_id);
                 owners.push(resolve_opt_id(
@@ -1037,7 +1083,7 @@ pub(super) async fn upsert_nfts_and_ownership(
                 )
                 SELECT n.id, tx_id, owner_id, event_type, ls, event_order, ca
                   FROM UNNEST(
-                    $1::VARCHAR[], $2::VARCHAR[], $3::BIGINT[], $4::BIGINT[],
+                    $1::BIGINT[], $2::VARCHAR[], $3::BIGINT[], $4::BIGINT[],
                     $5::VARCHAR[], $6::BIGINT[], $7::SMALLINT[], $8::TIMESTAMPTZ[]
                   ) AS t(contract_id, token_id, tx_id, owner_id, event_type, ls, event_order, ca)
                   JOIN nfts n ON n.contract_id = t.contract_id AND n.token_id = t.token_id
@@ -1596,5 +1642,29 @@ fn resolve_opt_id(
         None => Ok(None),
         Some(k) if !k.starts_with('G') && !k.starts_with('M') => Ok(None),
         Some(k) => Ok(Some(resolve_id(account_ids, k, field)?)),
+    }
+}
+
+/// Resolve a contract StrKey to its `soroban_contracts.id` surrogate (ADR 0030).
+fn resolve_contract_id(
+    contract_ids: &HashMap<String, i64>,
+    key: &str,
+    field: &'static str,
+) -> Result<i64, HandlerError> {
+    contract_ids.get(key).copied().ok_or_else(|| {
+        HandlerError::Staging(format!("unresolved contract StrKey for {field}: {key}"))
+    })
+}
+
+/// Same as `resolve_contract_id` but tolerant of `None` / non-`C…` inputs.
+fn resolve_contract_opt_id(
+    contract_ids: &HashMap<String, i64>,
+    key: Option<&str>,
+    field: &'static str,
+) -> Result<Option<i64>, HandlerError> {
+    match key {
+        None => Ok(None),
+        Some(k) if !k.starts_with('C') => Ok(None),
+        Some(k) => Ok(Some(resolve_contract_id(contract_ids, k, field)?)),
     }
 }

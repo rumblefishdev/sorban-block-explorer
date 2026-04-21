@@ -1,6 +1,7 @@
--- ADR 0027 — initial schema, step 5/7: tokens and NFTs
+-- ADR 0027 + ADR 0030 — initial schema, step 5/7: tokens and NFTs
 -- Tokens carry typed SEP-1 metadata columns (ADR 0023).
--- NFTs get a surrogate SERIAL PK; identity is still (contract_id, token_id).
+-- NFTs get a surrogate SERIAL PK; identity is still (contract_id, token_id)
+-- where contract_id is the BIGINT FK into soroban_contracts.id (ADR 0030).
 -- nft_ownership is partitioned and cascades from transactions.
 --
 -- Tables:
@@ -18,7 +19,7 @@ CREATE TABLE tokens (
     asset_type      VARCHAR(20)   NOT NULL,
     asset_code      VARCHAR(12),
     issuer_id       BIGINT        REFERENCES accounts(id),
-    contract_id     VARCHAR(56)   REFERENCES soroban_contracts(contract_id),
+    contract_id     BIGINT        REFERENCES soroban_contracts(id), -- ADR 0030
     name            VARCHAR(256),
     total_supply    NUMERIC(28,7),
     holder_count    INTEGER,
@@ -49,7 +50,7 @@ CREATE INDEX idx_tokens_code_trgm ON tokens USING GIN (asset_code gin_trgm_ops);
 -- 12. nfts (ADR 0027 §12)
 CREATE TABLE nfts (
     id                   SERIAL       PRIMARY KEY,
-    contract_id          VARCHAR(56)  NOT NULL REFERENCES soroban_contracts(contract_id),
+    contract_id          BIGINT       NOT NULL REFERENCES soroban_contracts(id), -- ADR 0030
     token_id             VARCHAR(256) NOT NULL,
     collection_name      VARCHAR(256),
     name                 VARCHAR(256),

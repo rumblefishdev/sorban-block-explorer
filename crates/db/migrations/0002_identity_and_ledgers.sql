@@ -1,9 +1,12 @@
--- ADR 0027 — initial schema, step 2/7: identity hubs and ledgers
+-- ADR 0027 + ADR 0030 — initial schema, step 2/7: identity hubs and ledgers
 -- Tables (FK-safe creation order):
 --   1. ledgers               — chain-head anchor, referenced implicitly via ledger_sequence
 --   2. accounts              — surrogate BIGSERIAL PK (ADR 0026), all account FKs target accounts.id
 --   3. wasm_interface_metadata — ABI keyed by wasm_hash, referenced by soroban_contracts
---   4. soroban_contracts     — contract identity + metadata, referenced by operations/events/tokens/nfts
+--   4. soroban_contracts     — surrogate BIGSERIAL PK (ADR 0030); contract_id VARCHAR(56)
+--      stays as a UNIQUE natural key for StrKey lookup, display, and E22 search.
+--      All FK columns on operations/events/invocations/tokens/nfts target
+--      soroban_contracts.id (BIGINT), not contract_id (VARCHAR).
 
 -- 1. ledgers
 CREATE TABLE ledgers (
@@ -36,9 +39,10 @@ CREATE TABLE wasm_interface_metadata (
     CONSTRAINT ck_wim_hash_len CHECK (octet_length(wasm_hash) = 32)
 );
 
--- 4. soroban_contracts
+-- 4. soroban_contracts (ADR 0030 — surrogate PK)
 CREATE TABLE soroban_contracts (
-    contract_id             VARCHAR(56) PRIMARY KEY,
+    id                      BIGSERIAL   PRIMARY KEY,
+    contract_id             VARCHAR(56) NOT NULL UNIQUE,
     wasm_hash               BYTEA       REFERENCES wasm_interface_metadata(wasm_hash),
     wasm_uploaded_at_ledger BIGINT,
     deployer_id             BIGINT      REFERENCES accounts(id),
