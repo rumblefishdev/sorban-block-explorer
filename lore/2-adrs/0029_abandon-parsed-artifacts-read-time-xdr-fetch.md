@@ -133,6 +133,17 @@ scaffold).
 
 ## Rationale
 
+### Reducing S3 storage cost (primary driver)
+
+The main argument raised in the meeting: mirroring the Soroban-era
+corpus as `parsed_ledger_{seq}.json.zst` on our S3 meant multi-TB
+accumulation over tens of millions of ledgers, plus lifecycle /
+replication overhead, for data that is already globally available on
+the public Stellar archive. The direct storage bill and the indirect
+operational cost of managing it were the dominant reason to drop the
+artifact bucket. The other points below reinforce the decision but
+would not by themselves have overturned ADR 0028.
+
 ### Simpler storage graph
 
 One system of record (the DB) instead of two (DB + parsed S3). Fewer
