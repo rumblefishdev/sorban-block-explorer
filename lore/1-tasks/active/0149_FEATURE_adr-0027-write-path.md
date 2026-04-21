@@ -44,6 +44,52 @@ history:
     status: active
     who: fmazur
     note: 'Activated task — promoted from backlog to active, set as current task.'
+  - date: '2026-04-21'
+    status: active
+    who: fmazur
+    note: >
+      Write-path wired end-to-end: 14-step pipeline + staging pass, retry
+      wrapper on 40001/40P01, UNNEST batching at 5 k rows, StrKey → id
+      resolver, watermark upserts, trustline removal with same-ledger re-add
+      cancellation. Two migrations needed to make replay idempotent:
+      `uq_transactions_hash_created_at` and the four natural-key UNIQUEs on
+      operations / soroban_events / soroban_invocations / liquidity_pool_snapshots.
+      Integration test asserts 18-table row counts on first write and zero
+      delta on replay. `backfill-bench` indexed 100 real ledgers from
+      mainnet partition 62016000 with zero errors.
+  - date: '2026-04-21'
+    status: active
+    who: fmazur
+    note: >
+      Performance reality check. Three bench runs on fresh DB:
+      pure UNNEST p95=424 ms, UNNEST+async+balance+COPY p95=434 ms,
+      shipped UNNEST+async+balance p95=450 ms. Variance between runs
+      exceeds the measured lever; none of async commit / balance refactor /
+      COPY events / COPY ops moves p95 outside noise on local NVMe.
+      Server-side FK + index + partition routing cost dominates. Reverted
+      the two COPY paths (added complexity without payoff). Kept async
+      commit and balance-history refactor — both are justified on their
+      own merits (fsync latency on prod EBS; O(log n) vs O(n) replay).
+  - date: '2026-04-21'
+    status: active
+    who: fmazur
+    note: >
+      Diagnostic-event filter added to staging (event_type="diagnostic" rows
+      skipped). Aligned with Stellar docs + ADR 0018/0027 S3 lane: diagnostic
+      events are "not hashed into the ledger, and therefore are not part of
+      the protocol" and not read by any ADR 0027 endpoint. Impact: event rows
+      360 523 → 55 581 (–85 %), soroban_events heap 39 MB → 7.7 MB (–80 %),
+      p95 450 ms → 305 ms (–32 %). Still over 150 ms SLO but the gap is now
+      bounded by server-side schema cost, not event volume.
+  - date: '2026-04-21'
+    status: active
+    who: fmazur
+    note: >
+      Spawned ADR 0030 (contracts surrogate BIGINT id, mirrors ADR 0026 for
+      accounts) + task 0151_FEATURE_contracts-surrogate-id-migration to
+      implement it. Captures ~270–320 GB/year storage saving and ~10–20 ms
+      estimated p95 contribution. PR ships 15/16 acceptance criteria; the
+      perf gap is documented with a concrete next-lever + ADR.
 ---
 
 # Indexer write-path against ADR 0027 schema (persist_ledger body)
@@ -217,22 +263,118 @@ per-row debug logging (kills Lambda throughput at scale).
 
 ## Acceptance Criteria
 
-- [ ] `persist_ledger` body covers all 15 steps; no TODO markers, no `unimplemented!()`
-- [ ] Signature extended with `nft_events`, `lp_positions`, `inner_tx_hashes`; `process_ledger` passes empty slices/`None`
-- [ ] StrKey → `accounts.id` resolver: bulk upsert + RETURNING, per-ledger `HashMap`
-- [ ] Every table write uses UNNEST batching — one round trip per table (or one round trip per 5k-row chunk); per-step timings logged
-- [ ] Replay-safe: re-running the same ledger yields no duplicate-key errors and no duplicated rows
-- [ ] Watermark-guarded: feeding an older ledger for an account/nft/pool/balance does not regress state
-- [ ] Trustline removals land, except when re-added in the same ledger
-- [ ] `ck_tokens_identity` and `ck_abc_native` / `ck_abh_native` never throw in practice
-- [ ] `transaction_participants` contains every account referenced by a given tx (source + ops + events + invocations), de-duplicated
-- [ ] Composite FKs to `transactions(id, created_at)` hold for all partitioned children
-- [ ] Retry policy: 3-attempt exponential backoff on `40001` / `40P01`; other errors bubble up
-- [ ] `cargo clippy --all-targets -- -D warnings` green; `SQLX_OFFLINE=true cargo build --workspace` green
-- [ ] `npm run db:prepare` succeeds; `.sqlx/` offline cache committed
-- [ ] Integration test: insert one synthetic ledger, assert row counts across 15 tables written today + 0 rows in `nft_ownership` / `lp_positions`; replay the same ledger, counts unchanged
-- [ ] `backfill-bench` runs ≥100 ledgers from a real Stellar partition without errors
-- [ ] Performance: `p95 ≤ 150ms/ledger` on local-bench profile (logged + asserted in bench)
+- [x] `persist_ledger` body covers all 15 steps; no TODO markers, no `unimplemented!()`
+- [x] Signature extended with `nft_events`, `lp_positions`, `inner_tx_hashes`; `process_ledger` passes empty slices/`None`
+- [x] StrKey → `accounts.id` resolver: bulk upsert + RETURNING, per-ledger `HashMap`
+- [x] Every table write uses UNNEST batching — one round trip per table (or one round trip per 5k-row chunk); per-step timings logged
+- [x] Replay-safe: re-running the same ledger yields no duplicate-key errors and no duplicated rows
+- [x] Watermark-guarded: feeding an older ledger for an account/nft/pool/balance does not regress state
+- [x] Trustline removals land, except when re-added in the same ledger
+- [x] `ck_tokens_identity` and `ck_abc_native` / `ck_abh_native` never throw in practice
+- [x] `transaction_participants` contains every account referenced by a given tx (source + ops + events + invocations), de-duplicated
+- [x] Composite FKs to `transactions(id, created_at)` hold for all partitioned children
+- [x] Retry policy: 3-attempt exponential backoff on `40001` / `40P01`; other errors bubble up
+- [x] `cargo clippy --all-targets -- -D warnings` green; `SQLX_OFFLINE=true cargo build --workspace` green
+- [x] `npm run db:prepare` succeeds; `.sqlx/` offline cache committed (empty — only runtime queries)
+- [x] Integration test: insert one synthetic ledger, assert row counts across 15 tables written today + 0 rows in `nft_ownership` / `lp_positions`; replay the same ledger, counts unchanged
+- [x] `backfill-bench` runs ≥100 ledgers from a real Stellar partition without errors
+- [ ] Performance: `p95 ≤ 150ms/ledger` on local-bench profile (logged + asserted in bench) — **not met; shipped p95 = 305 ms (after diagnostic-event filter). See [Performance](#performance) below. Gap remains open; next largest schema lever captured in ADR 0030 + task 0151.**
+
+## Performance
+
+Bench added to `backfill-bench` with `--assert-p95-ms <N>` flag for CI gating.
+Measurements on local-bench profile (docker-compose PostgreSQL 16, Ubuntu
+24.04, NVMe SSD, backfill 100 real ledgers from mainnet partition 62016000).
+Three runs on freshly-migrated DB, identical input range, showing the
+levers are indistinguishable from noise:
+
+| Metric  | (A) Pure UNNEST | (B) + async commit + balance refactor + COPY events + COPY ops | (C) Final shipped: (A) + async commit + balance refactor |          SLO |
+| ------- | --------------: | -------------------------------------------------------------: | -------------------------------------------------------: | -----------: |
+| min     |          124 ms |                                                         117 ms |                                                   116 ms |            — |
+| mean    |          305 ms |                                                         304 ms |                                                   317 ms |            — |
+| p50     |          337 ms |                                                         339 ms |                                                   354 ms |            — |
+| **p95** |      **424 ms** |                                                     **434 ms** |                                               **450 ms** | **≤ 150 ms** |
+| p99     |          445 ms |                                                         458 ms |                                                   497 ms |            — |
+| max     |          502 ms |                                                         483 ms |                                                   555 ms |            — |
+
+Variance between runs is ~30 ms at p95, larger than any measured lever.
+The shipped config is (C): async commit and the balance-history refactor
+are kept because they are justified on their own merits (fsync latency
+on slower disks; O(log n) vs O(n) replay cost) even though they are not
+perf wins on local NVMe. COPY was reverted because it adds ~300 lines of
+machinery without a measurable payoff (see "Root cause" below).
+
+Per-step breakdown on a heavy ledger (tx_count ≈ 500) shows
+`soroban_events` dominates (~50 % of persist_ms) with ~1.5 k–3 k rows per
+ledger on Soroban-heavy periods.
+
+### What was tried and kept
+
+1. **Async commit** inside the persist tx
+   (`SET LOCAL synchronous_commit = off`). Safe here because the S3 event
+   source + Lambda retry policy provides end-to-end durability. Measurable
+   win is small on local NVMe (~1–3 ms) but bigger on EBS gp3 in
+   production.
+2. **Balance-history refactor** — partitioned the `account_balance_history`
+   append-only insert by identity class (native vs credit) and routed each
+   through the matching partial UNIQUE index with `ON CONFLICT DO NOTHING`
+   instead of the prior `WHERE NOT EXISTS` anti-join. Same latency, clearer
+   code, O(log n) vs O(n) replay cost.
+
+### What was tried and reverted
+
+3. **`COPY FROM STDIN` for `soroban_events` and `operations`** — created
+   `TEMPORARY TABLE … ON COMMIT DROP`, streamed TEXT-format COPY, then
+   `INSERT … SELECT … ON CONFLICT DO NOTHING`. Measured p95 delta of +10 ms
+   (within noise). Reverted to keep the UNNEST path — the reason it didn't
+   help is spelled out below.
+
+### Root cause of the gap
+
+The `soroban_events` hot path cost is dominated by **server-side** work, not
+wire-protocol parsing:
+
+- 4 FK checks per row (contract_id → soroban_contracts, transfer_from_id /
+  transfer_to_id → accounts, composite (transaction_id, created_at) →
+  transactions)
+- 3 indexes on soroban_events: primary key, partial idx_events_transfer_from,
+  partial idx_events_transfer_to, plus the new natural-key UNIQUE
+- Partition routing through the DEFAULT partition (local bench creates
+  `_default` partitions because db-partition-mgmt only covers 3 of the 8
+  partitioned tables; see 0139 / related follow-up)
+
+`COPY` only replaces the INSERT parser in front of those checks — the
+server-side cost per row is unchanged. The same reasoning applies to the
+`operations` path.
+
+### Realistic optimization candidates (all out of scope for 0149)
+
+Each requires a change the task explicitly keeps out:
+
+- **Monthly range partitions for all 8 partitioned tables** — smaller hot
+  indexes, shorter FK lookups. Belongs in partition-Lambda extension
+  (task 0139 neighborhood). Estimated win: 20–40 %.
+- **Relax FKs on soroban_events.transfer_from_id / transfer_to_id** — they
+  are convenience FKs; the authoritative lookup for transfer history is
+  through `transaction_participants`. ADR change; ~30–50 ms saved on heavy
+  ledgers.
+- **COPY BINARY instead of TEXT** — bypasses text parse for NUMERIC(39,0)
+  and TIMESTAMPTZ. Needs a PG binary-wire encoder in Rust. Uncertain win.
+- **Parallel per-ledger processing across multiple connections** — doesn't
+  help per-ledger p95, but raises indexer throughput under burst load.
+
+### Follow-up spawned
+
+See **[ADR 0030](../../2-adrs/0030_contracts-surrogate-bigint-id.md)** +
+task **0151_FEATURE_contracts-surrogate-id-migration** (backlog) — captures
+the next single largest schema lever (contract_id VARCHAR(56) → BIGINT
+surrogate, mirroring ADR 0026's accounts-surrogate pattern). Projected
+contribution: ~10–20 ms on p95, plus ~270–320 GB/year DB-size saving.
+
+The broader sub-150 ms perf work (monthly partitions, FK relaxation on
+`soroban_events` transfer\_\* columns, COPY BINARY) remains open but is not
+currently tracked as a single task — call it out when we actually need
+stricter latency than 305 ms.
 
 ## Out of Scope
 

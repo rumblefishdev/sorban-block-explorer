@@ -4,7 +4,7 @@
 //! orchestrates the four parsing stages, and wraps all writes for a single
 //! ledger in one atomic database transaction.
 
-mod persist;
+pub mod persist;
 pub mod process;
 
 use aws_sdk_cloudwatch::Client as CloudWatchClient;
@@ -57,6 +57,8 @@ pub enum HandlerError {
     Parse(#[from] xdr_parser::ParseError),
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
+    #[error("persist staging error: {0}")]
+    Staging(String),
 }
 
 // ---------------------------------------------------------------------------

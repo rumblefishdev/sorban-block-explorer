@@ -5,6 +5,7 @@ use aws_sdk_cloudwatch::{
     types::{Dimension, MetricDatum, StandardUnit},
 };
 use sqlx::PgPool;
+use std::collections::HashMap;
 use std::time::Instant;
 use stellar_xdr::curr::{LedgerCloseMeta, TransactionMeta};
 use tracing::{info, warn};
@@ -140,11 +141,22 @@ pub async fn process_ledger(
     let parse_ms = parse_timer.elapsed().as_millis();
 
     // --- Step 4: Atomic database transaction ---
-    let persist_timer = Instant::now();
-    let mut db_tx = pool.begin().await?;
+    //
+    // persist_ledger owns the transaction lifecycle (open/commit/retry) so that
+    // transient 40001/40P01 conflicts replay the full envelope.
+    //
+    // Signature extension params (task 0149) — the parser does not yet produce
+    // these; pass empty slices so wiring is in place end-to-end:
+    //   * nft_events        → `nft_ownership` rows (follow-up from 0118)
+    //   * lp_positions      → `lp_positions` rows  (task 0126)
+    //   * inner_tx_hashes   → `transactions.inner_tx_hash` (follow-up parser work)
+    let nft_events: Vec<xdr_parser::types::ExtractedNftEvent> = Vec::new();
+    let lp_positions: Vec<xdr_parser::types::ExtractedLpPosition> = Vec::new();
+    let inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
 
+    let persist_timer = Instant::now();
     persist::persist_ledger(
-        &mut db_tx,
+        pool,
         &extracted_ledger,
         &extracted_transactions,
         &all_operations,
@@ -158,13 +170,11 @@ pub async fn process_ledger(
         &all_pool_snapshots,
         &all_tokens,
         &all_nfts,
+        &nft_events,
+        &lp_positions,
+        &inner_tx_hashes,
     )
     .await?;
-
-    let commit_timer = Instant::now();
-    db_tx.commit().await?;
-    let commit_ms = commit_timer.elapsed().as_millis();
-
     let persist_ms = persist_timer.elapsed().as_millis();
 
     info!(
@@ -173,7 +183,6 @@ pub async fn process_ledger(
         parse_errors = tx_parse_errors.len(),
         parse_ms,
         persist_ms,
-        commit_ms,
         "ledger saved to database"
     );
 

@@ -297,6 +297,52 @@ pub struct ExtractedNft {
     pub created_at: i64,
 }
 
+/// NFT ownership event carried from the parser into `nft_ownership`.
+///
+/// Schema-shaped superset of `NftEvent` that resolves the NFT row identity
+/// (`contract_id`, `token_id`) and carries the ownership transition needed for
+/// `nft_ownership` rows. Not produced by the parser today — task 0118 (NFT
+/// false-positive filtering) will gate population. Until then, `process_ledger`
+/// passes an empty slice.
+#[derive(Debug, Clone)]
+pub struct ExtractedNftEvent {
+    /// Parent transaction hash, hex-encoded. Resolved to `transaction_id` at persistence time.
+    pub transaction_hash: String,
+    /// NFT collection contract address (C... StrKey).
+    pub contract_id: String,
+    /// Stable per-collection token identity (matches `nfts.token_id`).
+    pub token_id: String,
+    /// Event kind: "mint" | "transfer" | "burn". Maps to `nft_ownership.event_type`.
+    pub event_type: String,
+    /// New owner after the event. `None` for burns.
+    pub owner_account: Option<String>,
+    /// Stable order within the ledger. Maps to `nft_ownership.event_order`.
+    pub event_order: u16,
+    /// Parent ledger sequence number.
+    pub ledger_sequence: u32,
+    /// Unix seconds. Matches parent transaction partitioning key.
+    pub created_at: i64,
+}
+
+/// LP position change carried from the parser into `lp_positions`.
+///
+/// Not produced by the parser today — task 0126 (LP participant tracking) will
+/// gate population. Until then, `process_ledger` passes an empty slice.
+#[derive(Debug, Clone)]
+pub struct ExtractedLpPosition {
+    /// Pool hash, hex-encoded (matches `liquidity_pools.pool_id` after decode).
+    pub pool_id: String,
+    /// Participant StrKey. Resolved to `accounts.id` at persistence time.
+    pub account_id: String,
+    /// Pool-share balance as decimal string (NUMERIC(28,7) in schema).
+    pub shares: String,
+    /// Ledger where this participant first deposited. Set only on the first
+    /// appearance of `(pool_id, account_id)`; `None` on subsequent updates.
+    pub first_deposit_ledger: Option<u32>,
+    /// Ledger of the change. Watermark column — older values must not overwrite newer.
+    pub last_updated_ledger: u32,
+}
+
 /// Extracted operation data, maps to the `operations` table.
 ///
 /// **Note:** field names do not directly mirror DB column names for this struct:

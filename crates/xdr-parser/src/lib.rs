@@ -41,7 +41,8 @@ pub use types::{
     ContractFunction, ExtractedAccountState, ExtractedContractDeployment,
     ExtractedContractInterface, ExtractedEvent, ExtractedInvocation, ExtractedLedger,
     ExtractedLedgerEntryChange, ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot,
-    ExtractedNft, ExtractedOperation, ExtractedToken, ExtractedTransaction, NftEvent,
+    ExtractedLpPosition, ExtractedNft, ExtractedNftEvent, ExtractedOperation, ExtractedToken,
+    ExtractedTransaction, NftEvent,
 };
 
 use stellar_xdr::curr::{LedgerCloseMetaBatch, ReadXdr};
