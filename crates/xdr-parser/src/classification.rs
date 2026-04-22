@@ -25,11 +25,13 @@ use crate::types::ContractFunction;
 /// WASM upload may have arrived on a different worker in the meantime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContractClassification {
-    /// SEP-0050-style NFT contract. Discriminator: exposes `owner_of`
-    /// and/or `token_uri`.
+    /// SEP-0050-style NFT contract. Discriminator: exposes any of
+    /// `owner_of`, `token_uri`, `approve_for_all`, `get_approved`,
+    /// or `is_approved_for_all`.
     Nft,
-    /// SEP-0041 fungible token contract. Discriminator: exposes
-    /// `decimals` and/or `allowance` without an NFT signature.
+    /// SEP-0041 fungible token contract. Discriminator: exposes any
+    /// of `decimals`, `allowance`, or `total_supply` without an NFT
+    /// discriminator.
     Fungible,
     /// No usable classification yet — either empty metadata, a
     /// pre-standard contract, or a custom contract whose public
@@ -96,20 +98,20 @@ pub enum ContractClassification {
 ///   filter should default to inserting (false-positive-safe) for any
 ///   classification it does not explicitly recognise.
 pub fn classify_contract_from_wasm_spec(functions: &[ContractFunction]) -> ContractClassification {
-    let has_nft_signature = functions.iter().any(|f| {
+    let has_nft_name_match = functions.iter().any(|f| {
         matches!(
             f.name.as_str(),
             "owner_of" | "token_uri" | "approve_for_all" | "get_approved" | "is_approved_for_all"
         )
     });
-    if has_nft_signature {
+    if has_nft_name_match {
         return ContractClassification::Nft;
     }
 
-    let has_fungible_signature = functions
+    let has_fungible_name_match = functions
         .iter()
         .any(|f| matches!(f.name.as_str(), "decimals" | "allowance" | "total_supply"));
-    if has_fungible_signature {
+    if has_fungible_name_match {
         return ContractClassification::Fungible;
     }
 
