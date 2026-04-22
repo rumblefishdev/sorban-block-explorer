@@ -3,8 +3,8 @@ id: '0155'
 title: 'DOCS: audit `docs/architecture/**` against ADR history, bring up to date'
 type: DOCS
 status: backlog
-related_adr: ['0032']
-related_tasks: ['0154']
+related_adr: ['0027', '0030', '0031', '0032']
+related_tasks: ['0139', '0140', '0154']
 tags: [docs, audit, priority-medium, effort-medium]
 links:
   - docs/architecture/technical-design-general-overview.md
@@ -14,6 +14,7 @@ links:
   - docs/architecture/indexing-pipeline/indexing-pipeline-overview.md
   - docs/architecture/infrastructure/infrastructure-overview.md
   - docs/architecture/xdr-parsing/xdr-parsing-overview.md
+  - docs/database-audit-first-implementation.md
   - lore/2-adrs/
   - lore/1-tasks/backlog/0154_REFACTOR_rename-tokens-to-assets/notes/R-assets-vs-tokens-taxonomy.md
 history:
@@ -26,6 +27,18 @@ history:
       ADR 0022 → 0031, compare to the current state of every file under
       `docs/architecture/**`, and update the docs to reflect reality. After
       this sweep, steady-state maintenance (per-ADR updates) takes over.
+  - date: '2026-04-22'
+    status: backlog
+    who: stkrolikiewicz
+    note: >
+      Partial coverage landed in 0139: `docs/architecture/database-schema/database-schema-overview.md`
+      (partition strategy lines 189/202/513) and `docs/database-audit-first-implementation.md`
+      (lines 130, 136-140) corrected for ADR 0027 operations partitioning.
+      Remaining hot spots for this task: `docs/architecture/technical-design-general-overview.md`
+      (16 stale schema hits per grep), plus rest of `docs/architecture/**`
+      for ADR 0030 contracts BIGINT surrogate, ADR 0031 enum SMALLINT,
+      and lingering operations_pN references. Should land AFTER 0154
+      (tokens→assets rename) to avoid merge churn on shared files.
 ---
 
 # DOCS: audit `docs/architecture/**` against ADR history, bring up to date
