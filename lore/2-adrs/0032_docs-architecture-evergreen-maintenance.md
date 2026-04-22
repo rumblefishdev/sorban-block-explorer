@@ -35,8 +35,11 @@ history:
       Drafted after the tokens-vs-assets taxonomy research note surfaced
       concrete drift between
       `docs/architecture/technical-design-general-overview.md` and the real
-      schema (4-value `asset_type` vs 3 in the doc, `VARCHAR(20)` vs
-      `VARCHAR(10)`, partial unique indexes vs plain UNIQUE, missing
+      schema (4-value `asset_type` now stored as `SMALLINT` with the
+      `token_asset_type_name` helper after ADR 0031 vs 3 values as
+      `VARCHAR(10)` in the doc, `tokens.contract_id` as a `BIGINT` FK to
+      `soroban_contracts.id` after ADR 0030 vs the older `VARCHAR(56)` FK
+      in the doc, partial unique indexes vs plain `UNIQUE`, missing
       `ck_tokens_identity`, plus analogous drift in other sections). The
       analogous pattern holds for other files under `docs/architecture/**`
       (backend, database-schema, frontend, indexing-pipeline,
@@ -83,11 +86,16 @@ The research note on `tokens` vs `assets` (now at
 §5.2) documents concrete drift
 examples for the schema surface alone:
 
-- `asset_type` has 4 values in the migration (`native, classic, sac,
-soroban`), the design doc describes 3.
-- `VARCHAR(20)` in reality, `VARCHAR(10)` in the doc.
-- Partial unique indexes per `asset_type` in reality, plain `UNIQUE` in
-  the doc.
+- `asset_type` has 4 values in the migration (`native`, `classic`, `sac`,
+  `soroban`), the design doc describes 3.
+- `asset_type` is a `SMALLINT` backed by the Rust `TokenAssetType`
+  enum with the `token_asset_type_name` SQL helper (ADR 0031), the
+  design doc still describes a `VARCHAR`-typed column.
+- `tokens.contract_id` is a `BIGINT` FK to `soroban_contracts.id`
+  (ADR 0030 contracts surrogate), the design doc still shows the
+  older `VARCHAR(56)` FK to `soroban_contracts.contract_id`.
+- Partial unique indexes per `asset_type` in reality, plain `UNIQUE`
+  in the doc.
 - `ck_tokens_identity` CHECK constraint in reality, not mentioned in
   the doc.
 - Analogous drift for `transaction_hash_index`, `transaction_participants`,
@@ -103,13 +111,14 @@ want them to be right, and if so, how do we sustain that".
 
 ## Decision
 
-**Adopt `docs/architecture/**` as evergreen, living documentation of the
-current system state.\*\* From this ADR onward:
+Adopt the `docs/architecture/` subtree as **evergreen, living
+documentation of the current system state**. From this ADR onward:
 
-1. **Any ADR that changes schema, API contract, ingest pipeline,
-   infrastructure, or a major subsystem owns keeping the corresponding
-   `docs/architecture/**` pages in sync.\*\* The PR that lands the ADR (or
-   the task that implements it) updates the relevant overview files.
+1. **Ownership.** Any ADR that changes schema, API contract, ingest
+   pipeline, infrastructure, or a major subsystem owns keeping the
+   corresponding `docs/architecture/` pages in sync. The PR that lands
+   the ADR (or the task that implements it) updates the relevant
+   overview files.
 2. **One-shot catch-up.** Task 0155 performs a single backward-looking
    sweep: walk ADRs 0022–0031 in order, compare each to the current
    state of `docs/architecture/**`, update the docs to match. After this
