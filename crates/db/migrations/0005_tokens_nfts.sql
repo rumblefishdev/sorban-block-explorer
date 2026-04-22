@@ -11,7 +11,7 @@
 
 -- 11. tokens (ADR 0027 §11 + ADR 0031)
 -- `asset_type` SMALLINT is the Rust `TokenAssetType` enum
--- (0=native, 1=classic, 2=sac, 3=soroban — see token_asset_type_name() in 0008).
+-- (0=native, 1=classic, 2=sac, 3=soroban — label helper: token_asset_type_name).
 -- Identity is enforced by ck_tokens_identity (which columns must be NOT NULL
 -- for each asset_type) plus per-asset_type partial UNIQUE indexes. The CHECK
 -- closes the NULL-in-UNIQUE loophole — PostgreSQL treats NULLs as distinct,

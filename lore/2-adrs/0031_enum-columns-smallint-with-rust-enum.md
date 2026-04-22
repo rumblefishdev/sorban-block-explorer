@@ -32,7 +32,9 @@ history:
       no more Debug/Display round-trip. 6 IMMUTABLE SQL helpers
       (op_type_name, asset_type_name, token_asset_type_name,
       event_type_name, nft_event_type_name, contract_type_name)
-      in migration 0008 + integration test iterating 43 variants ×
+      in migration 20260422000000_enum_label_functions (reversible
+      timestamped up/down pair per MIGRATIONS.md) + integration test
+      iterating 43 variants ×
       6 enums against the helpers closes the Rust ↔ SQL drift gap.
       Bench 100 ledgers clean (p95=384 ms — matches post-0030
       baseline, no regression). DB size 81 MB vs 84 MB post-0030

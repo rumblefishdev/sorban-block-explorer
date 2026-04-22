@@ -49,7 +49,7 @@ CREATE TABLE operations (
     id                BIGSERIAL    NOT NULL,
     transaction_id    BIGINT       NOT NULL,
     application_order SMALLINT     NOT NULL,
-    type              SMALLINT     NOT NULL, -- ADR 0031 (Rust OperationType enum; see op_type_name() in 0008)
+    type              SMALLINT     NOT NULL, -- ADR 0031 (Rust OperationType enum; label helper: op_type_name)
     source_id         BIGINT       REFERENCES accounts(id),
     destination_id    BIGINT       REFERENCES accounts(id),
     contract_id       BIGINT       REFERENCES soroban_contracts(id), -- ADR 0030

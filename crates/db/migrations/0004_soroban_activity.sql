@@ -11,7 +11,7 @@ CREATE TABLE soroban_events (
     id               BIGSERIAL    NOT NULL,
     transaction_id   BIGINT       NOT NULL,
     contract_id      BIGINT       REFERENCES soroban_contracts(id), -- ADR 0030
-    event_type       SMALLINT     NOT NULL, -- ADR 0031 (Rust ContractEventType; see event_type_name() in 0008)
+    event_type       SMALLINT     NOT NULL, -- ADR 0031 (Rust ContractEventType; label helper: event_type_name)
     topic0           TEXT,
     event_index      SMALLINT     NOT NULL,
     transfer_from_id BIGINT       REFERENCES accounts(id),

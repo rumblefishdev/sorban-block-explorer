@@ -48,8 +48,10 @@ history:
     note: >
       Landed. 9/10 acceptance criteria met in-code; last criterion
       (ADR 0031 → accepted) done at task close. 6 migrations edited
-      in place as source-of-truth (0002-0007) + new 0008 enum label
-      functions. 6 Rust `#[repr(i16)]` enums in crates/domain/src/enums/
+      in place as source-of-truth (0002-0007) + new reversible
+      20260422000000_enum_label_functions (up/down pair) for the
+      SQL label helpers. 6 Rust `#[repr(i16)]` enums in
+      crates/domain/src/enums/
       with feature-gated sqlx/utoipa derives (parser stays sqlx-free).
       Parser types.rs + operation.rs + event.rs + state.rs + nft.rs
       flipped to typed enums — no more Debug/Display string round-trip.
@@ -169,7 +171,7 @@ canonical label. Zero JOIN anywhere (unlike ADR 0030 which needed
       extended: fetches `operations.type` as `OperationType` enum +
       `op_type_name()` label, asserts match on Payment and InvokeHostFunction.
 - [x] New integration test iterating every variant: `op_type_name(v as i16)
-  == v.as_str()` for all, and same for other enums.
+== v.as_str()` for all, and same for other enums.
       `enum_label_helpers_match_rust_as_str` iterates 27 + 4 + 4 + 3 + 3 +
       2 = **43 variants × 6 enums** vs all 6 SQL helpers — passes.
 - [x] `backfill-bench --start 62016000 --end 62016099` indexes 100
@@ -241,10 +243,14 @@ SMALLINT NOT NULL` + CHECK per column.
   both tables. `ck_abc_native` / `ck_abh_native` rewritten to
   `asset_type = 0` / `<> 0`. Partial UNIQUE indexes (native vs
   credit) same flip.
-- `0008_enum_label_functions.sql` — **new** file. 6 `IMMUTABLE
-PARALLEL SAFE` SQL functions: `op_type_name`, `asset_type_name`
-  (XDR 4-variant), `token_asset_type_name` (explorer-synthetic),
-  `event_type_name`, `nft_event_type_name`, `contract_type_name`.
+- `20260422000000_enum_label_functions.{up,down}.sql` — **new**
+  reversible timestamped migration (per MIGRATIONS.md §3 — 0001-0007
+  are irreversible baseline, all new migrations use `-r`).
+  `.up.sql` ships 6 `IMMUTABLE PARALLEL SAFE` SQL functions:
+  `op_type_name`, `asset_type_name` (XDR 4-variant),
+  `token_asset_type_name` (explorer-synthetic), `event_type_name`,
+  `nft_event_type_name`, `contract_type_name`. `.down.sql` is 6
+  `DROP FUNCTION IF EXISTS` in reverse order.
 
 ### Phase 2 — Rust `domain/enums/` module
 
@@ -368,10 +374,12 @@ functions are ready.
 
 ### From Plan
 
-1. **Edit source-of-truth migrations in place** (per 0151 precedent) —
-   no new `yyyymmddHHMMSS_enum_columns.sql`. Project is pre-GA; the
-   canonical DB state is whatever `0001..0008` plus the two
-   timestamped ones produce.
+1. **Edit source-of-truth migrations in place** (per 0151 precedent)
+   for the enum column-type flips — no new `yyyymmddHHMMSS_enum_columns
+.sql` for the core SMALLINT work. Project is pre-GA; the canonical
+   DB state is whatever `0001..0007` plus the three timestamped
+   migrations produce (two pre-existing + `20260422000000_enum_label_
+functions` added here).
 
 2. **Enums live in `crates/domain/`** (not `xdr-parser/`) — domain
    already plays the role of "shared types for api + indexer".
@@ -431,6 +439,19 @@ xdr-parser`) free of DB and HTTP toolchain, matching parser's
    Changed to `.bind(asset_type)` as `$1`. Side benefit: sqlx can
    cache prepared statements per partition (classic vs sac share
    the same plan template now).
+
+10. **SQL helper migration converted to reversible timestamped pair**
+    — first landed as `0008_enum_label_functions.sql` (matching the
+    `00XX_` placeholder in ADR 0031 §3 and task Phase 1). PR review
+    (Copilot on #105) flagged that MIGRATIONS.md §3 explicitly limits
+    the numeric prefix to the irreversible 0001-0007 baseline and
+    requires all subsequent migrations to be `-r` (timestamped
+    `.up.sql` + `.down.sql` pair). Renamed to
+    `20260422000000_enum_label_functions.{up,down}.sql`; `.down.sql`
+    is six `DROP FUNCTION IF EXISTS …(SMALLINT)` in reverse order.
+    The SMALLINT columns stay in the irreversible baseline (they're
+    intrinsic to the ADR 0027 schema shape); only the helpers (a
+    presentation-layer concern) are reversible.
 
 ## Issues Encountered
 

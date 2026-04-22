@@ -12,7 +12,7 @@
 -- 14. liquidity_pools (ADR 0027 §14 + ADR 0031)
 -- `asset_*_type` SMALLINT carries the raw XDR AssetType
 -- (0=native, 1=credit_alphanum4, 2=credit_alphanum12, 3=pool_share —
--- see asset_type_name() in 0008; Rust `AssetType`).
+-- label helper: asset_type_name; Rust `AssetType`).
 CREATE TABLE liquidity_pools (
     pool_id            BYTEA       PRIMARY KEY,
     asset_a_type       SMALLINT    NOT NULL, -- ADR 0031: AssetType (XDR)

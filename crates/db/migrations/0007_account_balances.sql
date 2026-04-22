@@ -5,8 +5,8 @@
 -- for credit assets).
 --
 -- `asset_type` SMALLINT is the Rust `AssetType` XDR enum
--- (0=native, 1=credit_alphanum4, 2=credit_alphanum12 — see asset_type_name()
--- in 0008). Balances never carry pool_share (3) because parser
+-- (0=native, 1=credit_alphanum4, 2=credit_alphanum12 — label helper:
+-- asset_type_name). Balances never carry pool_share (3) because parser
 -- state.rs skips pool_share trustlines — LP positions live in `lp_positions`.
 --
 -- Tables:

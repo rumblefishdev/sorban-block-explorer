@@ -2,6 +2,10 @@
 -- SMALLINT enum column in psql / BI dashboards. Planner inlines each
 -- CASE expression; no runtime cost vs. a native ENUM cast.
 --
+-- Reversible per MIGRATIONS.md convention — the paired `.down.sql` drops
+-- all six functions. The SMALLINT columns themselves live in the
+-- irreversible 0002-0007 baseline (initial schema per ADR 0027).
+--
 -- Every function MUST stay bitwise-identical to the matching Rust enum's
 -- `as_str()` output. An integration test (see
 -- `crates/indexer/tests/persist_integration.rs`) enumerates every variant
