@@ -2,9 +2,9 @@
 id: '0152'
 title: 'Implement ADR 0031: enum-like VARCHAR columns → SMALLINT + Rust enum'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0027', '0030', '0031']
-related_tasks: ['0151']
+related_tasks: ['0149', '0151']
 tags:
   [
     layer-backend,
@@ -33,6 +33,15 @@ history:
       by flipping 7-8 enum-like VARCHAR columns to SMALLINT + Rust
       #[repr(i16)] enum + CHECK range. Preconditions: ADR 0030 must be
       landed (done via 0151).
+  - date: '2026-04-21'
+    status: active
+    who: fmazur
+    note: >
+      Activating right after closing 0151 + 0149. Set as current task.
+      Implementation order per ADR 0031: schema migrations 0002-0007 in
+      place (source-of-truth, per 0151 precedent), Rust #[repr(i16)] enum
+      modules per column, persist binds flipped String→i16, integration
+      test enumerating every variant against op_type_name SQL helper.
 ---
 
 # Implement ADR 0031: enum-like VARCHAR columns → `SMALLINT` + Rust enum
@@ -127,7 +136,7 @@ canonical label. Zero JOIN anywhere (unlike ADR 0030 which needed
 - [ ] `persist_integration.rs` round-trip test for at least one enum
       column passes.
 - [ ] New integration test iterating every variant: `op_type_name(v as i16)
-    == v.as_str()` for all, and same for other enums.
+  == v.as_str()` for all, and same for other enums.
 - [ ] `backfill-bench --start 62016000 --end 62016099` indexes 100
       ledgers without errors; p95 measured, expected improvement on
       `WHERE type = …` filter probes on partitions > ~10 k rows.
