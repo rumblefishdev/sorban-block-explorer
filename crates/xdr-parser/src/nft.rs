@@ -11,6 +11,7 @@
 use serde_json::Value;
 
 use crate::types::{ExtractedEvent, NftEvent};
+use domain::ContractEventType;
 
 /// Detect NFT-related events from a list of extracted events.
 ///
@@ -23,7 +24,7 @@ pub fn detect_nft_events(events: &[ExtractedEvent]) -> Vec<NftEvent> {
     let mut nft_events = Vec::new();
 
     for event in events {
-        if event.event_type != "contract" {
+        if event.event_type != ContractEventType::Contract {
             continue;
         }
         let Some(ref contract_id) = event.contract_id else {
@@ -211,7 +212,7 @@ mod tests {
     fn make_event(contract_id: &str, topics: Vec<Value>, data: Value) -> ExtractedEvent {
         ExtractedEvent {
             transaction_hash: "abcd1234".into(),
-            event_type: "contract".into(),
+            event_type: ContractEventType::Contract,
             contract_id: Some(contract_id.into()),
             topics: json!(topics),
             data,
@@ -335,7 +336,7 @@ mod tests {
             vec![json!({"type": "sym", "value": "transfer"})],
             json!({"type": "u32", "value": 1}),
         );
-        event.event_type = "system".into();
+        event.event_type = ContractEventType::System;
 
         let nft_events = detect_nft_events(&[event]);
         assert!(nft_events.is_empty());

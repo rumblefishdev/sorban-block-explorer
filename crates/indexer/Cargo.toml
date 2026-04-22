@@ -14,7 +14,7 @@ path = "src/main.rs"
 
 [dependencies]
 xdr-parser = { path = "../xdr-parser" }
-domain = { path = "../domain" }
+domain = { path = "../domain", features = ["sqlx"] }
 db = { path = "../db", features = ["aws-secrets"] }
 tokio = { workspace = true }
 tracing = { workspace = true }

@@ -17,8 +17,11 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
+use domain::{
+    AssetType, ContractEventType, ContractType, NftEventType, OperationType, TokenAssetType,
+};
 use indexer::handler::persist::persist_ledger;
-use serde_json::json;
+use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
 use xdr_parser::types::{
     ExtractedAccountState, ExtractedContractDeployment, ExtractedContractInterface, ExtractedEvent,
@@ -142,6 +145,27 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
     );
     assert_eq!(counts_first.lp_positions, 0, "lp_positions expected empty");
 
+    // ADR 0031 round-trip — operations.type SMALLINT decodes back to the
+    // typed enum, and the SQL helper renders the same canonical label as
+    // OperationType::as_str(). Closes the Rust ↔ SQL drift gap on every run.
+    let ops: Vec<(OperationType, String)> = sqlx::query_as(
+        r#"
+        SELECT type, op_type_name(type)
+          FROM operations
+         WHERE ledger_sequence = $1
+         ORDER BY application_order
+        "#,
+    )
+    .bind(i64::from(TEST_LEDGER_SEQ))
+    .fetch_all(&pool)
+    .await
+    .expect("fetch operations as typed enum");
+    assert_eq!(ops.len(), 2, "two ops inserted by the fixture");
+    assert_eq!(ops[0].0, OperationType::Payment);
+    assert_eq!(ops[0].1, "PAYMENT");
+    assert_eq!(ops[1].0, OperationType::InvokeHostFunction);
+    assert_eq!(ops[1].1, "INVOKE_HOST_FUNCTION");
+
     // --- Replay — counts must not change ---
     persist_ledger(
         &pool,
@@ -167,6 +191,66 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
 
     let counts_replay = test_counts(&pool).await;
     assert_eq!(counts_replay, counts_first, "replay must be idempotent");
+}
+
+/// ADR 0031 — every Rust `#[repr(i16)]` enum variant must agree with the
+/// matching `xxx_name(SMALLINT)` SQL helper from migration 0008. Without
+/// this guard a new Rust variant would silently render NULL in psql / BI
+/// dashboards until a human noticed.
+#[tokio::test]
+async fn enum_label_helpers_match_rust_as_str() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping enum-helper drift test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping enum-helper drift test");
+            return;
+        }
+    };
+
+    // Per-enum check: bind every VARIANTS element as SMALLINT, fetch the
+    // label rendered by the SQL helper, compare to Rust `as_str()`.
+    macro_rules! check_all {
+        ($pool:expr, $sql_fn:expr, $enum:ty) => {
+            for v in <$enum>::VARIANTS {
+                let i: i16 = *v as i16;
+                let label: Option<String> = sqlx::query_scalar(&format!("SELECT {}($1)", $sql_fn))
+                    .bind(i)
+                    .fetch_one($pool)
+                    .await
+                    .unwrap_or_else(|err| panic!("{}({}) query failed: {err}", $sql_fn, i));
+                let label = label.unwrap_or_else(|| {
+                    panic!(
+                        "{}({}) returned NULL — Rust ↔ SQL drift on variant {}",
+                        $sql_fn,
+                        i,
+                        v.as_str()
+                    )
+                });
+                assert_eq!(
+                    label,
+                    v.as_str(),
+                    "{}({}) = {:?}; Rust {}::{:?}.as_str() = {:?}",
+                    $sql_fn,
+                    i,
+                    label,
+                    stringify!($enum),
+                    v,
+                    v.as_str()
+                );
+            }
+        };
+    }
+
+    check_all!(&pool, "op_type_name", OperationType);
+    check_all!(&pool, "asset_type_name", AssetType);
+    check_all!(&pool, "token_asset_type_name", TokenAssetType);
+    check_all!(&pool, "event_type_name", ContractEventType);
+    check_all!(&pool, "nft_event_type_name", NftEventType);
+    check_all!(&pool, "contract_type_name", ContractType);
 }
 
 // ---------------------------------------------------------------------------
@@ -207,7 +291,7 @@ fn make_payment_op() -> ExtractedOperation {
     ExtractedOperation {
         transaction_hash: TEST_TX_HASH.to_string(),
         operation_index: 0,
-        op_type: "PAYMENT".to_string(),
+        op_type: OperationType::Payment,
         source_account: None,
         details: json!({
             "destination": DST_STRKEY,
@@ -221,7 +305,7 @@ fn make_invoke_op() -> ExtractedOperation {
     ExtractedOperation {
         transaction_hash: TEST_TX_HASH.to_string(),
         operation_index: 1,
-        op_type: "INVOKE_HOST_FUNCTION".to_string(),
+        op_type: OperationType::InvokeHostFunction,
         source_account: None,
         details: json!({
             "hostFunctionType": "invokeContract",
@@ -236,7 +320,7 @@ fn make_invoke_op() -> ExtractedOperation {
 fn make_transfer_event() -> ExtractedEvent {
     ExtractedEvent {
         transaction_hash: TEST_TX_HASH.to_string(),
-        event_type: "contract".to_string(),
+        event_type: ContractEventType::Contract,
         contract_id: Some(TOKEN_CONTRACT.to_string()),
         topics: json!([
             {"type": "sym", "value": "transfer"},
@@ -280,7 +364,7 @@ fn make_contract_deployment() -> ExtractedContractDeployment {
         wasm_hash: Some(WASM_HASH.to_string()),
         deployer_account: Some(SRC_STRKEY.to_string()),
         deployed_at_ledger: TEST_LEDGER_SEQ,
-        contract_type: "token".to_string(),
+        contract_type: ContractType::Token,
         is_sac: true,
         metadata: json!({"name": "TEST"}),
     }
@@ -332,7 +416,7 @@ fn make_pool_snapshot() -> ExtractedLiquidityPoolSnapshot {
 
 fn make_sac_token() -> ExtractedToken {
     ExtractedToken {
-        asset_type: "sac".to_string(),
+        asset_type: TokenAssetType::Sac,
         asset_code: Some("USDC".to_string()),
         issuer_address: Some(ISSUER_STRKEY.to_string()),
         contract_id: Some(TOKEN_CONTRACT.to_string()),
@@ -399,16 +483,26 @@ async fn clean_test_ledger(pool: &PgPool) {
     for sql in sql_stmts {
         let _ = sqlx::query(sql).bind(POOL_ID).execute(pool).await;
     }
-    let _ = sqlx::query("DELETE FROM nft_ownership WHERE nft_id IN (SELECT id FROM nfts WHERE contract_id IN ($1, $2))")
-        .bind(TOKEN_CONTRACT)
-        .bind(NFT_CONTRACT)
-        .execute(pool)
-        .await;
-    let _ = sqlx::query("DELETE FROM nfts WHERE contract_id IN ($1, $2)")
-        .bind(TOKEN_CONTRACT)
-        .bind(NFT_CONTRACT)
-        .execute(pool)
-        .await;
+    // ADR 0030: tokens/nfts/nft_ownership.contract_id is now BIGINT → join via
+    // soroban_contracts to filter by StrKey.
+    let _ = sqlx::query(
+        "DELETE FROM nft_ownership WHERE nft_id IN (
+            SELECT n.id FROM nfts n
+              JOIN soroban_contracts sc ON sc.id = n.contract_id
+             WHERE sc.contract_id = ANY($1)
+         )",
+    )
+    .bind(vec![TOKEN_CONTRACT.to_string(), NFT_CONTRACT.to_string()])
+    .execute(pool)
+    .await;
+    let _ = sqlx::query(
+        "DELETE FROM nfts WHERE contract_id IN (
+            SELECT id FROM soroban_contracts WHERE contract_id = ANY($1)
+         )",
+    )
+    .bind(vec![TOKEN_CONTRACT.to_string(), NFT_CONTRACT.to_string()])
+    .execute(pool)
+    .await;
     // soroban_events / invocations / operations / participants cascade via FK
     // on (transaction_id, created_at). Deleting the parent transactions wipes
     // them.
@@ -425,11 +519,15 @@ async fn clean_test_ledger(pool: &PgPool) {
         .execute(pool)
         .await;
     // tokens — delete anything referencing our SAC contract_id to start clean.
-    let _ = sqlx::query("DELETE FROM tokens WHERE contract_id IN ($1, $2)")
-        .bind(TOKEN_CONTRACT)
-        .bind(NFT_CONTRACT)
-        .execute(pool)
-        .await;
+    // ADR 0030: tokens.contract_id is BIGINT; resolve StrKey → id first.
+    let _ = sqlx::query(
+        "DELETE FROM tokens WHERE contract_id IN (
+            SELECT id FROM soroban_contracts WHERE contract_id = ANY($1)
+         )",
+    )
+    .bind(vec![TOKEN_CONTRACT.to_string(), NFT_CONTRACT.to_string()])
+    .execute(pool)
+    .await;
     let _ = sqlx::query(
         "DELETE FROM tokens WHERE asset_type IN ('classic','sac') AND issuer_id IN (SELECT id FROM accounts WHERE account_id = $1)"
     )
@@ -510,11 +608,18 @@ async fn test_counts(pool: &PgPool) -> Counts {
                   WHERE tx.hash = decode($3, 'hex')),
           c AS (SELECT COUNT(*) AS n FROM soroban_contracts WHERE contract_id = ANY($4)),
           w AS (SELECT COUNT(*) AS n FROM wasm_interface_metadata WHERE wasm_hash = decode($5, 'hex')),
-          tk AS (SELECT COUNT(*) AS n FROM tokens WHERE contract_id = ANY($4)),
-          n AS (SELECT COUNT(*) AS n FROM nfts WHERE contract_id = ANY($4)),
+          -- ADR 0030: tokens/nfts.contract_id is BIGINT → join soroban_contracts
+          -- to filter by StrKey.
+          tk AS (SELECT COUNT(*) AS n FROM tokens tk
+                   JOIN soroban_contracts sc ON sc.id = tk.contract_id
+                  WHERE sc.contract_id = ANY($4)),
+          n AS (SELECT COUNT(*) AS n FROM nfts n
+                   JOIN soroban_contracts sc ON sc.id = n.contract_id
+                  WHERE sc.contract_id = ANY($4)),
           no AS (SELECT COUNT(*) AS n FROM nft_ownership no2
                    JOIN nfts nf ON nf.id = no2.nft_id
-                  WHERE nf.contract_id = ANY($4)),
+                   JOIN soroban_contracts sc ON sc.id = nf.contract_id
+                  WHERE sc.contract_id = ANY($4)),
           pl AS (SELECT COUNT(*) AS n FROM liquidity_pools WHERE pool_id = decode($6, 'hex')),
           ps AS (SELECT COUNT(*) AS n FROM liquidity_pool_snapshots WHERE pool_id = decode($6, 'hex')),
           lp AS (SELECT COUNT(*) AS n FROM lp_positions WHERE pool_id = decode($6, 'hex')),
@@ -570,3 +675,242 @@ async fn test_counts(pool: &PgPool) -> Counts {
 // usages become conditional later.
 #[allow(dead_code)]
 fn _touch(_: DateTime<Utc>) {}
+
+// ---------------------------------------------------------------------------
+// Task 0153 — mid-stream backfill: stub wasm_interface_metadata when a
+// contract deployed in-window references a WASM uploaded before the window.
+// ---------------------------------------------------------------------------
+
+const STUB_LEDGER_SEQ: u32 = 90_000_101;
+const STUB_LEDGER_SEQ_2: u32 = 90_000_102;
+/// 2026-04-21 12:01:40 UTC / 12:03:20 UTC — distinct from the idempotency test.
+const STUB_CLOSED_AT: i64 = 1_777_118_500;
+const STUB_CLOSED_AT_2: i64 = 1_777_118_600;
+const STUB_TX_HASH: &str = "5555555555555555555555555555555555555555555555555555555555555555";
+const STUB_TX_HASH_2: &str = "6666666666666666666666666666666666666666666666666666666666666666";
+const STUB_LEDGER_HASH: &str = "7777777777777777777777777777777777777777777777777777777777777777";
+const STUB_LEDGER_HASH_2: &str = "8888888888888888888888888888888888888888888888888888888888888888";
+const STUB_CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASTUB";
+const STUB_WASM_HASH: &str = "9999999999999999999999999999999999999999999999999999999999999999";
+
+#[tokio::test]
+async fn stub_wasm_unblocks_unknown_hash_and_real_upload_upgrades_it() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping stub-wasm test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping stub-wasm test");
+            return;
+        }
+    };
+
+    ensure_default_partitions(&pool).await;
+    clean_stub_test(&pool).await;
+
+    // --- Ledger 1: deployment references a WASM whose interface is NOT in
+    // this ledger (simulating mid-stream backfill where the upload happened
+    // before the backfill window).
+    let ledger1 = ExtractedLedger {
+        sequence: STUB_LEDGER_SEQ,
+        hash: STUB_LEDGER_HASH.to_string(),
+        closed_at: STUB_CLOSED_AT,
+        protocol_version: 22,
+        transaction_count: 1,
+        base_fee: 100,
+    };
+    let tx1 = ExtractedTransaction {
+        hash: STUB_TX_HASH.to_string(),
+        ledger_sequence: STUB_LEDGER_SEQ,
+        source_account: SRC_STRKEY.to_string(),
+        fee_charged: 100,
+        successful: true,
+        result_code: "txSuccess".to_string(),
+        envelope_xdr: "AAAAAA...".to_string(),
+        result_xdr: "AAAAAA...".to_string(),
+        result_meta_xdr: None,
+        operation_tree: None,
+        memo_type: None,
+        memo: None,
+        created_at: STUB_CLOSED_AT,
+        parse_error: false,
+    };
+    let dep = ExtractedContractDeployment {
+        contract_id: STUB_CONTRACT.to_string(),
+        wasm_hash: Some(STUB_WASM_HASH.to_string()),
+        deployer_account: Some(SRC_STRKEY.to_string()),
+        deployed_at_ledger: STUB_LEDGER_SEQ,
+        contract_type: ContractType::Other,
+        is_sac: false,
+        metadata: json!({}),
+    };
+
+    let empty_operations: Vec<(String, Vec<ExtractedOperation>)> = Vec::new();
+    let empty_events: Vec<(String, Vec<ExtractedEvent>)> = Vec::new();
+    let empty_invocations: Vec<(String, Vec<ExtractedInvocation>)> = Vec::new();
+    let empty_trees: Vec<(String, serde_json::Value)> = Vec::new();
+    let no_interfaces: Vec<ExtractedContractInterface> = Vec::new();
+    let no_account_states: Vec<ExtractedAccountState> = Vec::new();
+    let no_pools: Vec<ExtractedLiquidityPool> = Vec::new();
+    let no_snapshots: Vec<ExtractedLiquidityPoolSnapshot> = Vec::new();
+    let no_tokens: Vec<ExtractedToken> = Vec::new();
+    let no_nfts: Vec<ExtractedNft> = Vec::new();
+    let no_nft_events: Vec<ExtractedNftEvent> = Vec::new();
+    let no_lp_positions: Vec<ExtractedLpPosition> = Vec::new();
+    let no_inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
+
+    persist_ledger(
+        &pool,
+        &ledger1,
+        &[tx1],
+        &empty_operations,
+        &empty_events,
+        &empty_invocations,
+        &empty_trees,
+        &no_interfaces,
+        &[dep],
+        &no_account_states,
+        &no_pools,
+        &no_snapshots,
+        &no_tokens,
+        &no_nfts,
+        &no_nft_events,
+        &no_lp_positions,
+        &no_inner_tx_hashes,
+    )
+    .await
+    .expect("persist_ledger with unknown wasm_hash must succeed (stub path)");
+
+    // Stub row exists, metadata is empty JSON, soroban_contracts carries the FK.
+    let stub_metadata: Value = sqlx::query_scalar(
+        "SELECT metadata FROM wasm_interface_metadata WHERE wasm_hash = decode($1, 'hex')",
+    )
+    .bind(STUB_WASM_HASH)
+    .fetch_one(&pool)
+    .await
+    .expect("stub wasm_interface_metadata row must exist");
+    assert_eq!(stub_metadata, json!({}), "stub metadata is empty JSON");
+
+    let contract_wasm: Option<Vec<u8>> =
+        sqlx::query_scalar("SELECT wasm_hash FROM soroban_contracts WHERE contract_id = $1")
+            .bind(STUB_CONTRACT)
+            .fetch_one(&pool)
+            .await
+            .expect("soroban_contracts row inserted under stub FK");
+    let expected_bytes = hex::decode(STUB_WASM_HASH).expect("decode STUB_WASM_HASH");
+    assert_eq!(
+        contract_wasm,
+        Some(expected_bytes),
+        "soroban_contracts.wasm_hash points at the stubbed WASM"
+    );
+
+    // --- Ledger 2: the real WASM upload is observed (contract_interface
+    // carries the hash). Stub metadata must be overwritten in place.
+    let ledger2 = ExtractedLedger {
+        sequence: STUB_LEDGER_SEQ_2,
+        hash: STUB_LEDGER_HASH_2.to_string(),
+        closed_at: STUB_CLOSED_AT_2,
+        protocol_version: 22,
+        transaction_count: 1,
+        base_fee: 100,
+    };
+    let tx2 = ExtractedTransaction {
+        hash: STUB_TX_HASH_2.to_string(),
+        ledger_sequence: STUB_LEDGER_SEQ_2,
+        source_account: SRC_STRKEY.to_string(),
+        fee_charged: 100,
+        successful: true,
+        result_code: "txSuccess".to_string(),
+        envelope_xdr: "AAAAAA...".to_string(),
+        result_xdr: "AAAAAA...".to_string(),
+        result_meta_xdr: None,
+        operation_tree: None,
+        memo_type: None,
+        memo: None,
+        created_at: STUB_CLOSED_AT_2,
+        parse_error: false,
+    };
+    let iface = ExtractedContractInterface {
+        wasm_hash: STUB_WASM_HASH.to_string(),
+        functions: Vec::new(),
+        wasm_byte_len: 512,
+    };
+    let no_deployments: Vec<ExtractedContractDeployment> = Vec::new();
+
+    persist_ledger(
+        &pool,
+        &ledger2,
+        &[tx2],
+        &empty_operations,
+        &empty_events,
+        &empty_invocations,
+        &empty_trees,
+        &[iface],
+        &no_deployments,
+        &no_account_states,
+        &no_pools,
+        &no_snapshots,
+        &no_tokens,
+        &no_nfts,
+        &no_nft_events,
+        &no_lp_positions,
+        &no_inner_tx_hashes,
+    )
+    .await
+    .expect("follow-up persist_ledger with the real WASM upload must succeed");
+
+    let upgraded_metadata: Value = sqlx::query_scalar(
+        "SELECT metadata FROM wasm_interface_metadata WHERE wasm_hash = decode($1, 'hex')",
+    )
+    .bind(STUB_WASM_HASH)
+    .fetch_one(&pool)
+    .await
+    .expect("wasm_interface_metadata row still present");
+    assert_eq!(
+        upgraded_metadata,
+        json!({"functions": [], "wasm_byte_len": 512}),
+        "stub metadata must be upgraded in place to the real ABI"
+    );
+
+    clean_stub_test(&pool).await;
+}
+
+async fn clean_stub_test(pool: &PgPool) {
+    // Wipe leaves first so the wasm_interface_metadata delete isn't blocked
+    // by the soroban_contracts FK.
+    let _ = sqlx::query("DELETE FROM transactions WHERE hash = ANY($1)")
+        .bind(
+            vec![STUB_TX_HASH, STUB_TX_HASH_2]
+                .into_iter()
+                .map(|h| hex::decode(h).unwrap())
+                .collect::<Vec<_>>(),
+        )
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM transaction_hash_index WHERE hash = ANY($1)")
+        .bind(
+            vec![STUB_TX_HASH, STUB_TX_HASH_2]
+                .into_iter()
+                .map(|h| hex::decode(h).unwrap())
+                .collect::<Vec<_>>(),
+        )
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM ledgers WHERE sequence = ANY($1)")
+        .bind(vec![
+            i64::from(STUB_LEDGER_SEQ),
+            i64::from(STUB_LEDGER_SEQ_2),
+        ])
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM soroban_contracts WHERE contract_id = $1")
+        .bind(STUB_CONTRACT)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM wasm_interface_metadata WHERE wasm_hash = decode($1, 'hex')")
+        .bind(STUB_WASM_HASH)
+        .execute(pool)
+        .await;
+}

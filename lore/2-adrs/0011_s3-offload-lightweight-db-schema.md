@@ -4,7 +4,7 @@ title: 'S3 offload: lightweight DB schema with parsed JSON on S3'
 status: proposed
 deciders: [fmazur]
 related_tasks: []
-related_adrs: ['0004', '0005', '0012']
+related_adrs: ['0004', '0005', '0012', '0029']
 tags: [database, s3, architecture, cost-optimization]
 links: []
 history:
@@ -12,6 +12,15 @@ history:
     status: proposed
     who: fmazur
     note: 'ADR created — going through tables one by one'
+  - date: '2026-04-21'
+    status: proposed
+    who: stkrolikiewicz
+    note: >
+      Partially superseded by ADR 0029. The "DB = lightweight index"
+      principle survives unchanged; the "heavy fields live on our S3"
+      half is abandoned — heavy-field reads (E3, E14) now fetch raw
+      XDR from the public Stellar archive at request time (task 0150),
+      not from a parsed-ledger bucket on our side.
 ---
 
 # ADR 0011: S3 offload — lightweight DB schema with parsed JSON on S3

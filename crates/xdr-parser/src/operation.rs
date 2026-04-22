@@ -7,6 +7,7 @@
 use crate::envelope::InnerTxRef;
 use crate::scval::scval_to_typed_json;
 use crate::types::ExtractedOperation;
+use domain::OperationType;
 use serde_json::{Value, json};
 use stellar_xdr::curr::*;
 
@@ -63,24 +64,26 @@ fn soroban_return_value(meta: &TransactionMeta) -> Option<ScVal> {
     }
 }
 
-/// Extract operation type string and details JSON for a single operation.
+/// Extract operation type discriminator and details JSON for a single
+/// operation. Matches the XDR body variant; the resulting `OperationType`
+/// casts to SMALLINT via `#[repr(i16)]` with zero lookup cost.
 fn extract_op_details(
     body: &OperationBody,
     return_value: Option<&ScVal>,
     _ledger_sequence: u32,
     _tx_index: usize,
     _op_index: usize,
-) -> (String, Value) {
+) -> (OperationType, Value) {
     match body {
         OperationBody::CreateAccount(op) => (
-            "CREATE_ACCOUNT".into(),
+            OperationType::CreateAccount,
             json!({
                 "destination": op.destination.0.to_string(),
                 "startingBalance": op.starting_balance,
             }),
         ),
         OperationBody::Payment(op) => (
-            "PAYMENT".into(),
+            OperationType::Payment,
             json!({
                 "destination": op.destination.to_string(),
                 "asset": format_asset(&op.asset),
@@ -88,7 +91,7 @@ fn extract_op_details(
             }),
         ),
         OperationBody::PathPaymentStrictReceive(op) => (
-            "PATH_PAYMENT_STRICT_RECEIVE".into(),
+            OperationType::PathPaymentStrictReceive,
             json!({
                 "sendAsset": format_asset(&op.send_asset),
                 "sendMax": op.send_max,
@@ -99,7 +102,7 @@ fn extract_op_details(
             }),
         ),
         OperationBody::PathPaymentStrictSend(op) => (
-            "PATH_PAYMENT_STRICT_SEND".into(),
+            OperationType::PathPaymentStrictSend,
             json!({
                 "sendAsset": format_asset(&op.send_asset),
                 "sendAmount": op.send_amount,
@@ -110,7 +113,7 @@ fn extract_op_details(
             }),
         ),
         OperationBody::ManageSellOffer(op) => (
-            "MANAGE_SELL_OFFER".into(),
+            OperationType::ManageSellOffer,
             json!({
                 "selling": format_asset(&op.selling),
                 "buying": format_asset(&op.buying),
@@ -120,7 +123,7 @@ fn extract_op_details(
             }),
         ),
         OperationBody::ManageBuyOffer(op) => (
-            "MANAGE_BUY_OFFER".into(),
+            OperationType::ManageBuyOffer,
             json!({
                 "selling": format_asset(&op.selling),
                 "buying": format_asset(&op.buying),
@@ -130,7 +133,7 @@ fn extract_op_details(
             }),
         ),
         OperationBody::CreatePassiveSellOffer(op) => (
-            "CREATE_PASSIVE_SELL_OFFER".into(),
+            OperationType::CreatePassiveSellOffer,
             json!({
                 "selling": format_asset(&op.selling),
                 "buying": format_asset(&op.buying),
@@ -169,17 +172,17 @@ fn extract_op_details(
                 details.insert("signerKey".into(), json!(signer.key.to_string()));
                 details.insert("signerWeight".into(), json!(signer.weight));
             }
-            ("SET_OPTIONS".into(), Value::Object(details))
+            (OperationType::SetOptions, Value::Object(details))
         }
         OperationBody::ChangeTrust(op) => (
-            "CHANGE_TRUST".into(),
+            OperationType::ChangeTrust,
             json!({
                 "asset": format_change_trust_asset(&op.line),
                 "limit": op.limit,
             }),
         ),
         OperationBody::AllowTrust(op) => (
-            "ALLOW_TRUST".into(),
+            OperationType::AllowTrust,
             json!({
                 "trustor": op.trustor.0.to_string(),
                 "asset": format_asset_code(&op.asset),
@@ -187,19 +190,19 @@ fn extract_op_details(
             }),
         ),
         OperationBody::AccountMerge(destination) => (
-            "ACCOUNT_MERGE".into(),
+            OperationType::AccountMerge,
             json!({
                 "destination": destination.to_string(),
             }),
         ),
-        OperationBody::Inflation => ("INFLATION".into(), json!({})),
+        OperationBody::Inflation => (OperationType::Inflation, json!({})),
         OperationBody::ManageData(op) => {
             let name = std::str::from_utf8(op.data_name.as_vec()).unwrap_or("<invalid-utf8>");
             let value = op.data_value.as_ref().map(|v| {
                 base64::Engine::encode(&base64::engine::general_purpose::STANDARD, v.as_slice())
             });
             (
-                "MANAGE_DATA".into(),
+                OperationType::ManageData,
                 json!({
                     "name": name,
                     "value": value,
@@ -207,13 +210,13 @@ fn extract_op_details(
             )
         }
         OperationBody::BumpSequence(op) => (
-            "BUMP_SEQUENCE".into(),
+            OperationType::BumpSequence,
             json!({
                 "bumpTo": op.bump_to.0,
             }),
         ),
         OperationBody::CreateClaimableBalance(op) => (
-            "CREATE_CLAIMABLE_BALANCE".into(),
+            OperationType::CreateClaimableBalance,
             json!({
                 "asset": format_asset(&op.asset),
                 "amount": op.amount,
@@ -221,19 +224,19 @@ fn extract_op_details(
             }),
         ),
         OperationBody::ClaimClaimableBalance(op) => (
-            "CLAIM_CLAIMABLE_BALANCE".into(),
+            OperationType::ClaimClaimableBalance,
             json!({
                 "balanceId": format_claimable_balance_id(&op.balance_id),
             }),
         ),
         OperationBody::BeginSponsoringFutureReserves(op) => (
-            "BEGIN_SPONSORING_FUTURE_RESERVES".into(),
+            OperationType::BeginSponsoringFutureReserves,
             json!({
                 "sponsoredId": op.sponsored_id.0.to_string(),
             }),
         ),
         OperationBody::EndSponsoringFutureReserves => {
-            ("END_SPONSORING_FUTURE_RESERVES".into(), json!({}))
+            (OperationType::EndSponsoringFutureReserves, json!({}))
         }
         OperationBody::RevokeSponsorship(op) => {
             let details = match op {
@@ -247,10 +250,10 @@ fn extract_op_details(
                     "signerKey": s.signer_key.to_string(),
                 }),
             };
-            ("REVOKE_SPONSORSHIP".into(), details)
+            (OperationType::RevokeSponsorship, details)
         }
         OperationBody::Clawback(op) => (
-            "CLAWBACK".into(),
+            OperationType::Clawback,
             json!({
                 "asset": format_asset(&op.asset),
                 "from": op.from.to_string(),
@@ -258,13 +261,13 @@ fn extract_op_details(
             }),
         ),
         OperationBody::ClawbackClaimableBalance(op) => (
-            "CLAWBACK_CLAIMABLE_BALANCE".into(),
+            OperationType::ClawbackClaimableBalance,
             json!({
                 "balanceId": format_claimable_balance_id(&op.balance_id),
             }),
         ),
         OperationBody::SetTrustLineFlags(op) => (
-            "SET_TRUST_LINE_FLAGS".into(),
+            OperationType::SetTrustLineFlags,
             json!({
                 "trustor": op.trustor.0.to_string(),
                 "asset": format_asset(&op.asset),
@@ -273,7 +276,7 @@ fn extract_op_details(
             }),
         ),
         OperationBody::LiquidityPoolDeposit(op) => (
-            "LIQUIDITY_POOL_DEPOSIT".into(),
+            OperationType::LiquidityPoolDeposit,
             json!({
                 "liquidityPoolId": hex::encode(op.liquidity_pool_id.0.as_slice()),
                 "maxAmountA": op.max_amount_a,
@@ -283,7 +286,7 @@ fn extract_op_details(
             }),
         ),
         OperationBody::LiquidityPoolWithdraw(op) => (
-            "LIQUIDITY_POOL_WITHDRAW".into(),
+            OperationType::LiquidityPoolWithdraw,
             json!({
                 "liquidityPoolId": hex::encode(op.liquidity_pool_id.0.as_slice()),
                 "amount": op.amount,
@@ -293,15 +296,15 @@ fn extract_op_details(
         ),
         OperationBody::InvokeHostFunction(op) => {
             let details = extract_invoke_host_function(op, return_value);
-            ("INVOKE_HOST_FUNCTION".into(), details)
+            (OperationType::InvokeHostFunction, details)
         }
         OperationBody::ExtendFootprintTtl(op) => (
-            "EXTEND_FOOTPRINT_TTL".into(),
+            OperationType::ExtendFootprintTtl,
             json!({
                 "extendTo": op.extend_to,
             }),
         ),
-        OperationBody::RestoreFootprint(_) => ("RESTORE_FOOTPRINT".into(), json!({})),
+        OperationBody::RestoreFootprint(_) => (OperationType::RestoreFootprint, json!({})),
     }
 }
 
@@ -438,7 +441,7 @@ mod tests {
         let result = extract_operations(&inner, None, "abcd1234", 100, 0);
 
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].op_type, "PAYMENT");
+        assert_eq!(result[0].op_type, OperationType::Payment);
         assert_eq!(result[0].transaction_hash, "abcd1234");
         assert_eq!(result[0].operation_index, 0);
         assert!(result[0].source_account.is_none());
@@ -460,7 +463,7 @@ mod tests {
         let result = extract_operations(&inner, None, "abcd1234", 100, 0);
 
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].op_type, "CREATE_ACCOUNT");
+        assert_eq!(result[0].op_type, OperationType::CreateAccount);
         assert!(result[0].source_account.is_some());
         assert_eq!(result[0].details["startingBalance"], 100_000_000);
     }
@@ -503,7 +506,7 @@ mod tests {
         let result = extract_operations(&inner, Some(&tx_meta), "abcd1234", 100, 0);
 
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].op_type, "INVOKE_HOST_FUNCTION");
+        assert_eq!(result[0].op_type, OperationType::InvokeHostFunction);
         let details = &result[0].details;
         assert_eq!(details["hostFunctionType"], "invokeContract");
         assert_eq!(details["functionName"], "transfer");
@@ -565,12 +568,15 @@ mod tests {
 
         assert_eq!(result.len(), 3);
         assert_eq!(result[0].operation_index, 0);
-        assert_eq!(result[0].op_type, "INFLATION");
+        assert_eq!(result[0].op_type, OperationType::Inflation);
         assert_eq!(result[1].operation_index, 1);
-        assert_eq!(result[1].op_type, "BUMP_SEQUENCE");
+        assert_eq!(result[1].op_type, OperationType::BumpSequence);
         assert_eq!(result[1].details["bumpTo"], 42);
         assert_eq!(result[2].operation_index, 2);
-        assert_eq!(result[2].op_type, "END_SPONSORING_FUTURE_RESERVES");
+        assert_eq!(
+            result[2].op_type,
+            OperationType::EndSponsoringFutureReserves
+        );
     }
 
     #[test]
@@ -586,7 +592,7 @@ mod tests {
         let inner = InnerTxRef::V1(&tx);
         let result = extract_operations(&inner, None, "abcd1234", 100, 0);
 
-        assert_eq!(result[0].op_type, "MANAGE_DATA");
+        assert_eq!(result[0].op_type, OperationType::ManageData);
         assert_eq!(result[0].details["name"], "mykey");
         // base64 of [0xDE, 0xAD] = "3q0="
         assert_eq!(result[0].details["value"], "3q0=");
@@ -608,7 +614,7 @@ mod tests {
         let inner = InnerTxRef::V1(&tx);
         let result = extract_operations(&inner, None, "abcd1234", 100, 0);
 
-        assert_eq!(result[0].op_type, "MANAGE_SELL_OFFER");
+        assert_eq!(result[0].op_type, OperationType::ManageSellOffer);
         assert_eq!(result[0].details["amount"], 500);
         assert_eq!(result[0].details["price"]["n"], 1);
         assert_eq!(result[0].details["price"]["d"], 2);
@@ -635,7 +641,7 @@ mod tests {
         let inner = InnerTxRef::V1(&tx);
         let result = extract_operations(&inner, None, "abcd1234", 100, 0);
 
-        assert_eq!(result[0].op_type, "SET_OPTIONS");
+        assert_eq!(result[0].op_type, OperationType::SetOptions);
         assert_eq!(result[0].details["clearFlags"], 1);
         assert_eq!(result[0].details["masterWeight"], 10);
         // Fields not set should not be present
@@ -656,7 +662,7 @@ mod tests {
         let inner = InnerTxRef::V1(&tx);
         let result = extract_operations(&inner, None, "abcd1234", 100, 0);
 
-        assert_eq!(result[0].op_type, "EXTEND_FOOTPRINT_TTL");
+        assert_eq!(result[0].op_type, OperationType::ExtendFootprintTtl);
         assert_eq!(result[0].details["extendTo"], 1000);
     }
 
@@ -672,7 +678,7 @@ mod tests {
         let inner = InnerTxRef::V1(&tx);
         let result = extract_operations(&inner, None, "abcd1234", 100, 0);
 
-        assert_eq!(result[0].op_type, "RESTORE_FOOTPRINT");
+        assert_eq!(result[0].op_type, OperationType::RestoreFootprint);
         assert_eq!(result[0].details, json!({}));
     }
 

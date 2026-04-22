@@ -2,6 +2,11 @@
 
 mod config;
 mod openapi;
+// Public-archive XDR fetch helper. Used by E3 and E14 endpoint handlers
+// (added in a follow-up task). Exposed as module so future handlers
+// can call the extractors without further wiring.
+#[allow(dead_code)]
+mod stellar_archive;
 
 use axum::{Json, Router, routing::get};
 use serde_json::{Value, json};

@@ -8,6 +8,7 @@ use stellar_xdr::curr::*;
 
 use crate::scval::scval_to_typed_json;
 use crate::types::ExtractedEvent;
+use domain::ContractEventType as DomainEventType;
 
 /// Extract all events from a transaction's metadata.
 ///
@@ -85,12 +86,12 @@ fn extract_single_event(
     created_at: i64,
     index: usize,
 ) -> ExtractedEvent {
+    // ADR 0031: emit the typed enum directly; persist binds it as SMALLINT.
     let event_type = match event.type_ {
-        ContractEventType::System => "system",
-        ContractEventType::Contract => "contract",
-        ContractEventType::Diagnostic => "diagnostic",
-    }
-    .to_string();
+        ContractEventType::System => DomainEventType::System,
+        ContractEventType::Contract => DomainEventType::Contract,
+        ContractEventType::Diagnostic => DomainEventType::Diagnostic,
+    };
 
     let contract_id = event
         .contract_id
@@ -156,7 +157,7 @@ mod tests {
         assert_eq!(events.len(), 1);
 
         let e = &events[0];
-        assert_eq!(e.event_type, "contract");
+        assert_eq!(e.event_type, DomainEventType::Contract);
         assert_eq!(e.transaction_hash, "abcd1234");
         assert!(e.contract_id.is_some());
         assert!(e.contract_id.as_ref().unwrap().starts_with('C'));
@@ -204,7 +205,7 @@ mod tests {
 
         let events = extract_events(&tx_meta, "abcd1234", 100, 1700000000);
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_type, "system");
+        assert_eq!(events[0].event_type, DomainEventType::System);
         assert!(events[0].contract_id.is_none());
         assert_eq!(events[0].topics.as_array().unwrap().len(), 0);
     }
@@ -332,7 +333,7 @@ mod tests {
 
         let events = extract_events(&tx_meta, "abcd1234", 100, 1700000000);
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_type, "contract");
+        assert_eq!(events[0].event_type, DomainEventType::Contract);
         assert!(events[0].contract_id.is_some());
         assert_eq!(events[0].data["value"], 77);
     }
@@ -370,7 +371,7 @@ mod tests {
 
         let events = extract_events(&tx_meta, "failed_tx_hash", 100, 1700000000);
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_type, "diagnostic");
+        assert_eq!(events[0].event_type, DomainEventType::Diagnostic);
         assert_eq!(events[0].data["value"], "error details");
     }
 }

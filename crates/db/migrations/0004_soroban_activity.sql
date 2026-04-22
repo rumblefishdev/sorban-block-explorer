@@ -1,4 +1,4 @@
--- ADR 0027 — initial schema, step 4/7: Soroban activity time-series
+-- ADR 0027 + ADR 0030 + ADR 0031 — initial schema, step 4/7: Soroban activity time-series
 -- Both tables partition on created_at and cascade from transactions via
 -- composite FK (transaction_id, created_at).
 --
@@ -10,8 +10,8 @@
 CREATE TABLE soroban_events (
     id               BIGSERIAL    NOT NULL,
     transaction_id   BIGINT       NOT NULL,
-    contract_id      VARCHAR(56)  REFERENCES soroban_contracts(contract_id),
-    event_type       VARCHAR(20)  NOT NULL,
+    contract_id      BIGINT       REFERENCES soroban_contracts(id), -- ADR 0030
+    event_type       SMALLINT     NOT NULL, -- ADR 0031 (Rust ContractEventType; label helper: event_type_name)
     topic0           TEXT,
     event_index      SMALLINT     NOT NULL,
     transfer_from_id BIGINT       REFERENCES accounts(id),
@@ -21,7 +21,8 @@ CREATE TABLE soroban_events (
     created_at       TIMESTAMPTZ  NOT NULL,
     PRIMARY KEY (id, created_at),
     FOREIGN KEY (transaction_id, created_at)
-        REFERENCES transactions (id, created_at) ON DELETE CASCADE
+        REFERENCES transactions (id, created_at) ON DELETE CASCADE,
+    CONSTRAINT ck_events_type_range CHECK (event_type BETWEEN 0 AND 15)
 ) PARTITION BY RANGE (created_at);
 
 CREATE INDEX idx_events_contract      ON soroban_events (contract_id, created_at DESC);
@@ -34,7 +35,7 @@ CREATE INDEX idx_events_transfer_to   ON soroban_events (transfer_to_id, created
 CREATE TABLE soroban_invocations (
     id               BIGSERIAL    NOT NULL,
     transaction_id   BIGINT       NOT NULL,
-    contract_id      VARCHAR(56)  REFERENCES soroban_contracts(contract_id),
+    contract_id      BIGINT       REFERENCES soroban_contracts(id), -- ADR 0030
     caller_id        BIGINT       REFERENCES accounts(id),
     function_name    VARCHAR(100) NOT NULL,
     successful       BOOLEAN      NOT NULL,

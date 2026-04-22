@@ -1,4 +1,4 @@
--- ADR 0027 — initial schema, step 3/7: transactions, operations, and participants
+-- ADR 0027 + ADR 0030 + ADR 0031 — initial schema, step 3/7: transactions, operations, and participants
 -- Partitioned tables use composite PK (id, created_at) with the partition key
 -- included per Postgres rules. Monthly partitions are provisioned by the
 -- partition-management Lambda (see task 0139 and crates/db-partition-mgmt).
@@ -49,10 +49,10 @@ CREATE TABLE operations (
     id                BIGSERIAL    NOT NULL,
     transaction_id    BIGINT       NOT NULL,
     application_order SMALLINT     NOT NULL,
-    type              VARCHAR(50)  NOT NULL,
+    type              SMALLINT     NOT NULL, -- ADR 0031 (Rust OperationType enum; label helper: op_type_name)
     source_id         BIGINT       REFERENCES accounts(id),
     destination_id    BIGINT       REFERENCES accounts(id),
-    contract_id       VARCHAR(56)  REFERENCES soroban_contracts(contract_id),
+    contract_id       BIGINT       REFERENCES soroban_contracts(id), -- ADR 0030
     asset_code        VARCHAR(12),
     asset_issuer_id   BIGINT       REFERENCES accounts(id),
     pool_id           BYTEA,
@@ -62,7 +62,8 @@ CREATE TABLE operations (
     PRIMARY KEY (id, created_at),
     FOREIGN KEY (transaction_id, created_at)
         REFERENCES transactions (id, created_at) ON DELETE CASCADE,
-    CONSTRAINT ck_ops_pool_id_len CHECK (pool_id IS NULL OR octet_length(pool_id) = 32)
+    CONSTRAINT ck_ops_pool_id_len   CHECK (pool_id IS NULL OR octet_length(pool_id) = 32),
+    CONSTRAINT ck_ops_type_range    CHECK (type BETWEEN 0 AND 127)  -- ADR 0031: room beyond Protocol 21's 27 variants
 ) PARTITION BY RANGE (created_at);
 
 CREATE INDEX idx_ops_tx          ON operations (transaction_id);

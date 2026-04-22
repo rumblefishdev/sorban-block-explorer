@@ -5,6 +5,7 @@
 //!
 //! This is the sole XDR parsing path (ADR-0004: Rust-only, ingestion-time).
 
+pub mod classification;
 pub mod contract;
 pub mod error;
 pub mod event;
@@ -19,10 +20,10 @@ pub mod state;
 pub mod transaction;
 pub mod types;
 
-pub mod artifact;
 pub mod envelope;
 mod xdr_limits;
 
+pub use classification::{ContractClassification, classify_contract_from_wasm_spec};
 pub use contract::extract_contract_interfaces;
 pub use envelope::InnerTxRef;
 pub use error::{ParseError, ParseErrorKind};

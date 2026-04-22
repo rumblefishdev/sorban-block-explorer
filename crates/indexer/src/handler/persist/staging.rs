@@ -13,6 +13,9 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
+use domain::{
+    AssetType, ContractEventType, ContractType, NftEventType, OperationType, TokenAssetType,
+};
 use serde_json::Value;
 use xdr_parser::types::{
     ExtractedAccountState, ExtractedContractDeployment, ExtractedContractInterface, ExtractedEvent,
@@ -22,8 +25,6 @@ use xdr_parser::types::{
 };
 
 use super::HandlerError;
-
-const NATIVE_ASSET_TYPE: &str = "native";
 
 // ---------------------------------------------------------------------------
 // Row DTOs — the shape the write layer binds directly.
@@ -51,7 +52,7 @@ pub(super) struct TxRow {
 pub(super) struct OpRow {
     pub tx_hash_hex: String,
     pub application_order: i16,
-    pub op_type: String,
+    pub op_type: OperationType,
     pub source_str_key: Option<String>,
     pub destination_str_key: Option<String>,
     pub contract_id: Option<String>,
@@ -67,7 +68,7 @@ pub(super) struct OpRow {
 pub(super) struct EventRow {
     pub tx_hash_hex: String,
     pub contract_id: Option<String>,
-    pub event_type: String,
+    pub event_type: ContractEventType,
     pub topic0: Option<String>,
     pub event_index: i16,
     pub transfer_from_str_key: Option<String>,
@@ -98,10 +99,10 @@ pub(super) struct ParticipantRow {
 
 pub(super) struct PoolRow {
     pub pool_id: [u8; 32],
-    pub asset_a_type: String,
+    pub asset_a_type: AssetType,
     pub asset_a_code: Option<String>,
     pub asset_a_issuer_str_key: Option<String>,
-    pub asset_b_type: String,
+    pub asset_b_type: AssetType,
     pub asset_b_code: Option<String>,
     pub asset_b_issuer_str_key: Option<String>,
     pub fee_bps: i32,
@@ -146,14 +147,14 @@ pub(super) struct NftOwnershipRow {
     pub token_id: String,
     pub tx_hash_hex: String,
     pub owner_str_key: Option<String>,
-    pub event_type: String,
+    pub event_type: NftEventType,
     pub ledger_sequence: i64,
     pub event_order: i16,
     pub created_at: DateTime<Utc>,
 }
 
 pub(super) struct TokenRow {
-    pub asset_type: String,
+    pub asset_type: TokenAssetType,
     pub asset_code: Option<String>,
     pub issuer_str_key: Option<String>,
     pub contract_id: Option<String>,
@@ -173,7 +174,7 @@ pub(super) struct ContractRow {
     pub wasm_uploaded_at_ledger: Option<i64>,
     pub deployer_str_key: Option<String>,
     pub deployed_at_ledger: Option<i64>,
-    pub contract_type: String,
+    pub contract_type: ContractType,
     pub is_sac: bool,
     pub metadata: Option<Value>,
 }
@@ -183,7 +184,7 @@ pub(super) struct ContractRow {
 /// `ck_abc_native` CHECK on `account_balances_current`.
 pub(super) struct BalanceRow {
     pub account_str_key: String,
-    pub asset_type: String,
+    pub asset_type: AssetType,
     pub asset_code: Option<String>,
     pub issuer_str_key: Option<String>,
     pub balance: String,
@@ -289,7 +290,7 @@ impl Staged {
                     account_keys_set.insert(src.clone());
                     participants.insert(src.clone());
                 }
-                for key in op_participant_str_keys(&op.op_type, &op.details) {
+                for key in op_participant_str_keys(op.op_type, &op.details) {
                     account_keys_set.insert(key.clone());
                     participants.insert(key);
                 }
@@ -429,7 +430,7 @@ impl Staged {
                 wasm_uploaded_at_ledger: Some(i64::from(dep.deployed_at_ledger)),
                 deployer_str_key: dep.deployer_account.clone(),
                 deployed_at_ledger: Some(i64::from(dep.deployed_at_ledger)),
-                contract_type: dep.contract_type.clone(),
+                contract_type: dep.contract_type,
                 is_sac: dep.is_sac,
                 metadata: Some(dep.metadata.clone()),
             });
@@ -499,7 +500,7 @@ impl Staged {
                 continue;
             };
             for op in ops {
-                let typed = OpTyped::from_details(&op.op_type, &op.details);
+                let typed = OpTyped::from_details(op.op_type, &op.details);
                 let pool_id = match &typed.pool_id_hex {
                     Some(hex_str) => Some(decode_hash(hex_str, "op.pool_id")?),
                     None => None,
@@ -510,7 +511,7 @@ impl Staged {
                         .operation_index
                         .try_into()
                         .map_err(|_| staging_err("op application_order overflow"))?,
-                    op_type: op.op_type.clone(),
+                    op_type: op.op_type,
                     source_str_key: op.source_account.clone(),
                     destination_str_key: typed.destination,
                     contract_id: typed.contract_id,
@@ -525,12 +526,27 @@ impl Staged {
         }
 
         // --- events flatten + transfer topic parse -------------------------
+        //
+        // Filter out event_type = "diagnostic". Per Stellar docs these are
+        // debug-only traces (fn_call / fn_return / core_metrics / log /
+        // error / host_fn_failed) emitted by the Soroban host VM and by
+        // stellar-core's InvokeHostFunctionOpFrame; they are explicitly
+        // "not hashed into the ledger, and therefore are not part of the
+        // protocol" and "not useful for most users". ADR 0027 routes them
+        // to S3 (advanced tx detail via E3), not to `soroban_events`.
+        // On a mainnet sample they are ~85 % of event volume and dominate
+        // events_ms in persist_ledger. Keep "contract" and "system".
         let mut event_rows: Vec<EventRow> = Vec::new();
+        let mut diagnostic_dropped = 0usize;
         for (tx_hash, evs) in events {
             let Some(&created_at) = tx_created_at.get(tx_hash) else {
                 continue;
             };
             for ev in evs {
+                if ev.event_type == ContractEventType::Diagnostic {
+                    diagnostic_dropped += 1;
+                    continue;
+                }
                 let topic0 = ev
                     .topics
                     .as_array()
@@ -542,7 +558,7 @@ impl Staged {
                 event_rows.push(EventRow {
                     tx_hash_hex: tx_hash.clone(),
                     contract_id: ev.contract_id.clone(),
-                    event_type: ev.event_type.clone(),
+                    event_type: ev.event_type,
                     topic0,
                     event_index: ev
                         .event_index
@@ -555,6 +571,14 @@ impl Staged {
                     created_at,
                 });
             }
+        }
+        if diagnostic_dropped > 0 {
+            tracing::debug!(
+                ledger_sequence = ledger.sequence,
+                diagnostic_dropped,
+                persisted = event_rows.len(),
+                "staged events (diagnostic filtered — S3 lane per ADR 0027)"
+            );
         }
 
         // --- invocations flatten -------------------------------------------
@@ -593,8 +617,16 @@ impl Staged {
         let mut pool_rows: Vec<PoolRow> = Vec::with_capacity(liquidity_pools.len());
         for pool in liquidity_pools {
             let pool_id = decode_hash(&pool.pool_id, "pool_id")?;
-            let (a_type, a_code, a_issuer) = split_pool_asset(&pool.asset_a);
-            let (b_type, b_code, b_issuer) = split_pool_asset(&pool.asset_b);
+            // Skip pools whose asset shape doesn't match a known XDR
+            // AssetType — the SMALLINT CHECK on liquidity_pools would
+            // reject them anyway, and indexing the rest of the ledger
+            // shouldn't fail because of one malformed pool.
+            let (Some((a_type, a_code, a_issuer)), Some((b_type, b_code, b_issuer))) = (
+                split_pool_asset(&pool.asset_a),
+                split_pool_asset(&pool.asset_b),
+            ) else {
+                continue;
+            };
             let row = PoolRow {
                 pool_id,
                 asset_a_type: a_type,
@@ -610,9 +642,9 @@ impl Staged {
             match pool_indices.get(&pool_id).copied() {
                 Some(idx) => {
                     let existing = &mut pool_rows[idx];
-                    // Keep the earliest `created_at_ledger` (pool creation watermark)
-                    // and the latest `last_updated_ledger`. Asset identity is stable
-                    // per pool so we keep whichever carries a non-"unknown" type.
+                    // Keep the earliest `created_at_ledger` (pool creation
+                    // watermark) and the latest `last_updated_ledger`. Asset
+                    // identity is stable per pool so the typed columns stay.
                     if row.last_updated_ledger >= existing.last_updated_ledger {
                         existing.last_updated_ledger = row.last_updated_ledger;
                     }
@@ -677,22 +709,31 @@ impl Staged {
         let mut token_rows: Vec<TokenRow> = Vec::with_capacity(tokens.len());
         let mut token_seen: HashSet<String> = HashSet::new();
         for t in tokens {
-            let fp = match t.asset_type.as_str() {
-                "native" => "native".to_string(),
-                "classic" => format!(
+            // Identity fingerprint matches the per-asset_type partial UNIQUE
+            // indexes on `tokens` (uidx_tokens_native / _classic_asset / _soroban).
+            // Native is a singleton; classic/SAC dedup by (code, issuer);
+            // soroban/SAC dedup by contract_id. SAC satisfies both uniques —
+            // we collapse on either key to avoid emitting two rows that the
+            // ON CONFLICT would have to merge.
+            let fp = match t.asset_type {
+                TokenAssetType::Native => "native".to_string(),
+                TokenAssetType::Classic => format!(
                     "classic|{}|{}",
                     t.asset_code.as_deref().unwrap_or(""),
                     t.issuer_address.as_deref().unwrap_or("")
                 ),
-                "sac" => format!("sac|{}", t.contract_id.as_deref().unwrap_or("")),
-                "soroban" => format!("soroban|{}", t.contract_id.as_deref().unwrap_or("")),
-                _ => continue,
+                TokenAssetType::Sac => {
+                    format!("sac|{}", t.contract_id.as_deref().unwrap_or(""))
+                }
+                TokenAssetType::Soroban => {
+                    format!("soroban|{}", t.contract_id.as_deref().unwrap_or(""))
+                }
             };
             if !token_seen.insert(fp) {
                 continue;
             }
             token_rows.push(TokenRow {
-                asset_type: t.asset_type.clone(),
+                asset_type: t.asset_type,
                 asset_code: t.asset_code.clone(),
                 issuer_str_key: t.issuer_address.clone(),
                 contract_id: t.contract_id.clone(),
@@ -758,7 +799,7 @@ impl Staged {
                 token_id: ev.token_id.clone(),
                 tx_hash_hex: ev.transaction_hash.clone(),
                 owner_str_key: ev.owner_account.clone(),
-                event_type: ev.event_type.clone(),
+                event_type: ev.event_type,
                 ledger_sequence: i64::from(ev.ledger_sequence),
                 event_order: ev
                     .event_order
@@ -785,20 +826,27 @@ impl Staged {
             let ledger_seq = i64::from(st.last_seen_ledger);
 
             for b in st.balances.as_array().into_iter().flatten() {
-                let asset_type = b
+                // Parser embeds asset_type as the canonical XDR string in the
+                // balances JSON (state.rs). Map it to the typed enum here so
+                // every downstream row carries SMALLINT-compatible state.
+                // Rows with an unknown / missing asset_type can't satisfy
+                // the ck_abc_* CHECK; skip them rather than fail the ledger.
+                let Some(asset_type) = b
                     .get("asset_type")
                     .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string();
+                    .and_then(|s| s.parse::<AssetType>().ok())
+                else {
+                    continue;
+                };
                 let balance = b
                     .get("balance")
                     .and_then(Value::as_str)
                     .unwrap_or("0")
                     .to_string();
-                let row = if asset_type == NATIVE_ASSET_TYPE {
+                let row = if asset_type == AssetType::Native {
                     BalanceRow {
                         account_str_key: st.account_id.clone(),
-                        asset_type: NATIVE_ASSET_TYPE.to_string(),
+                        asset_type,
                         asset_code: None,
                         issuer_str_key: None,
                         balance,
@@ -921,7 +969,7 @@ impl Staged {
 fn clone_balance_row(src: &BalanceRow) -> BalanceRow {
     BalanceRow {
         account_str_key: src.account_str_key.clone(),
-        asset_type: src.asset_type.clone(),
+        asset_type: src.asset_type,
         asset_code: src.asset_code.clone(),
         issuer_str_key: src.issuer_str_key.clone(),
         balance: src.balance.clone(),
@@ -987,14 +1035,14 @@ struct OpTyped {
 }
 
 impl OpTyped {
-    fn from_details(op_type: &str, details: &Value) -> Self {
+    fn from_details(op_type: OperationType, details: &Value) -> Self {
         let mut out = Self::default();
         match op_type {
-            "CREATE_ACCOUNT" => {
+            OperationType::CreateAccount => {
                 out.destination = str_field(details, "destination");
                 out.transfer_amount = stroops_as_numeric(details.get("startingBalance"));
             }
-            "PAYMENT" => {
+            OperationType::Payment => {
                 out.destination = str_field(details, "destination");
                 if let Some(asset) = details.get("asset") {
                     let (code, issuer) = split_asset_ref(asset);
@@ -1003,7 +1051,7 @@ impl OpTyped {
                 }
                 out.transfer_amount = stroops_as_numeric(details.get("amount"));
             }
-            "PATH_PAYMENT_STRICT_RECEIVE" => {
+            OperationType::PathPaymentStrictReceive => {
                 out.destination = str_field(details, "destination");
                 if let Some(asset) = details.get("destAsset") {
                     let (code, issuer) = split_asset_ref(asset);
@@ -1012,7 +1060,7 @@ impl OpTyped {
                 }
                 out.transfer_amount = stroops_as_numeric(details.get("destAmount"));
             }
-            "PATH_PAYMENT_STRICT_SEND" => {
+            OperationType::PathPaymentStrictSend => {
                 out.destination = str_field(details, "destination");
                 if let Some(asset) = details.get("destAsset") {
                     let (code, issuer) = split_asset_ref(asset);
@@ -1021,10 +1069,10 @@ impl OpTyped {
                 }
                 out.transfer_amount = stroops_as_numeric(details.get("destMin"));
             }
-            "ACCOUNT_MERGE" => {
+            OperationType::AccountMerge => {
                 out.destination = str_field(details, "destination");
             }
-            "CLAWBACK" => {
+            OperationType::Clawback => {
                 out.destination = str_field(details, "from");
                 if let Some(asset) = details.get("asset") {
                     let (code, issuer) = split_asset_ref(asset);
@@ -1033,24 +1081,24 @@ impl OpTyped {
                 }
                 out.transfer_amount = stroops_as_numeric(details.get("amount"));
             }
-            "LIQUIDITY_POOL_DEPOSIT" => {
+            OperationType::LiquidityPoolDeposit => {
                 out.pool_id_hex = str_field(details, "liquidityPoolId");
             }
-            "LIQUIDITY_POOL_WITHDRAW" => {
+            OperationType::LiquidityPoolWithdraw => {
                 out.pool_id_hex = str_field(details, "liquidityPoolId");
                 out.transfer_amount = stroops_as_numeric(details.get("amount"));
             }
-            "INVOKE_HOST_FUNCTION" => {
+            OperationType::InvokeHostFunction => {
                 out.contract_id = str_field(details, "contractId");
             }
-            "CHANGE_TRUST" => {
+            OperationType::ChangeTrust => {
                 if let Some(asset) = details.get("asset") {
                     let (code, issuer) = split_asset_ref(asset);
                     out.asset_code = code;
                     out.asset_issuer = issuer;
                 }
             }
-            "SET_TRUST_LINE_FLAGS" => {
+            OperationType::SetTrustLineFlags => {
                 out.destination = str_field(details, "trustor");
                 if let Some(asset) = details.get("asset") {
                     let (code, issuer) = split_asset_ref(asset);
@@ -1058,7 +1106,7 @@ impl OpTyped {
                     out.asset_issuer = issuer;
                 }
             }
-            "ALLOW_TRUST" => {
+            OperationType::AllowTrust => {
                 out.destination = str_field(details, "trustor");
                 if let Some(asset) = details.get("asset")
                     && let Some(code) = asset.as_str()
@@ -1066,9 +1114,15 @@ impl OpTyped {
                     out.asset_code = Some(code.to_string());
                 }
             }
-            "BEGIN_SPONSORING_FUTURE_RESERVES" => {
+            OperationType::BeginSponsoringFutureReserves => {
                 out.destination = str_field(details, "sponsoredId");
             }
+            // Other op types carry no per-row typed columns beyond the base
+            // (source / type / created_at). New op types added by future
+            // protocol upgrades must extend `OperationType` first; the
+            // exhaustive match below is intentionally left to `_` so the
+            // compiler doesn't force a dummy arm per addition — all the
+            // typed fields stay as their `Option::None` defaults.
             _ => {}
         }
         out
@@ -1110,20 +1164,22 @@ fn asset_issuer(asset: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-fn split_pool_asset(asset: &Value) -> (String, Option<String>, Option<String>) {
+/// Decode the parser's pool-asset JSON shape into typed columns.
+///
+/// The parser embeds `"native"` as a bare string and credit / pool_share
+/// assets as `{"type": "...", "code": "...", "issuer": "..."}` (see
+/// `xdr_parser::ledger_entry_changes`). Returns `None` for anything that
+/// doesn't map to a known XDR `AssetType` discriminator — caller must
+/// drop the row to avoid violating the SMALLINT CHECK on
+/// `liquidity_pools.asset_*_type`.
+fn split_pool_asset(asset: &Value) -> Option<(AssetType, Option<String>, Option<String>)> {
     if let Some(s) = asset.as_str()
         && s == "native"
     {
-        return ("native".to_string(), None, None);
+        return Some((AssetType::Native, None, None));
     }
-    let Some(obj) = asset.as_object() else {
-        return ("unknown".to_string(), None, None);
-    };
-    let ty = obj
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown")
-        .to_string();
+    let obj = asset.as_object()?;
+    let ty = obj.get("type").and_then(Value::as_str)?.parse().ok()?;
     let code = obj
         .get("code")
         .and_then(Value::as_str)
@@ -1134,7 +1190,7 @@ fn split_pool_asset(asset: &Value) -> (String, Option<String>, Option<String>) {
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
-    (ty, code, issuer)
+    Some((ty, code, issuer))
 }
 
 /// Shape-extract the SEP-0041 fungible-transfer event layout, if present:
@@ -1253,7 +1309,7 @@ fn is_strkey_account(s: &str) -> bool {
 /// Return every StrKey this op implicitly references (destinations, issuers,
 /// trustors, sponsored ids). Used to populate `transaction_participants` plus
 /// the `accounts` universe.
-fn op_participant_str_keys(op_type: &str, details: &Value) -> Vec<String> {
+fn op_participant_str_keys(op_type: OperationType, details: &Value) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut push = |v: Option<String>| {
         if let Some(s) = v
@@ -1263,21 +1319,22 @@ fn op_participant_str_keys(op_type: &str, details: &Value) -> Vec<String> {
         }
     };
 
+    use OperationType as Op;
     match op_type {
-        "CREATE_ACCOUNT"
-        | "PAYMENT"
-        | "PATH_PAYMENT_STRICT_RECEIVE"
-        | "PATH_PAYMENT_STRICT_SEND"
-        | "ACCOUNT_MERGE" => {
+        Op::CreateAccount
+        | Op::Payment
+        | Op::PathPaymentStrictReceive
+        | Op::PathPaymentStrictSend
+        | Op::AccountMerge => {
             push(str_field(details, "destination"));
         }
-        "CLAWBACK" => {
+        Op::Clawback => {
             push(str_field(details, "from"));
         }
-        "ALLOW_TRUST" | "SET_TRUST_LINE_FLAGS" => {
+        Op::AllowTrust | Op::SetTrustLineFlags => {
             push(str_field(details, "trustor"));
         }
-        "BEGIN_SPONSORING_FUTURE_RESERVES" => {
+        Op::BeginSponsoringFutureReserves => {
             push(str_field(details, "sponsoredId"));
         }
         _ => {}

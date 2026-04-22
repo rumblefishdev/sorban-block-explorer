@@ -86,12 +86,19 @@ dependencies = [
 name = "api"
 version = "0.1.0"
 dependencies = [
+ "aws-config",
+ "aws-sdk-s3",
  "axum",
+ "bytes",
  "db",
  "domain",
+ "futures",
+ "hex",
  "lambda_http",
  "serde",
  "serde_json",
+ "stellar-xdr",
+ "thiserror",
  "tokio",
  "tower",
  "tower-http",
@@ -100,6 +107,7 @@ dependencies = [
  "utoipa",
  "utoipa-axum",
  "utoipa-swagger-ui",
+ "xdr-parser",
 ]
 
 [[package]]
@@ -1238,6 +1246,9 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "sqlx",
+ "thiserror",
+ "utoipa",
 ]
 
 [[package]]
@@ -4198,6 +4209,7 @@ name = "xdr-parser"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "domain",
  "hex",
  "serde",
  "serde_json",

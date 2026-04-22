@@ -218,16 +218,26 @@ async fn run_all_steps(
 ) -> Result<(), HandlerError> {
     let ledger_sequence = staged.ledger_sequence;
 
+    // Async commit — skip the per-commit fsync wait. Safe for this indexer
+    // because the S3 event source + Lambda retry policy provides end-to-end
+    // durability: a crash between COMMIT and fsync simply re-delivers the
+    // ledger event and we re-ingest idempotently. Saves the commit-fsync
+    // latency (~5–15 ms on typical disks) from every ledger.
+    sqlx::query("SET LOCAL synchronous_commit = off")
+        .execute(&mut **db_tx)
+        .await?;
+
     let t = Instant::now();
     let account_ids = write::upsert_accounts(db_tx, staged).await?;
     timings.accounts_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
     write::upsert_wasm_metadata(db_tx, staged).await?;
+    write::stub_unknown_wasm_interfaces(db_tx, staged).await?;
     timings.wasm_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
-    write::upsert_contracts(db_tx, staged, &account_ids).await?;
+    let contract_ids = write::upsert_contracts_returning_id(db_tx, staged, &account_ids).await?;
     timings.contracts_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
@@ -251,23 +261,23 @@ async fn run_all_steps(
     timings.pools_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
-    write::insert_operations(db_tx, staged, &account_ids, &tx_ids).await?;
+    write::insert_operations(db_tx, staged, &account_ids, &contract_ids, &tx_ids).await?;
     timings.operations_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
-    write::insert_events(db_tx, staged, &account_ids, &tx_ids).await?;
+    write::insert_events(db_tx, staged, &account_ids, &contract_ids, &tx_ids).await?;
     timings.events_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
-    write::insert_invocations(db_tx, staged, &account_ids, &tx_ids).await?;
+    write::insert_invocations(db_tx, staged, &account_ids, &contract_ids, &tx_ids).await?;
     timings.invocations_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
-    write::upsert_tokens(db_tx, staged, &account_ids).await?;
+    write::upsert_tokens(db_tx, staged, &account_ids, &contract_ids).await?;
     timings.tokens_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
-    write::upsert_nfts_and_ownership(db_tx, staged, &account_ids, &tx_ids).await?;
+    write::upsert_nfts_and_ownership(db_tx, staged, &account_ids, &contract_ids, &tx_ids).await?;
     timings.nfts_ms = t.elapsed().as_millis();
 
     let t = Instant::now();

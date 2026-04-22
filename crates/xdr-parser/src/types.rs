@@ -2,6 +2,14 @@
 //!
 //! These types are the contract between the XDR parser and the database persistence layer.
 //! Field names match DB column names (snake_case).
+//!
+//! ADR 0031: enum-like columns (`operations.type`, `soroban_events.event_type`,
+//! `soroban_contracts.contract_type`, `tokens.asset_type`,
+//! `nft_ownership.event_type`) are typed via `domain::enums` enums — the
+//! parser emits the typed variant directly, skipping the legacy
+//! string round-trip through `Debug`/`Display`.
+
+use domain::{ContractEventType, ContractType, NftEventType, OperationType, TokenAssetType};
 
 /// Extracted ledger data, maps to the `ledgers` table.
 #[derive(Debug, Clone)]
@@ -62,8 +70,8 @@ pub struct ExtractedTransaction {
 pub struct ExtractedEvent {
     /// Parent transaction hash, hex-encoded. Resolved to `transaction_id` FK at persistence time.
     pub transaction_hash: String,
-    /// Event type: "contract", "system", or "diagnostic".
-    pub event_type: String,
+    /// Event type (ADR 0031). Maps to `soroban_events.event_type SMALLINT`.
+    pub event_type: ContractEventType,
     /// Contract that emitted the event (C... address). `None` for system events without a contract.
     pub contract_id: Option<String>,
     /// ScVal-decoded topic values as JSON array.
@@ -205,8 +213,10 @@ pub struct ExtractedContractDeployment {
     pub wasm_hash: Option<String>,
     pub deployer_account: Option<String>,
     pub deployed_at_ledger: u32,
-    /// "token", "dex", "lending", "nft", or "other".
-    pub contract_type: String,
+    /// Explorer-synthetic classification (ADR 0031). Maps to
+    /// `soroban_contracts.contract_type SMALLINT` (nullable at DB level,
+    /// but always set when the parser produces a deployment).
+    pub contract_type: ContractType,
     pub is_sac: bool,
     pub metadata: serde_json::Value,
 }
@@ -269,8 +279,8 @@ pub struct ExtractedLiquidityPoolSnapshot {
 /// Produced by `detect_tokens`. Maps to `tokens` table.
 #[derive(Debug, Clone)]
 pub struct ExtractedToken {
-    /// "classic", "sac", or "soroban".
-    pub asset_type: String,
+    /// Token classification (ADR 0031). Maps to `tokens.asset_type SMALLINT`.
+    pub asset_type: TokenAssetType,
     pub asset_code: Option<String>,
     pub issuer_address: Option<String>,
     pub contract_id: Option<String>,
@@ -312,8 +322,8 @@ pub struct ExtractedNftEvent {
     pub contract_id: String,
     /// Stable per-collection token identity (matches `nfts.token_id`).
     pub token_id: String,
-    /// Event kind: "mint" | "transfer" | "burn". Maps to `nft_ownership.event_type`.
-    pub event_type: String,
+    /// Event kind (ADR 0031). Maps to `nft_ownership.event_type SMALLINT`.
+    pub event_type: NftEventType,
     /// New owner after the event. `None` for burns.
     pub owner_account: Option<String>,
     /// Stable order within the ledger. Maps to `nft_ownership.event_order`.
@@ -358,8 +368,8 @@ pub struct ExtractedOperation {
     pub transaction_hash: String,
     /// Zero-based index of this operation within the transaction (maps to `application_order`).
     pub operation_index: u32,
-    /// Operation type string (e.g., "INVOKE_HOST_FUNCTION", "PAYMENT"). Maps to `type` column.
-    pub op_type: String,
+    /// Operation type (ADR 0031). Maps to `operations.type SMALLINT`.
+    pub op_type: OperationType,
     /// Per-operation source account override. `None` if the operation inherits the transaction
     /// source. Persistence layer must resolve `None` to the transaction source (column is NOT NULL).
     pub source_account: Option<String>,
