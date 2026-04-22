@@ -17,6 +17,9 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
+use domain::{
+    AssetType, ContractEventType, ContractType, NftEventType, OperationType, TokenAssetType,
+};
 use indexer::handler::persist::persist_ledger;
 use serde_json::json;
 use sqlx::{PgPool, Row};
@@ -142,6 +145,27 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
     );
     assert_eq!(counts_first.lp_positions, 0, "lp_positions expected empty");
 
+    // ADR 0031 round-trip — operations.type SMALLINT decodes back to the
+    // typed enum, and the SQL helper renders the same canonical label as
+    // OperationType::as_str(). Closes the Rust ↔ SQL drift gap on every run.
+    let ops: Vec<(OperationType, String)> = sqlx::query_as(
+        r#"
+        SELECT type, op_type_name(type)
+          FROM operations
+         WHERE ledger_sequence = $1
+         ORDER BY application_order
+        "#,
+    )
+    .bind(i64::from(TEST_LEDGER_SEQ))
+    .fetch_all(&pool)
+    .await
+    .expect("fetch operations as typed enum");
+    assert_eq!(ops.len(), 2, "two ops inserted by the fixture");
+    assert_eq!(ops[0].0, OperationType::Payment);
+    assert_eq!(ops[0].1, "PAYMENT");
+    assert_eq!(ops[1].0, OperationType::InvokeHostFunction);
+    assert_eq!(ops[1].1, "INVOKE_HOST_FUNCTION");
+
     // --- Replay — counts must not change ---
     persist_ledger(
         &pool,
@@ -167,6 +191,66 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
 
     let counts_replay = test_counts(&pool).await;
     assert_eq!(counts_replay, counts_first, "replay must be idempotent");
+}
+
+/// ADR 0031 — every Rust `#[repr(i16)]` enum variant must agree with the
+/// matching `xxx_name(SMALLINT)` SQL helper from migration 0008. Without
+/// this guard a new Rust variant would silently render NULL in psql / BI
+/// dashboards until a human noticed.
+#[tokio::test]
+async fn enum_label_helpers_match_rust_as_str() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping enum-helper drift test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping enum-helper drift test");
+            return;
+        }
+    };
+
+    // Per-enum check: bind every VARIANTS element as SMALLINT, fetch the
+    // label rendered by the SQL helper, compare to Rust `as_str()`.
+    macro_rules! check_all {
+        ($pool:expr, $sql_fn:expr, $enum:ty) => {
+            for v in <$enum>::VARIANTS {
+                let i: i16 = *v as i16;
+                let label: Option<String> = sqlx::query_scalar(&format!("SELECT {}($1)", $sql_fn))
+                    .bind(i)
+                    .fetch_one($pool)
+                    .await
+                    .unwrap_or_else(|err| panic!("{}({}) query failed: {err}", $sql_fn, i));
+                let label = label.unwrap_or_else(|| {
+                    panic!(
+                        "{}({}) returned NULL — Rust ↔ SQL drift on variant {}",
+                        $sql_fn,
+                        i,
+                        v.as_str()
+                    )
+                });
+                assert_eq!(
+                    label,
+                    v.as_str(),
+                    "{}({}) = {:?}; Rust {}::{:?}.as_str() = {:?}",
+                    $sql_fn,
+                    i,
+                    label,
+                    stringify!($enum),
+                    v,
+                    v.as_str()
+                );
+            }
+        };
+    }
+
+    check_all!(&pool, "op_type_name", OperationType);
+    check_all!(&pool, "asset_type_name", AssetType);
+    check_all!(&pool, "token_asset_type_name", TokenAssetType);
+    check_all!(&pool, "event_type_name", ContractEventType);
+    check_all!(&pool, "nft_event_type_name", NftEventType);
+    check_all!(&pool, "contract_type_name", ContractType);
 }
 
 // ---------------------------------------------------------------------------
@@ -207,7 +291,7 @@ fn make_payment_op() -> ExtractedOperation {
     ExtractedOperation {
         transaction_hash: TEST_TX_HASH.to_string(),
         operation_index: 0,
-        op_type: "PAYMENT".to_string(),
+        op_type: OperationType::Payment,
         source_account: None,
         details: json!({
             "destination": DST_STRKEY,
@@ -221,7 +305,7 @@ fn make_invoke_op() -> ExtractedOperation {
     ExtractedOperation {
         transaction_hash: TEST_TX_HASH.to_string(),
         operation_index: 1,
-        op_type: "INVOKE_HOST_FUNCTION".to_string(),
+        op_type: OperationType::InvokeHostFunction,
         source_account: None,
         details: json!({
             "hostFunctionType": "invokeContract",
@@ -236,7 +320,7 @@ fn make_invoke_op() -> ExtractedOperation {
 fn make_transfer_event() -> ExtractedEvent {
     ExtractedEvent {
         transaction_hash: TEST_TX_HASH.to_string(),
-        event_type: "contract".to_string(),
+        event_type: ContractEventType::Contract,
         contract_id: Some(TOKEN_CONTRACT.to_string()),
         topics: json!([
             {"type": "sym", "value": "transfer"},
@@ -280,7 +364,7 @@ fn make_contract_deployment() -> ExtractedContractDeployment {
         wasm_hash: Some(WASM_HASH.to_string()),
         deployer_account: Some(SRC_STRKEY.to_string()),
         deployed_at_ledger: TEST_LEDGER_SEQ,
-        contract_type: "token".to_string(),
+        contract_type: ContractType::Token,
         is_sac: true,
         metadata: json!({"name": "TEST"}),
     }
@@ -332,7 +416,7 @@ fn make_pool_snapshot() -> ExtractedLiquidityPoolSnapshot {
 
 fn make_sac_token() -> ExtractedToken {
     ExtractedToken {
-        asset_type: "sac".to_string(),
+        asset_type: TokenAssetType::Sac,
         asset_code: Some("USDC".to_string()),
         issuer_address: Some(ISSUER_STRKEY.to_string()),
         contract_id: Some(TOKEN_CONTRACT.to_string()),

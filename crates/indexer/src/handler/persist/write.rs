@@ -9,6 +9,9 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
+use domain::{
+    AssetType, ContractEventType, ContractType, NftEventType, OperationType, TokenAssetType,
+};
 use serde_json::Value;
 use sqlx::{Postgres, Transaction};
 
@@ -160,7 +163,8 @@ pub(super) async fn upsert_contracts_returning_id(
         let mut uploaded: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
         let mut deployers: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
         let mut deployed: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
-        let mut types: Vec<Option<String>> = Vec::with_capacity(chunk.len());
+        // ADR 0031: contract_type is SMALLINT (Rust ContractType enum).
+        let mut types: Vec<Option<ContractType>> = Vec::with_capacity(chunk.len());
         let mut sacs: Vec<bool> = Vec::with_capacity(chunk.len());
         let mut metadatas: Vec<Option<Value>> = Vec::with_capacity(chunk.len());
 
@@ -174,7 +178,7 @@ pub(super) async fn upsert_contracts_returning_id(
                     .and_then(|k| account_ids.get(k).copied()),
             );
             deployed.push(r.deployed_at_ledger);
-            types.push(Some(r.contract_type.clone()));
+            types.push(Some(r.contract_type));
             sacs.push(r.is_sac);
             metadatas.push(r.metadata.clone());
         }
@@ -187,7 +191,7 @@ pub(super) async fn upsert_contracts_returning_id(
             )
             SELECT * FROM UNNEST(
                 $1::VARCHAR[], $2::BYTEA[], $3::BIGINT[], $4::BIGINT[],
-                $5::BIGINT[], $6::VARCHAR[], $7::BOOL[], $8::JSONB[]
+                $5::BIGINT[], $6::SMALLINT[], $7::BOOL[], $8::JSONB[]
             )
             ON CONFLICT (contract_id) DO UPDATE SET
                 wasm_hash = COALESCE(EXCLUDED.wasm_hash, soroban_contracts.wasm_hash),
@@ -493,7 +497,8 @@ pub(super) async fn insert_operations(
     for chunk in staged.op_rows.chunks(CHUNK_SIZE) {
         let mut tx_id_vec: Vec<i64> = Vec::with_capacity(chunk.len());
         let mut app_order_vec: Vec<i16> = Vec::with_capacity(chunk.len());
-        let mut op_type_vec: Vec<String> = Vec::with_capacity(chunk.len());
+        // ADR 0031: operations.type is SMALLINT (Rust OperationType enum).
+        let mut op_type_vec: Vec<OperationType> = Vec::with_capacity(chunk.len());
         let mut source_id_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
         let mut dest_id_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
         let mut contract_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
@@ -510,7 +515,7 @@ pub(super) async fn insert_operations(
             };
             tx_id_vec.push(tx_id);
             app_order_vec.push(r.application_order);
-            op_type_vec.push(r.op_type.clone());
+            op_type_vec.push(r.op_type);
             source_id_vec.push(resolve_opt_id(
                 account_ids,
                 r.source_str_key.as_deref(),
@@ -565,7 +570,7 @@ pub(super) async fn insert_operations(
                 CASE WHEN t.txt IS NULL THEN NULL ELSE t.txt::NUMERIC(28,7) END,
                 t.ledger_sequence, t.created_at
               FROM UNNEST(
-                $1::BIGINT[], $2::SMALLINT[], $3::VARCHAR[], $4::BIGINT[], $5::BIGINT[],
+                $1::BIGINT[], $2::SMALLINT[], $3::SMALLINT[], $4::BIGINT[], $5::BIGINT[],
                 $6::BIGINT[], $7::VARCHAR[], $8::BIGINT[], $9::BYTEA[], $10::TEXT[],
                 $11::BIGINT[], $12::TIMESTAMPTZ[]
               )
@@ -610,7 +615,8 @@ pub(super) async fn insert_events(
     for chunk in staged.event_rows.chunks(CHUNK_SIZE) {
         let mut tx_id_vec: Vec<i64> = Vec::with_capacity(chunk.len());
         let mut contract_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
-        let mut type_vec: Vec<String> = Vec::with_capacity(chunk.len());
+        // ADR 0031: soroban_events.event_type is SMALLINT (Rust ContractEventType).
+        let mut type_vec: Vec<ContractEventType> = Vec::with_capacity(chunk.len());
         let mut topic0_vec: Vec<Option<String>> = Vec::with_capacity(chunk.len());
         let mut index_vec: Vec<i16> = Vec::with_capacity(chunk.len());
         let mut from_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
@@ -629,7 +635,7 @@ pub(super) async fn insert_events(
                 r.contract_id.as_deref(),
                 "event.contract",
             )?);
-            type_vec.push(r.event_type.clone());
+            type_vec.push(r.event_type);
             topic0_vec.push(r.topic0.clone());
             index_vec.push(r.event_index);
             from_vec.push(resolve_opt_id(
@@ -662,7 +668,7 @@ pub(super) async fn insert_events(
                    CASE WHEN amt IS NULL THEN NULL ELSE amt::NUMERIC(39,0) END,
                    ledger_sequence, created_at
               FROM UNNEST(
-                $1::BIGINT[], $2::BIGINT[], $3::VARCHAR[], $4::TEXT[], $5::SMALLINT[],
+                $1::BIGINT[], $2::BIGINT[], $3::SMALLINT[], $4::TEXT[], $5::SMALLINT[],
                 $6::BIGINT[], $7::BIGINT[], $8::TEXT[], $9::BIGINT[], $10::TIMESTAMPTZ[]
               ) AS t(tx_id, contract_id, event_type, topic0, event_index,
                      from_id, to_id, amt, ledger_sequence, created_at)
@@ -782,20 +788,24 @@ pub(super) async fn upsert_tokens(
     let mut soroban: Vec<&TokenRow> = Vec::new();
 
     for t in &staged.token_rows {
-        match t.asset_type.as_str() {
-            "native" => native.push(t),
-            "classic" => classic.push(t),
-            "sac" => sac.push(t),
-            "soroban" => soroban.push(t),
-            _ => {
-                // unknown asset_type — skip to avoid ck_tokens_asset_type violation
-            }
+        match t.asset_type {
+            TokenAssetType::Native => native.push(t),
+            TokenAssetType::Classic => classic.push(t),
+            TokenAssetType::Sac => sac.push(t),
+            TokenAssetType::Soroban => soroban.push(t),
         }
     }
 
     upsert_tokens_native(db_tx, &native).await?;
-    upsert_tokens_classic_like(db_tx, &classic, "classic", account_ids, contract_ids).await?;
-    upsert_tokens_classic_like(db_tx, &sac, "sac", account_ids, contract_ids).await?;
+    upsert_tokens_classic_like(
+        db_tx,
+        &classic,
+        TokenAssetType::Classic,
+        account_ids,
+        contract_ids,
+    )
+    .await?;
+    upsert_tokens_classic_like(db_tx, &sac, TokenAssetType::Sac, account_ids, contract_ids).await?;
     upsert_tokens_soroban(db_tx, &soroban, contract_ids).await?;
 
     Ok(())
@@ -814,13 +824,15 @@ async fn upsert_tokens_native(
         .first()
         .map(|t| (t.name.clone(), t.total_supply.clone(), t.holder_count))
         .unwrap_or((None, None, None));
+    // ADR 0031: tokens.asset_type is SMALLINT — bind the enum, don't inline a literal.
     sqlx::query(
         r#"
         INSERT INTO tokens (asset_type, name, total_supply, holder_count)
-        SELECT 'native', $1, CASE WHEN $2 IS NULL THEN NULL ELSE $2::NUMERIC(28,7) END, $3
-        WHERE NOT EXISTS (SELECT 1 FROM tokens WHERE asset_type = 'native')
+        SELECT $1, $2, CASE WHEN $3 IS NULL THEN NULL ELSE $3::NUMERIC(28,7) END, $4
+        WHERE NOT EXISTS (SELECT 1 FROM tokens WHERE asset_type = $1)
         "#,
     )
+    .bind(TokenAssetType::Native)
     .bind(name)
     .bind(total_supply)
     .bind(holder_count)
@@ -832,10 +844,14 @@ async fn upsert_tokens_native(
 async fn upsert_tokens_classic_like(
     db_tx: &mut Transaction<'_, Postgres>,
     rows: &[&TokenRow],
-    asset_type: &str,
+    asset_type: TokenAssetType,
     account_ids: &HashMap<String, i64>,
     contract_ids: &HashMap<String, i64>,
 ) -> Result<(), HandlerError> {
+    debug_assert!(
+        matches!(asset_type, TokenAssetType::Classic | TokenAssetType::Sac),
+        "upsert_tokens_classic_like only handles classic/sac; got {asset_type:?}"
+    );
     if rows.is_empty() {
         return Ok(());
     }
@@ -870,31 +886,34 @@ async fn upsert_tokens_classic_like(
             continue;
         }
 
-        let sql = format!(
+        // ADR 0031: bind asset_type as SMALLINT enum; partial UNIQUE index on
+        // `tokens (asset_code, issuer_id) WHERE asset_type IN (1, 2)` (classic, sac)
+        // matches numeric ordinals — see migration 0005.
+        sqlx::query(
             r#"
             INSERT INTO tokens (asset_type, asset_code, issuer_id, contract_id, name, total_supply, holder_count)
-            SELECT '{asset_type}', code, issuer_id, contract_id, name,
+            SELECT $1, code, issuer_id, contract_id, name,
                    CASE WHEN supply IS NULL THEN NULL ELSE supply::NUMERIC(28,7) END, holder_count
-              FROM UNNEST($1::VARCHAR[], $2::BIGINT[], $3::BIGINT[], $4::VARCHAR[], $5::TEXT[], $6::INTEGER[])
+              FROM UNNEST($2::VARCHAR[], $3::BIGINT[], $4::BIGINT[], $5::VARCHAR[], $6::TEXT[], $7::INTEGER[])
                 AS t(code, issuer_id, contract_id, name, supply, holder_count)
             ON CONFLICT (asset_code, issuer_id)
-              WHERE asset_type IN ('classic', 'sac')
+              WHERE asset_type IN (1, 2)  -- classic, sac
               DO UPDATE SET
                 contract_id = COALESCE(EXCLUDED.contract_id, tokens.contract_id),
                 name = COALESCE(EXCLUDED.name, tokens.name),
                 total_supply = COALESCE(EXCLUDED.total_supply, tokens.total_supply),
                 holder_count = COALESCE(EXCLUDED.holder_count, tokens.holder_count)
-            "#
-        );
-        sqlx::query(&sql)
-            .bind(&codes)
-            .bind(&issuers)
-            .bind(&contracts)
-            .bind(&names)
-            .bind(&supplies)
-            .bind(&holders)
-            .execute(&mut **db_tx)
-            .await?;
+            "#,
+        )
+        .bind(asset_type)
+        .bind(&codes)
+        .bind(&issuers)
+        .bind(&contracts)
+        .bind(&names)
+        .bind(&supplies)
+        .bind(&holders)
+        .execute(&mut **db_tx)
+        .await?;
     }
     Ok(())
 }
@@ -929,21 +948,23 @@ async fn upsert_tokens_soroban(
         if contracts.is_empty() {
             continue;
         }
+        // ADR 0031: partial UNIQUE on `tokens (contract_id) WHERE asset_type IN (2, 3)` (sac, soroban).
         sqlx::query(
             r#"
             INSERT INTO tokens (asset_type, contract_id, name, total_supply, holder_count)
-            SELECT 'soroban', contract_id, name,
+            SELECT $1, contract_id, name,
                    CASE WHEN supply IS NULL THEN NULL ELSE supply::NUMERIC(28,7) END, holder_count
-              FROM UNNEST($1::BIGINT[], $2::TEXT[], $3::TEXT[], $4::INTEGER[])
+              FROM UNNEST($2::BIGINT[], $3::TEXT[], $4::TEXT[], $5::INTEGER[])
                 AS t(contract_id, name, supply, holder_count)
             ON CONFLICT (contract_id)
-              WHERE asset_type IN ('soroban', 'sac')
+              WHERE asset_type IN (2, 3)  -- sac, soroban
               DO UPDATE SET
                 name = COALESCE(EXCLUDED.name, tokens.name),
                 total_supply = COALESCE(EXCLUDED.total_supply, tokens.total_supply),
                 holder_count = COALESCE(EXCLUDED.holder_count, tokens.holder_count)
             "#,
         )
+        .bind(TokenAssetType::Soroban)
         .bind(&contracts)
         .bind(&names)
         .bind(&supplies)
@@ -1045,7 +1066,8 @@ pub(super) async fn upsert_nfts_and_ownership(
             let mut token_ids: Vec<String> = Vec::with_capacity(chunk.len());
             let mut tx_id_vec: Vec<i64> = Vec::with_capacity(chunk.len());
             let mut owners: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
-            let mut types: Vec<String> = Vec::with_capacity(chunk.len());
+            // ADR 0031: nft_ownership.event_type is SMALLINT (Rust NftEventType).
+            let mut types: Vec<NftEventType> = Vec::with_capacity(chunk.len());
             let mut ls_vec: Vec<i64> = Vec::with_capacity(chunk.len());
             let mut order_vec: Vec<i16> = Vec::with_capacity(chunk.len());
             let mut ca_vec: Vec<DateTime<Utc>> = Vec::with_capacity(chunk.len());
@@ -1066,7 +1088,7 @@ pub(super) async fn upsert_nfts_and_ownership(
                     r.owner_str_key.as_deref(),
                     "nft_ownership.owner",
                 )?);
-                types.push(r.event_type.clone());
+                types.push(r.event_type);
                 ls_vec.push(r.ledger_sequence);
                 order_vec.push(r.event_order);
                 ca_vec.push(r.created_at);
@@ -1084,7 +1106,7 @@ pub(super) async fn upsert_nfts_and_ownership(
                 SELECT n.id, tx_id, owner_id, event_type, ls, event_order, ca
                   FROM UNNEST(
                     $1::BIGINT[], $2::VARCHAR[], $3::BIGINT[], $4::BIGINT[],
-                    $5::VARCHAR[], $6::BIGINT[], $7::SMALLINT[], $8::TIMESTAMPTZ[]
+                    $5::SMALLINT[], $6::BIGINT[], $7::SMALLINT[], $8::TIMESTAMPTZ[]
                   ) AS t(contract_id, token_id, tx_id, owner_id, event_type, ls, event_order, ca)
                   JOIN nfts n ON n.contract_id = t.contract_id AND n.token_id = t.token_id
                 ON CONFLICT (nft_id, created_at, ledger_sequence, event_order) DO NOTHING
@@ -1119,10 +1141,11 @@ pub(super) async fn upsert_pools_and_snapshots(
     if !staged.pool_rows.is_empty() {
         for chunk in staged.pool_rows.chunks(CHUNK_SIZE) {
             let mut pools: Vec<Vec<u8>> = Vec::with_capacity(chunk.len());
-            let mut a_types: Vec<String> = Vec::with_capacity(chunk.len());
+            // ADR 0031: liquidity_pools.asset_*_type are SMALLINT (Rust AssetType).
+            let mut a_types: Vec<AssetType> = Vec::with_capacity(chunk.len());
             let mut a_codes: Vec<Option<String>> = Vec::with_capacity(chunk.len());
             let mut a_issuers: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
-            let mut b_types: Vec<String> = Vec::with_capacity(chunk.len());
+            let mut b_types: Vec<AssetType> = Vec::with_capacity(chunk.len());
             let mut b_codes: Vec<Option<String>> = Vec::with_capacity(chunk.len());
             let mut b_issuers: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
             let mut fees: Vec<i32> = Vec::with_capacity(chunk.len());
@@ -1130,14 +1153,14 @@ pub(super) async fn upsert_pools_and_snapshots(
 
             for r in chunk {
                 pools.push(r.pool_id.to_vec());
-                a_types.push(r.asset_a_type.clone());
+                a_types.push(r.asset_a_type);
                 a_codes.push(r.asset_a_code.clone());
                 a_issuers.push(resolve_opt_id(
                     account_ids,
                     r.asset_a_issuer_str_key.as_deref(),
                     "pool.asset_a_issuer",
                 )?);
-                b_types.push(r.asset_b_type.clone());
+                b_types.push(r.asset_b_type);
                 b_codes.push(r.asset_b_code.clone());
                 b_issuers.push(resolve_opt_id(
                     account_ids,
@@ -1158,8 +1181,8 @@ pub(super) async fn upsert_pools_and_snapshots(
                     fee_bps, created_at_ledger
                 )
                 SELECT * FROM UNNEST(
-                    $1::BYTEA[], $2::VARCHAR[], $3::VARCHAR[], $4::BIGINT[],
-                    $5::VARCHAR[], $6::VARCHAR[], $7::BIGINT[],
+                    $1::BYTEA[], $2::SMALLINT[], $3::VARCHAR[], $4::BIGINT[],
+                    $5::SMALLINT[], $6::VARCHAR[], $7::BIGINT[],
                     $8::INTEGER[], $9::BIGINT[]
                 )
                 ON CONFLICT (pool_id) DO UPDATE SET
@@ -1327,7 +1350,7 @@ pub(super) async fn upsert_balances(
                 WHERE abc.account_id = t.acct
                   AND abc.asset_code = t.code
                   AND abc.issuer_id  = t.issuer
-                  AND abc.asset_type <> 'native'
+                  AND abc.asset_type <> 0  -- credit (not native)
                 "#,
             )
             .bind(&accts)
@@ -1344,7 +1367,7 @@ pub(super) async fn upsert_balances(
     let (natives, credits): (Vec<&BalanceRow>, Vec<&BalanceRow>) = staged
         .balance_rows
         .iter()
-        .partition(|r| r.asset_type == "native");
+        .partition(|r| r.asset_type == AssetType::Native);
 
     upsert_balances_native(db_tx, &natives, account_ids).await?;
     upsert_balances_credit(db_tx, &credits, account_ids).await?;
@@ -1386,9 +1409,9 @@ async fn upsert_balances_native(
             r#"
             INSERT INTO account_balances_current
                 (account_id, asset_type, asset_code, issuer_id, balance, last_updated_ledger)
-            SELECT acct, 'native', NULL, NULL, bal::NUMERIC(28,7), last_l
+            SELECT acct, 0, NULL, NULL, bal::NUMERIC(28,7), last_l   -- AssetType::Native
               FROM UNNEST($1::BIGINT[], $2::TEXT[], $3::BIGINT[]) AS t(acct, bal, last_l)
-            ON CONFLICT (account_id) WHERE asset_type = 'native'
+            ON CONFLICT (account_id) WHERE asset_type = 0   -- native
             DO UPDATE SET
                 balance = CASE
                     WHEN EXCLUDED.last_updated_ledger >= account_balances_current.last_updated_ledger
@@ -1420,7 +1443,8 @@ async fn upsert_balances_credit(
     }
     for chunk in rows.chunks(CHUNK_SIZE) {
         let mut accts: Vec<i64> = Vec::with_capacity(chunk.len());
-        let mut types: Vec<String> = Vec::with_capacity(chunk.len());
+        // ADR 0031: account_balances_current.asset_type is SMALLINT (Rust AssetType).
+        let mut types: Vec<AssetType> = Vec::with_capacity(chunk.len());
         let mut codes: Vec<String> = Vec::with_capacity(chunk.len());
         let mut issuers: Vec<i64> = Vec::with_capacity(chunk.len());
         let mut bals: Vec<String> = Vec::with_capacity(chunk.len());
@@ -1438,7 +1462,7 @@ async fn upsert_balances_credit(
                 &r.account_str_key,
                 "abc.credit.account",
             )?);
-            types.push(r.asset_type.clone());
+            types.push(r.asset_type);
             codes.push(code.clone());
             issuers.push(resolve_id(account_ids, issuer_key, "abc.credit.issuer")?);
             bals.push(r.balance.clone());
@@ -1457,9 +1481,9 @@ async fn upsert_balances_credit(
                 (account_id, asset_type, asset_code, issuer_id, balance, last_updated_ledger)
             SELECT acct, ty, code, issuer, bal::NUMERIC(28,7), last_l
               FROM UNNEST(
-                $1::BIGINT[], $2::VARCHAR[], $3::VARCHAR[], $4::BIGINT[], $5::TEXT[], $6::BIGINT[]
+                $1::BIGINT[], $2::SMALLINT[], $3::VARCHAR[], $4::BIGINT[], $5::TEXT[], $6::BIGINT[]
               ) AS t(acct, ty, code, issuer, bal, last_l)
-            ON CONFLICT (account_id, asset_code, issuer_id) WHERE asset_type <> 'native'
+            ON CONFLICT (account_id, asset_code, issuer_id) WHERE asset_type <> 0   -- credit (not native)
             DO UPDATE SET
                 balance = CASE
                     WHEN EXCLUDED.last_updated_ledger >= account_balances_current.last_updated_ledger
@@ -1499,7 +1523,7 @@ async fn append_balance_history(
     // Replaces the prior anti-join (which scanned account_balance_history
     // per row) with a direct unique-index lookup — O(log n) instead of O(n).
     let (natives, credits): (Vec<&BalanceRow>, Vec<&BalanceRow>) =
-        rows.iter().partition(|r| r.asset_type == "native");
+        rows.iter().partition(|r| r.asset_type == AssetType::Native);
 
     append_balance_history_native(db_tx, &natives, account_ids).await?;
     append_balance_history_credit(db_tx, &credits, account_ids).await?;
@@ -1535,10 +1559,10 @@ async fn append_balance_history_native(
             r#"
             INSERT INTO account_balance_history
                 (account_id, ledger_sequence, asset_type, asset_code, issuer_id, balance, created_at)
-            SELECT acct, ls, 'native', NULL, NULL, bal::NUMERIC(28,7), ca
+            SELECT acct, ls, 0, NULL, NULL, bal::NUMERIC(28,7), ca   -- AssetType::Native
               FROM UNNEST($1::BIGINT[], $2::BIGINT[], $3::TEXT[], $4::TIMESTAMPTZ[])
                 AS t(acct, ls, bal, ca)
-            ON CONFLICT (account_id, ledger_sequence, created_at) WHERE asset_type = 'native'
+            ON CONFLICT (account_id, ledger_sequence, created_at) WHERE asset_type = 0   -- native
             DO NOTHING
             "#,
         )
@@ -1563,7 +1587,8 @@ async fn append_balance_history_credit(
     for chunk in rows.chunks(CHUNK_SIZE) {
         let mut accts: Vec<i64> = Vec::with_capacity(chunk.len());
         let mut ls: Vec<i64> = Vec::with_capacity(chunk.len());
-        let mut types: Vec<String> = Vec::with_capacity(chunk.len());
+        // ADR 0031: account_balance_history.asset_type is SMALLINT (Rust AssetType).
+        let mut types: Vec<AssetType> = Vec::with_capacity(chunk.len());
         let mut codes: Vec<String> = Vec::with_capacity(chunk.len());
         let mut issuers: Vec<i64> = Vec::with_capacity(chunk.len());
         let mut bals: Vec<String> = Vec::with_capacity(chunk.len());
@@ -1582,7 +1607,7 @@ async fn append_balance_history_credit(
                 "abh.credit.account",
             )?);
             ls.push(r.last_updated_ledger);
-            types.push(r.asset_type.clone());
+            types.push(r.asset_type);
             codes.push(code.clone());
             issuers.push(resolve_id(account_ids, issuer_key, "abh.credit.issuer")?);
             bals.push(r.balance.clone());
@@ -1598,10 +1623,10 @@ async fn append_balance_history_credit(
                 (account_id, ledger_sequence, asset_type, asset_code, issuer_id, balance, created_at)
             SELECT acct, ls, ty, code, issuer, bal::NUMERIC(28,7), ca
               FROM UNNEST(
-                $1::BIGINT[], $2::BIGINT[], $3::VARCHAR[], $4::VARCHAR[], $5::BIGINT[], $6::TEXT[], $7::TIMESTAMPTZ[]
+                $1::BIGINT[], $2::BIGINT[], $3::SMALLINT[], $4::VARCHAR[], $5::BIGINT[], $6::TEXT[], $7::TIMESTAMPTZ[]
               ) AS t(acct, ls, ty, code, issuer, bal, ca)
             ON CONFLICT (account_id, ledger_sequence, asset_code, issuer_id, created_at)
-              WHERE asset_type <> 'native'
+              WHERE asset_type <> 0   -- credit (not native)
             DO NOTHING
             "#,
         )

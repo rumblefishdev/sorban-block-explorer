@@ -10,6 +10,7 @@ use crate::types::{
     ExtractedAccountState, ExtractedContractDeployment, ExtractedLedgerEntryChange,
     ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot, ExtractedNft, ExtractedToken, NftEvent,
 };
+use domain::{ContractType, TokenAssetType};
 
 // ---------------------------------------------------------------------------
 // Step 1 + Step 7: Contract Deployment + SAC Detection
@@ -49,10 +50,13 @@ pub fn extract_contract_deployments(
 
         let is_sac = is_sac_from_data(data);
         let wasm_hash = extract_wasm_hash(data);
+        // ADR 0031: synthetic 2-variant classification. SACs wrap a classic
+        // asset and are always tokens; everything else is `Other` until the
+        // explorer learns to recognise a richer taxonomy.
         let contract_type = if is_sac {
-            "token".to_string()
+            ContractType::Token
         } else {
-            "other".to_string()
+            ContractType::Other
         };
 
         deployments.push(ExtractedContractDeployment {
@@ -470,7 +474,7 @@ pub fn detect_tokens(deployments: &[ExtractedContractDeployment]) -> Vec<Extract
     for deployment in deployments {
         if deployment.is_sac {
             tokens.push(ExtractedToken {
-                asset_type: "sac".to_string(),
+                asset_type: TokenAssetType::Sac,
                 asset_code: None,
                 issuer_address: None,
                 contract_id: Some(deployment.contract_id.clone()),
@@ -599,7 +603,7 @@ mod tests {
         );
         assert_eq!(deployments[0].wasm_hash, Some("aa".repeat(32)));
         assert!(!deployments[0].is_sac);
-        assert_eq!(deployments[0].contract_type, "other");
+        assert_eq!(deployments[0].contract_type, ContractType::Other);
     }
 
     #[test]
@@ -625,7 +629,7 @@ mod tests {
         let deployments = extract_contract_deployments(&changes, "GDEPLOYER");
         assert_eq!(deployments.len(), 1);
         assert!(deployments[0].is_sac);
-        assert_eq!(deployments[0].contract_type, "token");
+        assert_eq!(deployments[0].contract_type, ContractType::Token);
         assert!(deployments[0].wasm_hash.is_none());
     }
 
@@ -1073,14 +1077,14 @@ mod tests {
             wasm_hash: None,
             deployer_account: None,
             deployed_at_ledger: 100,
-            contract_type: "token".into(),
+            contract_type: ContractType::Token,
             is_sac: true,
             metadata: json!({}),
         }];
 
         let tokens = detect_tokens(&deployments);
         assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0].asset_type, "sac");
+        assert_eq!(tokens[0].asset_type, TokenAssetType::Sac);
         assert_eq!(tokens[0].contract_id.as_deref(), Some("CSAC456"));
     }
 
@@ -1091,7 +1095,7 @@ mod tests {
             wasm_hash: Some("aa".repeat(32)),
             deployer_account: None,
             deployed_at_ledger: 100,
-            contract_type: "other".into(),
+            contract_type: ContractType::Other,
             is_sac: false,
             metadata: json!({}),
         }];

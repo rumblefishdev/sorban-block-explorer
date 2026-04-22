@@ -4,7 +4,19 @@ version = "0.1.0"
 edition = "2024"
 description = "Shared domain types for the Soroban block explorer"
 
+[features]
+default = []
+# sqlx::Type on the ADR 0031 enums so they encode/decode as SMALLINT.
+# Enabled by the indexer and api crates; the parser stays sqlx-free.
+sqlx = ["dep:sqlx"]
+# utoipa::ToSchema on the ADR 0031 enums for the OpenAPI spec.
+# Enabled by the api crate.
+utoipa = ["dep:utoipa"]
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
+thiserror = { workspace = true }
+sqlx = { workspace = true, optional = true }
+utoipa = { workspace = true, optional = true }

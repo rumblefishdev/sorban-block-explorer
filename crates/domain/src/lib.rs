@@ -8,6 +8,7 @@
 
 pub mod account;
 pub mod balance;
+pub mod enums;
 pub mod ledger;
 pub mod nft;
 pub mod operation;
@@ -15,3 +16,8 @@ pub mod pool;
 pub mod soroban;
 pub mod token;
 pub mod transaction;
+
+pub use enums::{
+    AssetType, ContractEventType, ContractType, EnumDecodeError, NftEventType, OperationType,
+    TokenAssetType,
+};

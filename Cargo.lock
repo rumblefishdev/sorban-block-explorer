@@ -1222,6 +1222,9 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "sqlx",
+ "thiserror",
+ "utoipa",
 ]
 
 [[package]]
@@ -4182,6 +4185,7 @@ name = "xdr-parser"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "domain",
  "hex",
  "serde",
  "serde_json",

@@ -1,4 +1,4 @@
--- ADR 0027 + ADR 0030 — initial schema, step 5/7: tokens and NFTs
+-- ADR 0027 + ADR 0030 + ADR 0031 — initial schema, step 5/7: tokens and NFTs
 -- Tokens carry typed SEP-1 metadata columns (ADR 0023).
 -- NFTs get a surrogate SERIAL PK; identity is still (contract_id, token_id)
 -- where contract_id is the BIGINT FK into soroban_contracts.id (ADR 0030).
@@ -9,14 +9,16 @@
 --   12. nfts            (unpartitioned)
 --   13. nft_ownership   (partitioned history)
 
--- 11. tokens (ADR 0027 §11)
+-- 11. tokens (ADR 0027 §11 + ADR 0031)
+-- `asset_type` SMALLINT is the Rust `TokenAssetType` enum
+-- (0=native, 1=classic, 2=sac, 3=soroban — label helper: token_asset_type_name).
 -- Identity is enforced by ck_tokens_identity (which columns must be NOT NULL
 -- for each asset_type) plus per-asset_type partial UNIQUE indexes. The CHECK
 -- closes the NULL-in-UNIQUE loophole — PostgreSQL treats NULLs as distinct,
 -- so without it the partial uniques would admit duplicate logical tokens.
 CREATE TABLE tokens (
     id              SERIAL        PRIMARY KEY,
-    asset_type      VARCHAR(20)   NOT NULL,
+    asset_type      SMALLINT      NOT NULL, -- ADR 0031: TokenAssetType
     asset_code      VARCHAR(12),
     issuer_id       BIGINT        REFERENCES accounts(id),
     contract_id     BIGINT        REFERENCES soroban_contracts(id), -- ADR 0030
@@ -26,24 +28,24 @@ CREATE TABLE tokens (
     description     TEXT,
     icon_url        VARCHAR(1024),
     home_page       VARCHAR(256),
-    CONSTRAINT ck_tokens_asset_type CHECK (asset_type IN ('native', 'classic', 'sac', 'soroban')),
+    CONSTRAINT ck_tokens_asset_type_range CHECK (asset_type BETWEEN 0 AND 15),
     CONSTRAINT ck_tokens_identity CHECK (
-        (asset_type = 'native'
+        (asset_type = 0  -- native
             AND asset_code IS NULL     AND issuer_id IS NULL     AND contract_id IS NULL)
-     OR (asset_type = 'classic'
+     OR (asset_type = 1  -- classic
             AND asset_code IS NOT NULL AND issuer_id IS NOT NULL AND contract_id IS NULL)
-     OR (asset_type = 'sac'
+     OR (asset_type = 2  -- sac
             AND asset_code IS NOT NULL AND issuer_id IS NOT NULL AND contract_id IS NOT NULL)
-     OR (asset_type = 'soroban'
+     OR (asset_type = 3  -- soroban
             AND issuer_id IS NULL      AND contract_id IS NOT NULL)
     )
 );
 CREATE UNIQUE INDEX uidx_tokens_native        ON tokens ((asset_type))
-    WHERE asset_type = 'native';
+    WHERE asset_type = 0;              -- native
 CREATE UNIQUE INDEX uidx_tokens_classic_asset ON tokens (asset_code, issuer_id)
-    WHERE asset_type IN ('classic', 'sac');
+    WHERE asset_type IN (1, 2);        -- classic, sac
 CREATE UNIQUE INDEX uidx_tokens_soroban       ON tokens (contract_id)
-    WHERE asset_type IN ('soroban', 'sac');
+    WHERE asset_type IN (2, 3);        -- sac, soroban
 CREATE INDEX idx_tokens_type      ON tokens (asset_type);
 CREATE INDEX idx_tokens_code_trgm ON tokens USING GIN (asset_code gin_trgm_ops);
 
@@ -70,11 +72,12 @@ CREATE TABLE nft_ownership (
     nft_id          INTEGER      NOT NULL REFERENCES nfts(id) ON DELETE CASCADE,
     transaction_id  BIGINT       NOT NULL,
     owner_id        BIGINT       REFERENCES accounts(id),
-    event_type      VARCHAR(20)  NOT NULL,
+    event_type      SMALLINT     NOT NULL, -- ADR 0031: NftEventType (mint/transfer/burn)
     ledger_sequence BIGINT       NOT NULL,
     event_order     SMALLINT     NOT NULL,
     created_at      TIMESTAMPTZ  NOT NULL,
     PRIMARY KEY (nft_id, created_at, ledger_sequence, event_order),
     FOREIGN KEY (transaction_id, created_at)
-        REFERENCES transactions (id, created_at) ON DELETE CASCADE
+        REFERENCES transactions (id, created_at) ON DELETE CASCADE,
+    CONSTRAINT ck_nft_own_event_type_range CHECK (event_type BETWEEN 0 AND 15)
 ) PARTITION BY RANGE (created_at);

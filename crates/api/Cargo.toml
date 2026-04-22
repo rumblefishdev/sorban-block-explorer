@@ -18,7 +18,7 @@ default = []
 swagger-ui = ["dep:utoipa-swagger-ui"]
 
 [dependencies]
-domain = { path = "../domain" }
+domain = { path = "../domain", features = ["sqlx", "utoipa"] }
 db = { path = "../db" }
 axum = { workspace = true }
 lambda_http = { workspace = true }
