@@ -6,7 +6,7 @@
 //! PG's 65535 bind-parameter limit at ~10 columns caps safe UNNEST at ~6500
 //! rows; `CHUNK_SIZE = 5000` keeps headroom.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 use domain::{
@@ -132,6 +132,47 @@ pub(super) async fn upsert_wasm_metadata(
         .execute(&mut **db_tx)
         .await?;
     }
+    Ok(())
+}
+
+/// Pre-insert stub `wasm_interface_metadata` rows for any `wasm_hash`
+/// referenced by `staged.contract_rows` but not uploaded in this ledger
+/// (task 0153). Mid-stream backfill hits contracts whose WASM was uploaded
+/// before the backfill window — the FK
+/// `soroban_contracts.wasm_hash -> wasm_interface_metadata.wasm_hash`
+/// would otherwise fail. Stubs carry empty metadata; `upsert_wasm_metadata`
+/// overwrites them in place once the real upload is observed (ON CONFLICT
+/// DO UPDATE), and the empty object is a safe sentinel because WASM bytes
+/// are content-addressed by hash.
+pub(super) async fn stub_unknown_wasm_interfaces(
+    db_tx: &mut Transaction<'_, Postgres>,
+    staged: &Staged,
+) -> Result<(), HandlerError> {
+    let staged_hashes: HashSet<[u8; 32]> = staged.wasm_rows.iter().map(|r| r.wasm_hash).collect();
+    let mut seen: HashSet<[u8; 32]> = HashSet::new();
+    let mut needed: Vec<Vec<u8>> = Vec::new();
+    for row in &staged.contract_rows {
+        if let Some(h) = row.wasm_hash
+            && !staged_hashes.contains(&h)
+            && seen.insert(h)
+        {
+            needed.push(h.to_vec());
+        }
+    }
+    if needed.is_empty() {
+        return Ok(());
+    }
+    sqlx::query(
+        r#"
+        INSERT INTO wasm_interface_metadata (wasm_hash, metadata)
+        SELECT wh, '{}'::jsonb
+          FROM UNNEST($1::BYTEA[]) AS t(wh)
+        ON CONFLICT (wasm_hash) DO NOTHING
+        "#,
+    )
+    .bind(&needed)
+    .execute(&mut **db_tx)
+    .await?;
     Ok(())
 }
 
