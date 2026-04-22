@@ -2,7 +2,7 @@
 id: '0150'
 title: 'API-side XDR fetch + parse for E3 and E14 heavy fields (ADR 0029 read path)'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0027', '0029']
 related_tasks: ['0149', '0145']
 blocked_by: []
@@ -21,6 +21,10 @@ links:
   - lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md
   - lore/2-adrs/0027_post-surrogate-schema-and-endpoint-realizability.md
 history:
+  - date: '2026-04-22'
+    status: active
+    who: FilipDz
+    note: 'Activated after ADR 0029 pivot — previous task (parsed JSON infra) abandoned.'
   - date: '2026-04-21'
     status: backlog
     who: stkrolikiewicz
