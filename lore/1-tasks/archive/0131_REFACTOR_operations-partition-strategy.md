@@ -2,19 +2,28 @@
 id: '0131'
 title: 'DB: fix operations partition strategy (transaction_id range useless at scale)'
 type: REFACTOR
-status: backlog
-related_adr: []
-related_tasks: ['0022', '0130']
+status: completed
+related_adr: ['0027']
+related_tasks: ['0022', '0130', '0140', '0139']
 tags: [priority-medium, effort-medium, layer-db, audit-F20]
 milestone: 1
 links:
-  - crates/db/migrations/0002_create_operations.sql
+  - crates/db/migrations/0003_transactions_and_operations.sql
   - docs/audits/2026-04-10-pipeline-data-audit.md
 history:
   - date: '2026-04-10'
     status: backlog
     who: stkrolikiewicz
     note: 'Spawned from pipeline audit finding F20 (MEDIUM).'
+  - date: '2026-04-22'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      De facto completed by 0140 (ADR 0027 schema rebuild, commit 998b774).
+      Option 2 from this task ("switch to time-based partitioning") was
+      implemented — operations now uses PARTITION BY RANGE (created_at)
+      monthly, uniform with other partitioned tables. Lambda code alignment
+      handled by 0139. No separate work needed under this task.
 ---
 
 # DB: fix operations partition strategy
