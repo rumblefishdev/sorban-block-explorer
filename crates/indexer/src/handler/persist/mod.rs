@@ -236,7 +236,7 @@ async fn run_all_steps(
     timings.wasm_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
-    write::upsert_contracts(db_tx, staged, &account_ids).await?;
+    let contract_ids = write::upsert_contracts_returning_id(db_tx, staged, &account_ids).await?;
     timings.contracts_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
@@ -260,23 +260,23 @@ async fn run_all_steps(
     timings.pools_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
-    write::insert_operations(db_tx, staged, &account_ids, &tx_ids).await?;
+    write::insert_operations(db_tx, staged, &account_ids, &contract_ids, &tx_ids).await?;
     timings.operations_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
-    write::insert_events(db_tx, staged, &account_ids, &tx_ids).await?;
+    write::insert_events(db_tx, staged, &account_ids, &contract_ids, &tx_ids).await?;
     timings.events_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
-    write::insert_invocations(db_tx, staged, &account_ids, &tx_ids).await?;
+    write::insert_invocations(db_tx, staged, &account_ids, &contract_ids, &tx_ids).await?;
     timings.invocations_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
-    write::upsert_tokens(db_tx, staged, &account_ids).await?;
+    write::upsert_tokens(db_tx, staged, &account_ids, &contract_ids).await?;
     timings.tokens_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
-    write::upsert_nfts_and_ownership(db_tx, staged, &account_ids, &tx_ids).await?;
+    write::upsert_nfts_and_ownership(db_tx, staged, &account_ids, &contract_ids, &tx_ids).await?;
     timings.nfts_ms = t.elapsed().as_millis();
 
     let t = Instant::now();

@@ -1,9 +1,9 @@
 ---
 id: '0027'
 title: 'Post-surrogate schema snapshot + endpoint realizability (post ADR 0011–0026)'
-status: accepted
+status: superseded
 deciders: [fmazur]
-related_tasks: ['0140']
+related_tasks: ['0140', '0151']
 related_adrs:
   [
     '0011',
@@ -39,6 +39,17 @@ history:
     status: accepted
     who: fmazur
     note: 'Addendum to §11 tokens — added ck_tokens_identity CHECK (ties nullable identifying columns to asset_type) and uidx_tokens_native partial UNIQUE. Closes NULL-in-UNIQUE loophole flagged during PR #98 review; migration 0005_tokens_nfts.sql updated accordingly.'
+  - date: 2026-04-21
+    status: superseded
+    by: '0030'
+    who: fmazur
+    note: >
+      Superseded by ADR 0030 (contracts surrogate BIGINT id). ADR 0030
+      replaces this snapshot as the authoritative schema reference; the
+      accounts-surrogate decisions from ADR 0026 are preserved verbatim,
+      the contract_id VARCHAR(56) FK decisions here flipped to BIGINT.
+      Landed via task 0151 (migrations 0002-0005 rewritten to post-0030
+      source-of-truth shape).
 ---
 
 # ADR 0027: Post-surrogate schema snapshot + endpoint realizability (post ADR 0011–0026)

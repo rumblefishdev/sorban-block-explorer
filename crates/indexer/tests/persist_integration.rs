@@ -399,16 +399,26 @@ async fn clean_test_ledger(pool: &PgPool) {
     for sql in sql_stmts {
         let _ = sqlx::query(sql).bind(POOL_ID).execute(pool).await;
     }
-    let _ = sqlx::query("DELETE FROM nft_ownership WHERE nft_id IN (SELECT id FROM nfts WHERE contract_id IN ($1, $2))")
-        .bind(TOKEN_CONTRACT)
-        .bind(NFT_CONTRACT)
-        .execute(pool)
-        .await;
-    let _ = sqlx::query("DELETE FROM nfts WHERE contract_id IN ($1, $2)")
-        .bind(TOKEN_CONTRACT)
-        .bind(NFT_CONTRACT)
-        .execute(pool)
-        .await;
+    // ADR 0030: tokens/nfts/nft_ownership.contract_id is now BIGINT → join via
+    // soroban_contracts to filter by StrKey.
+    let _ = sqlx::query(
+        "DELETE FROM nft_ownership WHERE nft_id IN (
+            SELECT n.id FROM nfts n
+              JOIN soroban_contracts sc ON sc.id = n.contract_id
+             WHERE sc.contract_id = ANY($1)
+         )",
+    )
+    .bind(vec![TOKEN_CONTRACT.to_string(), NFT_CONTRACT.to_string()])
+    .execute(pool)
+    .await;
+    let _ = sqlx::query(
+        "DELETE FROM nfts WHERE contract_id IN (
+            SELECT id FROM soroban_contracts WHERE contract_id = ANY($1)
+         )",
+    )
+    .bind(vec![TOKEN_CONTRACT.to_string(), NFT_CONTRACT.to_string()])
+    .execute(pool)
+    .await;
     // soroban_events / invocations / operations / participants cascade via FK
     // on (transaction_id, created_at). Deleting the parent transactions wipes
     // them.
@@ -425,11 +435,15 @@ async fn clean_test_ledger(pool: &PgPool) {
         .execute(pool)
         .await;
     // tokens — delete anything referencing our SAC contract_id to start clean.
-    let _ = sqlx::query("DELETE FROM tokens WHERE contract_id IN ($1, $2)")
-        .bind(TOKEN_CONTRACT)
-        .bind(NFT_CONTRACT)
-        .execute(pool)
-        .await;
+    // ADR 0030: tokens.contract_id is BIGINT; resolve StrKey → id first.
+    let _ = sqlx::query(
+        "DELETE FROM tokens WHERE contract_id IN (
+            SELECT id FROM soroban_contracts WHERE contract_id = ANY($1)
+         )",
+    )
+    .bind(vec![TOKEN_CONTRACT.to_string(), NFT_CONTRACT.to_string()])
+    .execute(pool)
+    .await;
     let _ = sqlx::query(
         "DELETE FROM tokens WHERE asset_type IN ('classic','sac') AND issuer_id IN (SELECT id FROM accounts WHERE account_id = $1)"
     )
@@ -510,11 +524,18 @@ async fn test_counts(pool: &PgPool) -> Counts {
                   WHERE tx.hash = decode($3, 'hex')),
           c AS (SELECT COUNT(*) AS n FROM soroban_contracts WHERE contract_id = ANY($4)),
           w AS (SELECT COUNT(*) AS n FROM wasm_interface_metadata WHERE wasm_hash = decode($5, 'hex')),
-          tk AS (SELECT COUNT(*) AS n FROM tokens WHERE contract_id = ANY($4)),
-          n AS (SELECT COUNT(*) AS n FROM nfts WHERE contract_id = ANY($4)),
+          -- ADR 0030: tokens/nfts.contract_id is BIGINT → join soroban_contracts
+          -- to filter by StrKey.
+          tk AS (SELECT COUNT(*) AS n FROM tokens tk
+                   JOIN soroban_contracts sc ON sc.id = tk.contract_id
+                  WHERE sc.contract_id = ANY($4)),
+          n AS (SELECT COUNT(*) AS n FROM nfts n
+                   JOIN soroban_contracts sc ON sc.id = n.contract_id
+                  WHERE sc.contract_id = ANY($4)),
           no AS (SELECT COUNT(*) AS n FROM nft_ownership no2
                    JOIN nfts nf ON nf.id = no2.nft_id
-                  WHERE nf.contract_id = ANY($4)),
+                   JOIN soroban_contracts sc ON sc.id = nf.contract_id
+                  WHERE sc.contract_id = ANY($4)),
           pl AS (SELECT COUNT(*) AS n FROM liquidity_pools WHERE pool_id = decode($6, 'hex')),
           ps AS (SELECT COUNT(*) AS n FROM liquidity_pool_snapshots WHERE pool_id = decode($6, 'hex')),
           lp AS (SELECT COUNT(*) AS n FROM lp_positions WHERE pool_id = decode($6, 'hex')),

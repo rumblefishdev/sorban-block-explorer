@@ -1,4 +1,4 @@
--- ADR 0027 — initial schema, step 3/7: transactions, operations, and participants
+-- ADR 0027 + ADR 0030 — initial schema, step 3/7: transactions, operations, and participants
 -- Partitioned tables use composite PK (id, created_at) with the partition key
 -- included per Postgres rules. Monthly partitions are provisioned by the
 -- partition-management Lambda (see task 0139 and crates/db-partition-mgmt).
@@ -52,7 +52,7 @@ CREATE TABLE operations (
     type              VARCHAR(50)  NOT NULL,
     source_id         BIGINT       REFERENCES accounts(id),
     destination_id    BIGINT       REFERENCES accounts(id),
-    contract_id       VARCHAR(56)  REFERENCES soroban_contracts(contract_id),
+    contract_id       BIGINT       REFERENCES soroban_contracts(id), -- ADR 0030
     asset_code        VARCHAR(12),
     asset_issuer_id   BIGINT       REFERENCES accounts(id),
     pool_id           BYTEA,

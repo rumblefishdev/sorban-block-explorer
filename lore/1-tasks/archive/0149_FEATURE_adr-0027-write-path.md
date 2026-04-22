@@ -2,9 +2,9 @@
 id: '0149'
 title: 'Indexer write-path against ADR 0027 schema (persist_ledger body)'
 type: FEATURE
-status: active
-related_adr: ['0024', '0026', '0027']
-related_tasks: ['0140', '0148', '0126', '0118', '0120', '0135']
+status: completed
+related_adr: ['0024', '0026', '0027', '0030', '0031']
+related_tasks: ['0140', '0148', '0126', '0118', '0120', '0135', '0151', '0152']
 tags:
   [
     layer-backend,
@@ -90,6 +90,19 @@ history:
       implement it. Captures ~270–320 GB/year storage saving and ~10–20 ms
       estimated p95 contribution. PR ships 15/16 acceptance criteria; the
       perf gap is documented with a concrete next-lever + ADR.
+  - date: '2026-04-21'
+    status: completed
+    who: fmazur
+    note: >
+      Closing. 15/16 acceptance criteria met. The remaining one (p95 ≤ 150 ms)
+      stays deferred and is now tracked through the schema-lever roadmap that
+      this task originated: task 0151 landed ADR 0030 (contracts surrogate
+      BIGINT id, no perf regression at p95 309 ms; storage saving
+      ~330–380 GB/year mainnet). Task 0152 (backlog) implements ADR 0031
+      (enum-like VARCHAR → SMALLINT + Rust enum) for the next ~160–220 GB/year
+      saving and ~2–3× faster WHERE type=… probes. Production-side perf
+      gap will be re-measured on RDS where cache misses dominate (local
+      Docker fits everything in shared_buffers, masking real index cost).
 ---
 
 # Indexer write-path against ADR 0027 schema (persist_ledger body)

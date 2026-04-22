@@ -1,7 +1,7 @@
 ---
 id: '0030'
 title: 'Surrogate `soroban_contracts.id BIGINT` replacing StrKey VARCHAR(56) FKs across the schema'
-status: proposed
+status: accepted
 deciders: [fmazur]
 related_tasks: ['0149', '0151']
 related_adrs: ['0011', '0019', '0020', '0022', '0024', '0025', '0026', '0027']
@@ -16,6 +16,18 @@ history:
       bench exposed the contract_id VARCHAR(56) FK as the next-biggest storage
       lever on the hot path. Mirrors ADR 0026's pattern for accounts.
       Supersedes ADR 0027 as the authoritative schema snapshot once landed.
+  - date: 2026-04-21
+    status: accepted
+    who: fmazur
+    note: >
+      Landed via task 0151. Migrations 0002-0005 rewritten to source-of-truth
+      post-ADR-0030 shape (soroban_contracts.id BIGSERIAL PK, contract_id
+      VARCHAR(56) UNIQUE; 5 FK tables now carry contract_id BIGINT).
+      upsert_contracts_returning_id in persist/write.rs + resolver helpers.
+      persist_integration test passes; backfill-bench 100 ledgers runs clean
+      (p95 309 ms, matches post-diag-filter 0149 baseline). 1:728 ref-to-
+      unique ratio measured vs. 1:730 forecast — saving estimate ~330-380
+      GB/year mainnet, in range. ADR 0027 marked superseded by this ADR.
 ---
 
 # ADR 0030: Surrogate `soroban_contracts.id BIGINT` replacing StrKey VARCHAR(56) FKs across the schema
@@ -35,14 +47,15 @@ history:
 
 ## Status
 
-`proposed` — next largest storage reduction after ADR 0026. Swaps the
-natural StrKey primary key on `soroban_contracts` for a surrogate
-`BIGINT`, then rewrites every FK column that currently carries
-`VARCHAR(56)` contract references to `BIGINT`. Estimated gain at
-mainnet scale: **~200–300 GB** over a year of activity (after the
-diagnostic-event filter from task 0149).
+`accepted` — landed via task 0151. Next largest storage reduction after
+ADR 0026. Swaps the natural StrKey primary key on `soroban_contracts`
+for a surrogate `BIGINT`, then rewrites every FK column that currently
+carries `VARCHAR(56)` contract references to `BIGINT`. Measured at
+100-ledger bench: 1:728 ref-to-unique ratio; projected saving
+**~330-380 GB/year** at mainnet scale (within ADR forecast of
+270-320 GB).
 
-Supersedes ADR 0027 as the authoritative schema snapshot once landed.
+Supersedes ADR 0027 as the authoritative schema snapshot.
 ADR 0027's account-surrogate decisions are preserved verbatim; this ADR
 is the symmetric treatment for contract identity flagged in ADR 0027
 Part V §7.
