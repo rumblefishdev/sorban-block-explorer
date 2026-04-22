@@ -9,11 +9,17 @@ mod ingest;
 mod partition;
 mod resume;
 mod run;
-mod source;
 mod status;
+mod sync;
+
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use tracing::error;
+
+/// Default local scratch dir. CLI `--temp-dir` or `BACKFILL_TEMP_DIR`
+/// overrides. Single source of truth — `run` and `status` both receive
+/// it via their `execute` args, no duplicated constant.
+const DEFAULT_TEMP_DIR: &str = ".temp/backfill-runner";
 
 #[derive(Parser)]
 #[command(name = "backfill-runner", version, about)]
@@ -22,8 +28,20 @@ struct Cli {
     command: Command,
 
     /// PostgreSQL connection string.
-    #[arg(long, env = "DATABASE_URL", global = true)]
+    #[arg(long, env = "DATABASE_URL")]
     database_url: String,
+
+    /// Local scratch directory for `aws s3 sync` output. Each partition
+    /// lands under `<temp-dir>/<HEX>--<start>-<end>/` and is deleted
+    /// after it indexes successfully.
+    #[arg(long, env = "BACKFILL_TEMP_DIR", default_value = DEFAULT_TEMP_DIR)]
+    temp_dir: PathBuf,
+
+    /// Enable per-ledger and per-partition progress logs. Without this
+    /// flag only warnings are shown during the run; the final summary
+    /// (and the `status` table) prints either way.
+    #[arg(long, short)]
+    verbose: bool,
 }
 
 #[derive(Subcommand)]
@@ -37,10 +55,6 @@ enum Command {
         /// Last ledger sequence (inclusive).
         #[arg(long)]
         end: u32,
-
-        /// Number of ledgers to process in each worker job (reserved).
-        #[arg(long, default_value_t = 100)]
-        chunk_size: u32,
     },
 
     /// Report ingested / missing ledgers for a range.
@@ -57,21 +71,24 @@ enum Command {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt().with_env_filter("info").init();
-
     let cli = Cli::parse();
 
-    let result = match cli.command {
-        Command::Run {
-            start,
-            end,
-            chunk_size,
-        } => run::execute(&cli.database_url, start, end, chunk_size).await,
-        Command::Status { start, end } => status::execute(&cli.database_url, start, end).await,
-    };
+    // Without `--verbose` only warnings (and errors, which panic) print.
+    // Per-ledger / per-partition progress events live at info level, so the
+    // flag is what gates the live debugging stream.
+    let filter = if cli.verbose { "info" } else { "warn" };
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
-    if let Err(err) = result {
-        error!(error = %err, "backfill-runner exiting with error");
-        std::process::exit(1);
+    // Errors currently panic (see task 0145, debug-first decision). The
+    // subcommand entrypoints still return `Result` for pool / IO wiring;
+    // `.expect` converts any residual Err into an immediate panic with a
+    // clear message and no graceful-exit path.
+    match cli.command {
+        Command::Run { start, end } => run::execute(&cli.database_url, &cli.temp_dir, start, end)
+            .await
+            .expect("backfill run failed"),
+        Command::Status { start, end } => status::execute(&cli.database_url, start, end)
+            .await
+            .expect("status failed"),
     }
 }

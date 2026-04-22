@@ -11,31 +11,18 @@ pub enum BackfillError {
     #[error("indexer: {0}")]
     Indexer(#[from] indexer::handler::HandlerError),
 
-    /// S3 `GetObject` failed (network, auth, throttling, etc.).
-    #[error("s3 get_object {key}: {source}")]
-    S3Get {
-        key: String,
-        #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
+    /// Local filesystem / subprocess I/O failure (create_dir_all, File::create,
+    /// read_dir, spawning `aws`, etc.). Constructed via `#[from]`.
+    #[error("io: {0}")]
+    Io(#[from] std::io::Error),
+
+    /// `aws s3 sync` subprocess exited non-zero after all retry attempts were
+    /// exhausted. Carries enough context (partition + exit code + stderr tail)
+    /// to diagnose without re-running.
+    #[error("aws s3 sync failed for partition {partition} (exit {exit_code}): {stderr}")]
+    AwsSyncFailed {
+        partition: u32,
+        exit_code: i32,
+        stderr: String,
     },
-
-    /// S3 returned 404 for a ledger key.
-    #[error("s3 ledger not found: {key}")]
-    S3NotFound { key: String },
-
-    /// Reading the body stream failed after `GetObject` succeeded.
-    #[error("s3 body read {key}: {source}")]
-    S3Body {
-        key: String,
-        #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
-    },
-
-    /// Command-line argument validation failed.
-    #[error("invalid argument: {0}")]
-    InvalidArgument(String),
-
-    /// The requested sequence range is invalid (e.g. start > end).
-    #[error("invalid sequence range: {0}")]
-    InvalidRange(String),
 }

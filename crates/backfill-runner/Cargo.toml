@@ -19,5 +19,4 @@ sqlx = { workspace = true }
 clap = { version = "4", features = ["derive", "env"] }
 chrono = { workspace = true }
 thiserror = { workspace = true }
-aws-config = { workspace = true }
-aws-sdk-s3 = "1"
+

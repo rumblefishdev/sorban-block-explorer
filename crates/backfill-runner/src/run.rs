@@ -1,216 +1,226 @@
 //! `run` subcommand — orchestrates the end-to-end backfill.
 //!
-//! Sequential implementation. Fetches from S3, parses, and persists ledgers
-//! one-by-one.
+//! Shape: one partition at a time, sequential per-ledger index, with a
+//! **single-slot** background prefetch of partition *N+1* while *N* is
+//! being indexed. No worker pool, no tokio `JoinSet` of indexer tasks —
+//! concurrency is out of scope here (see task 0145).
 //!
-//! Resume: sequences already in `ledgers` are filtered out up-front, so
-//! completed ledgers are never fetched from S3.
+//! Pre-flight (`aws --version`, `SELECT 1`) **panics** on failure.
+//! These are operator / environment errors, not transient conditions,
+//! and the typed `BackfillError` is reserved for things worth catching
+//! higher up.
 
-use std::time::{Duration, Instant};
+use std::collections::HashSet;
+use std::path::Path;
+use std::time::Instant;
 
-use tracing::{info, warn};
+use sqlx::PgPool;
+use tokio::process::Command;
+use tokio::task::JoinHandle;
+use tracing::info;
 
 use crate::error::BackfillError;
-use crate::{ingest, resume, source};
-
-/// Progress summary cadence (log every N ledgers handled).
-const PROGRESS_EVERY: usize = 100;
-
-// ---------------------------------------------------------------------------
-// Public entry point (Layer 0)
-// ---------------------------------------------------------------------------
+use crate::ingest::{PartitionStats, index_partition};
+use crate::partition::{Partition, partitions_for_range};
+use crate::resume::load_completed;
+use crate::sync::sync_partition;
 
 pub async fn execute(
     database_url: &str,
+    temp_dir: &Path,
     start: u32,
     end: u32,
-    chunk_size: u32,
 ) -> Result<(), BackfillError> {
-    if start > end {
-        return Err(BackfillError::InvalidRange(format!(
-            "start ({}) must be <= end ({})",
-            start, end
-        )));
-    }
-    if chunk_size < 1 {
-        return Err(BackfillError::InvalidArgument(
-            "chunk-size must be >= 1".to_string(),
-        ));
-    }
+    assert!(
+        start <= end,
+        "invalid range: start ({start}) must be <= end ({end})"
+    );
 
-    let total_requested = (end - start + 1) as usize;
+    tokio::fs::create_dir_all(&temp_dir).await?;
+
     let pool = db::pool::create_pool(database_url)?;
-    let client = source::build_client().await;
 
-    let completed = resume::load_completed(&pool, start, end).await?;
-    let pending: Vec<u32> = (start..=end).filter(|s| !completed.contains(s)).collect();
-    let pending_total = pending.len();
+    // Pre-flight. Either check failing means the run has no chance of
+    // completing — panic loudly rather than produce a typed error.
+    preflight_aws().await;
+    preflight_db(&pool).await;
+
+    let partitions = partitions_for_range(start, end);
+    if partitions.is_empty() {
+        info!("no partitions in range");
+        return Ok(());
+    }
+
+    let completed = load_completed(&pool, start, end).await?;
+
+    // Filter out partitions whose entire clamped range is already in the
+    // `ledgers` table. With cleanup-after-index the local folder is gone
+    // by the time the row lands in the DB, so a re-run without this
+    // pre-sync filter would re-download ~1–2 GB per already-done
+    // partition just for Stage B to reject every single persist call.
+    // Per-ledger Stage B still matters for mid-partition crashes where
+    // the partition is only partially in DB.
+    let todo: Vec<&Partition> = partitions
+        .iter()
+        .filter(|p| !partition_fully_done(p, start, end, &completed))
+        .collect();
 
     info!(
         start,
         end,
-        total = total_requested,
+        partitions = partitions.len(),
+        already_done_partitions = partitions.len() - todo.len(),
+        to_process = todo.len(),
         already_ingested = completed.len(),
-        pending = pending_total,
         "backfill starting"
     );
 
-    if pending.is_empty() {
-        info!("nothing to do — range already fully ingested");
+    if todo.is_empty() {
+        info!("nothing to do — all partitions in range already fully indexed");
         return Ok(());
     }
 
     let run_start = Instant::now();
-    let mut missing: Vec<u32> = Vec::new();
-    let mut processed = 0usize;
-    let mut gaps = 0usize;
+    let mut totals = PartitionStats::default();
 
-    for seq in pending {
-        match ingest::ingest_ledger(&client, &pool, seq).await {
-            Ok(()) => {}
-            Err(BackfillError::S3NotFound { key }) => {
-                warn!(seq, %key, "ledger missing in public archive, skipping");
-                missing.push(seq);
-                gaps += 1;
-            }
-            Err(e) => return Err(e),
-        }
+    // Prime: foreground sync of the first partition that still needs work.
+    // Subsequent partitions arrive via the background prefetch spawned at
+    // the end of each iteration.
+    sync_partition(todo[0], temp_dir).await?;
 
-        processed += 1;
-        if processed.is_multiple_of(PROGRESS_EVERY) || processed == pending_total {
-            log_progress(processed, gaps, pending_total, run_start.elapsed());
+    for (i, partition) in todo.iter().enumerate() {
+        // Kick off prefetch for N+1 BEFORE indexing N — so the sync runs
+        // while the indexer is busy. Exactly one in flight.
+        let next_handle: Option<JoinHandle<Result<(), BackfillError>>> =
+            if let Some(next) = todo.get(i + 1) {
+                let next = (*next).clone();
+                let temp = temp_dir.to_path_buf();
+                Some(tokio::spawn(
+                    async move { sync_partition(&next, &temp).await },
+                ))
+            } else {
+                None
+            };
+
+        let stats = index_partition(partition, temp_dir, &pool, start, end, &completed).await?;
+
+        // Fold per-partition stats into the run-wide accumulator.
+        // `wall_clock` is per-partition and not summed.
+        totals.indexed += stats.indexed;
+        totals.skipped_completed += stats.skipped_completed;
+        totals.parse_total_ms += stats.parse_total_ms;
+        totals.persist_total_ms += stats.persist_total_ms;
+        totals.min_ledger_ms = combine_min(totals.min_ledger_ms, stats.min_ledger_ms);
+        totals.max_ledger_ms = combine_max(totals.max_ledger_ms, stats.max_ledger_ms);
+
+        // Delete the local partition folder now that it has been fully
+        // indexed. Bounds total disk use at ~2 × partition_size (this
+        // plus the prefetch in flight). Doing it BEFORE awaiting the
+        // prefetch reclaims disk sooner in the sync-slower-than-index
+        // case. A failure here is a hard error — silent warn-and-
+        // continue would accumulate the garbage we just removed.
+        let local = partition.local_folder(temp_dir);
+        tokio::fs::remove_dir_all(&local).await?;
+        info!(
+            partition = partition.start,
+            local = %local.display(),
+            "partition local folder cleaned up"
+        );
+
+        // Await prefetch so its error (if any) surfaces synchronously
+        // before we advance. Happy path: already resolved, zero wait.
+        if let Some(h) = next_handle {
+            h.await.expect("prefetch task panicked")?;
         }
     }
 
     let elapsed = run_start.elapsed();
-    let ingested = processed.saturating_sub(gaps);
-
-    if missing.is_empty() {
-        info!(
-            ingested,
-            elapsed_secs = elapsed.as_secs(),
-            "backfill complete"
-        );
-    } else {
-        warn!(
-            ingested,
-            gaps = missing.len(),
-            elapsed_secs = elapsed.as_secs(),
-            missing = ?missing,
-            "backfill complete with archive gaps (not an error)"
-        );
-    }
+    print_run_summary(&todo, &totals, elapsed);
 
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Progress (Layer 1)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ProgressSnapshot {
-    pub processed: usize,
-    pub ingested: usize,
-    pub gaps: usize,
-    pub total: usize,
-    pub pct: f64,
-    pub throughput: f64,
-    pub eta_secs: u64,
+/// Final run summary — printed via `println!` so it's always visible,
+/// not gated by `--verbose`. The per-ledger and per-partition info logs
+/// are the debugging stream; this is the single "what just happened"
+/// block an operator sees when a run wraps up.
+fn print_run_summary(todo: &[&Partition], totals: &PartitionStats, elapsed: std::time::Duration) {
+    let (min_str, max_str) = match (totals.min_ledger_ms, totals.max_ledger_ms) {
+        (Some(min), Some(max)) => (format!("{min} ms"), format!("{max} ms")),
+        _ => ("n/a".into(), "n/a".into()),
+    };
+    println!();
+    println!("=== backfill complete ===");
+    println!("partitions processed:    {}", todo.len());
+    println!("ledgers indexed:         {}", totals.indexed);
+    println!("ledgers already in DB:   {}", totals.skipped_completed);
+    println!("parse total:             {} ms", totals.parse_total_ms);
+    println!("persist total:           {} ms", totals.persist_total_ms);
+    println!("ledger time (min / max): {min_str} / {max_str}");
+    println!("elapsed:                 {} s", elapsed.as_secs());
 }
 
-pub(crate) fn progress_snapshot(
-    processed: usize,
-    gaps: usize,
-    total: usize,
-    elapsed: Duration,
-) -> ProgressSnapshot {
-    let elapsed_s = elapsed.as_secs_f64().max(0.001);
-    let throughput = processed as f64 / elapsed_s;
-    let remaining = total.saturating_sub(processed);
-    let eta_secs = if throughput > 0.0 {
-        (remaining as f64 / throughput) as u64
-    } else {
-        0
-    };
-    let pct = if total == 0 {
-        0.0
-    } else {
-        (processed as f64 / total as f64) * 100.0
-    };
-    let ingested = processed.saturating_sub(gaps);
-    ProgressSnapshot {
-        processed,
-        ingested,
-        gaps,
-        total,
-        pct,
-        throughput,
-        eta_secs,
+fn combine_min(a: Option<u128>, b: Option<u128>) -> Option<u128> {
+    match (a, b) {
+        (Some(x), Some(y)) => Some(x.min(y)),
+        (Some(x), None) | (None, Some(x)) => Some(x),
+        (None, None) => None,
     }
 }
 
-fn log_progress(processed: usize, gaps: usize, total: usize, elapsed: Duration) {
-    let s = progress_snapshot(processed, gaps, total, elapsed);
+fn combine_max(a: Option<u128>, b: Option<u128>) -> Option<u128> {
+    match (a, b) {
+        (Some(x), Some(y)) => Some(x.max(y)),
+        (Some(x), None) | (None, Some(x)) => Some(x),
+        (None, None) => None,
+    }
+}
+
+/// Is every ledger in this partition's clamped range already in the DB?
+///
+/// "Clamped" = intersect the partition's full [start, end] with the run's
+/// requested [start, end]. A partition at the edge of the range may only
+/// need a subset of its ledgers, and that subset being complete is
+/// sufficient to skip it entirely — sync + index.
+fn partition_fully_done(
+    partition: &Partition,
+    start: u32,
+    end: u32,
+    completed: &HashSet<u32>,
+) -> bool {
+    let (first, last) = partition.clamped(start, end);
+    (first..=last).all(|s| completed.contains(&s))
+}
+
+async fn preflight_aws() {
+    let out = Command::new("aws")
+        .arg("--version")
+        .output()
+        .await
+        .unwrap_or_else(|err| {
+            panic!(
+                "pre-flight: failed to spawn `aws --version`: {err}. \
+                 Is the AWS CLI installed and on PATH?"
+            );
+        });
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        panic!(
+            "pre-flight: `aws --version` exited non-zero ({:?}): {}",
+            out.status.code(),
+            stderr
+        );
+    }
     info!(
-        ingested = s.ingested,
-        gaps = s.gaps,
-        processed = s.processed,
-        total = s.total,
-        pct = format!("{:.1}%", s.pct),
-        throughput = format!("{:.2} ledgers/s", s.throughput),
-        eta_secs = s.eta_secs,
-        "progress"
+        version = %String::from_utf8_lossy(&out.stdout).trim(),
+        "pre-flight: aws CLI present"
     );
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn halfway_no_gaps() {
-        let s = progress_snapshot(50, 0, 100, Duration::from_secs(50));
-        assert_eq!(s.processed, 50);
-        assert_eq!(s.ingested, 50);
-        assert_eq!(s.gaps, 0);
-        assert_eq!(s.total, 100);
-        assert!((s.pct - 50.0).abs() < 0.001);
-        assert!((s.throughput - 1.0).abs() < 0.001);
-        assert_eq!(s.eta_secs, 50);
-    }
-
-    #[test]
-    fn halfway_with_gaps() {
-        let s = progress_snapshot(50, 10, 100, Duration::from_secs(50));
-        assert_eq!(s.processed, 50);
-        assert_eq!(s.ingested, 40);
-        assert_eq!(s.gaps, 10);
-        assert!((s.pct - 50.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn completed_has_zero_eta() {
-        let s = progress_snapshot(100, 0, 100, Duration::from_secs(10));
-        assert!((s.pct - 100.0).abs() < 0.001);
-        assert_eq!(s.eta_secs, 0);
-    }
-
-    #[test]
-    fn zero_elapsed_does_not_panic() {
-        let s = progress_snapshot(10, 0, 100, Duration::from_secs(0));
-        assert!(s.throughput.is_finite());
-        assert!(s.throughput > 0.0);
-    }
-
-    #[test]
-    fn zero_total_does_not_divide_by_zero() {
-        let s = progress_snapshot(0, 0, 0, Duration::from_secs(1));
-        assert_eq!(s.pct, 0.0);
-        assert_eq!(s.eta_secs, 0);
-    }
+async fn preflight_db(pool: &PgPool) {
+    sqlx::query_scalar::<_, i32>("SELECT 1")
+        .fetch_one(pool)
+        .await
+        .unwrap_or_else(|err| panic!("pre-flight: database unreachable: {err}"));
+    info!("pre-flight: database reachable");
 }

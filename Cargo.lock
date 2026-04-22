@@ -791,8 +791,6 @@ dependencies = [
 name = "backfill-runner"
 version = "0.1.0"
 dependencies = [
- "aws-config",
- "aws-sdk-s3",
  "chrono",
  "clap",
  "db",
