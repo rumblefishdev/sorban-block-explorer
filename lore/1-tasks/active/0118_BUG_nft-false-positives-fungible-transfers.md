@@ -38,6 +38,66 @@ history:
       operational). Phase 1 delivers a testable `classify_contract_from_wasm_spec`
       function that Phase 2 drops into the write path once 0149 defines
       the new `persist_ledger` signature.
+  - date: '2026-04-22'
+    status: active
+    who: stkrolikiewicz
+    note: >
+      Phase 2 implementation landed on branch
+      `fix/0118_nft-false-positives-fungible-transfers-phase2`.
+      Task 0149 is merged, the gate is lifted. Ten files touched,
+      ~320 lines of production code + tests.
+
+      Domain: `ContractType` enum gains `Nft = 2` / `Fungible = 3`
+      (migration `20260422000100_contract_type_add_nft_fungible`
+      updates the `contract_type_name(SMALLINT)` label helper;
+      existing `BETWEEN 0 AND 15` CHECK already permits the new
+      discriminants, so no column change).
+
+      Indexer: new `handler::persist::ClassificationCache`
+      (`Arc<Mutex<HashMap<String, ContractType>>>`) lives on
+      `HandlerState` so one Lambda instance reuses the cache across
+      every invocation. Definitive verdicts only (Token / Nft /
+      Fungible) — `Other` is deliberately dropped so a later WASM
+      upload can promote the contract.
+
+      Staging computes a `wasm_hash → ContractType` map via
+      `xdr_parser::classify_contract_from_wasm_spec` and overrides
+      `ContractRow.contract_type` for non-SAC deployments whose
+      wasm_hash classified as Nft/Fungible. Write path adds
+      `reclassify_contracts_from_wasm` (UPDATE soroban_contracts,
+      same tx, inside the persist envelope) so rows deployed in
+      earlier ledgers get reclassified when the WASM upload is
+      finally observed. The NFT filter (`resolve_nft_filter`) runs
+      before `upsert_nfts_and_ownership`: hydrates the cache for
+      unknown contracts via a single `SELECT contract_id,
+      contract_type FROM soroban_contracts WHERE contract_id = ANY($1)`,
+      then drops rows whose contract resolves to `Token` / `Fungible`.
+      `Nft` and `Other` are inserted (the latter temporary — Phase 3
+      SQL cleans up once backfill has observed every WASM).
+
+      Parser: `xdr_parser` now provides
+      `impl From<ContractClassification> for ContractType` so
+      staging can `.into()` idiomatically; this replaced an earlier
+      helper function that lived in `classification_cache` and
+      unnecessarily put conversion logic outside the enum domain.
+
+      Tests: 130 xdr-parser unit tests (+1
+      `converts_into_contract_type`), 4 cache unit tests, 4 DB-gated
+      integration tests passing — including the new
+      `nft_filter_drops_fungible_classified_contract` end-to-end
+      test that ingests one NFT-classified and one fungible-classified
+      contract in the same ledger and asserts exactly one `nfts`
+      row survives the filter. The old permissive-parser test
+      `i128_token_id_not_excluded` was renamed to
+      `parser_emits_i128_transfer_as_nft_candidate` with a docstring
+      explaining the intentional parser-level permissiveness and the
+      filter-at-persist layer separation.
+
+      `nx build` / `nx lint` / `nx test` / `nx fmt-check` all green
+      locally. Task stays `active` pending Phase 3 (post-backfill
+      operational SQL cleanup) — that phase only runs once backfill
+      has indexed the full Soroban-era corpus, so it is intentionally
+      not part of this PR.
 ---
 
 # BUG: NFT false positives from fungible token transfers
@@ -241,19 +301,38 @@ reviewable and re-runnable.
 
 ### Phase 2 (integration, gated on 0149)
 
-- [ ] Classification writes `soroban_contracts.contract_type` on WASM
-      upload processing.
-- [ ] Per-worker cache avoids repeated DB lookups; does NOT cache
-      `Other`.
-- [ ] Batch cache population at ledger granularity (one query per
-      ledger covering all candidate contracts).
-- [ ] NFT insert path filters by classification: `Nft` → insert,
+- [x] Classification writes `soroban_contracts.contract_type` on WASM
+      upload processing. _(staging sets `ContractRow.contract_type`
+      for same-ledger deployments; `reclassify_contracts_from_wasm`
+      UPDATE back-propagates to rows deployed earlier.)_
+- [x] Per-worker cache avoids repeated DB lookups; does NOT cache
+      `Other`. _(`ClassificationCache::extend_definitive` filters
+      `Other`; cache lives on `HandlerState` for Lambda warm reuse.)_
+- [x] Batch cache population at ledger granularity (one query per
+      ledger covering all candidate contracts). _(`resolve_nft_filter`
+      issues a single `SELECT contract_id, contract_type FROM
+    soroban_contracts WHERE contract_id = ANY($1)` for cache misses
+      before per-row filtering.)_
+- [x] NFT insert path filters by classification: `Nft` → insert,
       `Fungible` / `Token` → skip, `Other` → insert (temporary).
-- [ ] `i128_token_id_not_excluded` test rewritten to assert the new
-      filter behavior.
-- [ ] End-to-end test: live ingest of a small fixture range with one
+      _(`resolve_nft_filter` `keep` closure; returns index vectors
+      into `staged.nft_rows` / `nft_ownership_rows` so the downstream
+      UNNEST binds only survivors.)_
+- [x] `i128_token_id_not_excluded` test rewritten to assert the new
+      filter behavior. _(Renamed to
+      `parser_emits_i128_transfer_as_nft_candidate` with a docstring
+      explaining the intentional parser-level permissiveness; the
+      authoritative filter assertion lives in the new end-to-end
+      integration test below.)_
+- [x] End-to-end test: live ingest of a small fixture range with one
       fungible contract + one NFT contract yields exactly the expected
       `nfts` rows (no USDC transfer leakage).
+      _(`nft_filter_drops_fungible_classified_contract` in
+      `crates/indexer/tests/persist_integration.rs` asserts: NFT
+      contract row survives, fungible-classified contract row dropped,
+      `soroban_contracts.contract_type` persisted correctly for both,
+      and the per-worker cache holds both definitive verdicts after
+      the ledger commits.)_
 
 ### Phase 3 (cleanup)
 

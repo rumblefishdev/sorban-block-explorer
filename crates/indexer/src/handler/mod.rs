@@ -70,6 +70,11 @@ pub struct HandlerState {
     pub s3_client: S3Client,
     pub cw_client: CloudWatchClient,
     pub db_pool: PgPool,
+    /// Per-worker cache of `soroban_contracts.contract_type` used by the
+    /// NFT-insert filter (task 0118 Phase 2). Lives on `HandlerState` so
+    /// one Lambda instance reuses the same cache across every invocation
+    /// it serves.
+    pub classification_cache: persist::ClassificationCache,
 }
 
 // ---------------------------------------------------------------------------
@@ -147,8 +152,13 @@ async fn process_s3_object(
 
     // Step 4: Process each ledger in the batch
     for ledger_meta in batch.ledger_close_metas.iter() {
-        if let Err(e) =
-            process::process_ledger(ledger_meta, &state.db_pool, Some(&state.cw_client)).await
+        if let Err(e) = process::process_ledger(
+            ledger_meta,
+            &state.db_pool,
+            Some(&state.cw_client),
+            &state.classification_cache,
+        )
+        .await
         {
             error!(
                 key,

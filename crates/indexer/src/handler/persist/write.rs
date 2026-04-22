@@ -16,7 +16,8 @@ use serde_json::Value;
 use sqlx::{Postgres, Transaction};
 
 use super::HandlerError;
-use super::staging::{BalanceRow, Staged, TokenRow, TxRow, WasmRow};
+use super::classification_cache::ClassificationCache;
+use super::staging::{BalanceRow, NftOwnershipRow, NftRow, Staged, TokenRow, TxRow, WasmRow};
 
 const CHUNK_SIZE: usize = 5000;
 
@@ -174,6 +175,79 @@ pub(super) async fn stub_unknown_wasm_interfaces(
     .execute(&mut **db_tx)
     .await?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Task 0118 Phase 2 — back-propagate wasm-spec classification to every
+// `soroban_contracts` row sharing a `wasm_hash` touched by this ledger.
+// ---------------------------------------------------------------------------
+
+/// UPDATE `soroban_contracts.contract_type` for rows whose `wasm_hash` was
+/// classified in this ledger (see `staging::Staged::wasm_classification`).
+///
+/// Semantics:
+///   * Only definitive verdicts (`Nft`, `Fungible`) drive the UPDATE.
+///     `Other` carries no information the filter can rely on and would
+///     needlessly churn rows.
+///   * Rows with `contract_type = Token` are left alone — SACs are
+///     authoritative at deploy time (they have no WASM, so a shared
+///     `wasm_hash` cannot belong to one) but the guard is defensive.
+///   * The UPDATE runs inside the persist tx so the subsequent NFT filter
+///     step's SELECT reads the new classification.
+///
+/// Idempotent on replay: the WHERE `contract_type <> …EXCLUDED…` guard
+/// short-circuits no-op writes.
+pub(super) async fn reclassify_contracts_from_wasm(
+    db_tx: &mut Transaction<'_, Postgres>,
+    staged: &Staged,
+) -> Result<(), HandlerError> {
+    if staged.wasm_classification.is_empty() {
+        return Ok(());
+    }
+    let mut hashes: Vec<Vec<u8>> = Vec::new();
+    let mut types: Vec<ContractType> = Vec::new();
+    for (hash, &ty) in &staged.wasm_classification {
+        if matches!(ty, ContractType::Nft | ContractType::Fungible) {
+            hashes.push(hash.to_vec());
+            types.push(ty);
+        }
+    }
+    if hashes.is_empty() {
+        return Ok(());
+    }
+
+    sqlx::query(
+        r#"
+        UPDATE soroban_contracts sc
+           SET contract_type = t.ty
+          FROM UNNEST($1::BYTEA[], $2::SMALLINT[]) AS t(wh, ty)
+         WHERE sc.wasm_hash = t.wh
+           AND sc.contract_type IS DISTINCT FROM 0  -- leave SACs alone
+           AND sc.contract_type IS DISTINCT FROM t.ty
+        "#,
+    )
+    .bind(&hashes)
+    .bind(&types)
+    .execute(&mut **db_tx)
+    .await?;
+    Ok(())
+}
+
+/// Populate the per-worker classification cache from the rows we just
+/// upserted. Runs outside the DB and outside the transaction — pure
+/// in-memory bookkeeping so a later ledger avoids the SELECT round trip.
+///
+/// SAC contracts land as `Token`; non-SAC contracts land as whatever
+/// classification survived the staging override (`Nft` / `Fungible` if
+/// their wasm_hash was observed this ledger, otherwise `Other`, which
+/// the cache deliberately drops).
+pub(super) fn populate_cache_from_staged(staged: &Staged, cache: &ClassificationCache) {
+    cache.extend_definitive(
+        staged
+            .contract_rows
+            .iter()
+            .map(|r| (r.contract_id.clone(), r.contract_type)),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1020,16 +1094,100 @@ async fn upsert_tokens_soroban(
 // 12. nfts + nft_ownership
 // ---------------------------------------------------------------------------
 
+/// Task 0118 Phase 2 — resolve every NFT-candidate contract's
+/// classification and decide which `nft_rows` / `nft_ownership_rows`
+/// survive the filter. Returns index vectors into the staged slices.
+///
+/// Flow:
+///   1. Collect distinct contract_ids referenced by either slice.
+///   2. Read the per-worker cache; anything it doesn't know needs a DB lookup.
+///   3. Batch SELECT the misses from `soroban_contracts`.
+///   4. Populate the cache with definitive verdicts (NULL → `Other`, not cached).
+///   5. Decide insert vs skip per-row:
+///      * `Nft`     → insert.
+///      * `Other`   → insert (temporary false positive; Phase 3 SQL
+///        cleans up once backfill has observed every WASM).
+///      * `Token` / `Fungible` → skip.
+async fn resolve_nft_filter(
+    db_tx: &mut Transaction<'_, Postgres>,
+    staged: &Staged,
+    cache: &ClassificationCache,
+) -> Result<(Vec<usize>, Vec<usize>), HandlerError> {
+    let mut candidate_ids: HashSet<&str> = HashSet::new();
+    for r in &staged.nft_rows {
+        candidate_ids.insert(r.contract_id.as_str());
+    }
+    for r in &staged.nft_ownership_rows {
+        candidate_ids.insert(r.contract_id.as_str());
+    }
+
+    if !candidate_ids.is_empty() {
+        let misses = cache.missing(candidate_ids.iter().copied());
+        if !misses.is_empty() {
+            let param: Vec<String> = misses.iter().map(|s| (*s).to_string()).collect();
+            let rows: Vec<(String, Option<i16>)> = sqlx::query_as(
+                r#"
+                SELECT contract_id, contract_type
+                  FROM soroban_contracts
+                 WHERE contract_id = ANY($1::VARCHAR[])
+                "#,
+            )
+            .bind(&param)
+            .fetch_all(&mut **db_tx)
+            .await?;
+            let fetched: Vec<(String, ContractType)> = rows
+                .into_iter()
+                .filter_map(|(id, ty)| {
+                    ty.and_then(|v| ContractType::try_from(v).ok())
+                        .map(|v| (id, v))
+                })
+                .collect();
+            cache.extend_definitive(fetched);
+        }
+    }
+
+    let keep = |id: &str| -> bool {
+        match cache.get(id) {
+            Some(ContractType::Token) | Some(ContractType::Fungible) => false,
+            Some(ContractType::Nft) | Some(ContractType::Other) | None => true,
+        }
+    };
+
+    let nft_indices: Vec<usize> = staged
+        .nft_rows
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| keep(r.contract_id.as_str()).then_some(i))
+        .collect();
+    let ownership_indices: Vec<usize> = staged
+        .nft_ownership_rows
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| keep(r.contract_id.as_str()).then_some(i))
+        .collect();
+    Ok((nft_indices, ownership_indices))
+}
+
 pub(super) async fn upsert_nfts_and_ownership(
     db_tx: &mut Transaction<'_, Postgres>,
     staged: &Staged,
     account_ids: &HashMap<String, i64>,
     contract_ids: &HashMap<String, i64>,
     tx_ids: &HashMap<String, i64>,
+    classification_cache: &ClassificationCache,
 ) -> Result<(), HandlerError> {
+    // Task 0118 Phase 2 — classify every contract referenced by an
+    // NFT-candidate row, dropping rows whose contract is a known
+    // `Fungible` or `Token` (SAC). `Other` rows are preserved (inserted
+    // temporarily; the Phase 3 cleanup SQL sweeps them once a backfill
+    // has observed every WASM upload).
+    let (nft_indices, ownership_indices) =
+        resolve_nft_filter(db_tx, staged, classification_cache).await?;
+
     // 12a. nfts (watermark-guarded on current_owner_ledger)
-    if !staged.nft_rows.is_empty() {
-        for chunk in staged.nft_rows.chunks(CHUNK_SIZE) {
+    if !nft_indices.is_empty() {
+        let nft_slice: Vec<&NftRow> = nft_indices.iter().map(|&i| &staged.nft_rows[i]).collect();
+        for chunk in nft_slice.chunks(CHUNK_SIZE) {
             let mut contracts: Vec<i64> = Vec::with_capacity(chunk.len());
             let mut token_ids: Vec<String> = Vec::with_capacity(chunk.len());
             let mut collections: Vec<Option<String>> = Vec::with_capacity(chunk.len());
@@ -1101,8 +1259,12 @@ pub(super) async fn upsert_nfts_and_ownership(
     }
 
     // 12b. nft_ownership (empty until parser catches up)
-    if !staged.nft_ownership_rows.is_empty() {
-        for chunk in staged.nft_ownership_rows.chunks(CHUNK_SIZE) {
+    if !ownership_indices.is_empty() {
+        let ownership_slice: Vec<&NftOwnershipRow> = ownership_indices
+            .iter()
+            .map(|&i| &staged.nft_ownership_rows[i])
+            .collect();
+        for chunk in ownership_slice.chunks(CHUNK_SIZE) {
             let mut contracts: Vec<i64> = Vec::with_capacity(chunk.len());
             let mut token_ids: Vec<String> = Vec::with_capacity(chunk.len());
             let mut tx_id_vec: Vec<i64> = Vec::with_capacity(chunk.len());

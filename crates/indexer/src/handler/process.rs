@@ -12,13 +12,17 @@ use tracing::{info, warn};
 
 use super::HandlerError;
 use super::persist;
+use super::persist::ClassificationCache;
 
 /// Process a single ledger: run all parsing stages and persist in one DB transaction.
 /// If `cw_client` is provided, publishes `LastProcessedLedgerSequence` to CloudWatch.
+/// `classification_cache` is the per-worker NFT-filter cache (task 0118 Phase 2);
+/// callers reuse the same instance across ledgers so it accumulates.
 pub async fn process_ledger(
     meta: &LedgerCloseMeta,
     pool: &PgPool,
     cw_client: Option<&CloudWatchClient>,
+    classification_cache: &ClassificationCache,
 ) -> Result<(), HandlerError> {
     // --- Stage 0024: Ledger + transaction extraction ---
     let extracted_ledger = xdr_parser::extract_ledger(meta)?;
@@ -173,6 +177,7 @@ pub async fn process_ledger(
         &nft_events,
         &lp_positions,
         &inner_tx_hashes,
+        classification_cache,
     )
     .await?;
     let persist_ms = persist_timer.elapsed().as_millis();

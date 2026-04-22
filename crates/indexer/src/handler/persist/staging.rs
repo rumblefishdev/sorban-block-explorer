@@ -224,6 +224,15 @@ pub(super) struct Staged {
 
     pub wasm_rows: Vec<WasmRow>,
     pub contract_rows: Vec<ContractRow>,
+    /// Task 0118 Phase 2 — classification derived from every wasm spec
+    /// observed this ledger. Keyed by `wasm_hash`. Non-`Other` values drive
+    /// the post-wasm `soroban_contracts.contract_type` UPDATE and the
+    /// staging-time override applied to `contract_rows` built in this
+    /// pass. `Other` entries are intentionally retained so callers can
+    /// tell "we saw a spec but it didn't classify" from "we haven't seen
+    /// a spec at all" — only the definitive variants are forwarded to the
+    /// DB UPDATE or the per-worker cache.
+    pub wasm_classification: HashMap<[u8; 32], ContractType>,
 
     pub tx_rows: Vec<TxRow>,
 
@@ -398,11 +407,19 @@ impl Staged {
         // --- wasm_interface_metadata rows (deduped by wasm_hash) ------------
         let mut wasm_seen: HashSet<[u8; 32]> = HashSet::new();
         let mut wasm_rows: Vec<WasmRow> = Vec::with_capacity(contract_interfaces.len());
+        let mut wasm_classification: HashMap<[u8; 32], ContractType> =
+            HashMap::with_capacity(contract_interfaces.len());
         for iface in contract_interfaces {
             let hash = decode_hash(&iface.wasm_hash, "wasm_hash")?;
             if !wasm_seen.insert(hash) {
                 continue;
             }
+            // Task 0118 Phase 2 — run the wasm-spec classifier here so the
+            // verdict is available to the contract_rows staging below and
+            // to the `reclassify_contracts_from_wasm` write step.
+            let classification = xdr_parser::classify_contract_from_wasm_spec(&iface.functions);
+            wasm_classification.insert(hash, classification.into());
+
             let metadata = serde_json::json!({
                 "functions": iface.functions,
                 "wasm_byte_len": iface.wasm_byte_len,
@@ -424,13 +441,27 @@ impl Staged {
                 Some(h) => Some(decode_hash(h, "deployment.wasm_hash")?),
                 None => None,
             };
+            // Task 0118 Phase 2 — if this deployment's wasm_hash was
+            // classified in the same ledger and carries a definitive
+            // verdict (Nft / Fungible), override the parser default
+            // (Other) before the row reaches the DB. SAC deployments stay
+            // `Token` (is_sac short-circuits WASM-spec classification —
+            // SACs have no WASM).
+            let mut contract_type = dep.contract_type;
+            if !dep.is_sac
+                && let Some(hash) = wasm_hash
+                && let Some(&classified) = wasm_classification.get(&hash)
+                && matches!(classified, ContractType::Nft | ContractType::Fungible)
+            {
+                contract_type = classified;
+            }
             contract_rows.push(ContractRow {
                 contract_id: dep.contract_id.clone(),
                 wasm_hash,
                 wasm_uploaded_at_ledger: Some(i64::from(dep.deployed_at_ledger)),
                 deployer_str_key: dep.deployer_account.clone(),
                 deployed_at_ledger: Some(i64::from(dep.deployed_at_ledger)),
-                contract_type: dep.contract_type,
+                contract_type,
                 is_sac: dep.is_sac,
                 metadata: Some(dep.metadata.clone()),
             });
@@ -948,6 +979,7 @@ impl Staged {
             account_state_overrides,
             wasm_rows,
             contract_rows,
+            wasm_classification,
             tx_rows,
             participant_rows,
             op_rows,

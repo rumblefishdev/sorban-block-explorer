@@ -207,6 +207,7 @@ async fn index_partition(
     global_indexed: &mut usize,
     latencies_ms: &mut Vec<u128>,
     cleanup: bool,
+    classification_cache: &indexer::handler::persist::ClassificationCache,
 ) -> Result<IndexStats, Box<dyn std::error::Error>> {
     let mut indexed = 0usize;
     let mut skipped = 0usize;
@@ -240,7 +241,13 @@ async fn index_partition(
             // SLO in task 0149 is defined over this envelope, matching what
             // the indexer Lambda does in production.
             let t = Instant::now();
-            indexer::handler::process::process_ledger(ledger_meta, pool, None).await?;
+            indexer::handler::process::process_ledger(
+                ledger_meta,
+                pool,
+                None,
+                classification_cache,
+            )
+            .await?;
             latencies_ms.push(t.elapsed().as_millis());
         }
 
@@ -393,6 +400,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut total_skipped = 0usize;
     let mut total_download_secs = 0.0f64;
     let mut latencies_ms: Vec<u128> = Vec::with_capacity(total_range);
+    // Task 0118 Phase 2 — bench mirrors the Lambda: one cache reused for
+    // the whole run so the NFT filter sees the same hit-rate curve.
+    let classification_cache = indexer::handler::persist::ClassificationCache::new();
 
     // ── Pipeline: download N+1 while indexing N ───────────────────────
     // Download first partition (cold start — must wait)
@@ -434,6 +444,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &mut total_indexed,
             &mut latencies_ms,
             args.cleanup,
+            &classification_cache,
         )
         .await?;
 
