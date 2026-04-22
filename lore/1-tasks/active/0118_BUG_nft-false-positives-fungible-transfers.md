@@ -78,23 +78,44 @@ contains the function signatures that let us classify. This task
 connects the dots: derive classification from WASM spec, persist it on
 `soroban_contracts.contract_type`, filter NFT inserts accordingly.
 
-### Classification rules (SEP-0050 vs SEP-0041)
+### Classification rules (OpenZeppelin `NonFungibleToken` vs `FungibleToken` traits)
 
-| Function                       | NFT | Fungible |
-| ------------------------------ | :-: | :------: |
-| `owner_of(token_id) → Address` | yes |    no    |
-| `token_uri(token_id) → String` | yes |    no    |
-| `decimals() → u32`             | no  |   yes    |
-| `allowance(...) → i128`        | no  |   yes    |
+Discriminators derived from the OpenZeppelin Stellar contracts
+library (the de-facto reference linked from Stellar Developers docs):
 
-- Presence of any NFT signature → classify as `Nft`.
-- Presence of fungible signatures without NFT ones → `Fungible`.
-- Dual-interface (both) → `Nft` (safer: prefer false positives over
-  false negatives for UX).
-- No usable WASM metadata yet → `Other` (temporary until WASM upload is
-  observed; see Phase 2 cache handling).
-- SAC contracts (no WASM) → DB already labels them `'token'` at deploy
-  time; Phase 2 treats `'token'` like `Fungible`.
+- `packages/tokens/src/non_fungible/mod.rs` — `NonFungibleToken` trait.
+- `packages/tokens/src/fungible/mod.rs` — `FungibleToken` trait (SEP-0041).
+
+| Function              | NFT trait | Fungible trait | Discriminator? |
+| --------------------- | :-------: | :------------: | :------------: |
+| `owner_of`            |    yes    |       no       |      NFT       |
+| `token_uri`           |    yes    |       no       |      NFT       |
+| `approve_for_all`     |    yes    |       no       |      NFT       |
+| `get_approved`        |    yes    |       no       |      NFT       |
+| `is_approved_for_all` |    yes    |       no       |      NFT       |
+| `decimals`            |    no     |      yes       |    Fungible    |
+| `allowance`           |    no     |      yes       |    Fungible    |
+| `total_supply`        |    no     |      yes       |    Fungible    |
+| `balance`             |    yes    |      yes       |     shared     |
+| `transfer`            |    yes    |      yes       |     shared     |
+| `transfer_from`       |    yes    |      yes       |     shared     |
+| `approve`             |    yes    |      yes       |     shared     |
+| `name`, `symbol`      |    yes    |      yes       |     shared     |
+
+- Any NFT discriminator present → classify as `Nft`.
+- Otherwise, any Fungible discriminator present → `Fungible`.
+- Dual-interface (both sets present) → `Nft` (safer: prefer false
+  positives over false negatives for UX).
+- No usable WASM metadata yet → `Other` (temporary until WASM upload
+  is observed; see Phase 2 cache handling).
+- SAC contracts (no WASM) → DB already labels them `'token'` at
+  deploy time; Phase 2 treats `'token'` like `Fungible`.
+
+Shared names — notably `balance` (returns `u32` for NFT count vs
+`i128` for fungible amount) and `approve` (different signatures) —
+are **not** discriminators. Name-level matching is sufficient for
+Phase 1; signature-aware classification is a potential refinement
+for a future enum variant.
 
 ## Implementation
 
