@@ -14,10 +14,10 @@ history:
     status: mature
     who: stkrolikiewicz
     note: >
-      Research note drafted earlier as freestanding `docs/assets-vs-tokens-
-      taxonomy-note.md`. Moved into task 0154's notes directory when the
-      task was created, so the task-to-research lineage is preserved in
-      place.
+      Notatka research napisana wcześniej jako wolnostojący plik
+      `docs/assets-vs-tokens-taxonomy-note.md`. Przeniesiona do katalogu
+      `notes/` taska 0154 przy jego tworzeniu, żeby lineage task → research
+      siedział w jednym miejscu.
 ---
 
 # Notatka: Assets vs Tokens w schemacie block explorera
@@ -326,7 +326,7 @@ Dla Blend BLND (Soroban-native): row w `soroban_contracts` z `is_sac = false`,
 własny `wasm_hash`, `contract_type = 'token'`; row w `tokens` z `asset_type =
 'soroban'`, tylko `contract_id`, bez code/issuer.
 
-### 6.6 Edge case: XLM
+### 6.6 Przypadek brzegowy: XLM
 
 XLM ma zdeployowany SAC na mainnet, aktywnie używany przez DeFi
 (`CAS3J...YHXP`). W naszym schemacie `ck_tokens_identity` wymusza dla `native`
@@ -613,7 +613,7 @@ migracja**. C (cichy status quo) jest najgorszy, bo problem wraca.
 - [stellar-core integration.md — emits LedgerCloseMeta over pipe](https://github.com/stellar/stellar-core/blob/master/docs/integration.md)
 - [stellar-core transactions README](https://github.com/stellar/stellar-core/blob/master/src/transactions/readme.md)
 
-### Community / third-party (potwierdzające używanie obu terminów)
+### Społeczność / źródła zewnętrzne (potwierdzające używanie obu terminów)
 
 - [Navigating Classic Assets and Smart Contract Tokens on Soroban — Cheesecake Labs](https://cheesecakelabs.com/blog/native-tokens-vs-soroban-tokens/)
 - [stellar-cli issue #934: refers to 'stellar asset contract' as 'token'](https://github.com/stellar/stellar-cli/issues/934) — przykład że sam zespół Stellara widzi mieszanie terminów jako real nuance
