@@ -26,7 +26,7 @@ history:
     who: FilipDz
     note: 'Activated after ADR 0029 pivot — previous task (parsed JSON infra) abandoned.'
   - date: '2026-04-22'
-    status: done
+    status: completed
     who: FilipDz
     note: >
       Library-level scope delivered in `crates/api/src/stellar_archive/`:

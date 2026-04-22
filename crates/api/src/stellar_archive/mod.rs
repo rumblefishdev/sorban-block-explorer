@@ -139,13 +139,16 @@ impl StellarArchiveFetcher {
             .send()
             .await
             .map_err(|e| {
-                let service_err = e.into_service_error();
-                if service_err.is_no_such_key() {
+                // Only promote to `NotFound` for a genuine service-level 404.
+                // Other failure modes (timeouts, dispatch, credential
+                // resolution) keep the original SDK error as the source so
+                // callers/log consumers retain context.
+                if matches!(e.as_service_error(), Some(svc) if svc.is_no_such_key()) {
                     FetchError::NotFound { seq }
                 } else {
                     FetchError::S3 {
                         seq,
-                        source: Box::new(service_err),
+                        source: Box::new(e),
                     }
                 }
             })?;

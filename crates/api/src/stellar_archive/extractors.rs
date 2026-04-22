@@ -8,9 +8,7 @@
 //! Endpoints (wired in a follow-up task) call these after `StellarArchiveFetcher` hands
 //! back the `LedgerCloseMeta` from the public archive.
 
-use stellar_xdr::curr::{
-    FeeBumpTransactionInnerTx, LedgerCloseMeta, TransactionEnvelope, TransactionMeta,
-};
+use stellar_xdr::curr::{LedgerCloseMeta, TransactionEnvelope, TransactionMeta};
 use tracing::instrument;
 
 use super::dto::{
@@ -74,7 +72,7 @@ pub fn extract_e3_heavy(meta: &LedgerCloseMeta, tx_hash: &str) -> Option<E3Heavy
             )
             .invocations
             .into_iter()
-            .map(to_invocation_dto)
+            .filter_map(to_invocation_dto)
             .collect()
         }
         _ => Vec::new(),
@@ -86,7 +84,7 @@ pub fn extract_e3_heavy(meta: &LedgerCloseMeta, tx_hash: &str) -> Option<E3Heavy
             let inner = xdr_parser::envelope::inner_transaction(env);
             xdr_parser::extract_operations(&inner, tx_meta, &ext_tx.hash, ledger_seq, idx)
                 .into_iter()
-                .map(to_operation_dto)
+                .filter_map(to_operation_dto)
                 .collect()
         })
         .unwrap_or_default();
@@ -131,9 +129,12 @@ pub fn extract_e14_heavy(meta: &LedgerCloseMeta, contract_id: &str) -> Vec<E14He
         let events = xdr_parser::extract_events(tm, &ext_tx.hash, ledger_seq, closed_at);
         for event in events {
             if event.contract_id.as_deref() == Some(contract_id) {
+                let Some(event_index) = to_i16_index(event.event_index, "event_index") else {
+                    continue;
+                };
                 let topics = topics_to_vec(event.topics);
                 out.push(E14HeavyEventFields {
-                    event_index: event.event_index as i16,
+                    event_index,
                     transaction_hash: event.transaction_hash,
                     topics,
                     data: event.data,
@@ -147,6 +148,24 @@ pub fn extract_e14_heavy(meta: &LedgerCloseMeta, contract_id: &str) -> Vec<E14He
 }
 
 // --- private helpers ---
+
+/// Checked `u32 → i16` conversion for indices that correlate to DB `SMALLINT`
+/// columns (`event_index`, `invocation_index`, `application_order`).
+/// Returns `None` and logs a warning if the value overflows i16 — the caller
+/// skips the row rather than silently truncate and corrupt correlation with DB.
+fn to_i16_index(value: u32, kind: &'static str) -> Option<i16> {
+    match i16::try_from(value) {
+        Ok(v) => Some(v),
+        Err(_) => {
+            tracing::warn!(
+                kind,
+                value,
+                "index out of SMALLINT range — skipping row to avoid silent truncation"
+            );
+            None
+        }
+    }
+}
 
 /// Collect `&TransactionMeta` pointers paired with their tx index, across
 /// LedgerCloseMeta variants. Mirrors the unified collection used in
@@ -187,10 +206,7 @@ fn envelope_signatures(env: &TransactionEnvelope) -> Vec<SignatureDto> {
 
 fn envelope_fee_bump_source(env: &TransactionEnvelope) -> Option<String> {
     match env {
-        TransactionEnvelope::TxFeeBump(fb) => {
-            let FeeBumpTransactionInnerTx::Tx(_) = &fb.tx.inner_tx;
-            Some(fb.tx.fee_source.to_string())
-        }
+        TransactionEnvelope::TxFeeBump(fb) => Some(fb.tx.fee_source.to_string()),
         _ => None,
     }
 }
@@ -201,6 +217,9 @@ fn split_events(events: Vec<xdr_parser::ExtractedEvent>) -> (Vec<XdrEventDto>, V
     let mut contract = Vec::new();
     let mut diagnostic = Vec::new();
     for e in events {
+        let Some(event_index) = to_i16_index(e.event_index, "event_index") else {
+            continue;
+        };
         let is_diagnostic = e.event_type == ContractEventType::Diagnostic;
         let topics = topics_to_vec(e.topics);
         let dto = XdrEventDto {
@@ -208,7 +227,7 @@ fn split_events(events: Vec<xdr_parser::ExtractedEvent>) -> (Vec<XdrEventDto>, V
             contract_id: e.contract_id,
             topics,
             data: e.data,
-            event_index: e.event_index as i16,
+            event_index,
         };
         if is_diagnostic {
             diagnostic.push(dto);
@@ -226,12 +245,13 @@ fn topics_to_vec(topics: serde_json::Value) -> Vec<serde_json::Value> {
     }
 }
 
-fn to_invocation_dto(inv: xdr_parser::ExtractedInvocation) -> XdrInvocationDto {
+fn to_invocation_dto(inv: xdr_parser::ExtractedInvocation) -> Option<XdrInvocationDto> {
+    let invocation_index = to_i16_index(inv.invocation_index, "invocation_index")?;
     let return_value = match inv.return_value {
         serde_json::Value::Null => None,
         v => Some(v),
     };
-    XdrInvocationDto {
+    Some(XdrInvocationDto {
         contract_id: inv.contract_id,
         caller_account: inv.caller_account,
         function_name: inv.function_name.unwrap_or_default(),
@@ -241,14 +261,15 @@ fn to_invocation_dto(inv: xdr_parser::ExtractedInvocation) -> XdrInvocationDto {
         },
         return_value,
         successful: inv.successful,
-        invocation_index: inv.invocation_index as i16,
-    }
+        invocation_index,
+    })
 }
 
-fn to_operation_dto(op: xdr_parser::ExtractedOperation) -> XdrOperationDto {
-    XdrOperationDto {
+fn to_operation_dto(op: xdr_parser::ExtractedOperation) -> Option<XdrOperationDto> {
+    let application_order = to_i16_index(op.operation_index, "application_order")?;
+    Some(XdrOperationDto {
         op_type: op.op_type.to_string(),
-        application_order: op.operation_index as i16,
+        application_order,
         details: op.details,
-    }
+    })
 }
