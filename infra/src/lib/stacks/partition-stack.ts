@@ -27,8 +27,10 @@ export interface PartitionStackProps extends cdk.StackProps {
  *
  * Creates and maintains PostgreSQL table partitions via a Lambda that:
  * 1. Runs on every deployment (CDK custom resource)
- * 2. Runs monthly via EventBridge schedule
+ * 2. Runs daily via EventBridge schedule (refreshes metrics + future partitions)
  * 3. Publishes CloudWatch metrics for monitoring
+ *
+ * All partitioned tables use RANGE (created_at) per ADR 0027.
  *
  * Dependency ordering (enforced in app.ts):
  *   NetworkStack → RdsStack → MigrationStack → PartitionStack → ComputeStack
@@ -99,17 +101,15 @@ export class PartitionStack extends cdk.Stack {
     });
 
     // ---------------------
-    // EventBridge Schedule (monthly)
+    // EventBridge Schedule (daily)
     // ---------------------
-    new events.Rule(this, 'MonthlyPartitionRule', {
-      ruleName: `${config.envName}-partition-monthly`,
-      description: 'Create future partitions on 1st of each month',
+    new events.Rule(this, 'DailyPartitionRule', {
+      ruleName: `${config.envName}-partition-daily`,
+      description:
+        'Ensure future partitions + refresh FuturePartitionCount metric daily',
       schedule: events.Schedule.cron({
         minute: '0',
         hour: '2',
-        day: '1',
-        month: '*',
-        year: '*',
       }),
       targets: [new targets.LambdaFunction(partitionFn)],
     });
@@ -118,6 +118,9 @@ export class PartitionStack extends cdk.Stack {
     // CloudWatch Alarms
     // ---------------------
     const timePartitionedTables = [
+      'transactions',
+      'operations',
+      'transaction_participants',
       'soroban_invocations',
       'soroban_events',
       'liquidity_pool_snapshots',
@@ -140,22 +143,6 @@ export class PartitionStack extends cdk.Stack {
         treatMissingData: cloudwatch.TreatMissingData.BREACHING,
       });
     }
-
-    new cloudwatch.Alarm(this, 'OperationsRangeHigh', {
-      alarmName: `${config.envName}-partition-operations-range-high`,
-      alarmDescription:
-        'Operations partition range >80% consumed — create next range',
-      metric: new cloudwatch.Metric({
-        namespace: metricsNamespace,
-        metricName: 'OperationsRangeUsagePercent',
-        period: cdk.Duration.days(1),
-        statistic: 'Maximum',
-      }),
-      threshold: 80,
-      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
-      evaluationPeriods: 1,
-      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-    });
 
     new cloudwatch.Alarm(this, 'PartitionLambdaErrors', {
       alarmName: `${config.envName}-partition-lambda-errors`,
