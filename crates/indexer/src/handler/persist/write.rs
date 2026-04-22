@@ -17,7 +17,7 @@ use sqlx::{Postgres, Transaction};
 
 use super::HandlerError;
 use super::classification_cache::ClassificationCache;
-use super::staging::{BalanceRow, NftOwnershipRow, NftRow, Staged, TokenRow, TxRow, WasmRow};
+use super::staging::{BalanceRow, Staged, TokenRow, TxRow, WasmRow};
 
 const CHUNK_SIZE: usize = 5000;
 
@@ -1102,8 +1102,12 @@ async fn upsert_tokens_soroban(
 ///   1. Collect distinct contract_ids referenced by either slice.
 ///   2. Read the per-worker cache; anything it doesn't know needs a DB lookup.
 ///   3. Batch SELECT the misses from `soroban_contracts`.
-///   4. Populate the cache with definitive verdicts (NULL → `Other`, not cached).
-///   5. Decide insert vs skip per-row:
+///   4. Populate the cache with definitive non-NULL verdicts; NULL/invalid
+///      rows stay uncached and therefore fall through as "keep" (same as
+///      an `Other` verdict, cleaned up by Phase 3 SQL).
+///   5. Take one cache snapshot for the candidate set so the per-row
+///      filter loop is lock-free.
+///   6. Decide insert vs skip per-row:
 ///      * `Nft`     → insert.
 ///      * `Other`   → insert (temporary false positive; Phase 3 SQL
 ///        cleans up once backfill has observed every WASM).
@@ -1146,10 +1150,17 @@ async fn resolve_nft_filter(
         }
     }
 
+    // One lock round-trip for the whole ledger's candidate set. The per-row
+    // filter below then consults the local HashMap without ever touching
+    // the shared mutex.
+    let snapshot = cache.snapshot_for(candidate_ids.iter().copied());
+
     let keep = |id: &str| -> bool {
-        match cache.get(id) {
+        match snapshot.get(id) {
             Some(ContractType::Token) | Some(ContractType::Fungible) => false,
-            Some(ContractType::Nft) | Some(ContractType::Other) | None => true,
+            // Nft / Other / uncached → insert. Uncached covers NULL DB rows
+            // and `Other` verdicts we deliberately don't cache.
+            _ => true,
         }
     };
 
@@ -1185,20 +1196,24 @@ pub(super) async fn upsert_nfts_and_ownership(
         resolve_nft_filter(db_tx, staged, classification_cache).await?;
 
     // 12a. nfts (watermark-guarded on current_owner_ledger)
+    //
+    // Iterate the surviving index vector directly — avoids the
+    // `Vec<&NftRow>` intermediate allocation proportional to the
+    // survivor count.
     if !nft_indices.is_empty() {
-        let nft_slice: Vec<&NftRow> = nft_indices.iter().map(|&i| &staged.nft_rows[i]).collect();
-        for chunk in nft_slice.chunks(CHUNK_SIZE) {
-            let mut contracts: Vec<i64> = Vec::with_capacity(chunk.len());
-            let mut token_ids: Vec<String> = Vec::with_capacity(chunk.len());
-            let mut collections: Vec<Option<String>> = Vec::with_capacity(chunk.len());
-            let mut names: Vec<Option<String>> = Vec::with_capacity(chunk.len());
-            let mut medias: Vec<Option<String>> = Vec::with_capacity(chunk.len());
-            let mut metadatas: Vec<Option<Value>> = Vec::with_capacity(chunk.len());
-            let mut minted: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
-            let mut owners: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
-            let mut owner_ledgers: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
+        for idx_chunk in nft_indices.chunks(CHUNK_SIZE) {
+            let mut contracts: Vec<i64> = Vec::with_capacity(idx_chunk.len());
+            let mut token_ids: Vec<String> = Vec::with_capacity(idx_chunk.len());
+            let mut collections: Vec<Option<String>> = Vec::with_capacity(idx_chunk.len());
+            let mut names: Vec<Option<String>> = Vec::with_capacity(idx_chunk.len());
+            let mut medias: Vec<Option<String>> = Vec::with_capacity(idx_chunk.len());
+            let mut metadatas: Vec<Option<Value>> = Vec::with_capacity(idx_chunk.len());
+            let mut minted: Vec<Option<i64>> = Vec::with_capacity(idx_chunk.len());
+            let mut owners: Vec<Option<i64>> = Vec::with_capacity(idx_chunk.len());
+            let mut owner_ledgers: Vec<Option<i64>> = Vec::with_capacity(idx_chunk.len());
 
-            for r in chunk {
+            for &i in idx_chunk {
+                let r = &staged.nft_rows[i];
                 contracts.push(resolve_contract_id(
                     contract_ids,
                     &r.contract_id,
@@ -1259,23 +1274,22 @@ pub(super) async fn upsert_nfts_and_ownership(
     }
 
     // 12b. nft_ownership (empty until parser catches up)
+    //
+    // Iterate surviving indices directly (same allocation win as 12a).
     if !ownership_indices.is_empty() {
-        let ownership_slice: Vec<&NftOwnershipRow> = ownership_indices
-            .iter()
-            .map(|&i| &staged.nft_ownership_rows[i])
-            .collect();
-        for chunk in ownership_slice.chunks(CHUNK_SIZE) {
-            let mut contracts: Vec<i64> = Vec::with_capacity(chunk.len());
-            let mut token_ids: Vec<String> = Vec::with_capacity(chunk.len());
-            let mut tx_id_vec: Vec<i64> = Vec::with_capacity(chunk.len());
-            let mut owners: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
+        for idx_chunk in ownership_indices.chunks(CHUNK_SIZE) {
+            let mut contracts: Vec<i64> = Vec::with_capacity(idx_chunk.len());
+            let mut token_ids: Vec<String> = Vec::with_capacity(idx_chunk.len());
+            let mut tx_id_vec: Vec<i64> = Vec::with_capacity(idx_chunk.len());
+            let mut owners: Vec<Option<i64>> = Vec::with_capacity(idx_chunk.len());
             // ADR 0031: nft_ownership.event_type is SMALLINT (Rust NftEventType).
-            let mut types: Vec<NftEventType> = Vec::with_capacity(chunk.len());
-            let mut ls_vec: Vec<i64> = Vec::with_capacity(chunk.len());
-            let mut order_vec: Vec<i16> = Vec::with_capacity(chunk.len());
-            let mut ca_vec: Vec<DateTime<Utc>> = Vec::with_capacity(chunk.len());
+            let mut types: Vec<NftEventType> = Vec::with_capacity(idx_chunk.len());
+            let mut ls_vec: Vec<i64> = Vec::with_capacity(idx_chunk.len());
+            let mut order_vec: Vec<i16> = Vec::with_capacity(idx_chunk.len());
+            let mut ca_vec: Vec<DateTime<Utc>> = Vec::with_capacity(idx_chunk.len());
 
-            for r in chunk {
+            for &i in idx_chunk {
+                let r = &staged.nft_ownership_rows[i];
                 let Some(tx_id) = tx_ids.get(&r.tx_hash_hex).copied() else {
                     continue;
                 };

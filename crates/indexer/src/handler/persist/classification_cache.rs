@@ -41,9 +41,12 @@ impl ClassificationCache {
         Self::default()
     }
 
-    /// Fast path lookup. `None` means "ask the DB" — either the entry was
+    /// Fast path lookup for a single id. Prefer [`Self::snapshot_for`]
+    /// when inspecting many ids from a hot loop — one lock round-trip
+    /// instead of one per call. `None` means "ask the DB": the entry was
     /// never observed or it was observed as `Other` (deliberately not
     /// cached so promotion can happen later).
+    #[allow(dead_code)] // consumed by integration tests + diagnostics
     pub fn get(&self, contract_id: &str) -> Option<ContractType> {
         self.inner
             .lock()
@@ -81,6 +84,23 @@ impl ClassificationCache {
             .expect("classification cache mutex poisoned");
         ids.into_iter()
             .filter(|id| !guard.contains_key(*id))
+            .collect()
+    }
+
+    /// Take a single lock and read every known verdict for `ids` into a
+    /// local map. The returned `HashMap` is then consulted lock-free by
+    /// callers making per-row filter decisions — avoids one lock round-trip
+    /// per row on large ledgers (task 0118 Phase 2 NFT filter).
+    pub fn snapshot_for<'a, I>(&self, ids: I) -> HashMap<&'a str, ContractType>
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
+        let guard = self
+            .inner
+            .lock()
+            .expect("classification cache mutex poisoned");
+        ids.into_iter()
+            .filter_map(|id| guard.get(id).map(|ty| (id, *ty)))
             .collect()
     }
 }
@@ -123,6 +143,20 @@ mod tests {
         cache.extend_definitive(vec![("C_NFT".into(), ContractType::Nft)]);
         let misses = cache.missing(["C_NFT", "C_UNKNOWN_1", "C_UNKNOWN_2"]);
         assert_eq!(misses, vec!["C_UNKNOWN_1", "C_UNKNOWN_2"]);
+    }
+
+    #[test]
+    fn snapshot_for_returns_only_cached_hits() {
+        let cache = ClassificationCache::new();
+        cache.extend_definitive(vec![
+            ("C_NFT".into(), ContractType::Nft),
+            ("C_FUN".into(), ContractType::Fungible),
+        ]);
+        let snap = cache.snapshot_for(["C_NFT", "C_FUN", "C_UNKNOWN"]);
+        assert_eq!(snap.len(), 2);
+        assert_eq!(snap.get("C_NFT"), Some(&ContractType::Nft));
+        assert_eq!(snap.get("C_FUN"), Some(&ContractType::Fungible));
+        assert_eq!(snap.get("C_UNKNOWN"), None);
     }
 
     #[test]
