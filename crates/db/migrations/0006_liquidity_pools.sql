@@ -1,4 +1,4 @@
--- ADR 0027 — initial schema, step 6/7: liquidity pools
+-- ADR 0027 + ADR 0031 — initial schema, step 6/7: liquidity pools
 -- pool_id is the 32 B pool hash (BYTEA). Snapshots are partitioned on
 -- created_at. LP positions are unpartitioned current-state.
 --
@@ -9,18 +9,23 @@
 --
 -- Also: attach the deferred operations.pool_id FK now that liquidity_pools exists.
 
--- 14. liquidity_pools (ADR 0027 §14)
+-- 14. liquidity_pools (ADR 0027 §14 + ADR 0031)
+-- `asset_*_type` SMALLINT carries the raw XDR AssetType
+-- (0=native, 1=credit_alphanum4, 2=credit_alphanum12, 3=pool_share —
+-- see asset_type_name() in 0008; Rust `AssetType`).
 CREATE TABLE liquidity_pools (
     pool_id            BYTEA       PRIMARY KEY,
-    asset_a_type       VARCHAR(20) NOT NULL,
+    asset_a_type       SMALLINT    NOT NULL, -- ADR 0031: AssetType (XDR)
     asset_a_code       VARCHAR(12),
     asset_a_issuer_id  BIGINT      REFERENCES accounts(id),
-    asset_b_type       VARCHAR(20) NOT NULL,
+    asset_b_type       SMALLINT    NOT NULL, -- ADR 0031: AssetType (XDR)
     asset_b_code       VARCHAR(12),
     asset_b_issuer_id  BIGINT      REFERENCES accounts(id),
     fee_bps            INTEGER     NOT NULL,
     created_at_ledger  BIGINT      NOT NULL,
-    CONSTRAINT ck_lp_pool_id_len CHECK (octet_length(pool_id) = 32)
+    CONSTRAINT ck_lp_pool_id_len        CHECK (octet_length(pool_id) = 32),
+    CONSTRAINT ck_lp_asset_a_type_range CHECK (asset_a_type BETWEEN 0 AND 15),
+    CONSTRAINT ck_lp_asset_b_type_range CHECK (asset_b_type BETWEEN 0 AND 15)
 );
 CREATE INDEX idx_pools_asset_a ON liquidity_pools (asset_a_code, asset_a_issuer_id);
 CREATE INDEX idx_pools_asset_b ON liquidity_pools (asset_b_code, asset_b_issuer_id);

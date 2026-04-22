@@ -5,6 +5,7 @@ edition = "2024"
 description = "LedgerCloseMeta XDR parser for the Soroban block explorer indexer"
 
 [dependencies]
+domain = { path = "../domain" }
 stellar-xdr = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

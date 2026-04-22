@@ -1,9 +1,9 @@
 ---
 id: '0031'
 title: 'Enum-like VARCHAR columns → `SMALLINT` + Rust enum (with CHECK constraint)'
-status: proposed
+status: accepted
 deciders: [fmazur]
-related_tasks: ['0151']
+related_tasks: ['0151', '0152']
 related_adrs: ['0020', '0024', '0026', '0027', '0030']
 tags: [schema, storage, enums, refactor, performance]
 links: []
@@ -17,6 +17,30 @@ history:
       100 ledgers — extrapolates to ~220 GB/year on mainnet. SMALLINT storage
       wins vs. PostgreSQL `ENUM` in both bytes-per-row and query speed, with
       Rust enum + CHECK constraint bridging type safety.
+  - date: 2026-04-22
+    status: accepted
+    who: fmazur
+    note: >
+      Landed via task 0152. 9 enum columns flipped (operations.type,
+      soroban_events.event_type, tokens.asset_type,
+      nft_ownership.event_type, liquidity_pools.asset_{a,b}_type,
+      account_balances_{current,history}.asset_type,
+      soroban_contracts.contract_type) to SMALLINT + CHECK range.
+      6 Rust #[repr(i16)] enums in crates/domain/src/enums/ with
+      feature-gated sqlx::Type + utoipa::ToSchema derives so
+      xdr-parser stays DB/HTTP-free. Parser emits typed enums —
+      no more Debug/Display round-trip. 6 IMMUTABLE SQL helpers
+      (op_type_name, asset_type_name, token_asset_type_name,
+      event_type_name, nft_event_type_name, contract_type_name)
+      in migration 0008 + integration test iterating 43 variants ×
+      6 enums against the helpers closes the Rust ↔ SQL drift gap.
+      Bench 100 ledgers clean (p95=384 ms — matches post-0030
+      baseline, no regression). DB size 81 MB vs 84 MB post-0030
+      baseline = 3.6% saved at 100-ledger scale (~190 GB/year
+      mainnet extrapolation, within forecast of 160-220 GB/year).
+      Column ordering re-layout (ADR §4 nudge) deferred to a
+      future maintenance task — its ~5-10% extra heap saving is
+      additive and doesn't block acceptance here.
 ---
 
 # ADR 0031: Enum-like `VARCHAR` columns → `SMALLINT` + Rust enum (with `CHECK` constraint)
@@ -33,10 +57,10 @@ history:
 
 ## Status
 
-`proposed` — next storage/speed lever after ADR 0030. Replaces every
-enum-like `VARCHAR(N)` column (closed-domain, known at compile time from
-the Stellar XDR protocol) with `SMALLINT` backed by a Rust `#[repr(i16)]`
-enum, guarded by a `CHECK` constraint on the numeric range.
+`accepted` — landed via task 0152. Replaced every enum-like `VARCHAR(N)`
+column (closed-domain, known at compile time from the Stellar XDR
+protocol) with `SMALLINT` backed by a Rust `#[repr(i16)]` enum, guarded
+by a `CHECK` constraint on the numeric range.
 
 Projected effect at mainnet-year (6.3 M ledgers):
 
