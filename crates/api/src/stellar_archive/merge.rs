@@ -48,9 +48,13 @@ pub fn merge_e14_event_response<E>(
     }
 }
 
-/// Correlate a slice of DB light events against a slice of XDR heavy events
-/// emitted by the same contract within one ledger, producing merged rows in
-/// the order of the DB input.
+/// Correlate a slice of DB light events against the supplied XDR heavy
+/// events, producing merged rows in the order of the DB input.
+///
+/// The `heavy` input may be pre-aggregated across multiple ledgers; callers
+/// do not need to scope it to a single ledger for this helper. Matching is
+/// done purely on the `(tx_hash, event_index)` key derived from each light
+/// row — a key any caller can compute regardless of ledger boundaries.
 ///
 /// Matching is done on `(transaction_hash, event_index)` — the XDR-side event
 /// uses hex tx hash, the DB side uses the same. Callers supply an extractor

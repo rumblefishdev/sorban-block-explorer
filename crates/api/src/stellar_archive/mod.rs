@@ -103,7 +103,7 @@ impl StellarArchiveFetcher {
         let key = format!("{PUBLIC_ARCHIVE_PREFIX}/{}", build_s3_key(seq));
 
         let compressed = self.download(seq, &key).await?;
-        let xdr_bytes = xdr_parser::decompress_zstd(&compressed)
+        let xdr_bytes = xdr_parser::decompress_zstd(compressed.as_ref())
             .map_err(|source| FetchError::Decompress { seq, source })?;
         let batch = xdr_parser::deserialize_batch(&xdr_bytes)
             .map_err(|source| FetchError::Deserialize { seq, source })?;
@@ -130,7 +130,7 @@ impl StellarArchiveFetcher {
             .await
     }
 
-    async fn download(&self, seq: u32, key: &str) -> Result<Vec<u8>, FetchError> {
+    async fn download(&self, seq: u32, key: &str) -> Result<bytes::Bytes, FetchError> {
         let resp = self
             .client
             .get_object()
@@ -161,8 +161,7 @@ impl StellarArchiveFetcher {
                 seq,
                 source: Box::new(e),
             })?
-            .into_bytes()
-            .to_vec();
+            .into_bytes();
 
         Ok(bytes)
     }
@@ -187,7 +186,7 @@ mod tests {
     /// End-to-end fetch of a known Soroban-era ledger from the public archive.
     ///
     /// Ignored by default — requires network access + writes no state. Run with:
-    ///   `cargo test --package api -- --ignored stellar_archive::tests::fetches_single_ledger_from_stellar_archive`
+    ///   `cargo test --package api -- --ignored stellar_archive::tests::fetch_single_ledger_from_stellar_archive`
     #[tokio::test]
     #[ignore = "requires network access to aws-public-blockchain"]
     async fn fetch_single_ledger_from_stellar_archive() {

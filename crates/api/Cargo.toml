@@ -38,6 +38,7 @@ stellar-xdr = { workspace = true }
 thiserror = { workspace = true }
 futures = "0.3"
 hex = { workspace = true }
+bytes = "1"
 
 [dev-dependencies]
 tower = "0.5"

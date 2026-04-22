@@ -89,6 +89,7 @@ dependencies = [
  "aws-config",
  "aws-sdk-s3",
  "axum",
+ "bytes",
  "db",
  "domain",
  "futures",

@@ -22,7 +22,13 @@ use super::dto::{
 /// `tx_hash` is the lowercase hex (64 chars) transaction hash — same format
 /// as `ExtractedTransaction.hash` produced by `xdr_parser::extract_transactions`.
 ///
-/// Returns `None` if the ledger does not contain a transaction with that hash.
+/// Returns `None` when either:
+/// - the ledger header cannot be extracted (malformed `LedgerCloseMeta`), or
+/// - the ledger does not contain a transaction matching `tx_hash`.
+///
+/// Both failure modes are currently conflated into a single `None`; the
+/// calling handler should treat it as "no heavy fields available" and
+/// fall back to DB-only response with `heavy_fields_status: unavailable`.
 #[instrument(skip(meta), fields(tx_hash = %tx_hash))]
 pub fn extract_e3_heavy(meta: &LedgerCloseMeta, tx_hash: &str) -> Option<E3HeavyFields> {
     let ledger = xdr_parser::extract_ledger(meta).ok()?;
@@ -143,7 +149,7 @@ pub fn extract_e14_heavy(meta: &LedgerCloseMeta, contract_id: &str) -> Vec<E14He
         }
     }
 
-    tracing::Span::current().record("events", out.len());
+    tracing::Span::current().record("events", out.len() as u64);
     out
 }
 
