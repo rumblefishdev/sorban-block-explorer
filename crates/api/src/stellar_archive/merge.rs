@@ -3,7 +3,9 @@
 //!
 //! These functions are generic over the caller's DB-side "light" shape so the
 //! same helper works whether the light type comes from `domain::*` or from a
-//! handler-local DTO. No I/O, no allocation beyond the result struct.
+//! handler-local DTO. No I/O; minimal allocations aside from any cloning
+//! needed to build the output (e.g. cloning a matched heavy row into its
+//! response slot in `merge_e14_events`).
 
 use super::dto::{
     E3HeavyFields, E3Response, E14EventResponse, E14HeavyEventFields, HeavyFieldsStatus,

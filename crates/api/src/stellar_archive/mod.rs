@@ -4,8 +4,10 @@
 //! full event topics/data, XDR blobs) not persisted in the DB are pulled on-demand
 //! from `s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/` at request time.
 //!
-//! Callers pass a slice of ledger sequences and receive `Vec<LedgerCloseMeta>` in
-//! input order. Downloads run concurrently. No caching — follow-up task if needed.
+//! Callers pass a slice of ledger sequences and receive
+//! `Vec<Result<LedgerCloseMeta, FetchError>>` in input order, so each requested
+//! ledger may succeed or fail independently. Downloads run concurrently up to
+//! `MAX_CONCURRENT_FETCHES`. No caching — follow-up task if needed.
 
 pub mod dto;
 pub mod extractors;
@@ -14,7 +16,7 @@ pub mod merge;
 
 use aws_sdk_s3::Client as S3Client;
 use aws_sdk_s3::config::timeout::TimeoutConfig;
-use futures::future::join_all;
+use futures::stream::{self, StreamExt};
 use std::time::Duration;
 use stellar_xdr::curr::LedgerCloseMeta;
 use thiserror::Error;
@@ -32,6 +34,11 @@ pub const PUBLIC_ARCHIVE_PREFIX: &str = "v1.1/stellar/ledgers/pubnet";
 /// end-to-end E3/E14 request completes well under API Gateway's 29s limit
 /// even with a retry or fallback upstream.
 pub const DEFAULT_S3_OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Maximum number of concurrent in-flight GETs issued by `fetch_ledgers`.
+/// Caps CPU/connection spikes when a caller passes a large slice (e.g.,
+/// a full E14 page whose events reference many distinct ledgers).
+pub const MAX_CONCURRENT_FETCHES: usize = 16;
 
 /// Build a timeout config applied to every public-archive S3 request.
 pub fn default_timeout_config() -> TimeoutConfig {
@@ -110,12 +117,17 @@ impl StellarArchiveFetcher {
 
     /// Fetch multiple ledgers concurrently. Results are returned in input order.
     ///
-    /// On any per-ledger failure the corresponding slot contains `Err`. Callers
-    /// decide how to handle partial failure (e.g. fail fast, degrade gracefully).
+    /// Concurrency is capped at `MAX_CONCURRENT_FETCHES` to prevent connection
+    /// and CPU spikes when callers pass a large slice. On any per-ledger
+    /// failure the corresponding slot contains `Err` — callers decide how to
+    /// handle partial failure (e.g. fail fast, degrade gracefully).
     #[instrument(skip(self, seqs), fields(count = seqs.len()))]
     pub async fn fetch_ledgers(&self, seqs: &[u32]) -> Vec<Result<LedgerCloseMeta, FetchError>> {
-        let futures = seqs.iter().map(|&seq| self.fetch_ledger(seq));
-        join_all(futures).await
+        stream::iter(seqs.iter().copied())
+            .map(|seq| self.fetch_ledger(seq))
+            .buffered(MAX_CONCURRENT_FETCHES)
+            .collect()
+            .await
     }
 
     async fn download(&self, seq: u32, key: &str) -> Result<Vec<u8>, FetchError> {

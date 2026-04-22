@@ -30,7 +30,8 @@ pub struct E3HeavyFields {
     pub result_meta_xdr: Option<String>,
     /// Diagnostic events emitted during Soroban invocation.
     pub diagnostic_events: Vec<XdrEventDto>,
-    /// Contract events with full topic array + data (beyond DB's `topic0`).
+    /// Non-diagnostic Soroban events (contract + system) with full topic
+    /// array + data (beyond DB's `topic0`).
     pub contract_events: Vec<XdrEventDto>,
     /// Soroban invocations with full function args + return value payloads.
     pub invocations: Vec<XdrInvocationDto>,
