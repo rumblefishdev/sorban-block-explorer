@@ -233,6 +233,7 @@ async fn run_all_steps(
 
     let t = Instant::now();
     write::upsert_wasm_metadata(db_tx, staged).await?;
+    write::stub_unknown_wasm_interfaces(db_tx, staged).await?;
     timings.wasm_ms = t.elapsed().as_millis();
 
     let t = Instant::now();

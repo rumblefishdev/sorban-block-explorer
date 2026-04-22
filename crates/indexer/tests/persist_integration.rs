@@ -21,7 +21,7 @@ use domain::{
     AssetType, ContractEventType, ContractType, NftEventType, OperationType, TokenAssetType,
 };
 use indexer::handler::persist::persist_ledger;
-use serde_json::json;
+use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
 use xdr_parser::types::{
     ExtractedAccountState, ExtractedContractDeployment, ExtractedContractInterface, ExtractedEvent,
@@ -675,3 +675,242 @@ async fn test_counts(pool: &PgPool) -> Counts {
 // usages become conditional later.
 #[allow(dead_code)]
 fn _touch(_: DateTime<Utc>) {}
+
+// ---------------------------------------------------------------------------
+// Task 0153 — mid-stream backfill: stub wasm_interface_metadata when a
+// contract deployed in-window references a WASM uploaded before the window.
+// ---------------------------------------------------------------------------
+
+const STUB_LEDGER_SEQ: u32 = 90_000_101;
+const STUB_LEDGER_SEQ_2: u32 = 90_000_102;
+/// 2026-04-21 12:01:40 UTC / 12:03:20 UTC — distinct from the idempotency test.
+const STUB_CLOSED_AT: i64 = 1_777_118_500;
+const STUB_CLOSED_AT_2: i64 = 1_777_118_600;
+const STUB_TX_HASH: &str = "5555555555555555555555555555555555555555555555555555555555555555";
+const STUB_TX_HASH_2: &str = "6666666666666666666666666666666666666666666666666666666666666666";
+const STUB_LEDGER_HASH: &str = "7777777777777777777777777777777777777777777777777777777777777777";
+const STUB_LEDGER_HASH_2: &str = "8888888888888888888888888888888888888888888888888888888888888888";
+const STUB_CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASTUB";
+const STUB_WASM_HASH: &str = "9999999999999999999999999999999999999999999999999999999999999999";
+
+#[tokio::test]
+async fn stub_wasm_unblocks_unknown_hash_and_real_upload_upgrades_it() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping stub-wasm test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping stub-wasm test");
+            return;
+        }
+    };
+
+    ensure_default_partitions(&pool).await;
+    clean_stub_test(&pool).await;
+
+    // --- Ledger 1: deployment references a WASM whose interface is NOT in
+    // this ledger (simulating mid-stream backfill where the upload happened
+    // before the backfill window).
+    let ledger1 = ExtractedLedger {
+        sequence: STUB_LEDGER_SEQ,
+        hash: STUB_LEDGER_HASH.to_string(),
+        closed_at: STUB_CLOSED_AT,
+        protocol_version: 22,
+        transaction_count: 1,
+        base_fee: 100,
+    };
+    let tx1 = ExtractedTransaction {
+        hash: STUB_TX_HASH.to_string(),
+        ledger_sequence: STUB_LEDGER_SEQ,
+        source_account: SRC_STRKEY.to_string(),
+        fee_charged: 100,
+        successful: true,
+        result_code: "txSuccess".to_string(),
+        envelope_xdr: "AAAAAA...".to_string(),
+        result_xdr: "AAAAAA...".to_string(),
+        result_meta_xdr: None,
+        operation_tree: None,
+        memo_type: None,
+        memo: None,
+        created_at: STUB_CLOSED_AT,
+        parse_error: false,
+    };
+    let dep = ExtractedContractDeployment {
+        contract_id: STUB_CONTRACT.to_string(),
+        wasm_hash: Some(STUB_WASM_HASH.to_string()),
+        deployer_account: Some(SRC_STRKEY.to_string()),
+        deployed_at_ledger: STUB_LEDGER_SEQ,
+        contract_type: ContractType::Other,
+        is_sac: false,
+        metadata: json!({}),
+    };
+
+    let empty_operations: Vec<(String, Vec<ExtractedOperation>)> = Vec::new();
+    let empty_events: Vec<(String, Vec<ExtractedEvent>)> = Vec::new();
+    let empty_invocations: Vec<(String, Vec<ExtractedInvocation>)> = Vec::new();
+    let empty_trees: Vec<(String, serde_json::Value)> = Vec::new();
+    let no_interfaces: Vec<ExtractedContractInterface> = Vec::new();
+    let no_account_states: Vec<ExtractedAccountState> = Vec::new();
+    let no_pools: Vec<ExtractedLiquidityPool> = Vec::new();
+    let no_snapshots: Vec<ExtractedLiquidityPoolSnapshot> = Vec::new();
+    let no_tokens: Vec<ExtractedToken> = Vec::new();
+    let no_nfts: Vec<ExtractedNft> = Vec::new();
+    let no_nft_events: Vec<ExtractedNftEvent> = Vec::new();
+    let no_lp_positions: Vec<ExtractedLpPosition> = Vec::new();
+    let no_inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
+
+    persist_ledger(
+        &pool,
+        &ledger1,
+        &[tx1],
+        &empty_operations,
+        &empty_events,
+        &empty_invocations,
+        &empty_trees,
+        &no_interfaces,
+        &[dep],
+        &no_account_states,
+        &no_pools,
+        &no_snapshots,
+        &no_tokens,
+        &no_nfts,
+        &no_nft_events,
+        &no_lp_positions,
+        &no_inner_tx_hashes,
+    )
+    .await
+    .expect("persist_ledger with unknown wasm_hash must succeed (stub path)");
+
+    // Stub row exists, metadata is empty JSON, soroban_contracts carries the FK.
+    let stub_metadata: Value = sqlx::query_scalar(
+        "SELECT metadata FROM wasm_interface_metadata WHERE wasm_hash = decode($1, 'hex')",
+    )
+    .bind(STUB_WASM_HASH)
+    .fetch_one(&pool)
+    .await
+    .expect("stub wasm_interface_metadata row must exist");
+    assert_eq!(stub_metadata, json!({}), "stub metadata is empty JSON");
+
+    let contract_wasm: Option<Vec<u8>> =
+        sqlx::query_scalar("SELECT wasm_hash FROM soroban_contracts WHERE contract_id = $1")
+            .bind(STUB_CONTRACT)
+            .fetch_one(&pool)
+            .await
+            .expect("soroban_contracts row inserted under stub FK");
+    let expected_bytes = hex::decode(STUB_WASM_HASH).expect("decode STUB_WASM_HASH");
+    assert_eq!(
+        contract_wasm,
+        Some(expected_bytes),
+        "soroban_contracts.wasm_hash points at the stubbed WASM"
+    );
+
+    // --- Ledger 2: the real WASM upload is observed (contract_interface
+    // carries the hash). Stub metadata must be overwritten in place.
+    let ledger2 = ExtractedLedger {
+        sequence: STUB_LEDGER_SEQ_2,
+        hash: STUB_LEDGER_HASH_2.to_string(),
+        closed_at: STUB_CLOSED_AT_2,
+        protocol_version: 22,
+        transaction_count: 1,
+        base_fee: 100,
+    };
+    let tx2 = ExtractedTransaction {
+        hash: STUB_TX_HASH_2.to_string(),
+        ledger_sequence: STUB_LEDGER_SEQ_2,
+        source_account: SRC_STRKEY.to_string(),
+        fee_charged: 100,
+        successful: true,
+        result_code: "txSuccess".to_string(),
+        envelope_xdr: "AAAAAA...".to_string(),
+        result_xdr: "AAAAAA...".to_string(),
+        result_meta_xdr: None,
+        operation_tree: None,
+        memo_type: None,
+        memo: None,
+        created_at: STUB_CLOSED_AT_2,
+        parse_error: false,
+    };
+    let iface = ExtractedContractInterface {
+        wasm_hash: STUB_WASM_HASH.to_string(),
+        functions: Vec::new(),
+        wasm_byte_len: 512,
+    };
+    let no_deployments: Vec<ExtractedContractDeployment> = Vec::new();
+
+    persist_ledger(
+        &pool,
+        &ledger2,
+        &[tx2],
+        &empty_operations,
+        &empty_events,
+        &empty_invocations,
+        &empty_trees,
+        &[iface],
+        &no_deployments,
+        &no_account_states,
+        &no_pools,
+        &no_snapshots,
+        &no_tokens,
+        &no_nfts,
+        &no_nft_events,
+        &no_lp_positions,
+        &no_inner_tx_hashes,
+    )
+    .await
+    .expect("follow-up persist_ledger with the real WASM upload must succeed");
+
+    let upgraded_metadata: Value = sqlx::query_scalar(
+        "SELECT metadata FROM wasm_interface_metadata WHERE wasm_hash = decode($1, 'hex')",
+    )
+    .bind(STUB_WASM_HASH)
+    .fetch_one(&pool)
+    .await
+    .expect("wasm_interface_metadata row still present");
+    assert_eq!(
+        upgraded_metadata,
+        json!({"functions": [], "wasm_byte_len": 512}),
+        "stub metadata must be upgraded in place to the real ABI"
+    );
+
+    clean_stub_test(&pool).await;
+}
+
+async fn clean_stub_test(pool: &PgPool) {
+    // Wipe leaves first so the wasm_interface_metadata delete isn't blocked
+    // by the soroban_contracts FK.
+    let _ = sqlx::query("DELETE FROM transactions WHERE hash = ANY($1)")
+        .bind(
+            vec![STUB_TX_HASH, STUB_TX_HASH_2]
+                .into_iter()
+                .map(|h| hex::decode(h).unwrap())
+                .collect::<Vec<_>>(),
+        )
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM transaction_hash_index WHERE hash = ANY($1)")
+        .bind(
+            vec![STUB_TX_HASH, STUB_TX_HASH_2]
+                .into_iter()
+                .map(|h| hex::decode(h).unwrap())
+                .collect::<Vec<_>>(),
+        )
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM ledgers WHERE sequence = ANY($1)")
+        .bind(vec![
+            i64::from(STUB_LEDGER_SEQ),
+            i64::from(STUB_LEDGER_SEQ_2),
+        ])
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM soroban_contracts WHERE contract_id = $1")
+        .bind(STUB_CONTRACT)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM wasm_interface_metadata WHERE wasm_hash = decode($1, 'hex')")
+        .bind(STUB_WASM_HASH)
+        .execute(pool)
+        .await;
+}
