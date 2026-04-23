@@ -20,14 +20,14 @@ use chrono::{DateTime, Utc};
 use domain::{
     AssetType, ContractEventType, ContractType, NftEventType, OperationType, TokenAssetType,
 };
-use indexer::handler::persist::persist_ledger;
+use indexer::handler::persist::{ClassificationCache, persist_ledger};
 use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
 use xdr_parser::types::{
-    ExtractedAccountState, ExtractedContractDeployment, ExtractedContractInterface, ExtractedEvent,
-    ExtractedInvocation, ExtractedLedger, ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot,
-    ExtractedLpPosition, ExtractedNft, ExtractedNftEvent, ExtractedOperation, ExtractedToken,
-    ExtractedTransaction,
+    ContractFunction, ExtractedAccountState, ExtractedContractDeployment,
+    ExtractedContractInterface, ExtractedEvent, ExtractedInvocation, ExtractedLedger,
+    ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot, ExtractedLpPosition, ExtractedNft,
+    ExtractedNftEvent, ExtractedOperation, ExtractedToken, ExtractedTransaction,
 };
 
 const TEST_LEDGER_SEQ: u32 = 90_000_001;
@@ -81,6 +81,7 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
     let nft_events: Vec<ExtractedNftEvent> = Vec::new();
     let lp_positions: Vec<ExtractedLpPosition> = Vec::new();
     let inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
+    let classification_cache = ClassificationCache::new();
 
     // --- First insert ---
     persist_ledger(
@@ -101,6 +102,7 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
         &nft_events,
         &lp_positions,
         &inner_tx_hashes,
+        &classification_cache,
     )
     .await
     .expect("first persist_ledger failed");
@@ -185,6 +187,7 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
         &nft_events,
         &lp_positions,
         &inner_tx_hashes,
+        &classification_cache,
     )
     .await
     .expect("replay persist_ledger failed");
@@ -760,6 +763,7 @@ async fn stub_wasm_unblocks_unknown_hash_and_real_upload_upgrades_it() {
     let no_nft_events: Vec<ExtractedNftEvent> = Vec::new();
     let no_lp_positions: Vec<ExtractedLpPosition> = Vec::new();
     let no_inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
+    let classification_cache = ClassificationCache::new();
 
     persist_ledger(
         &pool,
@@ -779,6 +783,7 @@ async fn stub_wasm_unblocks_unknown_hash_and_real_upload_upgrades_it() {
         &no_nft_events,
         &no_lp_positions,
         &no_inner_tx_hashes,
+        &classification_cache,
     )
     .await
     .expect("persist_ledger with unknown wasm_hash must succeed (stub path)");
@@ -857,6 +862,7 @@ async fn stub_wasm_unblocks_unknown_hash_and_real_upload_upgrades_it() {
         &no_nft_events,
         &no_lp_positions,
         &no_inner_tx_hashes,
+        &classification_cache,
     )
     .await
     .expect("follow-up persist_ledger with the real WASM upload must succeed");
@@ -875,6 +881,263 @@ async fn stub_wasm_unblocks_unknown_hash_and_real_upload_upgrades_it() {
     );
 
     clean_stub_test(&pool).await;
+}
+
+// ---------------------------------------------------------------------------
+// Task 0118 Phase 2 — fungible-transfer NFT filter
+// ---------------------------------------------------------------------------
+
+const FILTER_LEDGER_SEQ: u32 = 90_000_201;
+/// 2026-04-21 12:10:00 UTC — distinct from the other tests' ledger windows.
+const FILTER_CLOSED_AT: i64 = 1_777_119_000;
+const FILTER_TX_HASH: &str = "aaaa111111111111111111111111111111111111111111111111111111111111";
+const FILTER_LEDGER_HASH: &str = "bbbb111111111111111111111111111111111111111111111111111111111111";
+const NFT_ID: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFLTRNFT";
+const FUN_ID: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFLTRFUN";
+const NFT_WASM_HASH: &str = "cccc111111111111111111111111111111111111111111111111111111111111";
+const FUN_WASM_HASH: &str = "dddd111111111111111111111111111111111111111111111111111111111111";
+
+/// End-to-end check of the task 0118 Phase 2 NFT insert filter.
+///
+/// Both contracts receive an NFT-candidate row with an `i128`-shaped
+/// token id; only the contract classified as `Nft` should land in the
+/// `nfts` table after persist. The `Fungible` contract's row must be
+/// dropped by the filter — that is exactly the USDC-in-`nfts`
+/// regression from audit finding F9.
+#[tokio::test]
+async fn nft_filter_drops_fungible_classified_contract() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping NFT filter test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping NFT filter test");
+            return;
+        }
+    };
+
+    ensure_default_partitions(&pool).await;
+    clean_filter_test(&pool).await;
+
+    let ledger = ExtractedLedger {
+        sequence: FILTER_LEDGER_SEQ,
+        hash: FILTER_LEDGER_HASH.to_string(),
+        closed_at: FILTER_CLOSED_AT,
+        protocol_version: 22,
+        transaction_count: 1,
+        base_fee: 100,
+    };
+    let tx = ExtractedTransaction {
+        hash: FILTER_TX_HASH.to_string(),
+        ledger_sequence: FILTER_LEDGER_SEQ,
+        source_account: SRC_STRKEY.to_string(),
+        fee_charged: 100,
+        successful: true,
+        result_code: "txSuccess".to_string(),
+        envelope_xdr: "AAAAAA...".to_string(),
+        result_xdr: "AAAAAA...".to_string(),
+        result_meta_xdr: None,
+        operation_tree: None,
+        memo_type: None,
+        memo: None,
+        created_at: FILTER_CLOSED_AT,
+        parse_error: false,
+    };
+
+    let interfaces = vec![
+        iface_with(NFT_WASM_HASH, &["owner_of", "transfer"]),
+        iface_with(FUN_WASM_HASH, &["decimals", "allowance", "transfer"]),
+    ];
+    let deployments = vec![
+        deploy_with(NFT_ID, NFT_WASM_HASH),
+        deploy_with(FUN_ID, FUN_WASM_HASH),
+    ];
+    let nfts = vec![
+        nft_row(NFT_ID, "1"),
+        nft_row(FUN_ID, "2"), // fungible-transfer false-positive
+    ];
+
+    let empty_operations: Vec<(String, Vec<ExtractedOperation>)> = Vec::new();
+    let empty_events: Vec<(String, Vec<ExtractedEvent>)> = Vec::new();
+    let empty_invocations: Vec<(String, Vec<ExtractedInvocation>)> = Vec::new();
+    let empty_trees: Vec<(String, serde_json::Value)> = Vec::new();
+    let no_account_states: Vec<ExtractedAccountState> = Vec::new();
+    let no_pools: Vec<ExtractedLiquidityPool> = Vec::new();
+    let no_snapshots: Vec<ExtractedLiquidityPoolSnapshot> = Vec::new();
+    let no_tokens: Vec<ExtractedToken> = Vec::new();
+    let no_nft_events: Vec<ExtractedNftEvent> = Vec::new();
+    let no_lp_positions: Vec<ExtractedLpPosition> = Vec::new();
+    let no_inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
+    let classification_cache = ClassificationCache::new();
+
+    persist_ledger(
+        &pool,
+        &ledger,
+        &[tx],
+        &empty_operations,
+        &empty_events,
+        &empty_invocations,
+        &empty_trees,
+        &interfaces,
+        &deployments,
+        &no_account_states,
+        &no_pools,
+        &no_snapshots,
+        &no_tokens,
+        &nfts,
+        &no_nft_events,
+        &no_lp_positions,
+        &no_inner_tx_hashes,
+        &classification_cache,
+    )
+    .await
+    .expect("persist_ledger must succeed under the NFT filter path");
+
+    // ── contract_type column was written per classification ──
+    let nft_ty: Option<i16> =
+        sqlx::query_scalar("SELECT contract_type FROM soroban_contracts WHERE contract_id = $1")
+            .bind(NFT_ID)
+            .fetch_one(&pool)
+            .await
+            .expect("NFT contract row must exist");
+    let fun_ty: Option<i16> =
+        sqlx::query_scalar("SELECT contract_type FROM soroban_contracts WHERE contract_id = $1")
+            .bind(FUN_ID)
+            .fetch_one(&pool)
+            .await
+            .expect("fungible contract row must exist");
+    assert_eq!(
+        nft_ty.and_then(|v| ContractType::try_from(v).ok()),
+        Some(ContractType::Nft),
+        "NFT contract_type persisted",
+    );
+    assert_eq!(
+        fun_ty.and_then(|v| ContractType::try_from(v).ok()),
+        Some(ContractType::Fungible),
+        "fungible contract_type persisted",
+    );
+
+    // ── nfts filter verdict: NFT row kept, fungible row dropped ──
+    let nft_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM nfts n
+           JOIN soroban_contracts sc ON sc.id = n.contract_id
+          WHERE sc.contract_id = $1",
+    )
+    .bind(NFT_ID)
+    .fetch_one(&pool)
+    .await
+    .expect("count nfts for NFT contract");
+    let fun_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM nfts n
+           JOIN soroban_contracts sc ON sc.id = n.contract_id
+          WHERE sc.contract_id = $1",
+    )
+    .bind(FUN_ID)
+    .fetch_one(&pool)
+    .await
+    .expect("count nfts for fungible contract");
+    assert_eq!(nft_count, 1, "NFT contract row survives the filter");
+    assert_eq!(
+        fun_count, 0,
+        "fungible-classified contract row dropped at filter",
+    );
+
+    // ── cache hydrated for both deployments (definitive verdicts only) ──
+    assert_eq!(
+        classification_cache.get(NFT_ID),
+        Some(ContractType::Nft),
+        "per-worker cache holds the NFT verdict",
+    );
+    assert_eq!(
+        classification_cache.get(FUN_ID),
+        Some(ContractType::Fungible),
+        "per-worker cache holds the fungible verdict",
+    );
+
+    clean_filter_test(&pool).await;
+}
+
+fn iface_with(wasm_hash: &str, fn_names: &[&str]) -> ExtractedContractInterface {
+    ExtractedContractInterface {
+        wasm_hash: wasm_hash.to_string(),
+        functions: fn_names
+            .iter()
+            .map(|n| ContractFunction {
+                name: (*n).to_string(),
+                doc: String::new(),
+                inputs: Vec::new(),
+                outputs: Vec::new(),
+            })
+            .collect(),
+        wasm_byte_len: 1024,
+    }
+}
+
+fn deploy_with(contract_id: &str, wasm_hash: &str) -> ExtractedContractDeployment {
+    ExtractedContractDeployment {
+        contract_id: contract_id.to_string(),
+        wasm_hash: Some(wasm_hash.to_string()),
+        deployer_account: Some(SRC_STRKEY.to_string()),
+        deployed_at_ledger: FILTER_LEDGER_SEQ,
+        contract_type: ContractType::Other, // parser default; staging overrides
+        is_sac: false,
+        metadata: json!({}),
+    }
+}
+
+fn nft_row(contract_id: &str, token_id: &str) -> ExtractedNft {
+    ExtractedNft {
+        contract_id: contract_id.to_string(),
+        token_id: token_id.to_string(),
+        collection_name: None,
+        owner_account: Some(DST_STRKEY.to_string()),
+        name: None,
+        media_url: None,
+        metadata: None,
+        minted_at_ledger: Some(FILTER_LEDGER_SEQ),
+        last_seen_ledger: FILTER_LEDGER_SEQ,
+        created_at: FILTER_CLOSED_AT,
+    }
+}
+
+async fn clean_filter_test(pool: &PgPool) {
+    let contracts = vec![NFT_ID.to_string(), FUN_ID.to_string()];
+    // nfts → soroban_contracts join is the only ref path into nfts for the
+    // filter test fixture. Drop children first, then the contracts, then
+    // the wasm rows behind them.
+    let _ = sqlx::query(
+        "DELETE FROM nfts WHERE contract_id IN (
+            SELECT id FROM soroban_contracts WHERE contract_id = ANY($1)
+         )",
+    )
+    .bind(&contracts)
+    .execute(pool)
+    .await;
+    let _ = sqlx::query("DELETE FROM transactions WHERE hash = decode($1, 'hex')")
+        .bind(FILTER_TX_HASH)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM transaction_hash_index WHERE hash = decode($1, 'hex')")
+        .bind(FILTER_TX_HASH)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM ledgers WHERE sequence = $1")
+        .bind(i64::from(FILTER_LEDGER_SEQ))
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM soroban_contracts WHERE contract_id = ANY($1)")
+        .bind(&contracts)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM wasm_interface_metadata WHERE wasm_hash = ANY($1::BYTEA[])")
+        .bind(vec![
+            hex::decode(NFT_WASM_HASH).unwrap(),
+            hex::decode(FUN_WASM_HASH).unwrap(),
+        ])
+        .execute(pool)
+        .await;
 }
 
 async fn clean_stub_test(pool: &PgPool) {

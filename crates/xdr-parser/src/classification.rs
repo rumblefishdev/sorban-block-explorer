@@ -13,6 +13,7 @@
 //! cache) is gated on task 0149's write-path rebuild landing.
 
 use crate::types::ContractFunction;
+use domain::ContractType;
 
 /// Classification of a Soroban contract based on its public WASM
 /// function set.
@@ -116,6 +117,22 @@ pub fn classify_contract_from_wasm_spec(functions: &[ContractFunction]) -> Contr
     }
 
     ContractClassification::Other
+}
+
+/// Map the parser classification to the persisted `ContractType` SMALLINT.
+///
+/// Lives here (xdr-parser depends on domain) so consumers can
+/// `ContractType::from(classification)` or `.into()` without a helper.
+/// Task 0118 Phase 2 relies on this for the per-worker NFT filter and
+/// the `reclassify_contracts_from_wasm` UPDATE.
+impl From<ContractClassification> for ContractType {
+    fn from(c: ContractClassification) -> Self {
+        match c {
+            ContractClassification::Nft => Self::Nft,
+            ContractClassification::Fungible => Self::Fungible,
+            ContractClassification::Other => Self::Other,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -303,6 +320,22 @@ mod tests {
         assert_eq!(
             classify_contract_from_wasm_spec(&functions),
             ContractClassification::Nft,
+        );
+    }
+
+    #[test]
+    fn converts_into_contract_type() {
+        assert_eq!(
+            ContractType::from(ContractClassification::Nft),
+            ContractType::Nft
+        );
+        assert_eq!(
+            ContractType::from(ContractClassification::Fungible),
+            ContractType::Fungible,
+        );
+        assert_eq!(
+            ContractType::from(ContractClassification::Other),
+            ContractType::Other,
         );
     }
 }

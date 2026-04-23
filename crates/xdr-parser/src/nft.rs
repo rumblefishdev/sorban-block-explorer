@@ -260,8 +260,22 @@ mod tests {
     }
 
     #[test]
-    fn i128_token_id_not_excluded() {
-        // jamesbachini NFT contract uses i128 for token IDs
+    fn parser_emits_i128_transfer_as_nft_candidate() {
+        // Task 0118 Phase 2: the parser is deliberately permissive on the
+        // `i128` payload because SEP-0041 fungible transfers and some
+        // SEP-0050 NFT contracts (e.g. jamesbachini) use the same
+        // topic/data shape. The authoritative NFT-vs-fungible decision
+        // lives in the persist-time filter, which reads
+        // `soroban_contracts.contract_type` populated by
+        // `xdr_parser::classify_contract_from_wasm_spec` when the wasm
+        // upload is observed. A fungible-classified contract's rows are
+        // dropped before reaching `nfts`; a dual-interface contract is
+        // kept (precedence prefers false positives over false negatives).
+        //
+        // This test guards the parser contract: `i128` data must still
+        // produce an `NftEvent` so the filter has something to inspect.
+        // Removing the event here would re-introduce the old
+        // false-negative gap for legitimate NFT contracts.
         let event = make_event(
             "CABC123",
             vec![
