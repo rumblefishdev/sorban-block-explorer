@@ -144,7 +144,7 @@ pub async fn list_transactions(
     // Build a map: ledger_sequence → Option<LedgerCloseMeta>
     let ledger_map: std::collections::HashMap<u32, _> = unique_seqs
         .into_iter()
-        .zip(ledger_results.into_iter())
+        .zip(ledger_results)
         .filter_map(|(seq, res)| match res {
             Ok(meta) => Some((seq, meta)),
             Err(e) => {
