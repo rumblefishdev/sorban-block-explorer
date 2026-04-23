@@ -1185,10 +1185,10 @@ const TK_WASM_HASH: &str = "eeee555555555555555555555555555555555555555555555555
 /// End-to-end check of task 0120's same-ledger detection path.
 ///
 /// A WASM deployment classified as `Fungible` (SEP-0041 surface) lands in
-/// the `tokens` table with `asset_type = Soroban` and `contract_id` set
+/// the `assets` table with `asset_type = Soroban` and `contract_id` set
 /// to the surrogate bigint id of the deployed contract.
 #[tokio::test]
-async fn soroban_fungible_contract_produces_tokens_row() {
+async fn soroban_fungible_contract_produces_assets_row() {
     let Ok(database_url) = std::env::var("DATABASE_URL") else {
         eprintln!("DATABASE_URL unset — skipping 0120 same-ledger test");
         return;
@@ -1244,15 +1244,15 @@ async fn soroban_fungible_contract_produces_tokens_row() {
         metadata: json!({}),
     }];
     // Drive the real parser → persist wiring end-to-end so a regression in
-    // detect_tokens signature/behaviour fails this test, not just an
+    // detect_assets signature/behaviour fails this test, not just an
     // isolated unit test.
-    let tokens = xdr_parser::detect_tokens(&deployments, &interfaces);
+    let assets = xdr_parser::detect_assets(&deployments, &interfaces);
     assert_eq!(
-        tokens.len(),
+        assets.len(),
         1,
-        "parser must emit exactly one Soroban token for this deploy"
+        "parser must emit exactly one Soroban asset for this deploy"
     );
-    assert_eq!(tokens[0].asset_type, TokenAssetType::Soroban);
+    assert_eq!(assets[0].asset_type, TokenAssetType::Soroban);
 
     let empty_operations: Vec<(String, Vec<ExtractedOperation>)> = Vec::new();
     let empty_events: Vec<(String, Vec<ExtractedEvent>)> = Vec::new();
@@ -1280,7 +1280,7 @@ async fn soroban_fungible_contract_produces_tokens_row() {
         &no_account_states,
         &no_pools,
         &no_snapshots,
-        &tokens,
+        &assets,
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
@@ -1303,10 +1303,10 @@ async fn soroban_fungible_contract_produces_tokens_row() {
         "contract_type must be Fungible"
     );
 
-    // Exactly one Soroban token row for this contract.
+    // Exactly one Soroban asset row for this contract.
     let count: i64 = sqlx::query_scalar(
         r#"SELECT COUNT(*)
-             FROM tokens t
+             FROM assets t
              JOIN soroban_contracts sc ON sc.id = t.contract_id
             WHERE sc.contract_id = $1
               AND t.asset_type = $2"#,
@@ -1315,10 +1315,10 @@ async fn soroban_fungible_contract_produces_tokens_row() {
     .bind(TokenAssetType::Soroban)
     .fetch_one(&pool)
     .await
-    .expect("tokens count query succeeds");
+    .expect("assets count query succeeds");
     assert_eq!(
         count, 1,
-        "exactly one Soroban tokens row per Fungible contract"
+        "exactly one Soroban assets row per Fungible contract"
     );
 
     clean_tk_test(&pool).await;
@@ -1327,14 +1327,14 @@ async fn soroban_fungible_contract_produces_tokens_row() {
 /// End-to-end check of task 0120's late-WASM bridge path.
 ///
 /// Two-ledger pattern: contract deploys in L1 referencing a wasm_hash
-/// whose interface is not in L1. `detect_tokens` skips it. `stub_wasm`
+/// whose interface is not in L1. `detect_assets` skips it. `stub_wasm`
 /// path leaves `soroban_contracts.contract_type = Other`. In L2 the real
 /// WASM upload arrives with SEP-0041 discriminators;
 /// `reclassify_contracts_from_wasm` promotes contract_type to Fungible,
-/// and `insert_tokens_from_reclassified_contracts` backfills the missing
-/// tokens row.
+/// and `insert_assets_from_reclassified_contracts` backfills the missing
+/// assets row.
 #[tokio::test]
-async fn late_wasm_upload_backfills_tokens_row() {
+async fn late_wasm_upload_backfills_assets_row() {
     let Ok(database_url) = std::env::var("DATABASE_URL") else {
         eprintln!("DATABASE_URL unset — skipping 0120 late-WASM test");
         return;
@@ -1350,7 +1350,7 @@ async fn late_wasm_upload_backfills_tokens_row() {
     ensure_default_partitions(&pool).await;
     clean_tk_test(&pool).await;
 
-    // ── L1: deploy without the WASM upload. Parser emits no token row. ──
+    // ── L1: deploy without the WASM upload. Parser emits no asset row. ──
     let ledger1 = ExtractedLedger {
         sequence: TK_LEDGER_SEQ_1,
         hash: TK_LEDGER_HASH_1.to_string(),
@@ -1393,7 +1393,7 @@ async fn late_wasm_upload_backfills_tokens_row() {
     let no_account_states: Vec<ExtractedAccountState> = Vec::new();
     let no_pools: Vec<ExtractedLiquidityPool> = Vec::new();
     let no_snapshots: Vec<ExtractedLiquidityPoolSnapshot> = Vec::new();
-    let no_tokens: Vec<ExtractedToken> = Vec::new();
+    let no_assets: Vec<ExtractedAsset> = Vec::new();
     let no_nfts: Vec<ExtractedNft> = Vec::new();
     let no_nft_events: Vec<ExtractedNftEvent> = Vec::new();
     let no_lp_positions: Vec<ExtractedLpPosition> = Vec::new();
@@ -1413,7 +1413,7 @@ async fn late_wasm_upload_backfills_tokens_row() {
         &no_account_states,
         &no_pools,
         &no_snapshots,
-        &no_tokens,
+        &no_assets,
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
@@ -1423,10 +1423,10 @@ async fn late_wasm_upload_backfills_tokens_row() {
     .await
     .expect("L1 persist_ledger (no-WASM deploy) must succeed");
 
-    // After L1: contract exists with contract_type = Other, no tokens row.
+    // After L1: contract exists with contract_type = Other, no assets row.
     let count_before: i64 = sqlx::query_scalar(
         r#"SELECT COUNT(*)
-             FROM tokens t
+             FROM assets t
              JOIN soroban_contracts sc ON sc.id = t.contract_id
             WHERE sc.contract_id = $1
               AND t.asset_type = $2"#,
@@ -1435,11 +1435,11 @@ async fn late_wasm_upload_backfills_tokens_row() {
     .bind(TokenAssetType::Soroban)
     .fetch_one(&pool)
     .await
-    .expect("tokens count succeeds");
-    assert_eq!(count_before, 0, "no tokens row yet (WASM not observed)");
+    .expect("assets count succeeds");
+    assert_eq!(count_before, 0, "no assets row yet (WASM not observed)");
 
     // ── L2: WASM upload arrives. Interface has SEP-0041 surface.
-    //   Reclassify promotes Other → Fungible; bridge inserts tokens row.
+    //   Reclassify promotes Other → Fungible; bridge inserts assets row.
     let ledger2 = ExtractedLedger {
         sequence: TK_LEDGER_SEQ_2,
         hash: TK_LEDGER_HASH_2.to_string(),
@@ -1483,7 +1483,7 @@ async fn late_wasm_upload_backfills_tokens_row() {
         &no_account_states,
         &no_pools,
         &no_snapshots,
-        &no_tokens,
+        &no_assets,
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
@@ -1493,7 +1493,7 @@ async fn late_wasm_upload_backfills_tokens_row() {
     .await
     .expect("L2 persist_ledger (late-WASM upload) must succeed");
 
-    // After L2: contract promoted to Fungible, tokens row inserted.
+    // After L2: contract promoted to Fungible, assets row inserted.
     let fun_ty: Option<i16> =
         sqlx::query_scalar("SELECT contract_type FROM soroban_contracts WHERE contract_id = $1")
             .bind(TK_CONTRACT)
@@ -1508,7 +1508,7 @@ async fn late_wasm_upload_backfills_tokens_row() {
 
     let count_after: i64 = sqlx::query_scalar(
         r#"SELECT COUNT(*)
-             FROM tokens t
+             FROM assets t
              JOIN soroban_contracts sc ON sc.id = t.contract_id
             WHERE sc.contract_id = $1
               AND t.asset_type = $2"#,
@@ -1517,8 +1517,8 @@ async fn late_wasm_upload_backfills_tokens_row() {
     .bind(TokenAssetType::Soroban)
     .fetch_one(&pool)
     .await
-    .expect("tokens count succeeds");
-    assert_eq!(count_after, 1, "bridge inserted Soroban tokens row");
+    .expect("assets count succeeds");
+    assert_eq!(count_after, 1, "bridge inserted Soroban assets row");
 
     // Re-run the same ledger (replay) — must be idempotent, still exactly one row.
     let classification_cache2 = ClassificationCache::new();
@@ -1550,7 +1550,7 @@ async fn late_wasm_upload_backfills_tokens_row() {
         &no_account_states,
         &no_pools,
         &no_snapshots,
-        &no_tokens,
+        &no_assets,
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
@@ -1562,7 +1562,7 @@ async fn late_wasm_upload_backfills_tokens_row() {
 
     let count_replay: i64 = sqlx::query_scalar(
         r#"SELECT COUNT(*)
-             FROM tokens t
+             FROM assets t
              JOIN soroban_contracts sc ON sc.id = t.contract_id
             WHERE sc.contract_id = $1
               AND t.asset_type = $2"#,
@@ -1571,8 +1571,8 @@ async fn late_wasm_upload_backfills_tokens_row() {
     .bind(TokenAssetType::Soroban)
     .fetch_one(&pool)
     .await
-    .expect("tokens count succeeds");
-    assert_eq!(count_replay, 1, "replay does not duplicate tokens row");
+    .expect("assets count succeeds");
+    assert_eq!(count_replay, 1, "replay does not duplicate assets row");
 
     clean_tk_test(&pool).await;
 }
@@ -1583,7 +1583,7 @@ async fn clean_tk_test(pool: &PgPool) {
         hex::decode(TK_TX_HASH_2).unwrap(),
     ];
     let _ = sqlx::query(
-        "DELETE FROM tokens
+        "DELETE FROM assets
           WHERE contract_id IN (SELECT id FROM soroban_contracts WHERE contract_id = $1)",
     )
     .bind(TK_CONTRACT)

@@ -53,7 +53,7 @@ pub fn extract_contract_deployments(
         let is_sac = is_sac_from_data(data);
         let wasm_hash = extract_wasm_hash(data);
         // ADR 0031: synthetic 2-variant classification. SACs wrap a classic
-        // asset and are always tokens; everything else is `Other` until the
+        // asset and are always assets; everything else is `Other` until the
         // explorer learns to recognise a richer taxonomy.
         let contract_type = if is_sac {
             ContractType::Token
@@ -228,7 +228,7 @@ pub fn extract_account_states(
                             .get("type")
                             .and_then(|v| v.as_str())
                             .unwrap_or("unknown");
-                        // Skip pool_share trustlines — LP positions, not token balances
+                        // Skip pool_share trustlines — LP positions, not asset balances
                         if asset_type == "pool_share" {
                             continue;
                         }
@@ -1183,8 +1183,8 @@ mod tests {
     }
 
     #[test]
-    fn fungible_wasm_deployment_produces_soroban_token() {
-        // SEP-0041 surface → ContractClassification::Fungible → Soroban token row.
+    fn fungible_wasm_deployment_produces_soroban_asset() {
+        // SEP-0041 surface → ContractClassification::Fungible → Soroban asset row.
         let wasm = "aa".repeat(32);
         let deployments = vec![ExtractedContractDeployment {
             contract_id: "CFUN001".into(),
@@ -1210,8 +1210,8 @@ mod tests {
     }
 
     #[test]
-    fn nft_wasm_deployment_produces_no_token() {
-        // NFT-classified contracts live in the `nfts` table, not `tokens`.
+    fn nft_wasm_deployment_produces_no_asset() {
+        // NFT-classified contracts live in the `nfts` table, not `assets`.
         let wasm = "bb".repeat(32);
         let deployments = vec![ExtractedContractDeployment {
             contract_id: "CNFT002".into(),
@@ -1229,8 +1229,8 @@ mod tests {
     }
 
     #[test]
-    fn other_wasm_deployment_produces_no_token() {
-        // Unknown contract surface — no token row; a later WASM upload
+    fn other_wasm_deployment_produces_no_asset() {
+        // Unknown contract surface — no asset row; a later WASM upload
         // may promote it via reclassify_contracts_from_wasm.
         let wasm = "cc".repeat(32);
         let deployments = vec![ExtractedContractDeployment {
@@ -1249,10 +1249,10 @@ mod tests {
     }
 
     #[test]
-    fn dual_interface_contract_produces_no_token_row() {
+    fn dual_interface_contract_produces_no_asset_row() {
         // Precedence in classify_contract_from_wasm_spec: NFT wins over
         // Fungible when both discriminators present. Correct downstream
-        // behaviour: the contract goes to `nfts` filter — NOT `tokens`.
+        // behaviour: the contract goes to `nfts` filter — NOT `assets`.
         let wasm = "dd".repeat(32);
         let deployments = vec![ExtractedContractDeployment {
             contract_id: "CDUAL04".into(),
@@ -1270,7 +1270,7 @@ mod tests {
     }
 
     #[test]
-    fn sac_and_fungible_in_same_batch_both_produce_tokens() {
+    fn sac_and_fungible_in_same_batch_both_produce_assets() {
         let wasm = "ee".repeat(32);
         let deployments = vec![
             ExtractedContractDeployment {
