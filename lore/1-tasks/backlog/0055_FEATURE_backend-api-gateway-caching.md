@@ -57,8 +57,8 @@ Caching at the API Gateway level is the primary response caching mechanism. Clou
 | `GET /ledgers` (list)                     | 5-15s | New ledgers close frequently           |
 | `GET /accounts/:account_id`               | 5-15s | Account state updates with new ledgers |
 | `GET /accounts/:account_id/transactions`  | 5-15s | New transactions may appear            |
-| `GET /tokens` (list)                      | 5-15s | Token list may update                  |
-| `GET /tokens/:id/transactions`            | 5-15s | New transactions                       |
+| `GET /assets` (list)                      | 5-15s | Token list may update                  |
+| `GET /assets/:id/transactions`            | 5-15s | New transactions                       |
 | `GET /nfts` (list)                        | 5-15s | New NFTs may appear                    |
 | `GET /nfts/:id/transfers`                 | 5-15s | New transfers may appear               |
 | `GET /liquidity-pools` (list)             | 5-15s | Pool state changes frequently          |
@@ -73,7 +73,7 @@ Caching at the API Gateway level is the primary response caching mechanism. Clou
 | --------------------------------------- | ------- | ------------------------------------- |
 | `GET /contracts/:contract_id`           | 60-120s | Contract metadata rarely changes      |
 | `GET /contracts/:contract_id/interface` | 60-120s | Interface is immutable once deployed  |
-| `GET /tokens/:id`                       | 60-120s | Token metadata changes infrequently   |
+| `GET /assets/:id`                       | 60-120s | Token metadata changes infrequently   |
 | `GET /nfts/:id`                         | 60-120s | NFT metadata changes infrequently     |
 | `GET /liquidity-pools/:id/chart`        | 60-120s | Snapshot data updates less frequently |
 

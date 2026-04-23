@@ -2,13 +2,13 @@
 //!
 //! Processes `ExtractedLedgerEntryChange` records to produce higher-level
 //! entities: contract deployments, account states, liquidity pools,
-//! tokens, and NFTs. This is the final parsing stage before DB persistence.
+//! assets, and NFTs. This is the final parsing stage before DB persistence.
 
 use serde_json::Value;
 
 use crate::types::{
-    ExtractedAccountState, ExtractedContractDeployment, ExtractedLedgerEntryChange,
-    ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot, ExtractedNft, ExtractedToken, NftEvent,
+    ExtractedAccountState, ExtractedAsset, ExtractedContractDeployment, ExtractedLedgerEntryChange,
+    ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot, ExtractedNft, NftEvent,
 };
 use domain::{ContractType, TokenAssetType};
 
@@ -461,19 +461,19 @@ pub fn extract_liquidity_pools(
 }
 
 // ---------------------------------------------------------------------------
-// Step 5: Token Detection
+// Step 5: Asset Detection
 // ---------------------------------------------------------------------------
 
-/// Detect tokens from contract deployments.
+/// Detect assets from contract deployments.
 ///
-/// SAC deployments produce "sac" tokens. Other deployments with token-like
-/// interfaces could produce "soroban" tokens (heuristic-based).
-pub fn detect_tokens(deployments: &[ExtractedContractDeployment]) -> Vec<ExtractedToken> {
-    let mut tokens = Vec::new();
+/// SAC deployments produce "sac" assets. Other deployments with token-like
+/// interfaces could produce "soroban" assets (heuristic-based).
+pub fn detect_assets(deployments: &[ExtractedContractDeployment]) -> Vec<ExtractedAsset> {
+    let mut assets = Vec::new();
 
     for deployment in deployments {
         if deployment.is_sac {
-            tokens.push(ExtractedToken {
+            assets.push(ExtractedAsset {
                 asset_type: TokenAssetType::Sac,
                 asset_code: None,
                 issuer_address: None,
@@ -485,7 +485,7 @@ pub fn detect_tokens(deployments: &[ExtractedContractDeployment]) -> Vec<Extract
         }
     }
 
-    tokens
+    assets
 }
 
 // ---------------------------------------------------------------------------
@@ -1068,10 +1068,10 @@ mod tests {
         assert_eq!(snapshots[0].reserves["b"], 20000);
     }
 
-    // -- Token Detection Tests --
+    // -- Asset Detection Tests --
 
     #[test]
-    fn sac_deployment_produces_token() {
+    fn sac_deployment_produces_asset() {
         let deployments = vec![ExtractedContractDeployment {
             contract_id: "CSAC456".into(),
             wasm_hash: None,
@@ -1082,14 +1082,14 @@ mod tests {
             metadata: json!({}),
         }];
 
-        let tokens = detect_tokens(&deployments);
-        assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0].asset_type, TokenAssetType::Sac);
-        assert_eq!(tokens[0].contract_id.as_deref(), Some("CSAC456"));
+        let assets = detect_assets(&deployments);
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets[0].asset_type, TokenAssetType::Sac);
+        assert_eq!(assets[0].contract_id.as_deref(), Some("CSAC456"));
     }
 
     #[test]
-    fn non_sac_deployment_no_token() {
+    fn non_sac_deployment_no_asset() {
         let deployments = vec![ExtractedContractDeployment {
             contract_id: "CABC123".into(),
             wasm_hash: Some("aa".repeat(32)),
@@ -1100,8 +1100,8 @@ mod tests {
             metadata: json!({}),
         }];
 
-        let tokens = detect_tokens(&deployments);
-        assert!(tokens.is_empty());
+        let assets = detect_assets(&deployments);
+        assert!(assets.is_empty());
     }
 
     // -- NFT Detection Tests --

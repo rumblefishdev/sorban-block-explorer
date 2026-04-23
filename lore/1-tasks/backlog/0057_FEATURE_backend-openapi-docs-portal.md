@@ -49,7 +49,7 @@ A comprehensive OpenAPI specification serves both as interactive documentation f
 | Transactions    | `GET /transactions`, `GET /transactions/:hash`                                                                                                          |
 | Ledgers         | `GET /ledgers`, `GET /ledgers/:sequence`                                                                                                                |
 | Accounts        | `GET /accounts/:account_id`, `GET /accounts/:account_id/transactions`                                                                                   |
-| Tokens          | `GET /tokens`, `GET /tokens/:id`, `GET /tokens/:id/transactions`                                                                                        |
+| Assets          | `GET /assets`, `GET /assets/:id`, `GET /assets/:id/transactions`                                                                                        |
 | Contracts       | `GET /contracts/:contract_id`, `GET /contracts/:contract_id/interface`, `GET /contracts/:contract_id/invocations`, `GET /contracts/:contract_id/events` |
 | NFTs            | `GET /nfts`, `GET /nfts/:id`, `GET /nfts/:id/transfers`                                                                                                 |
 | Liquidity Pools | `GET /liquidity-pools`, `GET /liquidity-pools/:id`, `GET /liquidity-pools/:id/transactions`, `GET /liquidity-pools/:id/chart`                           |

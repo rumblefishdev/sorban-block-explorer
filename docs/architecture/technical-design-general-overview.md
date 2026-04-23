@@ -43,7 +43,7 @@ REST API with polling-based updates for new transactions and events.
 ```
 ┌────────┐     ┌──────────────────────────────────────────────────┐
 │  User  │────>│  Global Search Bar                               │
-│        │     │  (contracts, transactions, tokens, accounts, …)  │
+│        │     │  (contracts, transactions, assets, accounts, …)  │
 │        │     └──────────────────────────────────────────────────┘
 │        │
 │        │     ┌─────────────────────────────────────────────────────────────┐
@@ -55,8 +55,8 @@ REST API with polling-based updates for new transactions and events.
                │  /ledgers                   ── GET /ledgers ────────────┤   │
                │  /ledgers/:seq              ── GET /ledgers/:seq ───────┤   │
                │  /accounts/:id              ── GET /accounts/:id ───────┤   │
-               │  /tokens                    ── GET /tokens ─────────────┤   │
-               │  /tokens/:id                ── GET /tokens/:id ─────────┤   │
+               │  /assets                    ── GET /assets ─────────────┤   │
+               │  /assets/:id                ── GET /assets/:id ─────────┤   │
                │  /contracts/:id             ── GET /contracts/:id ──────┤   │
                │  /nfts                      ── GET /nfts ───────────────┤   │
                │  /nfts/:id                  ── GET /nfts/:id ───────────┤   │
@@ -82,8 +82,8 @@ REST API with polling-based updates for new transactions and events.
 | `/ledgers`               | Ledgers         | `GET /ledgers`                                                              |
 | `/ledgers/:sequence`     | Ledger          | `GET /ledgers/:sequence`                                                    |
 | `/accounts/:accountId`   | Account         | `GET /accounts/:account_id`, `GET /accounts/:account_id/transactions`       |
-| `/tokens`                | Tokens          | `GET /tokens`                                                               |
-| `/tokens/:id`            | Token           | `GET /tokens/:id`, `GET /tokens/:id/transactions`                           |
+| `/assets`                | Assets          | `GET /assets`                                                               |
+| `/assets/:id`            | Asset           | `GET /assets/:id`, `GET /assets/:id/transactions`                           |
 | `/contracts/:contractId` | Contract        | `GET /contracts/:contract_id`, `GET /contracts/:contract_id/interface`      |
 | `/nfts`                  | NFTs            | `GET /nfts`                                                                 |
 | `/nfts/:id`              | NFT             | `GET /nfts/:id`                                                             |
@@ -155,26 +155,26 @@ Paginated table of all ledgers. Default sort: most recent first.
 Account detail view for a Stellar account.
 
 - Account summary — account ID (full, copyable), sequence number, first seen ledger, last seen ledger
-- Balances — native XLM balance and trustline/token balances
+- Balances — native XLM balance and credit asset balances
 - Recent transactions — paginated table of transactions involving this account
 
-#### Tokens (`/tokens`)
+#### Assets (`/assets`)
 
-List of all known tokens (classic Stellar assets and Soroban token contracts).
+List of all known assets (native XLM, classic credit assets, SACs, and Soroban-native tokens).
 
-- Token table — asset code, issuer / contract ID, type (classic / SAC / Soroban), total
+- Asset table — asset code, issuer / contract ID, type (native / classic credit / SAC / Soroban), total
   supply, holder count
-- Filters — type (classic, SAC, Soroban), asset code search
+- Filters — type (native, classic_credit, SAC, Soroban), asset code search
 - Cursor-based pagination controls
 
-#### Token (`/tokens/:id`)
+#### Asset (`/assets/:id`)
 
-Single token detail view.
+Single asset detail view.
 
-- Token summary — asset code, issuer or contract ID (copyable), type badge, total supply,
+- Asset summary — asset code, issuer or contract ID (copyable), type badge, total supply,
   holder count, deployed at ledger (if Soroban)
 - Metadata — name, description, icon (if available), domain/home page
-- Latest transactions — paginated table of recent transactions involving this token
+- Latest transactions — paginated table of recent transactions involving this asset
 
 #### Contract (`/contracts/:contractId`)
 
@@ -230,7 +230,7 @@ Generic search across all entity types. For exact matches (transaction hash, con
 account ID), redirects directly to the detail page. Otherwise displays grouped results.
 
 - Search input — pre-filled with current query, allows refinement
-- Results grouped by type — transactions, contracts, tokens, accounts, NFTs, liquidity
+- Results grouped by type — transactions, contracts, assets, accounts, NFTs, liquidity
   pools (with type headers and counts)
 - Each result row — identifier (linked), type badge, brief context
 - Empty state — "No results found" with suggestions
@@ -240,7 +240,7 @@ account ID), redirects directly to the detail page. Otherwise displays grouped r
 Present across all pages:
 
 - **Header** — logo, global search bar, network indicator (mainnet/testnet)
-- **Navigation** — links to home, transactions, ledgers, tokens, contracts, NFTs,
+- **Navigation** — links to home, transactions, ledgers, assets, contracts, NFTs,
   liquidity pools
 - **Linked identifiers** — all hashes, account IDs, contract IDs, token IDs, pool IDs,
   and ledger sequences are clickable links to their respective detail pages
@@ -277,7 +277,7 @@ own PostgreSQL database, which is populated by the Galexie-based ingestion pipel
                                                       │  ├─ Transactions ────┤
                                                       │  ├─ Ledgers ─────────┤
                                                       │  ├─ Accounts ────────┤
-                                                      │  ├─ Tokens ──────────┤
+                                                      │  ├─ Assets ──────────┤
                                                       │  ├─ Contracts ───────┤
                                                       │  ├─ NFTs ────────────┤
                                                       │  ├─ Liquidity Pools ─┤
@@ -365,15 +365,15 @@ and first/last seen ledger.
 **`GET /accounts/:account_id/transactions`** — Paginated transactions involving this
 account.
 
-#### Tokens
+#### Assets
 
-**`GET /tokens`** — Paginated list of tokens (classic assets + Soroban token contracts).
-Query params: `limit`, `cursor`, `filter[type]` (classic/sac/soroban), `filter[code]`.
+**`GET /assets`** — Paginated list of assets (native XLM, classic credit assets, SACs, Soroban-native tokens).
+Query params: `limit`, `cursor`, `filter[type]` (native/classic_credit/sac/soroban), `filter[code]`.
 
-**`GET /tokens/:id`** — Token detail: asset code, issuer/contract, type, supply, holder
+**`GET /assets/:id`** — Asset detail: asset code, issuer/contract, type, supply, holder
 count, metadata.
 
-**`GET /tokens/:id/transactions`** — Paginated transactions involving this token.
+**`GET /assets/:id/transactions`** — Paginated transactions involving this asset.
 
 #### Contracts
 
@@ -411,7 +411,7 @@ Query params: `interval` (1h/1d/1w), `from`, `to`.
 
 #### Search
 
-**`GET /search?q=&type=transaction,contract,token,account,nft,pool`** — Generic search
+**`GET /search?q=&type=transaction,contract,asset,account,nft,pool`** — Generic search
 across all entity types. Uses prefix/exact matching on hashes, account IDs, contract IDs,
 asset codes, pool IDs, and NFT identifiers. Full-text search on metadata via
 `tsvector`/`tsquery` and GIN indexes where entity metadata is indexed.
@@ -467,7 +467,7 @@ Caching operates at two levels:
 │  ┌──────────────────────────▼───────────────────────────┐                     │
 │  │ RDS PostgreSQL (block explorer's own schema)         │                     │
 │  │ ledgers · transactions · operations · accounts       │                     │
-│  │ contracts · soroban_invocations · events · tokens    │                     │
+│  │ contracts · soroban_invocations · events · assets    │                     │
 │  │ nfts · liquidity_pools · liquidity_pool_snapshots    │                     │
 │  └──────────────────────────┬───────────────────────────┘                     │
 │                             │                                                 │
@@ -736,7 +736,7 @@ days. Lifecycle expiration happens only after that minimum replay window.
 **Idempotency and ordering:** ledger sequence is the canonical ordering key. Processing is
 replay-safe: immutable ledger-scoped writes happen transactionally per ledger, and
 reprocessing the same ledger replaces or de-duplicates that ledger's immutable rows rather
-than creating duplicates. Derived-state upserts (`accounts`, `tokens`, `nfts`,
+than creating duplicates. Derived-state upserts (`accounts`, `assets`, `nfts`,
 `liquidity_pools`) apply only when the incoming ledger sequence is newer than or equal to
 the stored watermark (`last_seen_ledger` / `last_updated_ledger`), so an older backfill
 batch cannot overwrite fresher live state.
@@ -945,21 +945,21 @@ CREATE TABLE soroban_events (
 ) PARTITION BY RANGE (created_at);
 ```
 
-### 6.7 Tokens
+### 6.7 Assets
 
 ```sql
-CREATE TABLE tokens (
-    id               SERIAL PRIMARY KEY,
-    asset_type       VARCHAR(10) NOT NULL CHECK (asset_type IN ('classic', 'sac', 'soroban')),
-    asset_code       VARCHAR(12),
-    issuer_address   VARCHAR(56),
-    contract_id      VARCHAR(56) REFERENCES soroban_contracts(contract_id),
-    name             VARCHAR(100),
-    total_supply     NUMERIC(28, 7),
-    holder_count     INT DEFAULT 0,
-    metadata         JSONB,
-    UNIQUE (asset_code, issuer_address),
-    UNIQUE (contract_id)
+CREATE TABLE assets (
+    id          SERIAL   PRIMARY KEY,
+    asset_type  SMALLINT NOT NULL,  -- TokenAssetType: 0=native, 1=classic_credit, 2=sac, 3=soroban
+    asset_code  VARCHAR(12),
+    issuer_id   BIGINT   REFERENCES accounts(id),
+    contract_id BIGINT   REFERENCES soroban_contracts(id),
+    name        VARCHAR(256),
+    total_supply NUMERIC(28,7),
+    holder_count INTEGER,
+    description TEXT,
+    icon_url    VARCHAR(1024),
+    home_page   VARCHAR(256)
 );
 ```
 
@@ -1069,7 +1069,7 @@ partitioned and are kept indefinitely.
 | ----------------------------------------------------------------------------------------- | ------ |
 | Ledger Processor Lambda — XDR parse + DB write (ledgers, txs, ops, accounts, NFTs, pools) | 6      |
 | Ledger Processor — Soroban invocations + CAP-67 events extraction                         | 5      |
-| Ledger Processor — contract deployments + token/NFT/pool detection                        | 4      |
+| Ledger Processor — contract deployments + asset/NFT/pool detection                        | 4      |
 | Backfill validation — gap detection, idempotency checks                                   | 3      |
 | Ingestion lag monitoring + alerting                                                       | 2      |
 | **Subtotal**                                                                              | **25** |
@@ -1083,7 +1083,7 @@ partitioned and are kept indefinitely.
 | Transactions endpoints (list + detail + operation tree)          | 9      |
 | Ledgers endpoints (list + detail)                                | 3      |
 | Accounts endpoints (detail + transactions/history)               | 4      |
-| Tokens endpoints (list + detail + transactions)                  | 5      |
+| Assets endpoints (list + detail + transactions)                  | 5      |
 | Contracts endpoints (detail + interface + invocations + events)  | 9      |
 | NFTs endpoints (list + detail + transfers)                       | 5      |
 | Liquidity Pools endpoints (list + detail + transactions + chart) | 6      |
@@ -1107,8 +1107,8 @@ partitioned and are kept indefinitely.
 | Ledgers page (paginated table)                                       | 1      |
 | Ledger detail page                                                   | 2      |
 | Account detail page (summary + balances + history)                   | 3      |
-| Tokens page (list, filters)                                          | 2      |
-| Token detail page (summary + transactions)                           | 2      |
+| Assets page (list, filters)                                          | 2      |
+| Asset detail page (summary + transactions)                           | 2      |
 | Contract detail page (summary + interface + invocations + events)    | 7      |
 | NFTs page (list, filters)                                            | 2      |
 | NFT detail page (media preview, metadata, transfers)                 | 5      |
@@ -1205,7 +1205,7 @@ infrastructure-as-code. CI/CD pipeline. CloudWatch dashboards and ingestion lag 
 
 All REST API endpoints live and serving mainnet data: transactions (list + detail),
 ledgers (list + detail), accounts (detail + history), contracts (detail + invocations +
-events), tokens, NFTs, liquidity pools, search (exact match + prefix). React SPA deployed
+events), assets, NFTs, liquidity pools, search (exact match + prefix). React SPA deployed
 via CloudFront with all pages. Rate limiting and response
 caching configured on API Gateway.
 

@@ -3,7 +3,7 @@ id: '0154'
 title: 'REFACTOR: rename `tokens` → `assets` (Stellar taxonomy alignment)'
 type: REFACTOR
 status: active
-related_adr: ['0022', '0023', '0027', '0032']
+related_adr: ['0022', '0023', '0027', '0032', '0033']
 related_tasks: ['0118', '0120', '0124', '0135', '0155']
 tags:
   [

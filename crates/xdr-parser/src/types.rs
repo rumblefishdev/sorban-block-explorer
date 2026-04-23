@@ -4,7 +4,7 @@
 //! Field names match DB column names (snake_case).
 //!
 //! ADR 0031: enum-like columns (`operations.type`, `soroban_events.event_type`,
-//! `soroban_contracts.contract_type`, `tokens.asset_type`,
+//! `soroban_contracts.contract_type`, `assets.asset_type`,
 //! `nft_ownership.event_type`) are typed via `domain::enums` enums — the
 //! parser emits the typed variant directly, skipping the legacy
 //! string round-trip through `Debug`/`Display`.
@@ -274,12 +274,12 @@ pub struct ExtractedLiquidityPoolSnapshot {
     pub fee_revenue: Option<String>,
 }
 
-/// Detected token from contract deployments or classic assets.
+/// Detected asset from contract deployments or classic assets.
 ///
-/// Produced by `detect_tokens`. Maps to `tokens` table.
+/// Produced by `detect_assets`. Maps to `assets` table.
 #[derive(Debug, Clone)]
-pub struct ExtractedToken {
-    /// Token classification (ADR 0031). Maps to `tokens.asset_type SMALLINT`.
+pub struct ExtractedAsset {
+    /// Asset classification (ADR 0031). Maps to `assets.asset_type SMALLINT`.
     pub asset_type: TokenAssetType,
     pub asset_code: Option<String>,
     pub issuer_address: Option<String>,

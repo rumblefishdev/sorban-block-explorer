@@ -124,12 +124,12 @@ pub async fn process_ledger(
     let mut all_account_states = Vec::new();
     let mut all_liquidity_pools = Vec::new();
     let mut all_pool_snapshots = Vec::new();
-    let mut all_tokens = Vec::new();
+    let mut all_assets = Vec::new();
 
     for (_tx_hash, tx_source, changes) in &all_ledger_entry_changes {
         let deployments = xdr_parser::extract_contract_deployments(changes, tx_source);
-        let tokens = xdr_parser::detect_tokens(&deployments);
-        all_tokens.extend(tokens);
+        let assets = xdr_parser::detect_assets(&deployments);
+        all_assets.extend(assets);
         all_contract_deployments.extend(deployments);
 
         let accounts = xdr_parser::extract_account_states(changes);
@@ -172,7 +172,7 @@ pub async fn process_ledger(
         &all_account_states,
         &all_liquidity_pools,
         &all_pool_snapshots,
-        &all_tokens,
+        &all_assets,
         &all_nfts,
         &nft_events,
         &lp_positions,

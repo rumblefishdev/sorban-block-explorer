@@ -18,10 +18,10 @@ use domain::{
 };
 use serde_json::Value;
 use xdr_parser::types::{
-    ExtractedAccountState, ExtractedContractDeployment, ExtractedContractInterface, ExtractedEvent,
-    ExtractedInvocation, ExtractedLedger, ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot,
-    ExtractedLpPosition, ExtractedNft, ExtractedNftEvent, ExtractedOperation, ExtractedToken,
-    ExtractedTransaction,
+    ExtractedAccountState, ExtractedAsset, ExtractedContractDeployment, ExtractedContractInterface,
+    ExtractedEvent, ExtractedInvocation, ExtractedLedger, ExtractedLiquidityPool,
+    ExtractedLiquidityPoolSnapshot, ExtractedLpPosition, ExtractedNft, ExtractedNftEvent,
+    ExtractedOperation, ExtractedTransaction,
 };
 
 use super::HandlerError;
@@ -153,7 +153,7 @@ pub(super) struct NftOwnershipRow {
     pub created_at: DateTime<Utc>,
 }
 
-pub(super) struct TokenRow {
+pub(super) struct AssetRow {
     pub asset_type: TokenAssetType,
     pub asset_code: Option<String>,
     pub issuer_str_key: Option<String>,
@@ -245,7 +245,7 @@ pub(super) struct Staged {
     pub snapshot_rows: Vec<SnapshotRow>,
     pub lp_position_rows: Vec<LpPositionRow>,
 
-    pub token_rows: Vec<TokenRow>,
+    pub asset_rows: Vec<AssetRow>,
 
     pub nft_rows: Vec<NftRow>,
     pub nft_ownership_rows: Vec<NftOwnershipRow>,
@@ -268,7 +268,7 @@ impl Staged {
         account_states: &[ExtractedAccountState],
         liquidity_pools: &[ExtractedLiquidityPool],
         pool_snapshots: &[ExtractedLiquidityPoolSnapshot],
-        tokens: &[ExtractedToken],
+        assets: &[ExtractedAsset],
         nfts: &[ExtractedNft],
         nft_events: &[ExtractedNftEvent],
         lp_positions: &[ExtractedLpPosition],
@@ -360,8 +360,8 @@ impl Staged {
                 account_keys_set.insert(issuer);
             }
         }
-        for token in tokens {
-            if let Some(issuer) = &token.issuer_address {
+        for asset in assets {
+            if let Some(issuer) = &asset.issuer_address {
                 account_keys_set.insert(issuer.clone());
             }
         }
@@ -734,22 +734,22 @@ impl Staged {
             });
         }
 
-        // --- tokens (dedup by identity — native singleton, classic/sac by
+        // --- assets (dedup by identity — native singleton, classic_credit/sac by
         // (code,issuer), soroban by contract_id; SAC satisfies both uniques so
         // collapse on either key)
-        let mut token_rows: Vec<TokenRow> = Vec::with_capacity(tokens.len());
-        let mut token_seen: HashSet<String> = HashSet::new();
-        for t in tokens {
+        let mut asset_rows: Vec<AssetRow> = Vec::with_capacity(assets.len());
+        let mut asset_seen: HashSet<String> = HashSet::new();
+        for t in assets {
             // Identity fingerprint matches the per-asset_type partial UNIQUE
-            // indexes on `tokens` (uidx_tokens_native / _classic_asset / _soroban).
-            // Native is a singleton; classic/SAC dedup by (code, issuer);
+            // indexes on `assets` (uidx_assets_native / _classic_asset / _soroban).
+            // Native is a singleton; classic_credit/SAC dedup by (code, issuer);
             // soroban/SAC dedup by contract_id. SAC satisfies both uniques —
             // we collapse on either key to avoid emitting two rows that the
             // ON CONFLICT would have to merge.
             let fp = match t.asset_type {
                 TokenAssetType::Native => "native".to_string(),
-                TokenAssetType::Classic => format!(
-                    "classic|{}|{}",
+                TokenAssetType::ClassicCredit => format!(
+                    "classic_credit|{}|{}",
                     t.asset_code.as_deref().unwrap_or(""),
                     t.issuer_address.as_deref().unwrap_or("")
                 ),
@@ -760,10 +760,10 @@ impl Staged {
                     format!("soroban|{}", t.contract_id.as_deref().unwrap_or(""))
                 }
             };
-            if !token_seen.insert(fp) {
+            if !asset_seen.insert(fp) {
                 continue;
             }
-            token_rows.push(TokenRow {
+            asset_rows.push(AssetRow {
                 asset_type: t.asset_type,
                 asset_code: t.asset_code.clone(),
                 issuer_str_key: t.issuer_address.clone(),
@@ -988,7 +988,7 @@ impl Staged {
             pool_rows,
             snapshot_rows,
             lp_position_rows,
-            token_rows,
+            asset_rows,
             nft_rows,
             nft_ownership_rows,
             balance_rows,
