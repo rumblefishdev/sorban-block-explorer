@@ -128,7 +128,12 @@ pub async fn process_ledger(
 
     for (_tx_hash, tx_source, changes) in &all_ledger_entry_changes {
         let deployments = xdr_parser::extract_contract_deployments(changes, tx_source);
-        let assets = xdr_parser::detect_assets(&deployments);
+        // detect_assets uses WASM interfaces to classify non-SAC deployments
+        // as Soroban-native assets (task 0120). Contracts deployed in this
+        // ledger without a matching interface are skipped here and picked up
+        // by the late-WASM bridge step (task 0120) once reclassify promotes
+        // them.
+        let assets = xdr_parser::detect_assets(&deployments, &all_contract_interfaces);
         all_assets.extend(assets);
         all_contract_deployments.extend(deployments);
 

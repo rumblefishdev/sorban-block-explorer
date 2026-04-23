@@ -128,7 +128,14 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
         counts_first.events_amount_sum, 1,
         "SUM(amount) must equal the ingested non-diagnostic event count (ADR 0033)"
     );
-    assert_eq!(counts_first.invocations, 1, "soroban_invocations row count");
+    assert_eq!(
+        counts_first.invocations, 1,
+        "soroban_invocations_appearances row count — one (contract, tx, ledger) trio"
+    );
+    assert_eq!(
+        counts_first.invocations_amount_sum, 1,
+        "SUM(amount) must equal the ingested invocation tree-node count (ADR 0034)"
+    );
     assert!(counts_first.contracts >= 1, "contracts row count");
     assert_eq!(counts_first.wasm, 1, "wasm_interface_metadata row count");
     assert_eq!(counts_first.assets, 1, "assets row count");
@@ -466,7 +473,7 @@ async fn ensure_default_partitions(pool: &PgPool) {
         "operations",
         "transaction_participants",
         "soroban_events_appearances",
-        "soroban_invocations",
+        "soroban_invocations_appearances",
         "nft_ownership",
         "liquidity_pool_snapshots",
         "account_balance_history",
@@ -582,6 +589,7 @@ struct Counts {
     events: i64,
     events_amount_sum: i64,
     invocations: i64,
+    invocations_amount_sum: i64,
     contracts: i64,
     wasm: i64,
     assets: i64,
@@ -618,9 +626,13 @@ async fn test_counts(pool: &PgPool) -> Counts {
                    FROM soroban_events_appearances ev
                    JOIN transactions tx ON tx.id = ev.transaction_id AND tx.created_at = ev.created_at
                   WHERE tx.hash = decode($3, 'hex')),
-          iv AS (SELECT COUNT(*) AS n FROM soroban_invocations inv
+          iv AS (SELECT COUNT(*) AS n FROM soroban_invocations_appearances inv
                    JOIN transactions tx ON tx.id = inv.transaction_id AND tx.created_at = inv.created_at
                   WHERE tx.hash = decode($3, 'hex')),
+          ivs AS (SELECT COALESCE(SUM(inv.amount), 0)::BIGINT AS n
+                    FROM soroban_invocations_appearances inv
+                    JOIN transactions tx ON tx.id = inv.transaction_id AND tx.created_at = inv.created_at
+                   WHERE tx.hash = decode($3, 'hex')),
           c AS (SELECT COUNT(*) AS n FROM soroban_contracts WHERE contract_id = ANY($4)),
           w AS (SELECT COUNT(*) AS n FROM wasm_interface_metadata WHERE wasm_hash = decode($5, 'hex')),
           -- ADR 0030: assets/nfts.contract_id is BIGINT → join soroban_contracts
@@ -645,9 +657,9 @@ async fn test_counts(pool: &PgPool) -> Counts {
                    JOIN accounts aa ON aa.id = abh.account_id
                   WHERE aa.account_id = ANY($2) AND abh.ledger_sequence = $1)
         SELECT l.n AS l, a.n AS a, t.n AS t, hi.n AS hi, p.n AS p, o.n AS o,
-               e.n AS e, es.n AS es, iv.n AS iv, c.n AS c, w.n AS w, tk.n AS tk, n.n AS n,
+               e.n AS e, es.n AS es, iv.n AS iv, ivs.n AS ivs, c.n AS c, w.n AS w, tk.n AS tk, n.n AS n,
                no.n AS no, pl.n AS pl, ps.n AS ps, lp.n AS lp, bc.n AS bc, bh.n AS bh
-          FROM l, a, t, hi, p, o, e, es, iv, c, w, tk, n, no, pl, ps, lp, bc, bh
+          FROM l, a, t, hi, p, o, e, es, iv, ivs, c, w, tk, n, no, pl, ps, lp, bc, bh
         "#,
     )
     .bind(ledger)
@@ -674,6 +686,7 @@ async fn test_counts(pool: &PgPool) -> Counts {
         events: row.get("e"),
         events_amount_sum: row.get("es"),
         invocations: row.get("iv"),
+        invocations_amount_sum: row.get("ivs"),
         contracts: row.get("c"),
         wasm: row.get("w"),
         assets: row.get("tk"),
@@ -1149,6 +1162,451 @@ async fn clean_filter_test(pool: &PgPool) {
             hex::decode(NFT_WASM_HASH).unwrap(),
             hex::decode(FUN_WASM_HASH).unwrap(),
         ])
+        .execute(pool)
+        .await;
+}
+
+// ---------------------------------------------------------------------------
+// Task 0120 — Soroban-native token detection + late-WASM bridge
+// ---------------------------------------------------------------------------
+
+const TK_LEDGER_SEQ_1: u32 = 90_000_301;
+const TK_LEDGER_SEQ_2: u32 = 90_000_302;
+/// 2026-04-22 12:20:00 UTC
+const TK_CLOSED_AT_1: i64 = 1_777_205_400;
+const TK_CLOSED_AT_2: i64 = TK_CLOSED_AT_1 + 6;
+const TK_LEDGER_HASH_1: &str = "eeee111111111111111111111111111111111111111111111111111111111111";
+const TK_LEDGER_HASH_2: &str = "eeee222222222222222222222222222222222222222222222222222222222222";
+const TK_TX_HASH_1: &str = "eeee333333333333333333333333333333333333333333333333333333333333";
+const TK_TX_HASH_2: &str = "eeee444444444444444444444444444444444444444444444444444444444444";
+const TK_CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAATKNSOR";
+const TK_WASM_HASH: &str = "eeee555555555555555555555555555555555555555555555555555555555555";
+
+/// End-to-end check of task 0120's same-ledger detection path.
+///
+/// A WASM deployment classified as `Fungible` (SEP-0041 surface) lands in
+/// the `tokens` table with `asset_type = Soroban` and `contract_id` set
+/// to the surrogate bigint id of the deployed contract.
+#[tokio::test]
+async fn soroban_fungible_contract_produces_tokens_row() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping 0120 same-ledger test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping 0120 same-ledger test");
+            return;
+        }
+    };
+
+    ensure_default_partitions(&pool).await;
+    clean_tk_test(&pool).await;
+
+    let ledger = ExtractedLedger {
+        sequence: TK_LEDGER_SEQ_1,
+        hash: TK_LEDGER_HASH_1.to_string(),
+        closed_at: TK_CLOSED_AT_1,
+        protocol_version: 22,
+        transaction_count: 1,
+        base_fee: 100,
+    };
+    let tx = ExtractedTransaction {
+        hash: TK_TX_HASH_1.to_string(),
+        ledger_sequence: TK_LEDGER_SEQ_1,
+        source_account: SRC_STRKEY.to_string(),
+        fee_charged: 100,
+        successful: true,
+        result_code: "txSuccess".to_string(),
+        envelope_xdr: "AAAAAA...".to_string(),
+        result_xdr: "AAAAAA...".to_string(),
+        result_meta_xdr: None,
+        operation_tree: None,
+        memo_type: None,
+        memo: None,
+        created_at: TK_CLOSED_AT_1,
+        parse_error: false,
+    };
+
+    // SEP-0041 surface (decimals is a fungible discriminator).
+    let interfaces = vec![iface_with(
+        TK_WASM_HASH,
+        &["transfer", "balance", "decimals", "name", "symbol"],
+    )];
+    let deployments = vec![ExtractedContractDeployment {
+        contract_id: TK_CONTRACT.to_string(),
+        wasm_hash: Some(TK_WASM_HASH.to_string()),
+        deployer_account: Some(SRC_STRKEY.to_string()),
+        deployed_at_ledger: TK_LEDGER_SEQ_1,
+        contract_type: ContractType::Other, // staging overrides via classifier
+        is_sac: false,
+        metadata: json!({}),
+    }];
+    // Drive the real parser → persist wiring end-to-end so a regression in
+    // detect_tokens signature/behaviour fails this test, not just an
+    // isolated unit test.
+    let tokens = xdr_parser::detect_tokens(&deployments, &interfaces);
+    assert_eq!(
+        tokens.len(),
+        1,
+        "parser must emit exactly one Soroban token for this deploy"
+    );
+    assert_eq!(tokens[0].asset_type, TokenAssetType::Soroban);
+
+    let empty_operations: Vec<(String, Vec<ExtractedOperation>)> = Vec::new();
+    let empty_events: Vec<(String, Vec<ExtractedEvent>)> = Vec::new();
+    let empty_invocations: Vec<(String, Vec<ExtractedInvocation>)> = Vec::new();
+    let empty_trees: Vec<(String, serde_json::Value)> = Vec::new();
+    let no_account_states: Vec<ExtractedAccountState> = Vec::new();
+    let no_pools: Vec<ExtractedLiquidityPool> = Vec::new();
+    let no_snapshots: Vec<ExtractedLiquidityPoolSnapshot> = Vec::new();
+    let no_nfts: Vec<ExtractedNft> = Vec::new();
+    let no_nft_events: Vec<ExtractedNftEvent> = Vec::new();
+    let no_lp_positions: Vec<ExtractedLpPosition> = Vec::new();
+    let no_inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
+    let classification_cache = ClassificationCache::new();
+
+    persist_ledger(
+        &pool,
+        &ledger,
+        &[tx],
+        &empty_operations,
+        &empty_events,
+        &empty_invocations,
+        &empty_trees,
+        &interfaces,
+        &deployments,
+        &no_account_states,
+        &no_pools,
+        &no_snapshots,
+        &tokens,
+        &no_nfts,
+        &no_nft_events,
+        &no_lp_positions,
+        &no_inner_tx_hashes,
+        &classification_cache,
+    )
+    .await
+    .expect("persist_ledger for 0120 same-ledger path must succeed");
+
+    // Contract row classified as Fungible.
+    let fun_ty: Option<i16> =
+        sqlx::query_scalar("SELECT contract_type FROM soroban_contracts WHERE contract_id = $1")
+            .bind(TK_CONTRACT)
+            .fetch_one(&pool)
+            .await
+            .expect("soroban_contracts row exists");
+    assert_eq!(
+        fun_ty.and_then(|v| ContractType::try_from(v).ok()),
+        Some(ContractType::Fungible),
+        "contract_type must be Fungible"
+    );
+
+    // Exactly one Soroban token row for this contract.
+    let count: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*)
+             FROM tokens t
+             JOIN soroban_contracts sc ON sc.id = t.contract_id
+            WHERE sc.contract_id = $1
+              AND t.asset_type = $2"#,
+    )
+    .bind(TK_CONTRACT)
+    .bind(TokenAssetType::Soroban)
+    .fetch_one(&pool)
+    .await
+    .expect("tokens count query succeeds");
+    assert_eq!(
+        count, 1,
+        "exactly one Soroban tokens row per Fungible contract"
+    );
+
+    clean_tk_test(&pool).await;
+}
+
+/// End-to-end check of task 0120's late-WASM bridge path.
+///
+/// Two-ledger pattern: contract deploys in L1 referencing a wasm_hash
+/// whose interface is not in L1. `detect_tokens` skips it. `stub_wasm`
+/// path leaves `soroban_contracts.contract_type = Other`. In L2 the real
+/// WASM upload arrives with SEP-0041 discriminators;
+/// `reclassify_contracts_from_wasm` promotes contract_type to Fungible,
+/// and `insert_tokens_from_reclassified_contracts` backfills the missing
+/// tokens row.
+#[tokio::test]
+async fn late_wasm_upload_backfills_tokens_row() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping 0120 late-WASM test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping 0120 late-WASM test");
+            return;
+        }
+    };
+
+    ensure_default_partitions(&pool).await;
+    clean_tk_test(&pool).await;
+
+    // ── L1: deploy without the WASM upload. Parser emits no token row. ──
+    let ledger1 = ExtractedLedger {
+        sequence: TK_LEDGER_SEQ_1,
+        hash: TK_LEDGER_HASH_1.to_string(),
+        closed_at: TK_CLOSED_AT_1,
+        protocol_version: 22,
+        transaction_count: 1,
+        base_fee: 100,
+    };
+    let tx1 = ExtractedTransaction {
+        hash: TK_TX_HASH_1.to_string(),
+        ledger_sequence: TK_LEDGER_SEQ_1,
+        source_account: SRC_STRKEY.to_string(),
+        fee_charged: 100,
+        successful: true,
+        result_code: "txSuccess".to_string(),
+        envelope_xdr: "AAAAAA...".to_string(),
+        result_xdr: "AAAAAA...".to_string(),
+        result_meta_xdr: None,
+        operation_tree: None,
+        memo_type: None,
+        memo: None,
+        created_at: TK_CLOSED_AT_1,
+        parse_error: false,
+    };
+    let deployments = vec![ExtractedContractDeployment {
+        contract_id: TK_CONTRACT.to_string(),
+        wasm_hash: Some(TK_WASM_HASH.to_string()),
+        deployer_account: Some(SRC_STRKEY.to_string()),
+        deployed_at_ledger: TK_LEDGER_SEQ_1,
+        contract_type: ContractType::Other,
+        is_sac: false,
+        metadata: json!({}),
+    }];
+
+    let empty_operations: Vec<(String, Vec<ExtractedOperation>)> = Vec::new();
+    let empty_events: Vec<(String, Vec<ExtractedEvent>)> = Vec::new();
+    let empty_invocations: Vec<(String, Vec<ExtractedInvocation>)> = Vec::new();
+    let empty_trees: Vec<(String, serde_json::Value)> = Vec::new();
+    let no_interfaces: Vec<ExtractedContractInterface> = Vec::new();
+    let no_account_states: Vec<ExtractedAccountState> = Vec::new();
+    let no_pools: Vec<ExtractedLiquidityPool> = Vec::new();
+    let no_snapshots: Vec<ExtractedLiquidityPoolSnapshot> = Vec::new();
+    let no_tokens: Vec<ExtractedToken> = Vec::new();
+    let no_nfts: Vec<ExtractedNft> = Vec::new();
+    let no_nft_events: Vec<ExtractedNftEvent> = Vec::new();
+    let no_lp_positions: Vec<ExtractedLpPosition> = Vec::new();
+    let no_inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
+    let classification_cache = ClassificationCache::new();
+
+    persist_ledger(
+        &pool,
+        &ledger1,
+        &[tx1],
+        &empty_operations,
+        &empty_events,
+        &empty_invocations,
+        &empty_trees,
+        &no_interfaces,
+        &deployments,
+        &no_account_states,
+        &no_pools,
+        &no_snapshots,
+        &no_tokens,
+        &no_nfts,
+        &no_nft_events,
+        &no_lp_positions,
+        &no_inner_tx_hashes,
+        &classification_cache,
+    )
+    .await
+    .expect("L1 persist_ledger (no-WASM deploy) must succeed");
+
+    // After L1: contract exists with contract_type = Other, no tokens row.
+    let count_before: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*)
+             FROM tokens t
+             JOIN soroban_contracts sc ON sc.id = t.contract_id
+            WHERE sc.contract_id = $1
+              AND t.asset_type = $2"#,
+    )
+    .bind(TK_CONTRACT)
+    .bind(TokenAssetType::Soroban)
+    .fetch_one(&pool)
+    .await
+    .expect("tokens count succeeds");
+    assert_eq!(count_before, 0, "no tokens row yet (WASM not observed)");
+
+    // ── L2: WASM upload arrives. Interface has SEP-0041 surface.
+    //   Reclassify promotes Other → Fungible; bridge inserts tokens row.
+    let ledger2 = ExtractedLedger {
+        sequence: TK_LEDGER_SEQ_2,
+        hash: TK_LEDGER_HASH_2.to_string(),
+        closed_at: TK_CLOSED_AT_2,
+        protocol_version: 22,
+        transaction_count: 1,
+        base_fee: 100,
+    };
+    let tx2 = ExtractedTransaction {
+        hash: TK_TX_HASH_2.to_string(),
+        ledger_sequence: TK_LEDGER_SEQ_2,
+        source_account: SRC_STRKEY.to_string(),
+        fee_charged: 100,
+        successful: true,
+        result_code: "txSuccess".to_string(),
+        envelope_xdr: "AAAAAA...".to_string(),
+        result_xdr: "AAAAAA...".to_string(),
+        result_meta_xdr: None,
+        operation_tree: None,
+        memo_type: None,
+        memo: None,
+        created_at: TK_CLOSED_AT_2,
+        parse_error: false,
+    };
+    let interfaces = vec![iface_with(
+        TK_WASM_HASH,
+        &["transfer", "balance", "decimals", "name", "symbol"],
+    )];
+    let no_deployments: Vec<ExtractedContractDeployment> = Vec::new();
+
+    persist_ledger(
+        &pool,
+        &ledger2,
+        &[tx2],
+        &empty_operations,
+        &empty_events,
+        &empty_invocations,
+        &empty_trees,
+        &interfaces,
+        &no_deployments,
+        &no_account_states,
+        &no_pools,
+        &no_snapshots,
+        &no_tokens,
+        &no_nfts,
+        &no_nft_events,
+        &no_lp_positions,
+        &no_inner_tx_hashes,
+        &classification_cache,
+    )
+    .await
+    .expect("L2 persist_ledger (late-WASM upload) must succeed");
+
+    // After L2: contract promoted to Fungible, tokens row inserted.
+    let fun_ty: Option<i16> =
+        sqlx::query_scalar("SELECT contract_type FROM soroban_contracts WHERE contract_id = $1")
+            .bind(TK_CONTRACT)
+            .fetch_one(&pool)
+            .await
+            .expect("soroban_contracts row exists");
+    assert_eq!(
+        fun_ty.and_then(|v| ContractType::try_from(v).ok()),
+        Some(ContractType::Fungible),
+        "contract_type promoted Other → Fungible"
+    );
+
+    let count_after: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*)
+             FROM tokens t
+             JOIN soroban_contracts sc ON sc.id = t.contract_id
+            WHERE sc.contract_id = $1
+              AND t.asset_type = $2"#,
+    )
+    .bind(TK_CONTRACT)
+    .bind(TokenAssetType::Soroban)
+    .fetch_one(&pool)
+    .await
+    .expect("tokens count succeeds");
+    assert_eq!(count_after, 1, "bridge inserted Soroban tokens row");
+
+    // Re-run the same ledger (replay) — must be idempotent, still exactly one row.
+    let classification_cache2 = ClassificationCache::new();
+    persist_ledger(
+        &pool,
+        &ledger2,
+        &[ExtractedTransaction {
+            hash: TK_TX_HASH_2.to_string(),
+            ledger_sequence: TK_LEDGER_SEQ_2,
+            source_account: SRC_STRKEY.to_string(),
+            fee_charged: 100,
+            successful: true,
+            result_code: "txSuccess".to_string(),
+            envelope_xdr: "AAAAAA...".to_string(),
+            result_xdr: "AAAAAA...".to_string(),
+            result_meta_xdr: None,
+            operation_tree: None,
+            memo_type: None,
+            memo: None,
+            created_at: TK_CLOSED_AT_2,
+            parse_error: false,
+        }],
+        &empty_operations,
+        &empty_events,
+        &empty_invocations,
+        &empty_trees,
+        &interfaces,
+        &no_deployments,
+        &no_account_states,
+        &no_pools,
+        &no_snapshots,
+        &no_tokens,
+        &no_nfts,
+        &no_nft_events,
+        &no_lp_positions,
+        &no_inner_tx_hashes,
+        &classification_cache2,
+    )
+    .await
+    .expect("L2 replay must be idempotent");
+
+    let count_replay: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*)
+             FROM tokens t
+             JOIN soroban_contracts sc ON sc.id = t.contract_id
+            WHERE sc.contract_id = $1
+              AND t.asset_type = $2"#,
+    )
+    .bind(TK_CONTRACT)
+    .bind(TokenAssetType::Soroban)
+    .fetch_one(&pool)
+    .await
+    .expect("tokens count succeeds");
+    assert_eq!(count_replay, 1, "replay does not duplicate tokens row");
+
+    clean_tk_test(&pool).await;
+}
+
+async fn clean_tk_test(pool: &PgPool) {
+    let tx_hashes = vec![
+        hex::decode(TK_TX_HASH_1).unwrap(),
+        hex::decode(TK_TX_HASH_2).unwrap(),
+    ];
+    let _ = sqlx::query(
+        "DELETE FROM tokens
+          WHERE contract_id IN (SELECT id FROM soroban_contracts WHERE contract_id = $1)",
+    )
+    .bind(TK_CONTRACT)
+    .execute(pool)
+    .await;
+    let _ = sqlx::query("DELETE FROM transactions WHERE hash = ANY($1)")
+        .bind(&tx_hashes)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM transaction_hash_index WHERE hash = ANY($1)")
+        .bind(&tx_hashes)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM ledgers WHERE sequence = ANY($1)")
+        .bind(vec![i64::from(TK_LEDGER_SEQ_1), i64::from(TK_LEDGER_SEQ_2)])
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM soroban_contracts WHERE contract_id = $1")
+        .bind(TK_CONTRACT)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM wasm_interface_metadata WHERE wasm_hash = decode($1, 'hex')")
+        .bind(TK_WASM_HASH)
         .execute(pool)
         .await;
 }

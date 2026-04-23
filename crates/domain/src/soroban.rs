@@ -1,14 +1,16 @@
-//! Soroban domain types matching the `soroban_contracts`,
-//! `wasm_interface_metadata`, and `soroban_invocations` PostgreSQL tables.
+//! Soroban domain types matching the `soroban_contracts` and
+//! `wasm_interface_metadata` PostgreSQL tables.
 //!
-//! Schema: ADR 0027 Part I §7, §8, §10.
+//! Schema: ADR 0027 Part I §7, §8.
 //! `soroban_contracts.search_vector` is a generated TSVECTOR — DB-only, omitted.
 //! Event detail (type, topics, data, transfer triple) lives exclusively on the
 //! public Stellar archive per ADR 0033; the `soroban_events_appearances` table
 //! is a pure index queried directly by the API without a domain mirror type.
-//! Invocation `function_args` / `return_value` live in S3 per ADR 0018.
+//! Invocation per-node detail (function name, args, return value, successful,
+//! depth) lives on the public archive per ADR 0034;
+//! `soroban_invocations_appearances` is queried directly by the API without a
+//! domain mirror type (same pattern as events).
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Contract identity + class + metadata (ADR 0027 §7).
@@ -31,18 +33,4 @@ pub struct SorobanContract {
 pub struct WasmInterfaceMetadata {
     pub wasm_hash: Vec<u8>,
     pub metadata: serde_json::Value,
-}
-
-/// Caller / function / status row (ADR 0027 §10). Partitioned on `created_at`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SorobanInvocation {
-    pub id: i64,
-    pub transaction_id: i64,
-    pub contract_id: Option<String>,
-    pub caller_id: Option<i64>,
-    pub function_name: String,
-    pub successful: bool,
-    pub invocation_index: i16,
-    pub ledger_sequence: i64,
-    pub created_at: DateTime<Utc>,
 }

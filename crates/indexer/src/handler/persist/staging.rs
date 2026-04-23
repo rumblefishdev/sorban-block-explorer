@@ -78,14 +78,18 @@ pub(super) struct EventRow {
     pub created_at: DateTime<Utc>,
 }
 
-/// `soroban_invocations` row.
+/// `soroban_invocations_appearances` row (pre-aggregation, one per
+/// invocation-tree node). ADR 0034: `contract_id` + `tx_hash_hex` +
+/// `ledger_sequence` + `created_at` form the aggregation key;
+/// `caller_str_key` is collapsed to the trio's first non-NULL caller
+/// at write time. Per-node detail (function name, per-node index,
+/// successful, args, return value, depth) is not carried — the API
+/// re-extracts it from XDR at read time via
+/// `xdr_parser::extract_invocations`.
 pub(super) struct InvRow {
     pub tx_hash_hex: String,
     pub contract_id: Option<String>,
     pub caller_str_key: Option<String>,
-    pub function_name: String,
-    pub successful: bool,
-    pub invocation_index: i16,
     pub ledger_sequence: i64,
     pub created_at: DateTime<Utc>,
 }
@@ -596,6 +600,11 @@ impl Staged {
         }
 
         // --- invocations flatten -------------------------------------------
+        //
+        // One pre-aggregation row per tree node (parser emits depth-first,
+        // root before sub-invocations). `insert_invocations` folds these
+        // into per-trio appearance rows at write time; carrying the raw
+        // node order here keeps the root-caller-wins invariant explicit.
         let mut inv_rows: Vec<InvRow> = Vec::new();
         for (tx_hash, invs) in invocations {
             let Some(&created_at) = tx_created_at.get(tx_hash) else {
@@ -611,15 +620,6 @@ impl Staged {
                     tx_hash_hex: tx_hash.clone(),
                     contract_id: inv.contract_id.clone(),
                     caller_str_key: caller,
-                    function_name: inv
-                        .function_name
-                        .clone()
-                        .unwrap_or_else(|| "<create-contract>".to_string()),
-                    successful: inv.successful,
-                    invocation_index: inv
-                        .invocation_index
-                        .try_into()
-                        .map_err(|_| staging_err("invocation_index overflow"))?,
                     ledger_sequence: ledger_sequence_i64,
                     created_at,
                 });

@@ -13,8 +13,8 @@
 //!   7. transaction_participants
 //!   8. liquidity_pools + liquidity_pool_snapshots + lp_positions
 //!   9. operations           (FK → liquidity_pools.pool_id)
-//!  10. soroban_events_appearances  (ADR 0033 — aggregate index per trio)
-//!  11. soroban_invocations
+//!  10. soroban_events_appearances       (ADR 0033 — aggregate index per trio)
+//!  11. soroban_invocations_appearances  (ADR 0034 — aggregate index per trio + caller payload)
 //!  12. assets
 //!  13. nfts + nft_ownership
 //!  14. account_balances_current + account_balance_history + trustline deletes
@@ -287,6 +287,10 @@ async fn run_all_steps(
 
     let t = Instant::now();
     write::upsert_assets(db_tx, staged, &account_ids, &contract_ids).await?;
+    // Task 0120 — bridge late-WASM reclassification into the `assets` table.
+    // Handles the two-ledger deploy pattern (contract deployed earlier,
+    // WASM uploaded now) that `detect_assets` cannot observe in-memory.
+    write::insert_assets_from_reclassified_contracts(db_tx, staged).await?;
     timings.assets_ms = t.elapsed().as_millis();
 
     let t = Instant::now();

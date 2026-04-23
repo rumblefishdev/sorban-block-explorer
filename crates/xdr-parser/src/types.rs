@@ -92,9 +92,13 @@ pub struct ExtractedEvent {
     pub created_at: i64,
 }
 
-/// Extracted Soroban invocation data, maps to the `soroban_invocations` table.
+/// Extracted Soroban invocation data, aggregated at indexer staging into
+/// `soroban_invocations_appearances` rows (ADR 0034). At read time the API
+/// re-extracts this structure from the public archive's XDR to render E13
+/// per-node detail (function name, caller, success, args, return value).
 ///
-/// Produced by `extract_invocations` — one row per node in the invocation tree.
+/// Produced by `extract_invocations` — one value per node in the invocation
+/// tree, emitted depth-first (root before sub-invocations).
 #[derive(Debug, Clone)]
 pub struct ExtractedInvocation {
     /// Parent transaction hash, hex-encoded. Resolved to `transaction_id` FK at persistence time.
