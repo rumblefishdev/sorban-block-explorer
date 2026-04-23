@@ -287,6 +287,10 @@ async fn run_all_steps(
 
     let t = Instant::now();
     write::upsert_tokens(db_tx, staged, &account_ids, &contract_ids).await?;
+    // Task 0120 — bridge late-WASM reclassification into the `tokens` table.
+    // Handles the two-ledger deploy pattern (contract deployed earlier,
+    // WASM uploaded now) that `detect_tokens` cannot observe in-memory.
+    write::insert_tokens_from_reclassified_contracts(db_tx, staged).await?;
     timings.tokens_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
