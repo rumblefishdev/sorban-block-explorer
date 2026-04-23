@@ -13,8 +13,8 @@
 //!   7. transaction_participants
 //!   8. liquidity_pools + liquidity_pool_snapshots + lp_positions
 //!   9. operations           (FK → liquidity_pools.pool_id)
-//!  10. soroban_events_appearances  (ADR 0033 — aggregate index per trio)
-//!  11. soroban_invocations
+//!  10. soroban_events_appearances       (ADR 0033 — aggregate index per trio)
+//!  11. soroban_invocations_appearances  (ADR 0034 — aggregate index per trio + caller payload)
 //!  12. tokens
 //!  13. nfts + nft_ownership
 //!  14. account_balances_current + account_balance_history + trustline deletes

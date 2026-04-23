@@ -295,6 +295,15 @@ CREATE INDEX idx_events_transfer_to    ON soroban_events (transfer_to_id, create
 
 #### 10. `soroban_invocations`
 
+> **Superseded for this table by
+> [ADR 0034: soroban_invocations_appearances](0034_soroban-invocations-appearances-read-time-detail.md).**
+> The table is renamed to `soroban_invocations_appearances`, collapsed
+> to a 6-column aggregate `(contract_id, transaction_id, ledger_sequence,
+caller_id, amount, created_at)` with per-trio granularity; per-node
+> detail (function name, per-node index, successful, args, return value,
+> depth) is materialised at read time from the public Stellar archive
+> via `xdr_parser::extract_invocations`. ADR 0027's other sections stand.
+
 ```sql
 CREATE TABLE soroban_invocations (
     id               BIGSERIAL    NOT NULL,

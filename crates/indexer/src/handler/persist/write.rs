@@ -876,9 +876,30 @@ pub(super) async fn insert_events(
 }
 
 // ---------------------------------------------------------------------------
-// 10. soroban_invocations — insert slim cols
+// 10. soroban_invocations_appearances — ADR 0034 appearance index
 // ---------------------------------------------------------------------------
 
+/// Aggregate staged Soroban invocations into `(contract, tx, ledger)`
+/// appearance rows and insert them. The `amount` column stores the number
+/// of invocation-tree nodes folded into the trio; all per-node detail
+/// (function name, per-node index, successful flag, function args, return
+/// value, depth) is re-materialised at read time from the public Stellar
+/// archive via `xdr_parser::extract_invocations`.
+///
+/// `caller_id` is carried as a payload column (ADR 0034 §3): for each trio
+/// the first non-NULL caller observed wins. Staging emits tree nodes in
+/// depth-first order (root before sub-invocations) and already filters
+/// contract-address callers to NULL via `is_strkey_account`, so the
+/// first-seen non-NULL caller is the root-level G-account — matching the
+/// pre-refactor `COUNT(DISTINCT caller_id)` semantics the E11
+/// `unique_callers` stat relies on.
+///
+/// Invocations without a resolved `contract_id` (create-contract roots and
+/// other non-contract nodes) are skipped — the appearance index is
+/// contract-scoped by construction.
+///
+/// Replay-safe: the composite PK covers the natural key, so a re-ingest of
+/// the same ledger produces zero duplicate rows via `ON CONFLICT DO NOTHING`.
 pub(super) async fn insert_invocations(
     db_tx: &mut Transaction<'_, Postgres>,
     staged: &Staged,
@@ -889,62 +910,83 @@ pub(super) async fn insert_invocations(
     if staged.inv_rows.is_empty() {
         return Ok(());
     }
-    for chunk in staged.inv_rows.chunks(CHUNK_SIZE) {
+
+    // Key: (contract_id, transaction_id, ledger_sequence, created_at).
+    // Value: (amount = tree-node count, caller_id = first non-NULL caller).
+    //
+    // `upsert_contracts_returning_id` seeds `contract_ids` from every
+    // contract key referenced in `staged.inv_rows` via staging's contract
+    // registration path, so a present contract key MUST resolve — a miss
+    // is an invariant violation (hard error, not silent skip). Rows with
+    // no contract (create-contract roots) are skipped silently; a missing
+    // `tx_id` also skips silently per repo convention.
+    type InvAggKey = (i64, i64, i64, DateTime<Utc>);
+    type InvAggValue = (i64, Option<i64>);
+    let mut agg: HashMap<InvAggKey, InvAggValue> = HashMap::new();
+    for r in &staged.inv_rows {
+        let Some(contract_key) = r.contract_id.as_deref() else {
+            continue;
+        };
+        let contract_id = resolve_contract_id(contract_ids, contract_key, "invocation.contract")?;
+        let Some(&tx_id) = tx_ids.get(&r.tx_hash_hex) else {
+            continue;
+        };
+        let caller_id_opt = resolve_opt_id(
+            account_ids,
+            r.caller_str_key.as_deref(),
+            "invocation.caller",
+        )?;
+        let entry = agg
+            .entry((contract_id, tx_id, r.ledger_sequence, r.created_at))
+            .or_insert((0, None));
+        entry.0 += 1;
+        if entry.1.is_none() {
+            entry.1 = caller_id_opt;
+        }
+    }
+
+    if agg.is_empty() {
+        return Ok(());
+    }
+
+    let rows: Vec<_> = agg.into_iter().collect();
+    for chunk in rows.chunks(CHUNK_SIZE) {
+        let mut contract_vec: Vec<i64> = Vec::with_capacity(chunk.len());
         let mut tx_id_vec: Vec<i64> = Vec::with_capacity(chunk.len());
-        let mut contract_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
-        let mut caller_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
-        let mut fname_vec: Vec<String> = Vec::with_capacity(chunk.len());
-        let mut success_vec: Vec<bool> = Vec::with_capacity(chunk.len());
-        let mut index_vec: Vec<i16> = Vec::with_capacity(chunk.len());
         let mut ls_vec: Vec<i64> = Vec::with_capacity(chunk.len());
+        let mut caller_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
+        let mut amount_vec: Vec<i32> = Vec::with_capacity(chunk.len());
         let mut ca_vec: Vec<DateTime<Utc>> = Vec::with_capacity(chunk.len());
 
-        for r in chunk {
-            let Some(tx_id) = tx_ids.get(&r.tx_hash_hex).copied() else {
-                continue;
-            };
+        for &((contract_id, tx_id, ledger_sequence, created_at), (amount, caller_id)) in chunk {
+            contract_vec.push(contract_id);
             tx_id_vec.push(tx_id);
-            contract_vec.push(resolve_contract_opt_id(
-                contract_ids,
-                r.contract_id.as_deref(),
-                "invocation.contract",
-            )?);
-            caller_vec.push(resolve_opt_id(
-                account_ids,
-                r.caller_str_key.as_deref(),
-                "invocation.caller",
-            )?);
-            fname_vec.push(r.function_name.clone());
-            success_vec.push(r.successful);
-            index_vec.push(r.invocation_index);
-            ls_vec.push(r.ledger_sequence);
-            ca_vec.push(r.created_at);
-        }
-
-        if tx_id_vec.is_empty() {
-            continue;
+            ls_vec.push(ledger_sequence);
+            caller_vec.push(caller_id);
+            amount_vec.push(i32::try_from(amount).map_err(|_| {
+                HandlerError::Staging(format!(
+                    "invocation appearance amount overflow: contract_id={contract_id}, tx_id={tx_id}, amount={amount}"
+                ))
+            })?);
+            ca_vec.push(created_at);
         }
 
         sqlx::query(
             r#"
-            INSERT INTO soroban_invocations (
-                transaction_id, contract_id, caller_id, function_name, successful,
-                invocation_index, ledger_sequence, created_at
+            INSERT INTO soroban_invocations_appearances (
+                contract_id, transaction_id, ledger_sequence, caller_id, amount, created_at
             )
             SELECT * FROM UNNEST(
-                $1::BIGINT[], $2::BIGINT[], $3::BIGINT[], $4::VARCHAR[], $5::BOOL[],
-                $6::SMALLINT[], $7::BIGINT[], $8::TIMESTAMPTZ[]
+                $1::BIGINT[], $2::BIGINT[], $3::BIGINT[], $4::BIGINT[], $5::INTEGER[], $6::TIMESTAMPTZ[]
             )
-            ON CONFLICT ON CONSTRAINT uq_soroban_invocations_tx_index DO NOTHING
+            ON CONFLICT (contract_id, transaction_id, ledger_sequence, created_at) DO NOTHING
             "#,
         )
-        .bind(&tx_id_vec)
         .bind(&contract_vec)
-        .bind(&caller_vec)
-        .bind(&fname_vec)
-        .bind(&success_vec)
-        .bind(&index_vec)
+        .bind(&tx_id_vec)
         .bind(&ls_vec)
+        .bind(&caller_vec)
+        .bind(&amount_vec)
         .bind(&ca_vec)
         .execute(&mut **db_tx)
         .await?;
