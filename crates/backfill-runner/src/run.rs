@@ -97,7 +97,10 @@ pub async fn execute(
     // Sticky dashboard. Visual bar covers the full range and is pre-
     // bumped by `completed.len()` (handled inside `Dashboard::new`);
     // `timing` is scoped only to the work this run actually has to do.
-    let total_range = (end - start + 1) as u64;
+    // Widen to u64 before the arithmetic — `(end - start + 1) as u32`
+    // wraps when `end == u32::MAX && start == 0`. Soroban ranges don't
+    // hit that in practice, but the fix is free. Copilot review on PR #111.
+    let total_range = u64::from(end) - u64::from(start) + 1;
     let already_done = completed.len() as u64;
     let dashboard = Arc::new(Dashboard::new(total_range, already_done, mp));
 

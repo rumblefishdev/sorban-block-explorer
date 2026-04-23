@@ -124,10 +124,11 @@ fn partition_row(
     let (first, last) = p.clamped(run_start, run_end);
     let range_len = (last - first + 1) as usize;
 
-    let indexed = completed
-        .iter()
-        .filter(|s| **s >= first && **s <= last)
-        .count();
+    // Iterate the clamped range (<=64k per partition) instead of the
+    // whole `completed` set — scanning `completed.iter()` per partition
+    // is O(partitions × completed) and blows up on full-history runs
+    // (~14M ledgers × hundreds of partitions). Copilot review on PR #111.
+    let indexed = (first..=last).filter(|s| completed.contains(s)).count();
     // `indexed` can only count sequences in the range, so this never
     // underflows; `saturating_sub` is defense against future bugs.
     let pending = range_len.saturating_sub(indexed);

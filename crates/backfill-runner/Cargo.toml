@@ -12,7 +12,15 @@ path = "src/main.rs"
 indexer = { path = "../indexer" }
 xdr-parser = { path = "../xdr-parser" }
 db = { path = "../db" }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "signal"] }
+tokio = { workspace = true, features = [
+    "macros",
+    "rt-multi-thread",
+    "sync",
+    "signal",
+    "fs",
+    "process",
+    "time",
+] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 sqlx = { workspace = true }
