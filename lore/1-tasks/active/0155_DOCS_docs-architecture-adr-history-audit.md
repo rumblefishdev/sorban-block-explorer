@@ -41,7 +41,7 @@ history:
       (tokens→assets rename) to avoid merge churn on shared files.
   - date: '2026-04-23'
     status: active
-    who: Karol Kowalczyk
+    who: karolkow
     note: >
       Task activated and assigned.
 ---
