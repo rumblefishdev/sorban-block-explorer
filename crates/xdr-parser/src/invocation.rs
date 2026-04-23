@@ -27,7 +27,8 @@ use crate::types::ExtractedInvocation;
 
 /// Result of invocation tree extraction.
 pub struct InvocationResult {
-    /// Flat invocation rows for `soroban_invocations` table.
+    /// Flat invocation rows aggregated at indexer staging into
+    /// `soroban_invocations_appearances` (ADR 0034).
     pub invocations: Vec<ExtractedInvocation>,
     /// Nested JSON hierarchy for `transactions.operation_tree`.
     /// `None` if the transaction has no Soroban auth entries.

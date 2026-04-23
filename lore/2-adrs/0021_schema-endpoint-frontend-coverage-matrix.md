@@ -65,26 +65,26 @@ of truth.
 
 ### Table inventory
 
-|  #  | Table                      |  Partitioned  | Purpose                                                                  |
-| :-: | -------------------------- | :-----------: | ------------------------------------------------------------------------ |
-|  1  | `ledgers`                  |      no       | Chain head / history anchor                                              |
-|  2  | `accounts`                 |      no       | Account identity + seen-range                                            |
-|  3  | `transactions`             | yes (monthly) | Transaction core, indexed for browsing / filter                          |
-|  4  | `transaction_hash_index`   |      no       | Global hash uniqueness + lookup                                          |
-|  5  | `operations`               |      yes      | Per-operation slim columns (type, dest, asset, pool, transfer amount)    |
-|  6  | `transaction_participants` |      yes      | `(account, tx)` edge — 3 cols only after ADR 0020                        |
-|  7  | `soroban_contracts`        |      no       | Contract identity + deployer + WASM hash + SAC flag + type + name        |
-|  8  | `wasm_interface_metadata`  |      no       | WASM ABI keyed by natural `wasm_hash`                                    |
-|  9  | `soroban_events`           |      yes      | Events; carries transfer_from/to/amount for fungible/NFT transfer events |
-| 10  | `soroban_invocations`      |      yes      | Contract invocation calls (caller, function, status)                     |
-| 11  | `tokens`                   |      no       | Canonical token registry (classic / SAC / Soroban)                       |
-| 12  | `nfts`                     |      no       | NFT identity + current owner                                             |
-| 13  | `nft_ownership`            |      yes      | NFT ownership history (mint / transfer / burn)                           |
-| 14  | `liquidity_pools`          |      no       | Pool identity + assets + fee                                             |
-| 15  | `liquidity_pool_snapshots` |      yes      | Per-ledger pool state + derived TVL/volume/fees                          |
-| 16  | `lp_positions`             |      no       | Current LP shares per (pool, account)                                    |
-| 17  | `account_balances_current` |      no       | Current balance per (account, asset)                                     |
-| 18  | `account_balance_history`  |      yes      | Balance history per (account, ledger, asset)                             |
+|  #  | Table                             |  Partitioned  | Purpose                                                                                                                          |
+| :-: | --------------------------------- | :-----------: | -------------------------------------------------------------------------------------------------------------------------------- |
+|  1  | `ledgers`                         |      no       | Chain head / history anchor                                                                                                      |
+|  2  | `accounts`                        |      no       | Account identity + seen-range                                                                                                    |
+|  3  | `transactions`                    | yes (monthly) | Transaction core, indexed for browsing / filter                                                                                  |
+|  4  | `transaction_hash_index`          |      no       | Global hash uniqueness + lookup                                                                                                  |
+|  5  | `operations`                      |      yes      | Per-operation slim columns (type, dest, asset, pool, transfer amount)                                                            |
+|  6  | `transaction_participants`        |      yes      | `(account, tx)` edge — 3 cols only after ADR 0020                                                                                |
+|  7  | `soroban_contracts`               |      no       | Contract identity + deployer + WASM hash + SAC flag + type + name                                                                |
+|  8  | `wasm_interface_metadata`         |      no       | WASM ABI keyed by natural `wasm_hash`                                                                                            |
+|  9  | `soroban_events`                  |      yes      | Events; carries transfer_from/to/amount for fungible/NFT transfer events                                                         |
+| 10  | `soroban_invocations_appearances` |      yes      | Contract invocation appearance index (ADR 0034): (contract, tx, ledger, caller_id, amount); per-node detail at read time via XDR |
+| 11  | `tokens`                          |      no       | Canonical token registry (classic / SAC / Soroban)                                                                               |
+| 12  | `nfts`                            |      no       | NFT identity + current owner                                                                                                     |
+| 13  | `nft_ownership`                   |      yes      | NFT ownership history (mint / transfer / burn)                                                                                   |
+| 14  | `liquidity_pools`                 |      no       | Pool identity + assets + fee                                                                                                     |
+| 15  | `liquidity_pool_snapshots`        |      yes      | Per-ledger pool state + derived TVL/volume/fees                                                                                  |
+| 16  | `lp_positions`                    |      no       | Current LP shares per (pool, account)                                                                                            |
+| 17  | `account_balances_current`        |      no       | Current balance per (account, asset)                                                                                             |
+| 18  | `account_balance_history`         |      yes      | Balance history per (account, ledger, asset)                                                                                     |
 
 **Bridges to S3:** every time-series table carries `ledger_sequence`.
 Detail lookup path is always `ledger_sequence → parsed_ledger_{N}.json`.
@@ -260,22 +260,22 @@ events (type, topics, raw data), diagnostic events, collapsible raw
 
 **Sources:**
 
-| Field                           | Source                                                                                                                                       |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hash`                          | `transaction_hash_index` → `transactions`                                                                                                    |
-| `status badge`                  | `transactions.successful`                                                                                                                    |
-| `ledger sequence`               | `transactions.ledger_sequence`                                                                                                               |
-| `timestamp`                     | `transactions.created_at` + `ledgers.closed_at`                                                                                              |
-| `fee charged`                   | `transactions.fee_charged` (stroops; XLM = /1e7)                                                                                             |
-| `source account`                | `transactions.source_account`                                                                                                                |
-| `memo (type + content)`         | **S3** `parsed_ledger_{N}.json`.transactions[app_order].memo                                                                                 |
-| `signatures[]`                  | **S3** `parsed_ledger_{N}.json`.transactions[app_order].envelope.signatures                                                                  |
-| Normal mode operations summary  | `operations` (type, destination, asset, pool, transfer_amount) + **S3** for rich text ("sent X to Y")                                        |
-| Normal mode Soroban tree        | `soroban_invocations` (function_name, caller, contract_id) + **S3** for call-tree hierarchy                                                  |
-| Advanced mode raw params        | **S3**                                                                                                                                       |
-| Advanced mode events            | `soroban_events_appearances` (does this tx have contract events? + `amount` display) + **S3** for type, topics, data, event_index (ADR 0033) |
-| Advanced mode diagnostic events | **S3**                                                                                                                                       |
-| Advanced mode XDR               | **S3** (`envelope_xdr`, `result_xdr`, `result_meta_xdr`)                                                                                     |
+| Field                           | Source                                                                                                                                                           |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hash`                          | `transaction_hash_index` → `transactions`                                                                                                                        |
+| `status badge`                  | `transactions.successful`                                                                                                                                        |
+| `ledger sequence`               | `transactions.ledger_sequence`                                                                                                                                   |
+| `timestamp`                     | `transactions.created_at` + `ledgers.closed_at`                                                                                                                  |
+| `fee charged`                   | `transactions.fee_charged` (stroops; XLM = /1e7)                                                                                                                 |
+| `source account`                | `transactions.source_account`                                                                                                                                    |
+| `memo (type + content)`         | **S3** `parsed_ledger_{N}.json`.transactions[app_order].memo                                                                                                     |
+| `signatures[]`                  | **S3** `parsed_ledger_{N}.json`.transactions[app_order].envelope.signatures                                                                                      |
+| Normal mode operations summary  | `operations` (type, destination, asset, pool, transfer_amount) + **S3** for rich text ("sent X to Y")                                                            |
+| Normal mode Soroban tree        | `soroban_invocations_appearances` (does this tx have invocations? + `amount` display) + **Read-time XDR** for per-node detail and call-tree hierarchy (ADR 0034) |
+| Advanced mode raw params        | **S3**                                                                                                                                                           |
+| Advanced mode events            | `soroban_events_appearances` (does this tx have contract events? + `amount` display) + **S3** for type, topics, data, event_index (ADR 0033)                     |
+| Advanced mode diagnostic events | **S3**                                                                                                                                                           |
+| Advanced mode XDR               | **S3** (`envelope_xdr`, `result_xdr`, `result_meta_xdr`)                                                                                                         |
 
 **Hash-lookup resolver (fail-fast per ADR 0016):**
 
@@ -291,7 +291,8 @@ SELECT t.* FROM transactions t
 ```
 
 **Schema headroom:** `has_soroban` flag lets the backend skip
-`soroban_events` + `soroban_invocations` joins for classic-only tx.
+`soroban_events_appearances` + `soroban_invocations_appearances` joins
+for classic-only tx.
 `parse_error` flag lets advanced mode surface parse warnings.
 `inner_tx_hash` signals fee-bump (advanced mode shows outer fee-payer from S3).
 
@@ -569,7 +570,13 @@ Indexes hit: `idx_ops_asset`, `idx_sea_contract_ledger`.
 
 Plus: _Stats — total invocations count, unique callers._
 
-**Sources (DB only):**
+**Sources:** ADR 0034 collapses the invocation-stats side of this endpoint
+to `soroban_invocations_appearances`. Stats are aggregated over per-trio
+rows: `SUM(amount)` replaces `COUNT(*)`, `COUNT(DISTINCT caller_id)` is
+preserved bit-for-bit because the appearance's `caller_id` is the
+root-level caller of the trio — matching the pre-refactor staging filter
+(ADR 0034 §3, §6). Summary-card columns stay on `soroban_contracts`
+(unchanged).
 
 ```sql
 SELECT contract_id, deployer_account, deployed_at_ledger,
@@ -578,13 +585,14 @@ SELECT contract_id, deployer_account, deployed_at_ledger,
  WHERE contract_id = :contract_id;
 
 -- Stats (cacheable)
-SELECT COUNT(*) AS total_invocations,
-       COUNT(DISTINCT caller_account) AS unique_callers
-  FROM soroban_invocations
+SELECT SUM(amount)              AS total_invocations,
+       COUNT(DISTINCT caller_id) AS unique_callers
+  FROM soroban_invocations_appearances
  WHERE contract_id = :contract_id;
 ```
 
-PK lookup on `soroban_contracts.contract_id`. Stats uses `idx_inv_contract`.
+PK lookup on `soroban_contracts.contract_id`. Stats uses
+`idx_sia_contract_ledger`.
 
 **Schema headroom:** `name` available for "Contract name" header.
 `contract_type` (`nft`/`fungible`/`token`/`other`) available for badge
@@ -633,21 +641,37 @@ JSONB` column in a future small migration when WASM parsing lands.
 > Invocations tab — recent invocations table (function name, caller
 > account, status, ledger, timestamp).
 
-**Sources (DB only):**
+**Sources:** ADR 0034 collapses E13's DB side to an appearance index;
+per-node detail (function name, per-node index, success flag, args,
+return value, depth) is materialised at read time from the public
+archive. The appearance row carries `caller_id` as an unindexed payload
+(preserved for the E11 stat), but per-row caller rendering in E13 comes
+from the parser output so that sub-invocation contract-callers — which
+staging filters to NULL in the DB — are visible per tree node.
+
+| Field                                                  | Source                                                                        |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| `ledger_sequence`                                      | `soroban_invocations_appearances.ledger_sequence`                             |
+| `transaction_id` / `transaction_hash`                  | `soroban_invocations_appearances.transaction_id` → `transactions`             |
+| `amount` (invocation tree nodes in this trio)          | `soroban_invocations_appearances.amount`                                      |
+| `function_name`, `caller_account`, `successful`, depth | **Read-time XDR** — `xdr_parser::extract_invocations` filtered by contract_id |
+| `function_args`, `return_value`                        | **Read-time XDR** — same parser call                                          |
 
 ```sql
-SELECT inv.function_name, inv.caller_account, inv.successful,
-       inv.ledger_sequence, t.created_at, t.hash
-  FROM soroban_invocations inv
-  JOIN transactions t
-       ON t.id = inv.transaction_id AND t.created_at = inv.created_at
- WHERE inv.contract_id = :contract_id
- ORDER BY inv.created_at DESC
+SELECT contract_id, transaction_id, ledger_sequence, amount, created_at
+  FROM soroban_invocations_appearances
+ WHERE contract_id = :contract_id
+   AND (ledger_sequence, transaction_id) < (:cursor_ledger, :cursor_tx)
+ ORDER BY ledger_sequence DESC, transaction_id DESC
  LIMIT :limit;
 ```
 
-Hits `idx_inv_contract` (covering). Hash from `transactions` if row
-needs to link to the tx page.
+Hits `idx_sia_contract_ledger`. For each distinct `ledger_sequence` in
+the page, one public-archive `GetObject` + `xdr_parser::extract_invocations`
+decodes every invocation tree the contract participates in for that
+ledger; each appearance row then expands into its `amount` consecutive
+nodes (depth-first, as the parser emits). Request-scope memoisation
+keeps a ledger parsed once per page — shared with E14's read path.
 
 ---
 
@@ -940,7 +964,7 @@ bounded per-type limits.
 | E10 | `GET /tokens/:id/transactions`            |   yes    |                                          no                                          |                                              yes                                              |
 | E11 | `GET /contracts/:contract_id`             |   yes    |                                          no                                          |                                              yes                                              |
 | E12 | `GET /contracts/:contract_id/interface`   |   yes    |                                          no                                          | **requires future `wasm_interface_metadata.abi` column** (non-breaking; tracked as follow-up) |
-| E13 | `GET /contracts/:contract_id/invocations` |   yes    |                                          no                                          |                                              yes                                              |
+| E13 | `GET /contracts/:contract_id/invocations` | partial  |  **yes** (function_name, caller_account, successful, args, return, depth per node)   |                                              yes                                              |
 | E14 | `GET /contracts/:contract_id/events`      | partial  |                           **yes** (topic[1..N], raw data)                            |                                              yes                                              |
 | E15 | `GET /nfts`                               |   yes    |                                          no                                          |                                              yes                                              |
 | E16 | `GET /nfts/:id`                           |   yes    |                                          no                                          |                                              yes                                              |

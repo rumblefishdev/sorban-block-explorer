@@ -128,7 +128,14 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
         counts_first.events_amount_sum, 1,
         "SUM(amount) must equal the ingested non-diagnostic event count (ADR 0033)"
     );
-    assert_eq!(counts_first.invocations, 1, "soroban_invocations row count");
+    assert_eq!(
+        counts_first.invocations, 1,
+        "soroban_invocations_appearances row count — one (contract, tx, ledger) trio"
+    );
+    assert_eq!(
+        counts_first.invocations_amount_sum, 1,
+        "SUM(amount) must equal the ingested invocation tree-node count (ADR 0034)"
+    );
     assert!(counts_first.contracts >= 1, "contracts row count");
     assert_eq!(counts_first.wasm, 1, "wasm_interface_metadata row count");
     assert_eq!(counts_first.tokens, 1, "tokens row count");
@@ -466,7 +473,7 @@ async fn ensure_default_partitions(pool: &PgPool) {
         "operations",
         "transaction_participants",
         "soroban_events_appearances",
-        "soroban_invocations",
+        "soroban_invocations_appearances",
         "nft_ownership",
         "liquidity_pool_snapshots",
         "account_balance_history",
@@ -582,6 +589,7 @@ struct Counts {
     events: i64,
     events_amount_sum: i64,
     invocations: i64,
+    invocations_amount_sum: i64,
     contracts: i64,
     wasm: i64,
     tokens: i64,
@@ -618,9 +626,13 @@ async fn test_counts(pool: &PgPool) -> Counts {
                    FROM soroban_events_appearances ev
                    JOIN transactions tx ON tx.id = ev.transaction_id AND tx.created_at = ev.created_at
                   WHERE tx.hash = decode($3, 'hex')),
-          iv AS (SELECT COUNT(*) AS n FROM soroban_invocations inv
+          iv AS (SELECT COUNT(*) AS n FROM soroban_invocations_appearances inv
                    JOIN transactions tx ON tx.id = inv.transaction_id AND tx.created_at = inv.created_at
                   WHERE tx.hash = decode($3, 'hex')),
+          ivs AS (SELECT COALESCE(SUM(inv.amount), 0)::BIGINT AS n
+                    FROM soroban_invocations_appearances inv
+                    JOIN transactions tx ON tx.id = inv.transaction_id AND tx.created_at = inv.created_at
+                   WHERE tx.hash = decode($3, 'hex')),
           c AS (SELECT COUNT(*) AS n FROM soroban_contracts WHERE contract_id = ANY($4)),
           w AS (SELECT COUNT(*) AS n FROM wasm_interface_metadata WHERE wasm_hash = decode($5, 'hex')),
           -- ADR 0030: tokens/nfts.contract_id is BIGINT → join soroban_contracts
@@ -645,9 +657,9 @@ async fn test_counts(pool: &PgPool) -> Counts {
                    JOIN accounts aa ON aa.id = abh.account_id
                   WHERE aa.account_id = ANY($2) AND abh.ledger_sequence = $1)
         SELECT l.n AS l, a.n AS a, t.n AS t, hi.n AS hi, p.n AS p, o.n AS o,
-               e.n AS e, es.n AS es, iv.n AS iv, c.n AS c, w.n AS w, tk.n AS tk, n.n AS n,
+               e.n AS e, es.n AS es, iv.n AS iv, ivs.n AS ivs, c.n AS c, w.n AS w, tk.n AS tk, n.n AS n,
                no.n AS no, pl.n AS pl, ps.n AS ps, lp.n AS lp, bc.n AS bc, bh.n AS bh
-          FROM l, a, t, hi, p, o, e, es, iv, c, w, tk, n, no, pl, ps, lp, bc, bh
+          FROM l, a, t, hi, p, o, e, es, iv, ivs, c, w, tk, n, no, pl, ps, lp, bc, bh
         "#,
     )
     .bind(ledger)
@@ -674,6 +686,7 @@ async fn test_counts(pool: &PgPool) -> Counts {
         events: row.get("e"),
         events_amount_sum: row.get("es"),
         invocations: row.get("iv"),
+        invocations_amount_sum: row.get("ivs"),
         contracts: row.get("c"),
         wasm: row.get("w"),
         tokens: row.get("tk"),
