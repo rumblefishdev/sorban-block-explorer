@@ -2,7 +2,7 @@
 id: '0159'
 title: 'REFACTOR: drop `account_balance_history` — unused, defer chart feature design'
 type: REFACTOR
-status: active
+status: completed
 related_adr: ['0035']
 related_tasks: ['0157', '0158']
 tags: [schema, write-path, size-reduction, drop-unused]
@@ -21,6 +21,17 @@ history:
       Activated as current task immediately after 0158 closed. ADR 0035
       already drafted as `proposed` alongside the task; will flip to
       `accepted` after implementation + bench comparison.
+  - date: '2026-04-23'
+    status: completed
+    who: fmazur
+    note: >
+      Implementation landed. `balances_ms` mean 38 → 15.47 ms on the
+      task-0158 100-ledger bench sample (−22.5 ms/ledger, exceeds the
+      −10/−20 ms target; median 15, p95 25, min/max 9/31). Total persist
+      mean 200 → 192 ms. All acceptance criteria met; integration test
+      6/6 passing, Rust gate green. ADR 0035 flipped to `accepted` with
+      measured speedup in history; ADR 0027 §18 superseded-by-0035 in
+      body + frontmatter; ADR 0021 row 18 removed.
 ---
 
 # REFACTOR: drop `account_balance_history` — unused, defer chart feature design
@@ -40,17 +51,12 @@ here is to collapse it to a single authoritative table (`current`) and
 reintroduce a historical index if/when the chart feature lands, with a
 design chosen against actual query patterns.
 
-## Status: Active
+## Status: Completed
 
-**Current state:** Activated 2026-04-23 as current task right after
-task 0158 closed. **No code changes yet** — this task doc and ADR 0035
-(`proposed`) were created alongside the 0158 PR as planning artefacts;
-the actual migration / staging / write / domain / test / ADR-0021
-updates happen in the 0159 implementation PR. Work picks up on its own
-branch and PR. Task 0157 and 0158 tied up the soroban_events /
-invocations appearance refactor; this task cleans up the
-account-balances side which was the second-biggest write-time
-contributor per the 0158 benchmark.
+**Current state:** Implementation landed on `refactor/0159_drop-account-balance-history`.
+All acceptance criteria met; ADR 0035 accepted with measured speedup;
+ADR 0027 §18 superseded-by-0035; ADR 0021 cleaned. Bench confirms
+`balances_ms` 38 → 15.47 ms mean per ledger (−22.5, exceeds target).
 
 ## Context
 
@@ -141,18 +147,18 @@ Mirrors 0157/0158 pattern — schema + write-path + tests + ADRs together.
 
 ## Acceptance Criteria
 
-- [ ] `account_balance_history` no longer exists in migrations, code, or
+- [x] `account_balance_history` no longer exists in migrations, code, or
       domain types.
-- [ ] `persist_integration` does not reference balance_history; all its
+- [x] `persist_integration` does not reference balance_history; all its
       existing counts assertions still pass.
-- [ ] `balances_ms` stage drops measurably (target: −10 to −20 ms/ledger
+- [x] `balances_ms` stage drops measurably (target: −10 to −20 ms/ledger
       on the same 100-ledger sample used in task 0158).
-- [ ] `cargo build --workspace`, `cargo test --workspace --lib`,
+- [x] `cargo build --workspace`, `cargo test --workspace --lib`,
       `cargo clippy --workspace --all-targets -- -D warnings`, and
       `cargo fmt --all -- --check` all green.
-- [ ] ADR 0021 no longer references `account_balance_history`.
-- [ ] ADR 0027 §18 carries a superseded-by-0035 marker.
-- [ ] ADR 0035 accepted after implementation with measured speedup noted.
+- [x] ADR 0021 no longer references `account_balance_history`.
+- [x] ADR 0027 §18 carries a superseded-by-0035 marker.
+- [x] ADR 0035 accepted after implementation with measured speedup noted.
 
 ## Notes
 

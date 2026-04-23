@@ -192,7 +192,6 @@ pub(super) struct BalanceRow {
     pub issuer_str_key: Option<String>,
     pub balance: String,
     pub last_updated_ledger: i64,
-    pub created_at: DateTime<Utc>,
 }
 
 pub(super) struct TrustlineRemoval {
@@ -255,7 +254,6 @@ pub(super) struct Staged {
 
     pub balance_rows: Vec<BalanceRow>,
     pub trustline_removals: Vec<TrustlineRemoval>,
-    pub balance_history_rows: Vec<BalanceRow>,
 }
 
 impl Staged {
@@ -836,7 +834,6 @@ impl Staged {
         let mut trustline_removals: Vec<TrustlineRemoval> = Vec::new();
 
         for st in account_states {
-            let created_at = ts_from_unix(st.created_at)?;
             let ledger_seq = i64::from(st.last_seen_ledger);
 
             for b in st.balances.as_array().into_iter().flatten() {
@@ -865,7 +862,6 @@ impl Staged {
                         issuer_str_key: None,
                         balance,
                         last_updated_ledger: ledger_seq,
-                        created_at,
                     }
                 } else {
                     let code = b
@@ -890,7 +886,6 @@ impl Staged {
                         issuer_str_key: Some(issuer),
                         balance,
                         last_updated_ledger: ledger_seq,
-                        created_at,
                     }
                 };
 
@@ -905,7 +900,6 @@ impl Staged {
                         if row.last_updated_ledger >= existing.last_updated_ledger {
                             existing.balance = row.balance;
                             existing.last_updated_ledger = row.last_updated_ledger;
-                            existing.created_at = row.created_at;
                         }
                     }
                     None => {
@@ -942,12 +936,6 @@ impl Staged {
             }
         }
 
-        // History: one row per (account, asset, ledger) — identical to current
-        // state after merging, so we derive it directly from the deduped
-        // balance_rows instead of re-walking account_states.
-        let balance_history_rows: Vec<BalanceRow> =
-            balance_rows.iter().map(clone_balance_row).collect();
-
         Ok(Self {
             ledger_sequence: ledger.sequence,
             ledger_sequence_i64,
@@ -976,20 +964,7 @@ impl Staged {
             nft_ownership_rows,
             balance_rows,
             trustline_removals,
-            balance_history_rows,
         })
-    }
-}
-
-fn clone_balance_row(src: &BalanceRow) -> BalanceRow {
-    BalanceRow {
-        account_str_key: src.account_str_key.clone(),
-        asset_type: src.asset_type,
-        asset_code: src.asset_code.clone(),
-        issuer_str_key: src.issuer_str_key.clone(),
-        balance: src.balance.clone(),
-        last_updated_ledger: src.last_updated_ledger,
-        created_at: src.created_at,
     }
 }
 

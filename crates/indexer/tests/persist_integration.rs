@@ -149,10 +149,6 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
         counts_first.balances_current >= 1,
         "account_balances_current row count"
     );
-    assert!(
-        counts_first.balance_history >= 1,
-        "account_balance_history row count"
-    );
 
     // Parser does not yet produce these today.
     assert_eq!(
@@ -476,7 +472,6 @@ async fn ensure_default_partitions(pool: &PgPool) {
         "soroban_invocations_appearances",
         "nft_ownership",
         "liquidity_pool_snapshots",
-        "account_balance_history",
     ] {
         let default_name = format!("{table}_default");
         let ddl = format!("CREATE TABLE IF NOT EXISTS {default_name} PARTITION OF {table} DEFAULT");
@@ -555,10 +550,6 @@ async fn clean_test_ledger(pool: &PgPool) {
         .bind(vec![SRC_STRKEY.to_string(), DST_STRKEY.to_string(), ISSUER_STRKEY.to_string()])
         .execute(pool)
         .await;
-    let _ = sqlx::query("DELETE FROM account_balance_history WHERE ledger_sequence = $1")
-        .bind(i64::from(TEST_LEDGER_SEQ))
-        .execute(pool)
-        .await;
     let _ = sqlx::query("DELETE FROM soroban_contracts WHERE contract_id IN ($1, $2)")
         .bind(TOKEN_CONTRACT)
         .bind(NFT_CONTRACT)
@@ -599,7 +590,6 @@ struct Counts {
     pool_snapshots: i64,
     lp_positions: i64,
     balances_current: i64,
-    balance_history: i64,
 }
 
 async fn test_counts(pool: &PgPool) -> Counts {
@@ -652,14 +642,11 @@ async fn test_counts(pool: &PgPool) -> Counts {
           lp AS (SELECT COUNT(*) AS n FROM lp_positions WHERE pool_id = decode($6, 'hex')),
           bc AS (SELECT COUNT(*) AS n FROM account_balances_current abc
                    JOIN accounts aa ON aa.id = abc.account_id
-                  WHERE aa.account_id = ANY($2)),
-          bh AS (SELECT COUNT(*) AS n FROM account_balance_history abh
-                   JOIN accounts aa ON aa.id = abh.account_id
-                  WHERE aa.account_id = ANY($2) AND abh.ledger_sequence = $1)
+                  WHERE aa.account_id = ANY($2))
         SELECT l.n AS l, a.n AS a, t.n AS t, hi.n AS hi, p.n AS p, o.n AS o,
                e.n AS e, es.n AS es, iv.n AS iv, ivs.n AS ivs, c.n AS c, w.n AS w, tk.n AS tk, n.n AS n,
-               no.n AS no, pl.n AS pl, ps.n AS ps, lp.n AS lp, bc.n AS bc, bh.n AS bh
-          FROM l, a, t, hi, p, o, e, es, iv, ivs, c, w, tk, n, no, pl, ps, lp, bc, bh
+               no.n AS no, pl.n AS pl, ps.n AS ps, lp.n AS lp, bc.n AS bc
+          FROM l, a, t, hi, p, o, e, es, iv, ivs, c, w, tk, n, no, pl, ps, lp, bc
         "#,
     )
     .bind(ledger)
@@ -696,7 +683,6 @@ async fn test_counts(pool: &PgPool) -> Counts {
         pool_snapshots: row.get("ps"),
         lp_positions: row.get("lp"),
         balances_current: row.get("bc"),
-        balance_history: row.get("bh"),
     }
 }
 

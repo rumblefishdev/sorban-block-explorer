@@ -334,7 +334,6 @@ async fn ensure_local_default_partitions(
         "soroban_invocations_appearances",
         "nft_ownership",
         "liquidity_pool_snapshots",
-        "account_balance_history",
     ];
     for table in TABLES {
         let ddl =
