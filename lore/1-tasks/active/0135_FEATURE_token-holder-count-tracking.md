@@ -25,9 +25,9 @@ history:
 
 ## Summary
 
-The technical design specifies `holder_count` in both the token list table and token detail
-page. The column exists in the schema (`tokens.holder_count INTEGER`) but is never populated
-— it is always NULL. The indexer's `detect_tokens()` does not compute holder counts, and
+The technical design specifies `holder_count` in both the asset list table and asset detail
+page. The column exists in the schema (`assets.holder_count INTEGER`) but is never populated
+— it is always NULL. The indexer's `detect_assets()` does not compute holder counts, and
 there is no ongoing mechanism to update them as trustline/balance changes occur.
 
 ## Context
@@ -47,14 +47,14 @@ to be implemented first, since trustline entries are the source of holder state 
 
 1. During trustline extraction (task 0119), detect when a trustline is created (new holder)
    or removed (lost holder) for a token.
-2. Increment/decrement `tokens.holder_count` atomically:
-   `UPDATE tokens SET holder_count = COALESCE(holder_count, 0) + 1 WHERE ...`
+2. Increment/decrement `assets.holder_count` atomically:
+   `UPDATE assets SET holder_count = COALESCE(holder_count, 0) + 1 WHERE ...`
 3. After historical backfill, run a one-time correction query to set accurate counts.
 
 **Option B — Periodic aggregation:**
 
 1. Scheduled job (EventBridge + Lambda) that runs:
-   `UPDATE tokens SET holder_count = (SELECT COUNT(DISTINCT account_id) FROM ... WHERE ...)`
+   `UPDATE assets SET holder_count = (SELECT COUNT(DISTINCT account_id) FROM ... WHERE ...)`
 2. Simpler but expensive at scale and always slightly stale.
 
 **Option C — Materialized view:**
@@ -64,9 +64,9 @@ to be implemented first, since trustline entries are the source of holder state 
 
 ## Acceptance Criteria
 
-- [ ] `tokens.holder_count` populated for classic assets (trustline-based)
-- [ ] `tokens.holder_count` updated incrementally on trustline create/remove
-- [ ] Holder count visible in `GET /tokens` list and `GET /tokens/:id` detail
+- [ ] `assets.holder_count` populated for classic assets (trustline-based)
+- [ ] `assets.holder_count` updated incrementally on trustline create/remove
+- [ ] Holder count visible in `GET /assets` list and `GET /assets/:id` detail
 - [ ] One-time backfill correction after historical ingestion
 - [ ] Test: token with 3 holders shows holder_count = 3
 - [ ] **Parallel backfill safety**: inline increment/decrement MUST be disabled during

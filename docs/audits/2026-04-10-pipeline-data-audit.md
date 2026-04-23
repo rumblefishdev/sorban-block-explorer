@@ -338,14 +338,14 @@ SELECT balances FROM accounts LIMIT 10;
 **Verify F8 — Token type coverage:**
 
 ```sql
-SELECT asset_type, COUNT(*) FROM tokens GROUP BY asset_type;
+SELECT asset_type, COUNT(*) FROM assets GROUP BY asset_type;
 -- If no 'soroban' type, confirms F8
 ```
 
-**Verify tokens.metadata always NULL:**
+**Verify assets.metadata always NULL:**
 
 ```sql
-SELECT COUNT(*) FROM tokens WHERE metadata IS NOT NULL;
+SELECT COUNT(*) FROM assets WHERE description IS NOT NULL;
 -- Expected: 0
 ```
 
@@ -493,7 +493,7 @@ Six columns are always NULL because they require data from outside the XDR:
 
 | Column                     | Tech Design Ref | What It Needs                | Why Indexer Cannot Do It                          |
 | -------------------------- | --------------- | ---------------------------- | ------------------------------------------------- |
-| `tokens.holder_count`      | L166, L175      | Count of all token holders   | Requires global state aggregation, not per-ledger |
+| `assets.holder_count`      | L166, L175      | Count of all token holders   | Requires global state aggregation, not per-ledger |
 | `tokens.metadata`          | L176            | Name, icon, domain           | Data in external stellar.toml (SEP-1), not in XDR |
 | `liquidity_pools.tvl`      | L223, L409      | Reserves x USD price         | USD prices not on-chain, requires price oracle    |
 | `lp_snapshots.tvl`         | L409            | Time-series TVL              | Same as above                                     |

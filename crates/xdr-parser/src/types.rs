@@ -3,12 +3,14 @@
 //! These types are the contract between the XDR parser and the database persistence layer.
 //! Field names match DB column names (snake_case).
 //!
-//! ADR 0031: enum-like columns (`operations.type`, `soroban_contracts.contract_type`,
-//! `tokens.asset_type`, `nft_ownership.event_type`) are typed via `domain::enums`
-//! enums — the parser emits the typed variant directly, skipping the legacy
+//! ADR 0031: enum-like columns (`operations.type`, `soroban_events.event_type`,
+//! `soroban_contracts.contract_type`, `assets.asset_type`,
+//! `nft_ownership.event_type`) are typed via `domain::enums` enums — the
+//! parser emits the typed variant directly, skipping the legacy
 //! string round-trip through `Debug`/`Display`. ADR 0033 removed
-//! `soroban_events.event_type`; `ExtractedEvent.event_type` is still produced
-//! for in-memory classification (diagnostic filtering + read-time tagging).
+//! `soroban_events.event_type` from the DB column; `ExtractedEvent.event_type`
+//! is still produced for in-memory classification (diagnostic filtering +
+//! read-time tagging).
 
 use domain::{ContractEventType, ContractType, NftEventType, OperationType, TokenAssetType};
 
@@ -282,12 +284,12 @@ pub struct ExtractedLiquidityPoolSnapshot {
     pub fee_revenue: Option<String>,
 }
 
-/// Detected token from contract deployments or classic assets.
+/// Detected asset from contract deployments or classic assets.
 ///
-/// Produced by `detect_tokens`. Maps to `tokens` table.
+/// Produced by `detect_assets`. Maps to `assets` table.
 #[derive(Debug, Clone)]
-pub struct ExtractedToken {
-    /// Token classification (ADR 0031). Maps to `tokens.asset_type SMALLINT`.
+pub struct ExtractedAsset {
+    /// Asset classification (ADR 0031). Maps to `assets.asset_type SMALLINT`.
     pub asset_type: TokenAssetType,
     pub asset_code: Option<String>,
     pub issuer_address: Option<String>,

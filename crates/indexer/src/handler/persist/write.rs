@@ -15,7 +15,7 @@ use sqlx::{Postgres, Transaction};
 
 use super::HandlerError;
 use super::classification_cache::ClassificationCache;
-use super::staging::{BalanceRow, Staged, TokenRow, TxRow, WasmRow};
+use super::staging::{AssetRow, BalanceRow, Staged, TxRow, WasmRow};
 
 const CHUNK_SIZE: usize = 5000;
 
@@ -249,42 +249,42 @@ pub(super) fn populate_cache_from_staged(staged: &Staged, cache: &Classification
 }
 
 // ---------------------------------------------------------------------------
-// Task 0120 — bridge late-WASM reclassification to the `tokens` table.
+// Task 0120 — bridge late-WASM reclassification to the `assets` table.
 // ---------------------------------------------------------------------------
 
-/// Insert a Soroban token row for every `soroban_contracts` row that was
+/// Insert a Soroban asset row for every `soroban_contracts` row that was
 /// promoted to `Fungible` via a WASM upload observed in this ledger,
-/// unless such a tokens row already exists.
+/// unless such an assets row already exists.
 ///
 /// Why this step exists:
 ///
-/// `detect_tokens` only emits rows for contracts whose WASM interface is
+/// `detect_assets` only emits rows for contracts whose WASM interface is
 /// present in the same ledger as the deployment. A two-ledger pattern
 /// (contract deployed in ledger N without WASM → WASM uploaded in
 /// ledger N+k) leaves `soroban_contracts.contract_type` correct after
-/// [`reclassify_contracts_from_wasm`], but no tokens row ever gets
+/// [`reclassify_contracts_from_wasm`], but no assets row ever gets
 /// created — the deployment row has already been persisted and no longer
-/// passes through `detect_tokens`. This step closes that gap by consulting
+/// passes through `detect_assets`. This step closes that gap by consulting
 /// the DB after reclassification.
 ///
 /// Semantics:
 ///
 /// * Runs inside the persist tx, after both
-///   [`reclassify_contracts_from_wasm`] and [`upsert_tokens`] have
+///   [`reclassify_contracts_from_wasm`] and [`upsert_assets`] have
 ///   executed earlier in the same transaction. That ordering guarantees
 ///   (a) `soroban_contracts.contract_type` is authoritative, and (b)
-///   any row this ledger's `detect_tokens` already produced is present
+///   any row this ledger's `detect_assets` already produced is present
 ///   and won't be duplicated.
 /// * Idempotent on replay via `NOT EXISTS` + `ON CONFLICT DO NOTHING`.
-/// * Only acts on `Fungible` classifications (tokens side). `Nft` and
+/// * Only acts on `Fungible` classifications (assets side). `Nft` and
 ///   `Other` are no-ops here — NFTs live in the `nfts` table and `Other`
-///   carries no token identity.
-pub(super) async fn insert_tokens_from_reclassified_contracts(
+///   carries no asset identity.
+pub(super) async fn insert_assets_from_reclassified_contracts(
     db_tx: &mut Transaction<'_, Postgres>,
     staged: &Staged,
 ) -> Result<(), HandlerError> {
     // Collect only the Fungible wasm_hashes observed this ledger. NFT and
-    // Other verdicts are not token candidates.
+    // Other verdicts are not asset candidates.
     let fungible_hashes: Vec<Vec<u8>> = staged
         .wasm_classification
         .iter()
@@ -298,15 +298,15 @@ pub(super) async fn insert_tokens_from_reclassified_contracts(
 
     sqlx::query(
         r#"
-        INSERT INTO tokens (asset_type, contract_id)
+        INSERT INTO assets (asset_type, contract_id)
         SELECT $1::SMALLINT, sc.id
           FROM soroban_contracts sc
          WHERE sc.wasm_hash = ANY($2::BYTEA[])
            AND sc.contract_type = $3::SMALLINT
            AND NOT EXISTS (
-                 SELECT 1 FROM tokens t
-                  WHERE t.contract_id = sc.id
-                    AND t.asset_type IN (2, 3)  -- sac, soroban
+                 SELECT 1 FROM assets a
+                  WHERE a.contract_id = sc.id
+                    AND a.asset_type IN (2, 3)  -- sac, soroban
                )
         ON CONFLICT (contract_id)
           WHERE asset_type IN (2, 3)
@@ -334,7 +334,7 @@ pub(super) async fn insert_tokens_from_reclassified_contracts(
 ///      `ON CONFLICT DO UPDATE` rewrites no-op columns so `RETURNING` fires
 ///      on both insert and replay paths.
 ///   2. Referenced-only contract StrKeys from ops/events/invocations/
-///      tokens/nfts that weren't deployed this ledger. Bare-row upsert with
+///      assets/nfts that weren't deployed this ledger. Bare-row upsert with
 ///      the same no-op `DO UPDATE` trick so `RETURNING` populates the map.
 pub(super) async fn upsert_contracts_returning_id(
     db_tx: &mut Transaction<'_, Postgres>,
@@ -426,7 +426,7 @@ pub(super) async fn upsert_contracts_returning_id(
     for row in &staged.inv_rows {
         consider(row.contract_id.as_ref());
     }
-    for row in &staged.token_rows {
+    for row in &staged.asset_rows {
         consider(row.contract_id.as_ref());
     }
     for row in &staged.nft_rows {
@@ -995,67 +995,67 @@ pub(super) async fn insert_invocations(
 }
 
 // ---------------------------------------------------------------------------
-// 11. tokens — upsert honouring ck_tokens_identity
+// 11. assets — upsert honouring ck_assets_identity
 // ---------------------------------------------------------------------------
 
-pub(super) async fn upsert_tokens(
+pub(super) async fn upsert_assets(
     db_tx: &mut Transaction<'_, Postgres>,
     staged: &Staged,
     account_ids: &HashMap<String, i64>,
     contract_ids: &HashMap<String, i64>,
 ) -> Result<(), HandlerError> {
-    if staged.token_rows.is_empty() {
+    if staged.asset_rows.is_empty() {
         return Ok(());
     }
     // Separate paths per identity class — each has its own partial UNIQUE.
-    let mut native: Vec<&TokenRow> = Vec::new();
-    let mut classic: Vec<&TokenRow> = Vec::new();
-    let mut sac: Vec<&TokenRow> = Vec::new();
-    let mut soroban: Vec<&TokenRow> = Vec::new();
+    let mut native: Vec<&AssetRow> = Vec::new();
+    let mut classic_credit: Vec<&AssetRow> = Vec::new();
+    let mut sac: Vec<&AssetRow> = Vec::new();
+    let mut soroban: Vec<&AssetRow> = Vec::new();
 
-    for t in &staged.token_rows {
+    for t in &staged.asset_rows {
         match t.asset_type {
             TokenAssetType::Native => native.push(t),
-            TokenAssetType::Classic => classic.push(t),
+            TokenAssetType::ClassicCredit => classic_credit.push(t),
             TokenAssetType::Sac => sac.push(t),
             TokenAssetType::Soroban => soroban.push(t),
         }
     }
 
-    upsert_tokens_native(db_tx, &native).await?;
-    upsert_tokens_classic_like(
+    upsert_assets_native(db_tx, &native).await?;
+    upsert_assets_classic_like(
         db_tx,
-        &classic,
-        TokenAssetType::Classic,
+        &classic_credit,
+        TokenAssetType::ClassicCredit,
         account_ids,
         contract_ids,
     )
     .await?;
-    upsert_tokens_classic_like(db_tx, &sac, TokenAssetType::Sac, account_ids, contract_ids).await?;
-    upsert_tokens_soroban(db_tx, &soroban, contract_ids).await?;
+    upsert_assets_classic_like(db_tx, &sac, TokenAssetType::Sac, account_ids, contract_ids).await?;
+    upsert_assets_soroban(db_tx, &soroban, contract_ids).await?;
 
     Ok(())
 }
 
-async fn upsert_tokens_native(
+async fn upsert_assets_native(
     db_tx: &mut Transaction<'_, Postgres>,
-    rows: &[&TokenRow],
+    rows: &[&AssetRow],
 ) -> Result<(), HandlerError> {
     if rows.is_empty() {
         return Ok(());
     }
-    // Only one native token can exist (uidx_tokens_native). De-dup here so the
+    // Only one native asset can exist (uidx_assets_native). De-dup here so the
     // INSERT binds exactly one row.
     let (name, total_supply, holder_count) = rows
         .first()
         .map(|t| (t.name.clone(), t.total_supply.clone(), t.holder_count))
         .unwrap_or((None, None, None));
-    // ADR 0031: tokens.asset_type is SMALLINT — bind the enum, don't inline a literal.
+    // ADR 0031: assets.asset_type is SMALLINT — bind the enum, don't inline a literal.
     sqlx::query(
         r#"
-        INSERT INTO tokens (asset_type, name, total_supply, holder_count)
+        INSERT INTO assets (asset_type, name, total_supply, holder_count)
         SELECT $1, $2, CASE WHEN $3 IS NULL THEN NULL ELSE $3::NUMERIC(28,7) END, $4
-        WHERE NOT EXISTS (SELECT 1 FROM tokens WHERE asset_type = $1)
+        WHERE NOT EXISTS (SELECT 1 FROM assets WHERE asset_type = $1)
         "#,
     )
     .bind(TokenAssetType::Native)
@@ -1067,16 +1067,19 @@ async fn upsert_tokens_native(
     Ok(())
 }
 
-async fn upsert_tokens_classic_like(
+async fn upsert_assets_classic_like(
     db_tx: &mut Transaction<'_, Postgres>,
-    rows: &[&TokenRow],
+    rows: &[&AssetRow],
     asset_type: TokenAssetType,
     account_ids: &HashMap<String, i64>,
     contract_ids: &HashMap<String, i64>,
 ) -> Result<(), HandlerError> {
     debug_assert!(
-        matches!(asset_type, TokenAssetType::Classic | TokenAssetType::Sac),
-        "upsert_tokens_classic_like only handles classic/sac; got {asset_type:?}"
+        matches!(
+            asset_type,
+            TokenAssetType::ClassicCredit | TokenAssetType::Sac
+        ),
+        "upsert_assets_classic_like only handles classic_credit/sac; got {asset_type:?}"
     );
     if rows.is_empty() {
         return Ok(());
@@ -1096,13 +1099,13 @@ async fn upsert_tokens_classic_like(
             let Some(issuer_key) = r.issuer_str_key.as_ref() else {
                 continue;
             };
-            let issuer_id = resolve_id(account_ids, issuer_key, "token.issuer")?;
+            let issuer_id = resolve_id(account_ids, issuer_key, "asset.issuer")?;
             codes.push(code.clone());
             issuers.push(issuer_id);
             contracts.push(resolve_contract_opt_id(
                 contract_ids,
                 r.contract_id.as_deref(),
-                "token.contract",
+                "asset.contract",
             )?);
             names.push(r.name.clone());
             supplies.push(r.total_supply.clone());
@@ -1113,22 +1116,22 @@ async fn upsert_tokens_classic_like(
         }
 
         // ADR 0031: bind asset_type as SMALLINT enum; partial UNIQUE index on
-        // `tokens (asset_code, issuer_id) WHERE asset_type IN (1, 2)` (classic, sac)
+        // `assets (asset_code, issuer_id) WHERE asset_type IN (1, 2)` (classic_credit, sac)
         // matches numeric ordinals — see migration 0005.
         sqlx::query(
             r#"
-            INSERT INTO tokens (asset_type, asset_code, issuer_id, contract_id, name, total_supply, holder_count)
+            INSERT INTO assets (asset_type, asset_code, issuer_id, contract_id, name, total_supply, holder_count)
             SELECT $1, code, issuer_id, contract_id, name,
                    CASE WHEN supply IS NULL THEN NULL ELSE supply::NUMERIC(28,7) END, holder_count
               FROM UNNEST($2::VARCHAR[], $3::BIGINT[], $4::BIGINT[], $5::VARCHAR[], $6::TEXT[], $7::INTEGER[])
                 AS t(code, issuer_id, contract_id, name, supply, holder_count)
             ON CONFLICT (asset_code, issuer_id)
-              WHERE asset_type IN (1, 2)  -- classic, sac
+              WHERE asset_type IN (1, 2)  -- classic_credit, sac
               DO UPDATE SET
-                contract_id = COALESCE(EXCLUDED.contract_id, tokens.contract_id),
-                name = COALESCE(EXCLUDED.name, tokens.name),
-                total_supply = COALESCE(EXCLUDED.total_supply, tokens.total_supply),
-                holder_count = COALESCE(EXCLUDED.holder_count, tokens.holder_count)
+                contract_id = COALESCE(EXCLUDED.contract_id, assets.contract_id),
+                name = COALESCE(EXCLUDED.name, assets.name),
+                total_supply = COALESCE(EXCLUDED.total_supply, assets.total_supply),
+                holder_count = COALESCE(EXCLUDED.holder_count, assets.holder_count)
             "#,
         )
         .bind(asset_type)
@@ -1144,9 +1147,9 @@ async fn upsert_tokens_classic_like(
     Ok(())
 }
 
-async fn upsert_tokens_soroban(
+async fn upsert_assets_soroban(
     db_tx: &mut Transaction<'_, Postgres>,
-    rows: &[&TokenRow],
+    rows: &[&AssetRow],
     contract_ids: &HashMap<String, i64>,
 ) -> Result<(), HandlerError> {
     if rows.is_empty() {
@@ -1165,7 +1168,7 @@ async fn upsert_tokens_soroban(
             contracts.push(resolve_contract_id(
                 contract_ids,
                 cid,
-                "token.soroban.contract",
+                "asset.soroban.contract",
             )?);
             names.push(r.name.clone());
             supplies.push(r.total_supply.clone());
@@ -1174,10 +1177,10 @@ async fn upsert_tokens_soroban(
         if contracts.is_empty() {
             continue;
         }
-        // ADR 0031: partial UNIQUE on `tokens (contract_id) WHERE asset_type IN (2, 3)` (sac, soroban).
+        // ADR 0031: partial UNIQUE on `assets (contract_id) WHERE asset_type IN (2, 3)` (sac, soroban).
         sqlx::query(
             r#"
-            INSERT INTO tokens (asset_type, contract_id, name, total_supply, holder_count)
+            INSERT INTO assets (asset_type, contract_id, name, total_supply, holder_count)
             SELECT $1, contract_id, name,
                    CASE WHEN supply IS NULL THEN NULL ELSE supply::NUMERIC(28,7) END, holder_count
               FROM UNNEST($2::BIGINT[], $3::TEXT[], $4::TEXT[], $5::INTEGER[])
@@ -1185,9 +1188,9 @@ async fn upsert_tokens_soroban(
             ON CONFLICT (contract_id)
               WHERE asset_type IN (2, 3)  -- sac, soroban
               DO UPDATE SET
-                name = COALESCE(EXCLUDED.name, tokens.name),
-                total_supply = COALESCE(EXCLUDED.total_supply, tokens.total_supply),
-                holder_count = COALESCE(EXCLUDED.holder_count, tokens.holder_count)
+                name = COALESCE(EXCLUDED.name, assets.name),
+                total_supply = COALESCE(EXCLUDED.total_supply, assets.total_supply),
+                holder_count = COALESCE(EXCLUDED.holder_count, assets.holder_count)
             "#,
         )
         .bind(TokenAssetType::Soroban)

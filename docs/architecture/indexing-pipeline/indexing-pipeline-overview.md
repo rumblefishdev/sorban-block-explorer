@@ -52,7 +52,7 @@ Its role is to:
 - stream or backfill canonical ledger data into the system
 - parse `LedgerCloseMeta` payloads into structured explorer records
 - persist those records into RDS PostgreSQL
-- derive higher-level explorer entities such as contracts, accounts, tokens, NFTs, and
+- derive higher-level explorer entities such as contracts, accounts, assets, NFTs, and
   liquidity pools from canonical ledger artifacts
 - make all normal backend and frontend reads depend on the explorer's own database rather
   than on external APIs
@@ -158,7 +158,7 @@ For each arriving ledger artifact, the current pipeline model is:
 7. extract CAP-67 contract events
 8. extract contract deployments from `LedgerEntryChanges`
 9. extract account state snapshots from `LedgerEntryChanges`
-10. detect token contracts, NFT contracts, and liquidity pools from deployment/event-derived patterns
+10. detect SEP-41 token contracts (→ `assets`), NFT contracts, and liquidity pools from deployment/event-derived patterns
 11. write all resulting records to RDS PostgreSQL
 
 ### 5.3 Write Target
@@ -169,7 +169,7 @@ That write includes both:
 
 - low-level structured explorer records such as ledgers, transactions, operations,
   invocations, and events
-- derived explorer-facing state such as accounts, tokens, NFTs, and liquidity pools
+- derived explorer-facing state such as accounts, assets, NFTs, and liquidity pools
 
 The API layer reads only from this persisted result, not from live ingestion memory or raw
 S3 objects.

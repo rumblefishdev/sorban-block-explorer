@@ -37,16 +37,16 @@ pub use nft::detect_nft_events;
 pub use operation::extract_operations;
 pub use scval::scval_to_typed_json;
 pub use state::{
-    detect_nfts, detect_tokens, extract_account_states, extract_contract_deployments,
+    detect_assets, detect_nfts, extract_account_states, extract_contract_deployments,
     extract_liquidity_pools,
 };
 pub use transaction::extract_transactions;
 pub use types::{
-    ContractFunction, ExtractedAccountState, ExtractedContractDeployment,
+    ContractFunction, ExtractedAccountState, ExtractedAsset, ExtractedContractDeployment,
     ExtractedContractInterface, ExtractedEvent, ExtractedInvocation, ExtractedLedger,
     ExtractedLedgerEntryChange, ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot,
-    ExtractedLpPosition, ExtractedNft, ExtractedNftEvent, ExtractedOperation, ExtractedToken,
-    ExtractedTransaction, NftEvent,
+    ExtractedLpPosition, ExtractedNft, ExtractedNftEvent, ExtractedOperation, ExtractedTransaction,
+    NftEvent,
 };
 
 use stellar_xdr::curr::{LedgerCloseMetaBatch, ReadXdr};

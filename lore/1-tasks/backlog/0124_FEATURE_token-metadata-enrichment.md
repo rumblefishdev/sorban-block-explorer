@@ -13,15 +13,15 @@ history:
   - date: '2026-04-10'
     status: backlog
     who: stkrolikiewicz
-    note: 'Spawned from pipeline audit — tokens.metadata column exists but is hardcoded to None. No plan to populate it.'
+    note: 'Spawned from pipeline audit — assets.metadata column exists but is hardcoded to None. No plan to populate it.'
 ---
 
 # Indexer: token metadata enrichment pipeline
 
 ## Summary
 
-The `tokens.metadata` JSONB column exists in the schema but `convert.rs:167` hardcodes it
-to `None`. The `ExtractedToken` struct has no `metadata` field. No task in backlog, active,
+The `assets.metadata` JSONB column exists in the schema but `convert.rs:167` hardcodes it
+to `None`. The `ExtractedAsset` struct has no `metadata` field. No task in backlog, active,
 or archive addresses populating this column.
 
 ## Context
@@ -40,18 +40,18 @@ during ledger processing would add network latency and failure modes to the crit
 ingestion path.
 
 1. **Enrichment Worker Lambda** (new): dedicated Lambda triggered by EventBridge cron
-   (daily). Scans tokens with `metadata IS NULL`, fetches SEP-1 TOML from issuer's
+   (daily). Scans assets with `metadata IS NULL`, fetches SEP-1 TOML from issuer's
    `home_domain` (if set in accounts table) to extract currency metadata.
 2. For Soroban tokens: extract metadata from contract interface (name, symbol, decimals
    already available from WASM spec in `wasm_interface_metadata`).
-3. Store in `tokens.metadata` JSONB: `{"description": "...", "icon": "...", "domain": "..."}`.
+3. Store in `assets.metadata` JSONB: `{"description": "...", "icon": "...", "domain": "..."}`.
 4. **Infrastructure**: EventBridge rule (daily cron) + Lambda ARM64 256MB + IAM role with
    RDS access. Estimated cost: <$1/mo.
 
 ## Acceptance Criteria
 
-- [ ] `tokens.metadata` populated for classic assets with available SEP-1 TOML data
-- [ ] `tokens.metadata` populated for Soroban tokens with contract-level metadata
+- [ ] `assets.metadata` populated for classic assets with available SEP-1 TOML data
+- [ ] `assets.metadata` populated for Soroban tokens with contract-level metadata
 - [ ] Graceful handling of missing/unavailable metadata (remains NULL)
 - [ ] API returns metadata in token detail response
 - [ ] **Scheduled Enrichment Worker Lambda deployed** with EventBridge daily cron trigger

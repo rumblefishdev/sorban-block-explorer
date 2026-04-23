@@ -83,7 +83,7 @@ non-browser consumers.
                                                       │  ├─ Transactions ────┤
                                                       │  ├─ Ledgers ─────────┤
                                                       │  ├─ Accounts ────────┤
-                                                      │  ├─ Tokens ──────────┤
+                                                      │  ├─ Assets ──────────┤
                                                       │  ├─ Contracts ───────┤
                                                       │  ├─ NFTs ────────────┤
                                                       │  ├─ Liquidity Pools ─┤
@@ -175,7 +175,7 @@ surface.
 - `Transactions` - list and detail queries, filter handling, advanced/raw payload support
 - `Ledgers` - ledger list/detail access and linked transaction retrieval
 - `Accounts` - account summary, balances, and account-related transaction history
-- `Tokens` - classic asset and Soroban token listing and detail retrieval
+- `Assets` - classic and Soroban-native asset listing and detail retrieval
 - `Contracts` - contract metadata, interface, invocations, and events
 - `NFTs` - NFT list/detail retrieval and transfer history access
 - `Liquidity Pools` - pool listing, detail, transaction history, and chart data
@@ -208,11 +208,11 @@ These are backend concerns even when their outputs are consumed by frontend page
 | Transactions    | `GET /transactions`, `GET /transactions/:hash`                                                                                                          |
 | Ledgers         | `GET /ledgers`, `GET /ledgers/:sequence`                                                                                                                |
 | Accounts        | `GET /accounts/:account_id`, `GET /accounts/:account_id/transactions`                                                                                   |
-| Tokens          | `GET /tokens`, `GET /tokens/:id`, `GET /tokens/:id/transactions`                                                                                        |
+| Assets          | `GET /assets`, `GET /assets/:id`, `GET /assets/:id/transactions`                                                                                        |
 | Contracts       | `GET /contracts/:contract_id`, `GET /contracts/:contract_id/interface`, `GET /contracts/:contract_id/invocations`, `GET /contracts/:contract_id/events` |
 | NFTs            | `GET /nfts`, `GET /nfts/:id`, `GET /nfts/:id/transfers`                                                                                                 |
 | Liquidity Pools | `GET /liquidity-pools`, `GET /liquidity-pools/:id`, `GET /liquidity-pools/:id/transactions`, `GET /liquidity-pools/:id/chart`                           |
-| Search          | `GET /search?q=&type=transaction,contract,token,account,nft,pool`                                                                                       |
+| Search          | `GET /search?q=&type=transaction,contract,asset,account,nft,pool`                                                                                       |
 
 ### 6.3 Resource Details
 
@@ -287,18 +287,18 @@ The current account scope is intentionally limited to:
 This keeps account support aligned with the currently documented product scope and avoids
 expanding the backend contract beyond what the frontend is expected to show.
 
-#### Tokens
+#### Assets
 
-**`GET /tokens`** - Paginated list of tokens (classic assets + Soroban token contracts).
-Query params: `limit`, `cursor`, `filter[type]` (classic/sac/soroban), `filter[code]`.
+**`GET /assets`** - Paginated list of assets (native XLM, classic credit assets, SACs, and Soroban-native assets).
+Query params: `limit`, `cursor`, `filter[type]` (native/classic_credit/sac/soroban), `filter[code]`.
 
-**`GET /tokens/:id`** - Token detail: asset code, issuer/contract, type, supply, holder
+**`GET /assets/:id`** - Asset detail: asset code, issuer/contract, type, supply, holder
 count, metadata.
 
-**`GET /tokens/:id/transactions`** - Paginated transactions involving this token.
+**`GET /assets/:id/transactions`** - Paginated transactions involving this asset.
 
-The backend must preserve the distinction between classic assets and contract-based tokens
-while still serving both through a unified explorer API.
+The backend must preserve the distinction between native, classic credit, SAC, and
+Soroban-native assets while still serving all through a unified explorer API.
 
 #### Contracts
 
@@ -345,7 +345,7 @@ backend should keep raw pool state and chart-series generation concerns clearly 
 
 #### Search
 
-**`GET /search?q=&type=transaction,contract,token,account,nft,pool`** - Generic search
+**`GET /search?q=&type=transaction,contract,asset,account,nft,pool`** - Generic search
 across all entity types. Uses prefix/exact matching on hashes, account IDs, contract IDs,
 asset codes, pool IDs, and NFT identifiers. Full-text search on metadata via
 `tsvector`/`tsquery` and GIN indexes where entity metadata is indexed.

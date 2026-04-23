@@ -62,12 +62,12 @@ CREATE FUNCTION asset_type_name(ty SMALLINT) RETURNS TEXT
     END
 $$;
 
--- tokens.asset_type — explorer-synthetic Rust `domain::TokenAssetType` (4 variants).
+-- assets.asset_type — explorer-synthetic Rust `domain::TokenAssetType` (4 variants).
 CREATE FUNCTION token_asset_type_name(ty SMALLINT) RETURNS TEXT
     IMMUTABLE PARALLEL SAFE LANGUAGE SQL AS $$
     SELECT CASE ty
         WHEN 0 THEN 'native'
-        WHEN 1 THEN 'classic'
+        WHEN 1 THEN 'classic_credit'
         WHEN 2 THEN 'sac'
         WHEN 3 THEN 'soroban'
     END

@@ -77,7 +77,7 @@ of truth.
 |  8  | `wasm_interface_metadata`         |      no       | WASM ABI keyed by natural `wasm_hash`                                                                                            |
 |  9  | `soroban_events`                  |      yes      | Events; carries transfer_from/to/amount for fungible/NFT transfer events                                                         |
 | 10  | `soroban_invocations_appearances` |      yes      | Contract invocation appearance index (ADR 0034): (contract, tx, ledger, caller_id, amount); per-node detail at read time via XDR |
-| 11  | `tokens`                          |      no       | Canonical token registry (classic / SAC / Soroban)                                                                               |
+| 11  | `assets`                          |      no       | Canonical asset registry (classic_credit / SAC / Soroban / native)                                                               |
 | 12  | `nfts`                            |      no       | NFT identity + current owner                                                                                                     |
 | 13  | `nft_ownership`                   |      yes      | NFT ownership history (mint / transfer / burn)                                                                                   |
 | 14  | `liquidity_pools`                 |      no       | Pool identity + assets + fee                                                                                                     |
@@ -445,19 +445,19 @@ resolver documented in ADR 0020 §Role reconstruction (4 roles from DB,
 
 | Field                  | Source                                                                                                        |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `asset_code`           | `tokens.asset_code`                                                                                           |
-| `issuer / contract ID` | `tokens.issuer_address` or `tokens.contract_id`                                                               |
-| `type`                 | `tokens.asset_type` (native/classic/sac/soroban)                                                              |
+| `asset_code`           | `assets.asset_code`                                                                                           |
+| `issuer / contract ID` | `assets.issuer_address` or `assets.contract_id`                                                               |
+| `type`                 | `assets.asset_type` (native/classic_credit/sac/soroban)                                                       |
 | `total_supply`         | **computed** — `SUM(balance) FROM account_balances_current WHERE asset matches`                               |
 | `holder_count`         | **computed** — `COUNT(DISTINCT account_id) FROM account_balances_current WHERE asset matches AND balance > 0` |
 
-Filter `filter[type]` uses `idx_tokens_type`.
-Filter `filter[code]` uses `idx_tokens_code_trgm` (trigram substring).
+Filter `filter[type]` uses `idx_assets_type`.
+Filter `filter[code]` uses `idx_assets_code_trgm` (trigram substring).
 
 ```sql
 SELECT t.id, t.asset_type, t.asset_code, t.issuer_address,
        t.contract_id, t.name
-  FROM tokens t
+  FROM assets t
  WHERE (:type IS NULL OR t.asset_type = :type)
    AND (:code IS NULL OR t.asset_code ILIKE '%' || :code || '%')
  ORDER BY t.id DESC
@@ -475,8 +475,8 @@ Holder-count / supply are hot, denormalizable later if the aggregate
 cost is high (not addressed by this ADR — see ADR 0135 task for holder
 count tracking if promoted).
 
-**Schema headroom:** `tokens.search_vector` (GIN) supports full-text
-token name search. `tokens.decimals` supports formatted-amount display.
+**Schema headroom:** `assets.search_vector` (GIN) supports full-text
+token name search. `assets.decimals` supports formatted-amount display.
 
 ---
 
@@ -496,14 +496,14 @@ token name search. `tokens.decimals` supports formatted-amount display.
 
 | Field                                         | Source                                                                      |
 | --------------------------------------------- | --------------------------------------------------------------------------- |
-| `asset_code`, `issuer`, `contract_id`, `type` | `tokens`                                                                    |
+| `asset_code`, `issuer`, `contract_id`, `type` | `assets`                                                                    |
 | `total_supply`, `holder_count`                | see E8 (computed from `account_balances_current`)                           |
-| `deployed at ledger` (Soroban only)           | `soroban_contracts.deployed_at_ledger` via `tokens.contract_id`             |
-| `name`                                        | `tokens.name`                                                               |
+| `deployed at ledger` (Soroban only)           | `soroban_contracts.deployed_at_ledger` via `assets.contract_id`             |
+| `name`                                        | `assets.name`                                                               |
 | `description`, `icon`, `home page`            | **S3** from `parsed_ledger_{metadata_ledger}.json` (stellar asset metadata) |
-| `home domain` (classic)                       | `accounts.home_domain` via `tokens.issuer_address`                          |
+| `home domain` (classic)                       | `accounts.home_domain` via `assets.issuer_address`                          |
 
-**Schema headroom:** `tokens.metadata_ledger` pinpoints the S3 file that
+**Schema headroom:** `assets.metadata_ledger` pinpoints the S3 file that
 carries full metadata. No extra indexes needed.
 
 ---
@@ -938,7 +938,7 @@ materialized. Monthly partitioning keeps long-range scans cheap.
 | Starts with `G` (56 chars) | `accounts` (exact or prefix)      | `idx_accounts_prefix` (text_pattern_ops)    |
 | Starts with `C` (56 chars) | `soroban_contracts`               | `idx_contracts_prefix`                      |
 | Pool ID prefix             | `liquidity_pools`                 | `idx_pools_prefix`                          |
-| Short asset code           | `tokens` full-text + trigram      | `idx_tokens_search`, `idx_tokens_code_trgm` |
+| Short asset code           | `assets` full-text + trigram      | `idx_assets_search`, `idx_assets_code_trgm` |
 | Contract name              | `soroban_contracts.search_vector` | `idx_contracts_search` (GIN)                |
 | NFT name / collection      | `nfts` trigram / collection       | `idx_nfts_name_trgm`, `idx_nfts_collection` |
 
@@ -1020,7 +1020,7 @@ Every displayed element in frontend-overview.md §6 is mapped:
 
 2. **Token `supply` / `holder_count`** (E8, E9) — currently computed
    via aggregate over `account_balances_current`. At mainnet scale
-   this will likely require denormalized counters on `tokens`. Task
+   this will likely require denormalized counters on `assets`. Task
    0135 (FEATURE_token-holder-count-tracking) handles this out of
    band.
 
@@ -1052,7 +1052,7 @@ reference surface for the pre-GA build. Verified via:
 - No silent gaps surfaced by this walk.
 
 Further schema changes are expected to be additive (e.g. `abi JSONB`
-on `wasm_interface_metadata`, denormalized counters on `tokens`) and
+on `wasm_interface_metadata`, denormalized counters on `assets`) and
 do not invalidate the structure documented here.
 
 ---

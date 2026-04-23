@@ -1,22 +1,22 @@
--- ADR 0027 + ADR 0030 + ADR 0031 — initial schema, step 5/7: tokens and NFTs
--- Tokens carry typed SEP-1 metadata columns (ADR 0023).
+-- ADR 0027 + ADR 0030 + ADR 0031 + ADR 0036 — initial schema, step 5/7: assets and NFTs
+-- Assets carry typed SEP-1 metadata columns (ADR 0023).
 -- NFTs get a surrogate SERIAL PK; identity is still (contract_id, token_id)
 -- where contract_id is the BIGINT FK into soroban_contracts.id (ADR 0030).
 -- nft_ownership is partitioned and cascades from transactions.
 --
 -- Tables:
---   11. tokens          (unpartitioned registry)
+--   11. assets          (unpartitioned registry)
 --   12. nfts            (unpartitioned)
 --   13. nft_ownership   (partitioned history)
 
--- 11. tokens (ADR 0027 §11 + ADR 0031)
+-- 11. assets (ADR 0027 §11 + ADR 0031 + ADR 0036)
 -- `asset_type` SMALLINT is the Rust `TokenAssetType` enum
--- (0=native, 1=classic, 2=sac, 3=soroban — label helper: token_asset_type_name).
--- Identity is enforced by ck_tokens_identity (which columns must be NOT NULL
+-- (0=native, 1=classic_credit, 2=sac, 3=soroban — label helper: token_asset_type_name).
+-- Identity is enforced by ck_assets_identity (which columns must be NOT NULL
 -- for each asset_type) plus per-asset_type partial UNIQUE indexes. The CHECK
 -- closes the NULL-in-UNIQUE loophole — PostgreSQL treats NULLs as distinct,
--- so without it the partial uniques would admit duplicate logical tokens.
-CREATE TABLE tokens (
+-- so without it the partial uniques would admit duplicate logical assets.
+CREATE TABLE assets (
     id              SERIAL        PRIMARY KEY,
     asset_type      SMALLINT      NOT NULL, -- ADR 0031: TokenAssetType
     asset_code      VARCHAR(12),
@@ -28,11 +28,11 @@ CREATE TABLE tokens (
     description     TEXT,
     icon_url        VARCHAR(1024),
     home_page       VARCHAR(256),
-    CONSTRAINT ck_tokens_asset_type_range CHECK (asset_type BETWEEN 0 AND 15),
-    CONSTRAINT ck_tokens_identity CHECK (
+    CONSTRAINT ck_assets_asset_type_range CHECK (asset_type BETWEEN 0 AND 15),
+    CONSTRAINT ck_assets_identity CHECK (
         (asset_type = 0  -- native
             AND asset_code IS NULL     AND issuer_id IS NULL     AND contract_id IS NULL)
-     OR (asset_type = 1  -- classic
+     OR (asset_type = 1  -- classic_credit
             AND asset_code IS NOT NULL AND issuer_id IS NOT NULL AND contract_id IS NULL)
      OR (asset_type = 2  -- sac
             AND asset_code IS NOT NULL AND issuer_id IS NOT NULL AND contract_id IS NOT NULL)
@@ -40,14 +40,14 @@ CREATE TABLE tokens (
             AND issuer_id IS NULL      AND contract_id IS NOT NULL)
     )
 );
-CREATE UNIQUE INDEX uidx_tokens_native        ON tokens ((asset_type))
+CREATE UNIQUE INDEX uidx_assets_native        ON assets ((asset_type))
     WHERE asset_type = 0;              -- native
-CREATE UNIQUE INDEX uidx_tokens_classic_asset ON tokens (asset_code, issuer_id)
-    WHERE asset_type IN (1, 2);        -- classic, sac
-CREATE UNIQUE INDEX uidx_tokens_soroban       ON tokens (contract_id)
+CREATE UNIQUE INDEX uidx_assets_classic_asset ON assets (asset_code, issuer_id)
+    WHERE asset_type IN (1, 2);        -- classic_credit, sac
+CREATE UNIQUE INDEX uidx_assets_soroban       ON assets (contract_id)
     WHERE asset_type IN (2, 3);        -- sac, soroban
-CREATE INDEX idx_tokens_type      ON tokens (asset_type);
-CREATE INDEX idx_tokens_code_trgm ON tokens USING GIN (asset_code gin_trgm_ops);
+CREATE INDEX idx_assets_type      ON assets (asset_type);
+CREATE INDEX idx_assets_code_trgm ON assets USING GIN (asset_code gin_trgm_ops);
 
 -- 12. nfts (ADR 0027 §12)
 CREATE TABLE nfts (

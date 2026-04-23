@@ -144,7 +144,7 @@ DO NOTHING`. Re-processing the same ledger is a no-op because the
    | Endpoint                           | Old behaviour                                           | New behaviour                                                            |
    | ---------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------ |
    | E3 `GET /transactions/:hash`       | DB list + S3 heavy fields                               | DB appearances + S3 full expansion                                       |
-   | E10 `GET /tokens/:id/transactions` | DB `DISTINCT` filtered by `transfer_amount IS NOT NULL` | DB appearances for token's contract + S3 filter for transfer-kind events |
+   | E10 `GET /assets/:id/transactions` | DB `DISTINCT` filtered by `transfer_amount IS NOT NULL` | DB appearances for token's contract + S3 filter for transfer-kind events |
    | E14 `GET /contracts/:id/events`    | DB list + optional S3 heavy                             | DB appearances + S3 full expansion                                       |
 
    All three use the same pattern:
