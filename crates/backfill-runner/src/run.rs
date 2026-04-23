@@ -146,6 +146,7 @@ pub async fn execute(
         // `wall_clock` is per-partition and not summed.
         totals.indexed += stats.indexed;
         totals.skipped_completed += stats.skipped_completed;
+        totals.total_bytes += stats.total_bytes;
         totals.parse_total_ms += stats.parse_total_ms;
         totals.persist_total_ms += stats.persist_total_ms;
         totals.min_ledger_ms = combine_min(totals.min_ledger_ms, stats.min_ledger_ms);
@@ -198,6 +199,7 @@ fn print_run_summary(partitions_processed: usize, totals: &PartitionStats, elaps
     println!("partitions processed:    {partitions_processed}");
     println!("ledgers indexed:         {}", totals.indexed);
     println!("ledgers already in DB:   {}", totals.skipped_completed);
+    println!("total bytes:             {}", totals.total_bytes);
     println!("parse total:             {} ms", totals.parse_total_ms);
     println!("persist total:           {} ms", totals.persist_total_ms);
     println!("ledger time (min / max): {min_str} / {max_str}");

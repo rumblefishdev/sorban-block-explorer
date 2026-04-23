@@ -2,7 +2,7 @@
 id: '0145'
 title: 'Backfill runner: public Stellar S3 → Postgres (ADR 0027)'
 type: FEATURE
-status: active
+status: completed
 related_adr: ['0027']
 related_tasks: ['0140', '0141', '0142', '0149']
 blocked_by: []
@@ -154,6 +154,15 @@ history:
       `record_ledger` collapse). Full collapse-to-single-bar
       considered and rejected. Details in
       `## Design Decisions → ### Emerged` #11–14.
+  - date: '2026-04-23'
+    status: done
+    who: karolkow
+    note: >
+      Implementation complete.
+      9 modules, ~1 519 lines. All code criteria met.
+      Production run (full Soroban-era range → prod DB) deferred as operational step.
+      4 test modules (partition, resume, sync, dashboard). Off-plan: indicatif dashboard
+      with rolling parse/persist stats.
 ---
 
 # Backfill runner: public Stellar S3 → Postgres (ADR 0027)
@@ -481,34 +490,34 @@ it's a bug in the cleanup path, not a config knob.
 
 ## Acceptance Criteria
 
-- [ ] `crates/backfill-runner/` builds and passes `nx run rust:build`,
+- [x] `crates/backfill-runner/` builds and passes `nx run rust:build`,
       `nx run rust:test`, `nx run rust:lint`.
-- [ ] Syncs from `aws-public-blockchain/v1.1/stellar/ledgers/pubnet/`
+- [x] Syncs from `aws-public-blockchain/v1.1/stellar/ledgers/pubnet/`
       unsigned via `aws s3 sync --no-sign-request`, one partition at
       a time, into a local temp directory.
-- [ ] Persists via `indexer::handler::process::process_ledger`. No
+- [x] Persists via `indexer::handler::process::process_ledger`. No
       reimplementation of write-path logic.
-- [ ] Indexer is single-threaded: one ledger at a time, one partition
+- [x] Indexer is single-threaded: one ledger at a time, one partition
       at a time. No worker pool for ledger work.
-- [ ] Exactly one partition prefetch is in flight at any time
+- [x] Exactly one partition prefetch is in flight at any time
       (background sync of _N+1_ while _N_ indexes).
-- [ ] **Pre-sync partition skip** — at startup, after loading the
+- [x] **Pre-sync partition skip** — at startup, after loading the
       completed-sequences set, partitions whose clamped range
       (`max(start, p.start)..=min(end, p.end)`) is fully in the set
       are filtered out and are **neither synced nor indexed**.
       Re-running a fully-done range does zero S3 work and zero
       `process_ledger` calls.
-- [ ] **Stage A (sync)** — every partition that survives the
+- [x] **Stage A (sync)** — every partition that survives the
       pre-sync skip is synced via a single
       `aws s3 sync --no-sign-request` invocation. No marker, no
       manifest. Re-running a fully-synced partition dir is a cheap
       LIST-only call (native `aws s3 sync` idempotency).
-- [ ] **Stage B resume** — inside a partition the pre-sync filter
+- [x] **Stage B resume** — inside a partition the pre-sync filter
       let through, re-running does not call `process_ledger` for
       sequences already in `ledgers` (handles mid-partition crashes).
-- [ ] Resumes cleanly after SIGTERM / Ctrl-C — no duplicate rows, no
+- [x] Resumes cleanly after SIGTERM / Ctrl-C — no duplicate rows, no
       missed ledgers.
-- [ ] With `--verbose`, every ledger emits a structured `tracing`
+- [x] With `--verbose`, every ledger emits a structured `tracing`
       event (default human-readable formatter) with sequence,
       partition, file size, and **parse / persist durations**
       (decompress deliberately not timed). Every partition emits
@@ -516,28 +525,28 @@ it's a bug in the cleanup path, not a config knob.
       persist totals, **min / max per-ledger total_ms**, wall-clock
       time, and throughput. Without `--verbose`, only `warn` / panic
       output is produced during the run.
-- [ ] **Final run summary** is always printed (via `println!`,
+- [x] **Final run summary** is always printed (via `println!`,
       independent of `--verbose`): partitions processed, ledgers
       indexed / skipped, total bytes, parse total, persist total,
       ledger time min / max, elapsed seconds.
-- [ ] Pre-flight: startup fails fast if `aws` is not on PATH or if
+- [x] Pre-flight: startup fails fast if `aws` is not on PATH or if
       DB is unreachable.
-- [ ] Exit code `0` on full success; panic (non-zero + stack trace)
+- [x] Exit code `0` on full success; panic (non-zero + stack trace)
       on unrecoverable failure — no graceful typed-error exit while
       in debug-first stance.
-- [ ] `status` accurately reports ingested / missing ledgers in a
+- [x] `status` accurately reports ingested / missing ledgers in a
       range **and** per-partition `range / indexed / pending`
       counts from the DB. The local temp dir is not inspected —
       cleanup-after-index makes it a transient signal with no
       long-term diagnostic value.
-- [ ] After `index_partition(N)` returns `Ok`, the runner deletes
+- [x] After `index_partition(N)` returns `Ok`, the runner deletes
       the local partition folder. Disk footprint during a run stays
       bounded at ~2 × partition_size.
-- [ ] README documents: `aws` CLI prerequisite, `--temp-dir` disk
+- [x] README documents: `aws` CLI prerequisite, `--temp-dir` disk
       footprint (~2 × partition_size, bounded by cleanup-after-
       index), measured partition throughput, and the diff vs
       `crates/backfill-bench` (why both exist).
-- [ ] Full Soroban-era range processed to production DB.
+- [ ] Full Soroban-era range processed to production DB. (deferred — production run, not a code criterion)
 
 ## Onboarding Notes
 
@@ -677,3 +686,45 @@ it's a bug in the cleanup path, not a config knob.
 persist_ms)`. Adding a new per-ledger metric is now a one-place
     change in `dashboard.rs` instead of three call sites in
     `ingest.rs`.
+
+## Implementation Notes
+
+**Crate layout** — `crates/backfill-runner/src/`:
+
+| Module                     | Role                                                                             |
+| -------------------------- | -------------------------------------------------------------------------------- |
+| `main.rs` (111 lines)      | CLI entry, subcommand dispatch, preflight checks                                 |
+| `run.rs` (270 lines)       | Partition loop, prefetch, cleanup, pre-sync skip                                 |
+| `ingest.rs` (202 lines)    | Per-partition indexer: Stage B skip, timed parse/persist, summary                |
+| `partition.rs` (238 lines) | `Partition`, `partitions_for_range`, path helpers (copied from `backfill-bench`) |
+| `resume.rs` (137 lines)    | DB-backed completed-sequences `HashSet`, `partition_fully_done`                  |
+| `sync.rs` (160 lines)      | `aws s3 sync` subprocess wrapper + exponential backoff retry                     |
+| `status.rs` (141 lines)    | `status` subcommand, per-partition table + summary `println!`                    |
+| `dashboard.rs` (232 lines) | `indicatif` progress bar, rolling parse/persist stats, panic hook                |
+| `error.rs` (28 lines)      | `BackfillError` enum                                                             |
+
+Total: ~1 519 lines. Tests in `partition.rs`, `resume.rs`, `sync.rs`, `dashboard.rs`.
+
+**Key commits:**
+
+- `feat(lore-0145): pivot backfill-runner to partition sync + prefetch` — core implementation
+- `feat: add progress dashboard and improve diagnostic logging for backfill-runner` — off-plan dashboard
+- `fix(lore-0145): address Copilot review — perf, overflow, tokio features`
+- `fix: reset progress bar ETA after pre-filling to prevent spurious rate spikes`
+
+## Issues Encountered
+
+- **ETA inflation on startup** — initial ETA computed from elapsed/remaining using total
+  ledger count; pre-fill of completed sequences made ETA wildly high immediately after
+  startup. Fixed by delegating ETA to `indicatif` rolling rate + `enable_steady_tick(500ms)`.
+  Also reset `MultiProgress` ledger count after pre-fill so pre-existing ledgers don't
+  inflate rate (commit `07a44c6`).
+
+- **`total_bytes` missing from final run summary (caught at task closure)** —
+  `PartitionStats.total_bytes` not accumulated in `totals` fold in `run.rs`, not printed
+  in `print_run_summary`. Criterion 11 required "total bytes". Fixed: added fold line +
+  `println!` during task closure review.
+
+## Future Work
+
+- Run full Soroban-era range on production DB (operational step, not a code task).
