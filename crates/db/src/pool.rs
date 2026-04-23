@@ -1,6 +1,7 @@
-//! PostgreSQL connection pool configuration for Lambda.
+//! PostgreSQL connection pool configuration.
 //!
-//! Lambda functions should use `max_connections(1)` with RDS Proxy.
+//! Entry point for creating a database connection pool. Default configuration
+//! uses a single connection, optimized for Lambda callers fronted by RDS Proxy.
 
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
