@@ -40,12 +40,17 @@ here is to collapse it to a single authoritative table (`current`) and
 reintroduce a historical index if/when the chart feature lands, with a
 design chosen against actual query patterns.
 
-## Status: Backlog
+## Status: Active
 
-**Current state:** Decision made (2026-04-23), picked up after task 0158
-closes. Task 0157 and 0158 tie up the soroban_events/invocations appearance
-refactor; this task cleans up the account-balances side which was the
-second-biggest write-time contributor per the 0158 benchmark work.
+**Current state:** Activated 2026-04-23 as current task right after
+task 0158 closed. **No code changes yet** — this task doc and ADR 0035
+(`proposed`) were created alongside the 0158 PR as planning artefacts;
+the actual migration / staging / write / domain / test / ADR-0021
+updates happen in the 0159 implementation PR. Work picks up on its own
+branch and PR. Task 0157 and 0158 tied up the soroban_events /
+invocations appearance refactor; this task cleans up the
+account-balances side which was the second-biggest write-time
+contributor per the 0158 benchmark.
 
 ## Context
 
