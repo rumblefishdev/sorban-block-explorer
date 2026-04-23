@@ -2,7 +2,7 @@
 id: '0155'
 title: 'DOCS: audit `docs/architecture/**` against ADR history, bring up to date'
 type: DOCS
-status: backlog
+status: active
 related_adr: ['0027', '0030', '0031', '0032']
 related_tasks: ['0139', '0140', '0154']
 tags: [docs, audit, priority-medium, effort-medium]
@@ -39,6 +39,11 @@ history:
       for ADR 0030 contracts BIGINT surrogate, ADR 0031 enum SMALLINT,
       and lingering operations_pN references. Should land AFTER 0154
       (tokens→assets rename) to avoid merge churn on shared files.
+  - date: '2026-04-23'
+    status: active
+    who: Karol Kowalczyk
+    note: >
+      Task activated and assigned.
 ---
 
 # DOCS: audit `docs/architecture/**` against ADR history, bring up to date
