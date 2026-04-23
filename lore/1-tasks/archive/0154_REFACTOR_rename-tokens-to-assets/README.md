@@ -3,7 +3,7 @@ id: '0154'
 title: 'REFACTOR: rename `tokens` → `assets` (Stellar taxonomy alignment)'
 type: REFACTOR
 status: completed
-related_adr: ['0022', '0023', '0027', '0032', '0033']
+related_adr: ['0022', '0023', '0027', '0032', '0036']
 related_tasks: ['0118', '0120', '0124', '0135', '0155']
 tags:
   [
@@ -59,7 +59,7 @@ history:
     who: karolkow
     note: >
       Done. DB migration edited in place, Rust ~20 files, docs 4 files,
-      lore tasks updated. ADR renumbered 0033→0034 (conflict with develop).
+      lore tasks updated. ADR renumbered 0033→0036 (conflict with develop).
       Bench p95 −3.1% vs develop baseline. API routes deferred (0049).
       cargo clippy + persist_integration 4/4 pass.
 ---

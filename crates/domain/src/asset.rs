@@ -1,6 +1,6 @@
 //! Asset domain type matching the `assets` PostgreSQL table.
 //!
-//! Schema: ADR 0027 Part I §11 + ADR 0033 rename. SEP-1 metadata promoted to typed columns
+//! Schema: ADR 0027 Part I §11 + ADR 0036 rename. SEP-1 metadata promoted to typed columns
 //! per ADR 0023 (`description`, `icon_url`, `home_page`) — legacy
 //! `metadata JSONB` is gone.
 //!

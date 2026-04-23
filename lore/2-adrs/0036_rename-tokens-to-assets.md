@@ -1,5 +1,5 @@
 ---
-id: '0033'
+id: '0036'
 title: 'Rename `tokens` table → `assets`; remap `classic` → `classic_credit`'
 status: accepted
 deciders: [karolkow]
@@ -24,7 +24,7 @@ history:
       reversible pair) — justified by pre-production state.
 ---
 
-# ADR 0033: Rename `tokens` table → `assets`; remap `classic` → `classic_credit`
+# ADR 0036: Rename `tokens` table → `assets`; remap `classic` → `classic_credit`
 
 **Related:**
 

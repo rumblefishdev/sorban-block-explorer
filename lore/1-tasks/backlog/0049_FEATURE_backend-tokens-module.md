@@ -3,7 +3,7 @@ id: '0049'
 title: 'Backend: Assets module (list + detail + transactions)'
 type: FEATURE
 status: backlog
-related_adr: ['0005', '0033']
+related_adr: ['0005', '0036']
 related_tasks: ['0023', '0043', '0092']
 tags: [layer-backend, assets]
 milestone: 2

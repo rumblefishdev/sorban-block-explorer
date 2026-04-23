@@ -1,4 +1,4 @@
--- ADR 0027 + ADR 0030 + ADR 0031 + ADR 0033 — initial schema, step 5/7: assets and NFTs
+-- ADR 0027 + ADR 0030 + ADR 0031 + ADR 0036 — initial schema, step 5/7: assets and NFTs
 -- Assets carry typed SEP-1 metadata columns (ADR 0023).
 -- NFTs get a surrogate SERIAL PK; identity is still (contract_id, token_id)
 -- where contract_id is the BIGINT FK into soroban_contracts.id (ADR 0030).
@@ -9,7 +9,7 @@
 --   12. nfts            (unpartitioned)
 --   13. nft_ownership   (partitioned history)
 
--- 11. assets (ADR 0027 §11 + ADR 0031 + ADR 0033)
+-- 11. assets (ADR 0027 §11 + ADR 0031 + ADR 0036)
 -- `asset_type` SMALLINT is the Rust `TokenAssetType` enum
 -- (0=native, 1=classic_credit, 2=sac, 3=soroban — label helper: token_asset_type_name).
 -- Identity is enforced by ck_assets_identity (which columns must be NOT NULL

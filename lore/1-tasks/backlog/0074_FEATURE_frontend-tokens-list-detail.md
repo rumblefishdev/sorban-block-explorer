@@ -3,7 +3,7 @@ id: '0074'
 title: 'Frontend: Assets list and detail pages'
 type: FEATURE
 status: backlog
-related_adr: ['0033']
+related_adr: ['0036']
 related_tasks: []
 tags: [priority-medium, effort-medium, layer-frontend-pages]
 milestone: 2
