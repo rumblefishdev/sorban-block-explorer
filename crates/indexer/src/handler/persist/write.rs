@@ -9,9 +9,7 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
-use domain::{
-    AssetType, ContractEventType, ContractType, NftEventType, OperationType, TokenAssetType,
-};
+use domain::{AssetType, ContractType, NftEventType, OperationType, TokenAssetType};
 use serde_json::Value;
 use sqlx::{Postgres, Transaction};
 
@@ -714,91 +712,83 @@ pub(super) async fn insert_operations(
 }
 
 // ---------------------------------------------------------------------------
-// 9. soroban_events — insert typed transfer prefix
+// 9. soroban_events_appearances — ADR 0033 appearance index
 // ---------------------------------------------------------------------------
 
+/// Aggregate staged contract events into `(contract, tx, ledger)` appearance
+/// rows and insert them. The `amount` column stores the number of non-
+/// diagnostic contract events folded into the trio; all parsed event detail
+/// (type, topics, data, per-event index, transfer triple) is re-materialised
+/// at read time from the public Stellar archive via
+/// `xdr_parser::extract_events`.
+///
+/// Events without a resolved `contract_id` (system events with no emitter
+/// or contracts the indexer hasn't seen yet) are skipped — the appearance
+/// index is contract-scoped by construction.
+///
+/// Replay-safe: the composite PK covers the natural key, so a re-ingest of
+/// the same ledger produces zero duplicate rows via `ON CONFLICT DO NOTHING`.
 pub(super) async fn insert_events(
     db_tx: &mut Transaction<'_, Postgres>,
     staged: &Staged,
-    account_ids: &HashMap<String, i64>,
     contract_ids: &HashMap<String, i64>,
     tx_ids: &HashMap<String, i64>,
 ) -> Result<(), HandlerError> {
     if staged.event_rows.is_empty() {
         return Ok(());
     }
-    for chunk in staged.event_rows.chunks(CHUNK_SIZE) {
+
+    // Key: (contract_id, transaction_id, ledger_sequence, created_at).
+    let mut agg: HashMap<(i64, i64, i64, DateTime<Utc>), i64> = HashMap::new();
+    for r in &staged.event_rows {
+        let Some(contract_key) = r.contract_id.as_deref() else {
+            continue;
+        };
+        let Some(&contract_id) = contract_ids.get(contract_key) else {
+            continue;
+        };
+        let Some(&tx_id) = tx_ids.get(&r.tx_hash_hex) else {
+            continue;
+        };
+        *agg.entry((contract_id, tx_id, r.ledger_sequence, r.created_at))
+            .or_insert(0) += 1;
+    }
+
+    if agg.is_empty() {
+        return Ok(());
+    }
+
+    let rows: Vec<_> = agg.into_iter().collect();
+    for chunk in rows.chunks(CHUNK_SIZE) {
+        let mut contract_vec: Vec<i64> = Vec::with_capacity(chunk.len());
         let mut tx_id_vec: Vec<i64> = Vec::with_capacity(chunk.len());
-        let mut contract_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
-        // ADR 0031: soroban_events.event_type is SMALLINT (Rust ContractEventType).
-        let mut type_vec: Vec<ContractEventType> = Vec::with_capacity(chunk.len());
-        let mut topic0_vec: Vec<Option<String>> = Vec::with_capacity(chunk.len());
-        let mut index_vec: Vec<i16> = Vec::with_capacity(chunk.len());
-        let mut from_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
-        let mut to_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
-        let mut amt_vec: Vec<Option<String>> = Vec::with_capacity(chunk.len());
         let mut ls_vec: Vec<i64> = Vec::with_capacity(chunk.len());
+        let mut amount_vec: Vec<i64> = Vec::with_capacity(chunk.len());
         let mut ca_vec: Vec<DateTime<Utc>> = Vec::with_capacity(chunk.len());
 
-        for r in chunk {
-            let Some(tx_id) = tx_ids.get(&r.tx_hash_hex).copied() else {
-                continue;
-            };
+        for &((contract_id, tx_id, ledger_sequence, created_at), amount) in chunk {
+            contract_vec.push(contract_id);
             tx_id_vec.push(tx_id);
-            contract_vec.push(resolve_contract_opt_id(
-                contract_ids,
-                r.contract_id.as_deref(),
-                "event.contract",
-            )?);
-            type_vec.push(r.event_type);
-            topic0_vec.push(r.topic0.clone());
-            index_vec.push(r.event_index);
-            from_vec.push(resolve_opt_id(
-                account_ids,
-                r.transfer_from_str_key.as_deref(),
-                "event.transfer_from",
-            )?);
-            to_vec.push(resolve_opt_id(
-                account_ids,
-                r.transfer_to_str_key.as_deref(),
-                "event.transfer_to",
-            )?);
-            amt_vec.push(r.transfer_amount.clone());
-            ls_vec.push(r.ledger_sequence);
-            ca_vec.push(r.created_at);
-        }
-
-        if tx_id_vec.is_empty() {
-            continue;
+            ls_vec.push(ledger_sequence);
+            amount_vec.push(amount);
+            ca_vec.push(created_at);
         }
 
         sqlx::query(
             r#"
-            INSERT INTO soroban_events (
-                transaction_id, contract_id, event_type, topic0, event_index,
-                transfer_from_id, transfer_to_id, transfer_amount, ledger_sequence, created_at
+            INSERT INTO soroban_events_appearances (
+                contract_id, transaction_id, ledger_sequence, amount, created_at
             )
-            SELECT tx_id, contract_id, event_type, topic0, event_index,
-                   from_id, to_id,
-                   CASE WHEN amt IS NULL THEN NULL ELSE amt::NUMERIC(39,0) END,
-                   ledger_sequence, created_at
-              FROM UNNEST(
-                $1::BIGINT[], $2::BIGINT[], $3::SMALLINT[], $4::TEXT[], $5::SMALLINT[],
-                $6::BIGINT[], $7::BIGINT[], $8::TEXT[], $9::BIGINT[], $10::TIMESTAMPTZ[]
-              ) AS t(tx_id, contract_id, event_type, topic0, event_index,
-                     from_id, to_id, amt, ledger_sequence, created_at)
-            ON CONFLICT ON CONSTRAINT uq_soroban_events_tx_index DO NOTHING
+            SELECT * FROM UNNEST(
+                $1::BIGINT[], $2::BIGINT[], $3::BIGINT[], $4::BIGINT[], $5::TIMESTAMPTZ[]
+            )
+            ON CONFLICT (contract_id, transaction_id, ledger_sequence, created_at) DO NOTHING
             "#,
         )
-        .bind(&tx_id_vec)
         .bind(&contract_vec)
-        .bind(&type_vec)
-        .bind(&topic0_vec)
-        .bind(&index_vec)
-        .bind(&from_vec)
-        .bind(&to_vec)
-        .bind(&amt_vec)
+        .bind(&tx_id_vec)
         .bind(&ls_vec)
+        .bind(&amount_vec)
         .bind(&ca_vec)
         .execute(&mut **db_tx)
         .await?;

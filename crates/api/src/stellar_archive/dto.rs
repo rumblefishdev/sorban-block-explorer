@@ -1,9 +1,12 @@
-//! DTOs for XDR-sourced heavy fields, merged with DB-sourced light fields
-//! to produce final E3/E14 endpoint responses.
+//! DTOs for XDR-sourced fields, composed with DB-sourced light slices to
+//! produce final E3/E14 endpoint responses.
 //!
-//! Per ADR 0027 Part III + ADR 0029: the DB stores light index columns,
-//! heavy payload (memo, signatures, XDR blobs, full event topics+data) lives
-//! only in the public Stellar archive. These DTOs represent the heavy slice.
+//! Per ADR 0027 Part III + ADR 0029 + ADR 0033: the DB stores identity and
+//! index columns; event, memo, signature, and envelope detail lives only on
+//! the public Stellar archive. For E14 this means the entire event payload
+//! (type, topics, data, event index) is S3-sourced — there is no DB-side
+//! event row to merge against. E3 still carries its DB tx-light slice and
+//! composes it with an XDR heavy struct.
 
 use serde::{Deserialize, Serialize};
 
@@ -31,7 +34,7 @@ pub struct E3HeavyFields {
     /// Diagnostic events emitted during Soroban invocation.
     pub diagnostic_events: Vec<XdrEventDto>,
     /// Non-diagnostic Soroban events (contract + system) with full topic
-    /// array + data (beyond DB's `topic0`).
+    /// array + decoded data payload.
     pub contract_events: Vec<XdrEventDto>,
     /// Soroban invocations with full function args + return value payloads.
     pub invocations: Vec<XdrInvocationDto>,
@@ -39,18 +42,23 @@ pub struct E3HeavyFields {
     pub operations: Vec<XdrOperationDto>,
 }
 
-/// E14 (`GET /contracts/:id/events`) — per-event heavy fields.
+/// E14 (`GET /contracts/:id/events`) — per-event payload materialised from
+/// the ledger XDR.
 ///
-/// The DB holds event identity + `topic0` + transfer prefix; XDR supplies the
-/// full topics array and decoded data payload.
+/// ADR 0033: the DB appearance index only tells us *which* `(contract, tx,
+/// ledger)` trios carry events and how many. The actual event payload (type,
+/// topics, data, per-event index within the tx) is extracted from the
+/// public-archive XDR at request time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct E14HeavyEventFields {
-    /// Event index within its transaction (matches `soroban_events.event_index`).
+    /// Event index within its transaction. Stable per-tx identifier that
+    /// survives across requests — used for client-side de-duplication when a
+    /// page redraw overlaps a previous page.
     pub event_index: i16,
-    /// Transaction hash (hex) this event belongs to — needed for correlation
-    /// because a single ledger's events may span many transactions.
+    /// Transaction hash (hex) this event belongs to — needed because a
+    /// single ledger's events may span many transactions.
     pub transaction_hash: String,
-    /// Full topics array as decoded JSON (includes topic0 for self-containment).
+    /// Full topics array as decoded JSON.
     pub topics: Vec<serde_json::Value>,
     /// Event data payload as decoded JSON.
     pub data: serde_json::Value,
@@ -76,7 +84,7 @@ pub struct XdrEventDto {
     pub topics: Vec<serde_json::Value>,
     /// Decoded event data payload.
     pub data: serde_json::Value,
-    /// Event index within the transaction (matches DB `event_index`).
+    /// Event index within the transaction (zero-based).
     pub event_index: i16,
 }
 
@@ -112,7 +120,7 @@ pub struct XdrOperationDto {
 
 /// Merged E3 response: DB light fields + optional XDR heavy fields.
 ///
-/// `heavy_fields_status` = `"ok"` when `heavy` is `Some`, `"unavailable"` when
+/// `heavy_fields_status` = `Ok` when `heavy` is `Some`, `Unavailable` when
 /// the public-archive fetch failed and the caller degraded gracefully.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct E3Response<TxLight> {
@@ -122,17 +130,7 @@ pub struct E3Response<TxLight> {
     pub heavy_fields_status: HeavyFieldsStatus,
 }
 
-/// Merged E14 per-event response: DB light row + optional XDR heavy payload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct E14EventResponse<EventLight> {
-    #[serde(flatten)]
-    pub light: EventLight,
-    pub topics: Option<Vec<serde_json::Value>>,
-    pub data: Option<serde_json::Value>,
-    pub heavy_fields_status: HeavyFieldsStatus,
-}
-
-/// Indicates whether the heavy (XDR-sourced) fields were loaded successfully.
+/// Indicates whether the XDR-sourced fields were loaded successfully.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HeavyFieldsStatus {
