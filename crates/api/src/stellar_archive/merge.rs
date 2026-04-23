@@ -1,69 +1,36 @@
-//! Pure merge functions that fold DB-sourced light fields together with
-//! XDR-sourced heavy fields into the final endpoint response DTOs.
+//! Pure composition helpers that combine DB-sourced light slices with
+//! XDR-sourced fields into the final endpoint response DTOs.
 //!
-//! These functions are generic over the caller's DB-side "light" shape so the
-//! same helper works whether the light type comes from `domain::*` or from a
-//! handler-local DTO. No I/O; minimal allocations aside from any cloning
-//! needed to build the output (e.g. cloning a matched heavy row into its
-//! response slot in `merge_e14_events`).
+//! ADR 0033: E14 no longer has a DB-side event row to merge against — its
+//! response is assembled directly in the handler from appearance rows plus
+//! parser output, so no E14 helper lives here. E3 still merges a DB tx-light
+//! slice with an XDR heavy struct; that helper stays generic over the
+//! caller's light type.
 
-use super::dto::{E14EventResponse, E14HeavyEventFields, HeavyFieldsStatus};
+use super::dto::{E3HeavyFields, E3Response, HeavyFieldsStatus};
 
-/// Merge a single DB light event row with its XDR heavy payload.
+/// Merge the DB light view of a transaction with the XDR heavy fields.
 ///
-/// When `heavy = None`, topics and data are absent (DB-only fallback).
-#[allow(dead_code)] // used by future E14 events endpoint
-pub fn merge_e14_event_response<E>(
-    light: E,
-    heavy: Option<E14HeavyEventFields>,
-) -> E14EventResponse<E> {
-    let (topics, data, status) = match heavy {
-        Some(h) => (Some(h.topics), Some(h.data), HeavyFieldsStatus::Ok),
-        None => (None, None, HeavyFieldsStatus::Unavailable),
+/// `heavy = Some(_)` → `heavy_fields_status: Ok`.
+/// `heavy = None` (upstream fetch failed) → `heavy_fields_status: Unavailable`
+/// and the response still contains the DB light view.
+//
+// `0150` library helper, retained per ADR 0033 (E3 still has DB tx-light +
+// XDR heavy to merge). Task 0046 emits a flat `TransactionDetailLight` per
+// its spec, so the wrapper is unused on this branch — kept available for
+// future endpoints that prefer the nested `{light, heavy, status}` shape.
+#[allow(dead_code)]
+pub fn merge_e3_response<T>(light: T, heavy: Option<E3HeavyFields>) -> E3Response<T> {
+    let heavy_fields_status = if heavy.is_some() {
+        HeavyFieldsStatus::Ok
+    } else {
+        HeavyFieldsStatus::Unavailable
     };
-    E14EventResponse {
+    E3Response {
         light,
-        topics,
-        data,
-        heavy_fields_status: status,
+        heavy,
+        heavy_fields_status,
     }
-}
-
-/// Correlate a slice of DB light events against the supplied XDR heavy
-/// events, producing merged rows in the order of the DB input.
-///
-/// The `heavy` input may be pre-aggregated across multiple ledgers; callers
-/// do not need to scope it to a single ledger for this helper. Matching is
-/// done purely on the `(tx_hash, event_index)` key derived from each light
-/// row — a key any caller can compute regardless of ledger boundaries.
-///
-/// Matching is done on `(transaction_hash, event_index)` — the XDR-side event
-/// uses hex tx hash, the DB side uses the same. Callers supply an extractor
-/// closure to pull `(tx_hash_hex, event_index)` from their light type so this
-/// function stays generic.
-///
-/// If no matching XDR heavy event is found, the resulting merged row has
-/// `heavy_fields_status: "unavailable"` — equivalent to a missing upstream.
-#[allow(dead_code)] // used by future E14 events endpoint
-pub fn merge_e14_events<E, F>(
-    light: Vec<E>,
-    heavy: Vec<E14HeavyEventFields>,
-    key_of_light: F,
-) -> Vec<E14EventResponse<E>>
-where
-    F: Fn(&E) -> (String, i16),
-{
-    // Small N (page size ≤100 on E14); linear lookup beats hashing overhead.
-    light
-        .into_iter()
-        .map(|l| {
-            let (tx_hash, event_index) = key_of_light(&l);
-            let matched = heavy
-                .iter()
-                .find(|h| h.transaction_hash == tx_hash && h.event_index == event_index);
-            merge_e14_event_response(l, matched.cloned())
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -71,43 +38,46 @@ mod tests {
     use super::*;
 
     #[derive(Debug, Clone, PartialEq, serde::Serialize)]
-    struct EventLight {
-        transaction_hash: String,
-        event_index: i16,
-        topic0: Option<String>,
+    struct TxLight {
+        hash: String,
+        successful: bool,
+    }
+
+    fn sample_heavy() -> E3HeavyFields {
+        E3HeavyFields {
+            memo_type: Some("text".into()),
+            memo: Some("hi".into()),
+            signatures: Vec::new(),
+            fee_bump_source: None,
+            envelope_xdr: Some("AAAA".into()),
+            result_xdr: Some("AAAB".into()),
+            diagnostic_events: Vec::new(),
+            contract_events: Vec::new(),
+            operations: Vec::new(),
+            result_code: Some("txSuccess".into()),
+            operation_tree: None,
+        }
     }
 
     #[test]
-    fn merge_e14_matches_by_hash_and_index() {
-        let light = vec![
-            EventLight {
-                transaction_hash: "aa".into(),
-                event_index: 0,
-                topic0: Some("transfer".into()),
-            },
-            EventLight {
-                transaction_hash: "bb".into(),
-                event_index: 1,
-                topic0: None,
-            },
-        ];
-        let heavy = vec![E14HeavyEventFields {
-            event_index: 1,
-            transaction_hash: "bb".into(),
-            topics: vec![serde_json::json!("t0"), serde_json::json!("t1")],
-            data: serde_json::json!({"amount": "100"}),
-        }];
-        let merged = merge_e14_events(light, heavy, |e| {
-            (e.transaction_hash.clone(), e.event_index)
-        });
+    fn merge_e3_ok_when_heavy_some() {
+        let light = TxLight {
+            hash: "abc".into(),
+            successful: true,
+        };
+        let merged = merge_e3_response(light, Some(sample_heavy()));
+        assert_eq!(merged.heavy_fields_status, HeavyFieldsStatus::Ok);
+        assert!(merged.heavy.is_some());
+    }
 
-        assert_eq!(merged.len(), 2);
-        assert_eq!(
-            merged[0].heavy_fields_status,
-            HeavyFieldsStatus::Unavailable
-        );
-        assert!(merged[0].topics.is_none());
-        assert_eq!(merged[1].heavy_fields_status, HeavyFieldsStatus::Ok);
-        assert_eq!(merged[1].topics.as_ref().unwrap().len(), 2);
+    #[test]
+    fn merge_e3_unavailable_when_heavy_none() {
+        let light = TxLight {
+            hash: "abc".into(),
+            successful: true,
+        };
+        let merged = merge_e3_response(light, None);
+        assert_eq!(merged.heavy_fields_status, HeavyFieldsStatus::Unavailable);
+        assert!(merged.heavy.is_none());
     }
 }

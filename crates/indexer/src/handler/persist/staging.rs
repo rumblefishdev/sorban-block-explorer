@@ -4,7 +4,8 @@
 //! * Collect every StrKey referenced anywhere → `accounts` universe
 //! * Hex-decode every 32-byte hash once → reusable `[u8; 32]`
 //! * Unpack `operations.details` JSON into typed column values
-//! * Parse `soroban_events` transfer-shape topics into typed columns
+//! * Collapse contract events into `soroban_events_appearances` rows
+//!   (ADR 0033 — one row per `(contract, tx, ledger)` trio)
 //! * Split `account_balances_current` rows into native (NULL code/issuer) and
 //!   credit (both NOT NULL) per the `ck_abc_native` CHECK
 //! * Derive `transactions.has_soroban` from presence of events/invocations
@@ -64,17 +65,15 @@ pub(super) struct OpRow {
     pub created_at: DateTime<Utc>,
 }
 
-/// `soroban_events` row with the typed transfer prefix already parsed.
+/// `soroban_events_appearances` staging row (ADR 0033).
+///
+/// Carries only the minimum needed to aggregate into the 4-column
+/// appearance index — `contract_id` (StrKey, resolved to BIGINT FK in the
+/// write layer), plus the transaction-identity key. Diagnostic events are
+/// filtered out before staging (they live only on the S3 read path).
 pub(super) struct EventRow {
     pub tx_hash_hex: String,
     pub contract_id: Option<String>,
-    pub event_type: ContractEventType,
-    pub topic0: Option<String>,
-    pub event_index: i16,
-    pub transfer_from_str_key: Option<String>,
-    pub transfer_to_str_key: Option<String>,
-    /// NUMERIC(39,0) — bound as TEXT and cast in SQL.
-    pub transfer_amount: Option<String>,
     pub ledger_sequence: i64,
     pub created_at: DateTime<Utc>,
 }
@@ -309,11 +308,11 @@ impl Staged {
         for (tx_hash, evs) in events {
             let participants = participants_per_tx.entry(tx_hash.clone()).or_default();
             for ev in evs {
-                if let Some(shape) = parse_transfer_topics(&ev.topics) {
-                    account_keys_set.insert(shape.from.clone());
-                    account_keys_set.insert(shape.to.clone());
-                    participants.insert(shape.from);
-                    participants.insert(shape.to);
+                if let Some((from, to)) = xdr_parser::transfer_participants(&ev.topics) {
+                    account_keys_set.insert(from.clone());
+                    account_keys_set.insert(to.clone());
+                    participants.insert(from);
+                    participants.insert(to);
                 }
             }
         }
@@ -556,17 +555,18 @@ impl Staged {
             }
         }
 
-        // --- events flatten + transfer topic parse -------------------------
+        // --- events flatten for appearance aggregation ---------------------
         //
         // Filter out event_type = "diagnostic". Per Stellar docs these are
         // debug-only traces (fn_call / fn_return / core_metrics / log /
         // error / host_fn_failed) emitted by the Soroban host VM and by
         // stellar-core's InvokeHostFunctionOpFrame; they are explicitly
         // "not hashed into the ledger, and therefore are not part of the
-        // protocol" and "not useful for most users". ADR 0027 routes them
-        // to S3 (advanced tx detail via E3), not to `soroban_events`.
-        // On a mainnet sample they are ~85 % of event volume and dominate
-        // events_ms in persist_ledger. Keep "contract" and "system".
+        // protocol" and "not useful for most users". ADR 0033 routes them
+        // (and all other event detail) to the public archive; the DB
+        // appearance index only counts "contract" and "system" events.
+        // On a mainnet sample diagnostic events are ~85 % of event volume
+        // and previously dominated events_ms in persist_ledger.
         let mut event_rows: Vec<EventRow> = Vec::new();
         let mut diagnostic_dropped = 0usize;
         for (tx_hash, evs) in events {
@@ -578,26 +578,9 @@ impl Staged {
                     diagnostic_dropped += 1;
                     continue;
                 }
-                let topic0 = ev
-                    .topics
-                    .as_array()
-                    .and_then(|t| t.first())
-                    .and_then(|t| t.get("value"))
-                    .and_then(Value::as_str)
-                    .map(str::to_string);
-                let transfer = parse_transfer_event(&ev.topics, &ev.data);
                 event_rows.push(EventRow {
                     tx_hash_hex: tx_hash.clone(),
                     contract_id: ev.contract_id.clone(),
-                    event_type: ev.event_type,
-                    topic0,
-                    event_index: ev
-                        .event_index
-                        .try_into()
-                        .map_err(|_| staging_err("event_index overflow"))?,
-                    transfer_from_str_key: transfer.as_ref().map(|t| t.from.clone()),
-                    transfer_to_str_key: transfer.as_ref().map(|t| t.to.clone()),
-                    transfer_amount: transfer.and_then(|t| t.amount),
                     ledger_sequence: ledger_sequence_i64,
                     created_at,
                 });
@@ -607,8 +590,8 @@ impl Staged {
             tracing::debug!(
                 ledger_sequence = ledger.sequence,
                 diagnostic_dropped,
-                persisted = event_rows.len(),
-                "staged events (diagnostic filtered — S3 lane per ADR 0027)"
+                staged = event_rows.len(),
+                "staged events for appearance aggregation (diagnostic filtered — S3 lane per ADR 0033)"
             );
         }
 
@@ -1223,81 +1206,6 @@ fn split_pool_asset(asset: &Value) -> Option<(AssetType, Option<String>, Option<
         .filter(|s| !s.is_empty())
         .map(str::to_string);
     Some((ty, code, issuer))
-}
-
-/// Shape-extract the SEP-0041 fungible-transfer event layout, if present:
-///   topics = [Symbol("transfer"), Address(from), Address(to), (Symbol(asset_code))?]
-/// Returns `None` for any other topic shape so non-transfer events leave
-/// `transfer_*` columns NULL.
-struct TransferShape {
-    from: String,
-    to: String,
-    amount: Option<String>,
-}
-
-fn parse_transfer_topics(topics: &Value) -> Option<TransferShapeMini> {
-    let arr = topics.as_array()?;
-    if arr.len() < 3 {
-        return None;
-    }
-    let first = arr[0].get("type").and_then(Value::as_str)?;
-    if first != "sym" {
-        return None;
-    }
-    let sym = arr[0].get("value").and_then(Value::as_str)?;
-    if !sym.eq_ignore_ascii_case("transfer") {
-        return None;
-    }
-    let from = address_topic(&arr[1])?;
-    let to = address_topic(&arr[2])?;
-    Some(TransferShapeMini { from, to })
-}
-
-fn parse_transfer_event(topics: &Value, data: &Value) -> Option<TransferShape> {
-    let shape = parse_transfer_topics(topics)?;
-    // Amount lives in `data` for SEP-0041 fungible transfers; NFT transfers
-    // carry a token_id here (we intentionally keep the non-numeric case as
-    // `amount=None` so the typed amount column stays NULL for NFT-style events).
-    let amount = numeric_scval(data);
-    Some(TransferShape {
-        from: shape.from,
-        to: shape.to,
-        amount,
-    })
-}
-
-struct TransferShapeMini {
-    from: String,
-    to: String,
-}
-
-fn address_topic(topic: &Value) -> Option<String> {
-    let ty = topic.get("type").and_then(Value::as_str)?;
-    if ty != "address" {
-        return None;
-    }
-    let s = topic.get("value").and_then(Value::as_str)?;
-    if s.is_empty() {
-        None
-    } else {
-        Some(s.to_string())
-    }
-}
-
-/// Extract a NUMERIC(39,0)-compatible decimal string from a ScVal-typed JSON
-/// value. Accepts `u32`, `i32`, `u64`, `i64`, `u128`, `i128`, and `u256/i256`
-/// (stellar-xdr encodes big ints as JSON strings).
-fn numeric_scval(data: &Value) -> Option<String> {
-    let ty = data.get("type").and_then(Value::as_str)?;
-    let val = data.get("value")?;
-    match ty {
-        "u32" | "i32" | "u64" | "i64" => val
-            .as_i64()
-            .map(|n| n.to_string())
-            .or_else(|| val.as_u64().map(|n| n.to_string())),
-        "u128" | "i128" | "u256" | "i256" => val.as_str().map(str::to_string),
-        _ => None,
-    }
 }
 
 /// Convert raw stroops (i64) to NUMERIC(28,7) decimal string.

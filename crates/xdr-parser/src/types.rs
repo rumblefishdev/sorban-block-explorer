@@ -3,11 +3,12 @@
 //! These types are the contract between the XDR parser and the database persistence layer.
 //! Field names match DB column names (snake_case).
 //!
-//! ADR 0031: enum-like columns (`operations.type`, `soroban_events.event_type`,
-//! `soroban_contracts.contract_type`, `tokens.asset_type`,
-//! `nft_ownership.event_type`) are typed via `domain::enums` enums — the
-//! parser emits the typed variant directly, skipping the legacy
-//! string round-trip through `Debug`/`Display`.
+//! ADR 0031: enum-like columns (`operations.type`, `soroban_contracts.contract_type`,
+//! `tokens.asset_type`, `nft_ownership.event_type`) are typed via `domain::enums`
+//! enums — the parser emits the typed variant directly, skipping the legacy
+//! string round-trip through `Debug`/`Display`. ADR 0033 removed
+//! `soroban_events.event_type`; `ExtractedEvent.event_type` is still produced
+//! for in-memory classification (diagnostic filtering + read-time tagging).
 
 use domain::{ContractEventType, ContractType, NftEventType, OperationType, TokenAssetType};
 
@@ -63,14 +64,17 @@ pub struct ExtractedTransaction {
     pub parse_error: bool,
 }
 
-/// Extracted Soroban event data, maps to the `soroban_events` table.
+/// Extracted Soroban event data, produced by `extract_events` from
+/// `SorobanTransactionMeta.events`.
 ///
-/// Produced by `extract_events` from `SorobanTransactionMeta.events`.
+/// ADR 0033: only contract-scoped non-diagnostic events contribute to the
+/// `soroban_events_appearances` aggregate — full detail is re-expanded from
+/// the public archive at read time.
 #[derive(Debug, Clone)]
 pub struct ExtractedEvent {
     /// Parent transaction hash, hex-encoded. Resolved to `transaction_id` FK at persistence time.
     pub transaction_hash: String,
-    /// Event type (ADR 0031). Maps to `soroban_events.event_type SMALLINT`.
+    /// Event type (ADR 0031). In-memory classifier only; not persisted to DB.
     pub event_type: ContractEventType,
     /// Contract that emitted the event (C... address). `None` for system events without a contract.
     pub contract_id: Option<String>,
