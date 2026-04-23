@@ -11,10 +11,7 @@
 use stellar_xdr::curr::{LedgerCloseMeta, TransactionEnvelope, TransactionMeta};
 use tracing::instrument;
 
-use super::dto::{
-    E3HeavyFields, E14HeavyEventFields, SignatureDto, XdrEventDto, XdrInvocationDto,
-    XdrOperationDto,
-};
+use super::dto::{E3HeavyFields, E14HeavyEventFields, SignatureDto, XdrEventDto, XdrOperationDto};
 
 /// Extract the heavy-field subset of the E3 (`/transactions/:hash`) response
 /// for a given transaction hash within the supplied ledger.
@@ -63,8 +60,8 @@ pub fn extract_e3_heavy(meta: &LedgerCloseMeta, tx_hash: &str) -> Option<E3Heavy
         None => (Vec::new(), Vec::new()),
     };
 
-    // Invocations: nested Soroban call tree.
-    let invocations = match (envelope, tx_meta) {
+    // Invocations: nested Soroban call tree (flat list is not exposed by any endpoint).
+    let operation_tree = match (envelope, tx_meta) {
         (Some(env), Some(tm)) => {
             let inner = xdr_parser::envelope::inner_transaction(env);
             xdr_parser::extract_invocations(
@@ -76,12 +73,9 @@ pub fn extract_e3_heavy(meta: &LedgerCloseMeta, tx_hash: &str) -> Option<E3Heavy
                 &ext_tx.source_account,
                 ext_tx.successful,
             )
-            .invocations
-            .into_iter()
-            .filter_map(to_invocation_dto)
-            .collect()
+            .operation_tree
         }
-        _ => Vec::new(),
+        _ => None,
     };
 
     // Operations: raw details per op.
@@ -102,11 +96,15 @@ pub fn extract_e3_heavy(meta: &LedgerCloseMeta, tx_hash: &str) -> Option<E3Heavy
         fee_bump_source,
         envelope_xdr: Some(ext_tx.envelope_xdr.clone()).filter(|s| !s.is_empty()),
         result_xdr: Some(ext_tx.result_xdr.clone()).filter(|s| !s.is_empty()),
-        result_meta_xdr: ext_tx.result_meta_xdr.clone(),
         diagnostic_events,
         contract_events,
-        invocations,
         operations,
+        result_code: if ext_tx.parse_error {
+            None
+        } else {
+            Some(ext_tx.result_code.clone())
+        },
+        operation_tree,
     })
 }
 
@@ -115,6 +113,7 @@ pub fn extract_e3_heavy(meta: &LedgerCloseMeta, tx_hash: &str) -> Option<E3Heavy
 /// within the supplied ledger.
 ///
 /// `contract_id` is the StrKey C… address (56 chars).
+#[allow(dead_code)] // used by future E14 events endpoint
 #[instrument(skip(meta), fields(contract_id = %contract_id, events = tracing::field::Empty))]
 pub fn extract_e14_heavy(meta: &LedgerCloseMeta, contract_id: &str) -> Vec<E14HeavyEventFields> {
     let ledger = match xdr_parser::extract_ledger(meta) {
@@ -249,26 +248,6 @@ fn topics_to_vec(topics: serde_json::Value) -> Vec<serde_json::Value> {
         serde_json::Value::Array(a) => a,
         other => vec![other],
     }
-}
-
-fn to_invocation_dto(inv: xdr_parser::ExtractedInvocation) -> Option<XdrInvocationDto> {
-    let invocation_index = to_i16_index(inv.invocation_index, "invocation_index")?;
-    let return_value = match inv.return_value {
-        serde_json::Value::Null => None,
-        v => Some(v),
-    };
-    Some(XdrInvocationDto {
-        contract_id: inv.contract_id,
-        caller_account: inv.caller_account,
-        function_name: inv.function_name.unwrap_or_default(),
-        function_args: match inv.function_args {
-            serde_json::Value::Array(a) => a,
-            other => vec![other],
-        },
-        return_value,
-        successful: inv.successful,
-        invocation_index,
-    })
 }
 
 fn to_operation_dto(op: xdr_parser::ExtractedOperation) -> Option<XdrOperationDto> {

@@ -50,7 +50,6 @@ pub struct PageInfo {
 /// picked up automatically by utoipa-axum via the handler return type
 /// when M2 endpoint modules are wired in. Unused in M1 — kept as
 /// infrastructure that M2 endpoints will consume.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Paginated<T>
 where

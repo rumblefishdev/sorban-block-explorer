@@ -6,13 +6,14 @@
 //! only in the public Stellar archive. These DTOs represent the heavy slice.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// E3 (`GET /transactions/:hash`) — fields sourced from XDR parse.
 ///
 /// All optional: a tx that parses cleanly exposes every field; on upstream
 /// failure the caller substitutes `None` and sets `heavy_fields_status` on
 /// the merged response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct E3HeavyFields {
     /// Memo type as ASCII tag (`"text"`, `"id"`, `"hash"`, `"return"`, `"none"`).
     pub memo_type: Option<String>,
@@ -26,23 +27,27 @@ pub struct E3HeavyFields {
     pub envelope_xdr: Option<String>,
     /// Base64-encoded `TransactionResult`.
     pub result_xdr: Option<String>,
-    /// Base64-encoded `TransactionMeta`.
-    pub result_meta_xdr: Option<String>,
     /// Diagnostic events emitted during Soroban invocation.
     pub diagnostic_events: Vec<XdrEventDto>,
-    /// Non-diagnostic Soroban events (contract + system) with full topic
-    /// array + data (beyond DB's `topic0`).
+    /// Contract events — exposed in the light layer as `events`; not serialized here.
+    #[serde(skip_serializing)]
     pub contract_events: Vec<XdrEventDto>,
-    /// Soroban invocations with full function args + return value payloads.
-    pub invocations: Vec<XdrInvocationDto>,
-    /// Operation raw parameters (full JSON details, not just indexed columns).
+    /// Operations — cross-merged into light `OperationItem` list; not serialized here.
+    #[serde(skip_serializing)]
     pub operations: Vec<XdrOperationDto>,
+    /// Transaction result code (e.g. `"txSuccess"`, `"txFailed"`).
+    /// `None` only when the transaction had a parse error.
+    pub result_code: Option<String>,
+    /// Nested Soroban invocation tree — exposed in the light layer; not serialized here.
+    #[serde(skip_serializing)]
+    pub operation_tree: Option<serde_json::Value>,
 }
 
 /// E14 (`GET /contracts/:id/events`) — per-event heavy fields.
 ///
 /// The DB holds event identity + `topic0` + transfer prefix; XDR supplies the
 /// full topics array and decoded data payload.
+#[allow(dead_code)] // used by future E14 events endpoint
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct E14HeavyEventFields {
     /// Event index within its transaction (matches `soroban_events.event_index`).
@@ -57,7 +62,7 @@ pub struct E14HeavyEventFields {
 }
 
 /// Single signature on a transaction envelope.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SignatureDto {
     /// 4-byte hint (lowercase hex, 8 chars).
     pub hint: String,
@@ -66,7 +71,7 @@ pub struct SignatureDto {
 }
 
 /// Common shape for contract events and diagnostic events.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct XdrEventDto {
     /// `"contract"`, `"system"`, or `"diagnostic"`.
     pub event_type: String,
@@ -80,27 +85,8 @@ pub struct XdrEventDto {
     pub event_index: i16,
 }
 
-/// Soroban invocation with full args/return payload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct XdrInvocationDto {
-    /// Contract address (StrKey) invoked.
-    pub contract_id: Option<String>,
-    /// Caller StrKey (account or contract).
-    pub caller_account: Option<String>,
-    /// Invoked function name.
-    pub function_name: String,
-    /// Function arguments as decoded JSON.
-    pub function_args: Vec<serde_json::Value>,
-    /// Return value as decoded JSON.
-    pub return_value: Option<serde_json::Value>,
-    /// Whether this call succeeded.
-    pub successful: bool,
-    /// Zero-based depth-first index in the invocation tree.
-    pub invocation_index: i16,
-}
-
 /// Operation raw parameters (XDR-decoded full details).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct XdrOperationDto {
     /// Operation type tag (e.g. `"payment"`, `"invoke_host_function"`).
     pub op_type: String,
@@ -110,19 +96,8 @@ pub struct XdrOperationDto {
     pub details: serde_json::Value,
 }
 
-/// Merged E3 response: DB light fields + optional XDR heavy fields.
-///
-/// `heavy_fields_status` = `"ok"` when `heavy` is `Some`, `"unavailable"` when
-/// the public-archive fetch failed and the caller degraded gracefully.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct E3Response<TxLight> {
-    #[serde(flatten)]
-    pub light: TxLight,
-    pub heavy: Option<E3HeavyFields>,
-    pub heavy_fields_status: HeavyFieldsStatus,
-}
-
 /// Merged E14 per-event response: DB light row + optional XDR heavy payload.
+#[allow(dead_code)] // used by future E14 events endpoint
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct E14EventResponse<EventLight> {
     #[serde(flatten)]
@@ -133,7 +108,7 @@ pub struct E14EventResponse<EventLight> {
 }
 
 /// Indicates whether the heavy (XDR-sourced) fields were loaded successfully.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HeavyFieldsStatus {
     Ok,

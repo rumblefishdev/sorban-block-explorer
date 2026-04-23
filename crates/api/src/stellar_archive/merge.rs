@@ -7,31 +7,12 @@
 //! needed to build the output (e.g. cloning a matched heavy row into its
 //! response slot in `merge_e14_events`).
 
-use super::dto::{
-    E3HeavyFields, E3Response, E14EventResponse, E14HeavyEventFields, HeavyFieldsStatus,
-};
-
-/// Merge the DB light view of a transaction with the XDR heavy fields.
-///
-/// `heavy = Some(_)` → `heavy_fields_status: "ok"`.
-/// `heavy = None` (upstream fetch failed) → `heavy_fields_status: "unavailable"`
-/// and the response still contains the DB light view.
-pub fn merge_e3_response<T>(light: T, heavy: Option<E3HeavyFields>) -> E3Response<T> {
-    let heavy_fields_status = if heavy.is_some() {
-        HeavyFieldsStatus::Ok
-    } else {
-        HeavyFieldsStatus::Unavailable
-    };
-    E3Response {
-        light,
-        heavy,
-        heavy_fields_status,
-    }
-}
+use super::dto::{E14EventResponse, E14HeavyEventFields, HeavyFieldsStatus};
 
 /// Merge a single DB light event row with its XDR heavy payload.
 ///
 /// When `heavy = None`, topics and data are absent (DB-only fallback).
+#[allow(dead_code)] // used by future E14 events endpoint
 pub fn merge_e14_event_response<E>(
     light: E,
     heavy: Option<E14HeavyEventFields>,
@@ -63,6 +44,7 @@ pub fn merge_e14_event_response<E>(
 ///
 /// If no matching XDR heavy event is found, the resulting merged row has
 /// `heavy_fields_status: "unavailable"` — equivalent to a missing upstream.
+#[allow(dead_code)] // used by future E14 events endpoint
 pub fn merge_e14_events<E, F>(
     light: Vec<E>,
     heavy: Vec<E14HeavyEventFields>,
@@ -89,54 +71,10 @@ mod tests {
     use super::*;
 
     #[derive(Debug, Clone, PartialEq, serde::Serialize)]
-    struct TxLight {
-        hash: String,
-        successful: bool,
-    }
-
-    #[derive(Debug, Clone, PartialEq, serde::Serialize)]
     struct EventLight {
         transaction_hash: String,
         event_index: i16,
         topic0: Option<String>,
-    }
-
-    fn sample_heavy() -> E3HeavyFields {
-        E3HeavyFields {
-            memo_type: Some("text".into()),
-            memo: Some("hi".into()),
-            signatures: Vec::new(),
-            fee_bump_source: None,
-            envelope_xdr: Some("AAAA".into()),
-            result_xdr: Some("AAAB".into()),
-            result_meta_xdr: None,
-            diagnostic_events: Vec::new(),
-            contract_events: Vec::new(),
-            invocations: Vec::new(),
-            operations: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn merge_e3_ok_when_heavy_some() {
-        let light = TxLight {
-            hash: "abc".into(),
-            successful: true,
-        };
-        let merged = merge_e3_response(light, Some(sample_heavy()));
-        assert_eq!(merged.heavy_fields_status, HeavyFieldsStatus::Ok);
-        assert!(merged.heavy.is_some());
-    }
-
-    #[test]
-    fn merge_e3_unavailable_when_heavy_none() {
-        let light = TxLight {
-            hash: "abc".into(),
-            successful: true,
-        };
-        let merged = merge_e3_response(light, None);
-        assert_eq!(merged.heavy_fields_status, HeavyFieldsStatus::Unavailable);
-        assert!(merged.heavy.is_none());
     }
 
     #[test]
