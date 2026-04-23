@@ -1,11 +1,11 @@
 ---
 id: '0049'
-title: 'Backend: Tokens module (list + detail + transactions)'
+title: 'Backend: Assets module (list + detail + transactions)'
 type: FEATURE
 status: backlog
-related_adr: ['0005']
+related_adr: ['0005', '0033']
 related_tasks: ['0023', '0043', '0092']
-tags: [layer-backend, tokens, assets]
+tags: [layer-backend, assets]
 milestone: 2
 links: []
 history:
@@ -17,13 +17,17 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
+  - date: 2026-04-23
+    status: backlog
+    who: karolkow
+    note: 'Updated per task 0154: tokens→assets rename, filter values updated (classic→classic_credit, added native)'
 ---
 
-# Backend: Tokens module (list + detail + transactions)
+# Backend: Assets module (list + detail + transactions)
 
 ## Summary
 
-Implement the Tokens module providing paginated token listing with type/code filters, token detail, and token-related transaction history. The module must unify classic Stellar assets and Soroban token contracts through a single API while preserving identity distinctions between them.
+Implement the Assets module providing paginated asset listing with type/code filters, asset detail, and asset-related transaction history. The module must unify native XLM, classic credit assets, SACs, and Soroban-native tokens through a single API while preserving identity distinctions between them.
 
 > **Stack:** axum 0.8 + utoipa 5.4 + sqlx 0.8 (per ADR 0005). Code in crates/api/.
 
@@ -33,28 +37,28 @@ Implement the Tokens module providing paginated token listing with type/code fil
 
 ## Context
 
-The explorer serves both classic Stellar assets and Soroban-based tokens through a unified token API. Classic assets are identified by `asset_code + issuer_address`, while Soroban tokens are identified by `contract_id`. The `:id` parameter must support both identification schemes.
+The explorer serves all Stellar asset classes through a unified asset API. Classic credit assets are identified by `asset_code + issuer_address`, Soroban tokens by `contract_id`. The `:id` parameter must support both identification schemes.
 
 ### API Specification
 
-**Location:** `crates/api/src/tokens/`
+**Location:** `crates/api/src/assets/`
 
 ---
 
-#### GET /v1/tokens
+#### GET /v1/assets
 
 **Method:** GET
 
-**Path:** `/tokens`
+**Path:** `/assets`
 
 **Query Parameters:**
 
-| Parameter      | Type   | Default | Description                             |
-| -------------- | ------ | ------- | --------------------------------------- |
-| `limit`        | number | 20      | Items per page (max 100)                |
-| `cursor`       | string | null    | Opaque pagination cursor                |
-| `filter[type]` | string | null    | Token type: `classic`, `sac`, `soroban` |
-| `filter[code]` | string | null    | Filter by asset code                    |
+| Parameter      | Type   | Default | Description                                              |
+| -------------- | ------ | ------- | -------------------------------------------------------- |
+| `limit`        | number | 20      | Items per page (max 100)                                 |
+| `cursor`       | string | null    | Opaque pagination cursor                                 |
+| `filter[type]` | string | null    | Asset type: `native`, `classic_credit`, `sac`, `soroban` |
+| `filter[code]` | string | null    | Filter by asset code                                     |
 
 **Response Shape (list):**
 
@@ -63,7 +67,7 @@ The explorer serves both classic Stellar assets and Soroban-based tokens through
   "data": [
     {
       "id": 1,
-      "asset_type": "classic",
+      "asset_type": "classic_credit",
       "asset_code": "USDC",
       "issuer_address": "GCNY...ABC",
       "contract_id": null,
@@ -81,64 +85,65 @@ The explorer serves both classic Stellar assets and Soroban-based tokens through
 
 ---
 
-#### GET /v1/tokens/:id
+#### GET /v1/assets/:id
 
 **Method:** GET
 
-**Path:** `/tokens/:id`
+**Path:** `/assets/:id`
 
 **Path Parameters:**
 
 | Parameter | Type             | Description                                                                               |
 | --------- | ---------------- | ----------------------------------------------------------------------------------------- |
-| `id`      | string or number | Token identifier: numeric ID, or contract_id (C+56 chars), or asset_code+issuer composite |
+| `id`      | string or number | Asset identifier: numeric ID, or contract_id (C+56 chars), or asset_code+issuer composite |
 
 **Response Shape:**
 
 ```json
 {
   "id": 1,
-  "asset_type": "classic",
+  "asset_type": "classic_credit",
   "asset_code": "USDC",
   "issuer_address": "GCNY...ABC",
   "contract_id": null,
   "name": "USD Coin",
   "total_supply": "1000000.0000000",
   "holder_count": 5000,
-  "metadata": {
-    "description": "A stablecoin pegged to USD",
-    "icon_url": "https://example.com/usdc.png"
-  }
+  "description": "A stablecoin pegged to USD",
+  "icon_url": "https://example.com/usdc.png",
+  "home_page": "https://centre.io"
 }
 ```
 
 **Detail fields:**
 
-| Field            | Type           | Description                       |
-| ---------------- | -------------- | --------------------------------- |
-| `id`             | number         | Internal token ID                 |
-| `asset_type`     | string         | `classic`, `sac`, or `soroban`    |
-| `asset_code`     | string or null | Asset code (classic/SAC tokens)   |
-| `issuer_address` | string or null | Issuer address (classic tokens)   |
-| `contract_id`    | string or null | Contract ID (Soroban/SAC tokens)  |
-| `name`           | string or null | Human-readable token name         |
-| `total_supply`   | string or null | Total supply (numeric string)     |
-| `holder_count`   | number         | Number of holders                 |
-| `metadata`       | object or null | Additional token metadata (JSONB) |
+| Field            | Type           | Description                                     |
+| ---------------- | -------------- | ----------------------------------------------- |
+| `id`             | number         | Internal asset ID                               |
+| `asset_type`     | string         | `native`, `classic_credit`, `sac`, or `soroban` |
+| `asset_code`     | string or null | Asset code (classic_credit/SAC assets)          |
+| `issuer_address` | string or null | Issuer address (classic_credit assets)          |
+| `contract_id`    | string or null | Contract ID (Soroban/SAC assets)                |
+| `name`           | string or null | Human-readable asset name                       |
+| `total_supply`   | string or null | Total supply (numeric string)                   |
+| `holder_count`   | number         | Number of holders                               |
+| `description`    | string or null | Asset description (SEP-1 metadata)              |
+| `icon_url`       | string or null | Icon URL (SEP-1 metadata)                       |
+| `home_page`      | string or null | Home page URL (SEP-1 metadata)                  |
 
 ---
 
-#### GET /v1/tokens/:id/transactions
+#### GET /v1/assets/:id/transactions
 
 **Method:** GET
 
-**Path:** `/tokens/:id/transactions`
+**Path:** `/assets/:id/transactions`
 
 **Path Parameters:**
 
 | Parameter | Type             | Description      |
 | --------- | ---------------- | ---------------- |
-| `id`      | string or number | Token identifier |
+| `id`      | string or number | Asset identifier |
 
 **Query Parameters:**
 
@@ -171,64 +176,64 @@ The explorer serves both classic Stellar assets and Soroban-based tokens through
 
 ### Behavioral Requirements
 
-- Token identity: classic = `asset_code + issuer_address`, Soroban = `contract_id`
+- Asset identity: classic_credit = `asset_code + issuer_address`, Soroban = `contract_id`, native = singleton
 - The `:id` param must support both identification schemes (numeric ID, contract_id, or code+issuer)
-- Preserve distinction between classic and contract-based tokens
-- Serve both through a unified API
-- `filter[type]` accepts: `classic`, `sac`, `soroban`
+- Preserve distinction between native, classic credit, SAC, and Soroban-native assets
+- Serve all through a unified API
+- `filter[type]` accepts: `native`, `classic_credit`, `sac`, `soroban`
 - `filter[code]` matches against `asset_code`
 
 ### Caching
 
 | Endpoint                       | TTL     | Notes                                |
 | ------------------------------ | ------- | ------------------------------------ |
-| `GET /tokens`                  | 5-15s   | List may change as new tokens appear |
-| `GET /tokens/:id`              | 60-120s | Token metadata changes infrequently  |
-| `GET /tokens/:id/transactions` | 5-15s   | New transactions may appear          |
+| `GET /assets`                  | 5-15s   | List may change as new assets appear |
+| `GET /assets/:id`              | 60-120s | Asset metadata changes infrequently  |
+| `GET /assets/:id/transactions` | 5-15s   | New transactions may appear          |
 
 ### Error Handling
 
 - 400: Invalid filter[type] value, invalid id format
-- 404: Token not found
+- 404: Asset not found
 - 500: Database errors
 
 ## Implementation Plan
 
 ### Step 1: Route + handler setup
 
-Create `crates/api/src/tokens/` with module, controller, service, and request/response types (ToSchema).
+Create `crates/api/src/assets/` with module, controller, service, and request/response types (ToSchema).
 
-### Step 2: Token ID Resolution
+### Step 2: Asset ID Resolution
 
 Implement ID resolution logic that determines whether `:id` is a numeric ID, a contract_id (C+56), or a code+issuer composite, and queries accordingly.
 
 ### Step 3: List Endpoint
 
-Implement `GET /tokens` with cursor pagination and filter[type]/filter[code] support.
+Implement `GET /assets` with cursor pagination and filter[type]/filter[code] support.
 
 ### Step 4: Detail Endpoint
 
-Implement `GET /tokens/:id` with the multi-scheme ID resolution.
+Implement `GET /assets/:id` with the multi-scheme ID resolution.
 
-### Step 5: Token Transactions Endpoint
+### Step 5: Asset Transactions Endpoint
 
-Implement `GET /tokens/:id/transactions` with cursor pagination. Join through operations/events to find transactions involving this token.
+Implement `GET /assets/:id/transactions` with cursor pagination. Join through operations/events to find transactions involving this asset.
 
 ## Acceptance Criteria
 
-- [ ] `GET /v1/tokens` returns paginated token list
-- [ ] `GET /v1/tokens/:id` returns token detail
-- [ ] `GET /v1/tokens/:id/transactions` returns paginated transaction list
+- [ ] `GET /v1/assets` returns paginated asset list
+- [ ] `GET /v1/assets/:id` returns asset detail
+- [ ] `GET /v1/assets/:id/transactions` returns paginated transaction list
 - [ ] `:id` supports numeric ID, contract_id, and code+issuer identification
-- [ ] `filter[type]` works for classic, sac, soroban
+- [ ] `filter[type]` works for native, classic_credit, sac, soroban
 - [ ] `filter[code]` filters by asset_code
-- [ ] Classic and Soroban tokens served through unified API
-- [ ] Identity distinctions preserved (asset_code+issuer vs contract_id)
+- [ ] All asset classes served through unified API
+- [ ] Identity distinctions preserved (asset_code+issuer vs contract_id vs native singleton)
 - [ ] Standard pagination and error envelopes
-- [ ] 404 for non-existent tokens
+- [ ] 404 for non-existent assets
 
 ## Notes
 
 - The multi-scheme ID resolution is the main complexity in this module.
-- Token transactions may require joining through operations or events depending on token type.
-- SAC (Stellar Asset Contract) tokens bridge classic and Soroban; they have both asset_code/issuer and contract_id.
+- Asset transactions may require joining through operations or events depending on asset type.
+- SAC (Stellar Asset Contract) assets bridge classic and Soroban; they have both asset_code/issuer and contract_id.

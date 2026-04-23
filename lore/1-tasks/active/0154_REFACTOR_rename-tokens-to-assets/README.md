@@ -141,19 +141,19 @@ CloudWatch dashboard PR so there is no gap.
 
 ## Acceptance Criteria
 
-- [ ] ADR drafted and `accepted`, referenced from `related_adr`.
-- [ ] Reversible migration pair (up + down) lands and tested against
+- [x] ADR drafted and `accepted`, referenced from `related_adr`.
+- [x] Reversible migration pair (up + down) lands and tested against
       a restored staging dump in both directions.
-- [ ] `cargo build --workspace` + `cargo clippy --all-targets
+- [x] `cargo build --workspace` + `cargo clippy --all-targets
 -- -D warnings` + `cargo test -p indexer persist_integration`
       green.
 - [ ] Axum routes live at `/assets*`; `/tokens*` aliased or dropped
       per the ADR; OpenAPI regenerated; frontend types aliased or
       updated.
-- [ ] Every file in [notes/G-docs-architecture-rename-scope.md](notes/G-docs-architecture-rename-scope.md)
+- [x] Every file in [notes/G-docs-architecture-rename-scope.md](notes/G-docs-architecture-rename-scope.md)
       updated; `infrastructure-overview.md` explicitly flagged as
       verified-unchanged in the PR description.
-- [ ] `tokens_ms` → `assets_ms` across dashboards; ops channel
+- [x] `tokens_ms` → `assets_ms` across dashboards; ops channel
       notified.
 - [ ] 100-ledger backfill bench p95 within ±5 % of pre-rename
       baseline.
