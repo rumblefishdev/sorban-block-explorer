@@ -11,6 +11,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use indexer::handler::HandlerError;
+use indexer::handler::persist::ClassificationCache;
 use sqlx::PgPool;
 use tracing::info;
 
@@ -64,6 +65,7 @@ pub async fn ingest_ledger_from_file(
     pool: &PgPool,
     seq: u32,
     partition_start: u32,
+    classification_cache: &ClassificationCache,
 ) -> Result<LedgerTimings, BackfillError> {
     let compressed = tokio::fs::read(path).await?;
     let bytes = compressed.len();
@@ -99,7 +101,7 @@ pub async fn ingest_ledger_from_file(
 
     let persist_start = Instant::now();
     for meta in batch.ledger_close_metas.iter() {
-        indexer::handler::process::process_ledger(meta, pool, None).await?;
+        indexer::handler::process::process_ledger(meta, pool, None, classification_cache).await?;
     }
     let persist_ms = persist_start.elapsed().as_millis();
 
@@ -131,6 +133,7 @@ pub async fn ingest_ledger_from_file(
 ///
 /// Emits `partition indexing started` / `partition indexing complete`
 /// at info level when `--verbose` is on.
+#[allow(clippy::too_many_arguments)]
 pub async fn index_partition(
     partition: &Partition,
     temp_dir: &Path,
@@ -139,6 +142,7 @@ pub async fn index_partition(
     range_end: u32,
     completed: &HashSet<u32>,
     dashboard: &Dashboard,
+    classification_cache: &ClassificationCache,
 ) -> Result<PartitionStats, BackfillError> {
     let (first, last) = partition.clamped(range_start, range_end);
 
@@ -163,7 +167,8 @@ pub async fn index_partition(
             seq,
             path.display()
         );
-        let t = ingest_ledger_from_file(&path, pool, seq, partition.start).await?;
+        let t = ingest_ledger_from_file(&path, pool, seq, partition.start, classification_cache)
+            .await?;
         stats.indexed += 1;
         stats.total_bytes += t.bytes as u64;
         stats.parse_total_ms += t.parse_ms;

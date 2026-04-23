@@ -15,6 +15,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use indexer::handler::persist::ClassificationCache;
 use indicatif::MultiProgress;
 use sqlx::PgPool;
 use tokio::process::Command;
@@ -87,6 +88,12 @@ pub async fn execute(
     let run_start = Instant::now();
     let mut totals = PartitionStats::default();
 
+    // Single cache instance reused across the whole run. Mirrors the
+    // indexer Lambda's per-invocation reuse pattern (task 0118 Phase 2)
+    // and the backfill-bench wiring — one batch `SELECT` per ledger for
+    // unseen contracts, zero lookups for already-classified ones.
+    let classification_cache = ClassificationCache::new();
+
     // Sticky dashboard. Visual bar covers the full range and is pre-
     // bumped by `completed.len()` (handled inside `Dashboard::new`);
     // `timing` is scoped only to the work this run actually has to do.
@@ -121,7 +128,14 @@ pub async fn execute(
 
         dashboard.set_stage("indexing");
         let stats = index_partition(
-            partition, temp_dir, &pool, start, end, &completed, &dashboard,
+            partition,
+            temp_dir,
+            &pool,
+            start,
+            end,
+            &completed,
+            &dashboard,
+            &classification_cache,
         )
         .await?;
 
