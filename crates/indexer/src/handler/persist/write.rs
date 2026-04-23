@@ -298,15 +298,15 @@ pub(super) async fn insert_assets_from_reclassified_contracts(
 
     sqlx::query(
         r#"
-        INSERT INTO tokens (asset_type, contract_id)
+        INSERT INTO assets (asset_type, contract_id)
         SELECT $1::SMALLINT, sc.id
           FROM soroban_contracts sc
          WHERE sc.wasm_hash = ANY($2::BYTEA[])
            AND sc.contract_type = $3::SMALLINT
            AND NOT EXISTS (
-                 SELECT 1 FROM tokens t
-                  WHERE t.contract_id = sc.id
-                    AND t.asset_type IN (2, 3)  -- sac, soroban
+                 SELECT 1 FROM assets a
+                  WHERE a.contract_id = sc.id
+                    AND a.asset_type IN (2, 3)  -- sac, soroban
                )
         ON CONFLICT (contract_id)
           WHERE asset_type IN (2, 3)
