@@ -10,7 +10,8 @@
 //! Readable SQL labels for psql / BI live in the
 //! `20260422000000_enum_label_functions` migration (one IMMUTABLE helper
 //! per enum: `op_type_name`, `asset_type_name`, `token_asset_type_name`,
-//! `event_type_name`, `nft_event_type_name`, `contract_type_name`).
+//! `nft_event_type_name`, `contract_type_name`). ADR 0033 removed
+//! `soroban_events.event_type`, so no `event_type_name` helper is defined.
 //! An integration test iterates every variant and asserts that the SQL
 //! helper agrees with `Self::as_str()` so drift surfaces in CI, not prod.
 

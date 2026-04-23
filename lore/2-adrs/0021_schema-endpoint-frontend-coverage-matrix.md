@@ -260,22 +260,22 @@ events (type, topics, raw data), diagnostic events, collapsible raw
 
 **Sources:**
 
-| Field                           | Source                                                                                                           |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `hash`                          | `transaction_hash_index` → `transactions`                                                                        |
-| `status badge`                  | `transactions.successful`                                                                                        |
-| `ledger sequence`               | `transactions.ledger_sequence`                                                                                   |
-| `timestamp`                     | `transactions.created_at` + `ledgers.closed_at`                                                                  |
-| `fee charged`                   | `transactions.fee_charged` (stroops; XLM = /1e7)                                                                 |
-| `source account`                | `transactions.source_account`                                                                                    |
-| `memo (type + content)`         | **S3** `parsed_ledger_{N}.json`.transactions[app_order].memo                                                     |
-| `signatures[]`                  | **S3** `parsed_ledger_{N}.json`.transactions[app_order].envelope.signatures                                      |
-| Normal mode operations summary  | `operations` (type, destination, asset, pool, transfer_amount) + **S3** for rich text ("sent X to Y")            |
-| Normal mode Soroban tree        | `soroban_invocations` (function_name, caller, contract_id) + **S3** for call-tree hierarchy                      |
-| Advanced mode raw params        | **S3**                                                                                                           |
-| Advanced mode events            | `soroban_events` (type, topic0, contract_id, transfer_from/to/amount) + **S3** for full topic[1..N] and raw data |
-| Advanced mode diagnostic events | **S3**                                                                                                           |
-| Advanced mode XDR               | **S3** (`envelope_xdr`, `result_xdr`, `result_meta_xdr`)                                                         |
+| Field                           | Source                                                                                                                                       |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hash`                          | `transaction_hash_index` → `transactions`                                                                                                    |
+| `status badge`                  | `transactions.successful`                                                                                                                    |
+| `ledger sequence`               | `transactions.ledger_sequence`                                                                                                               |
+| `timestamp`                     | `transactions.created_at` + `ledgers.closed_at`                                                                                              |
+| `fee charged`                   | `transactions.fee_charged` (stroops; XLM = /1e7)                                                                                             |
+| `source account`                | `transactions.source_account`                                                                                                                |
+| `memo (type + content)`         | **S3** `parsed_ledger_{N}.json`.transactions[app_order].memo                                                                                 |
+| `signatures[]`                  | **S3** `parsed_ledger_{N}.json`.transactions[app_order].envelope.signatures                                                                  |
+| Normal mode operations summary  | `operations` (type, destination, asset, pool, transfer_amount) + **S3** for rich text ("sent X to Y")                                        |
+| Normal mode Soroban tree        | `soroban_invocations` (function_name, caller, contract_id) + **S3** for call-tree hierarchy                                                  |
+| Advanced mode raw params        | **S3**                                                                                                                                       |
+| Advanced mode events            | `soroban_events_appearances` (does this tx have contract events? + `amount` display) + **S3** for type, topics, data, event_index (ADR 0033) |
+| Advanced mode diagnostic events | **S3**                                                                                                                                       |
+| Advanced mode XDR               | **S3** (`envelope_xdr`, `result_xdr`, `result_meta_xdr`)                                                                                     |
 
 **Hash-lookup resolver (fail-fast per ADR 0016):**
 
@@ -529,25 +529,32 @@ SELECT DISTINCT t.id, t.hash, t.ledger_sequence, t.source_account,
  LIMIT :limit;
 ```
 
-For **Soroban tokens** (contract-based): JOIN through `soroban_events`
-on `contract_id` where transfer columns are populated:
+For **Soroban tokens** (contract-based): JOIN through
+`soroban_events_appearances` on `contract_id` for the list of candidate
+transactions; the "is this a transfer?" classification lives on the read
+path, not on a DB column (ADR 0033):
 
 ```sql
 SELECT DISTINCT t.id, t.hash, t.ledger_sequence, t.source_account,
        t.successful, t.fee_charged, t.created_at
-  FROM soroban_events e
+  FROM soroban_events_appearances e
   JOIN transactions t
        ON t.id = e.transaction_id AND t.created_at = e.created_at
- WHERE e.contract_id     = :contract_id
-   AND e.transfer_amount IS NOT NULL
+ WHERE e.contract_id = :contract_id
  ORDER BY t.created_at DESC
  LIMIT :limit;
 ```
 
+Transfer-only filtering is performed after the DB step by fetching the
+relevant ledgers' XDR from the public archive and running
+`xdr_parser::is_transfer_event` against each event. This trades a tiny
+per-ledger archive fetch for removing the `transfer_amount IS NOT NULL`
+DB column that ADR 0033 dropped.
+
 (UNION ALL at the API layer if a token has both classic and Soroban
 representations — rare but possible for wrapped assets.)
 
-Indexes hit: `idx_ops_asset`, `idx_events_contract`.
+Indexes hit: `idx_ops_asset`, `idx_sea_contract_ledger`.
 
 ---
 
@@ -652,28 +659,32 @@ needs to link to the tx page.
 
 > Events tab — recent events table (event type, topics, data, ledger).
 
-**Sources:**
+**Sources:** ADR 0033 collapses E14's DB side to an appearance index; all
+parsed event detail (type, full topics array, data, per-event index, transfer
+triple) is materialised at read time from the public archive.
 
-| Field                                 | Source                                                                   |
-| ------------------------------------- | ------------------------------------------------------------------------ |
-| `event_type`                          | `soroban_events.event_type`                                              |
-| `topic0`                              | `soroban_events.topic0` (typed prefix, e.g. `sym:transfer`)              |
-| `topic[1..N]`                         | **S3** `parsed_ledger_{N}.json`.transactions[...].events[...].topics     |
-| `data`                                | **S3**                                                                   |
-| `ledger_sequence`                     | `soroban_events.ledger_sequence`                                         |
-| transfer summary (from / to / amount) | `soroban_events.transfer_from/to/amount` (for transfer/mint/burn events) |
+| Field                                                         | Source                                                             |
+| ------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `ledger_sequence`                                             | `soroban_events_appearances.ledger_sequence`                       |
+| `transaction_id` / `transaction_hash`                         | `soroban_events_appearances.transaction_id` → `transactions`       |
+| `amount` (events in this trio)                                | `soroban_events_appearances.amount`                                |
+| `event_type`, `topics[0..N]`, `data`, per-event `event_index` | **S3** — `xdr_parser::extract_events` filtered by `contract_id`    |
+| transfer summary (from / to / amount)                         | **S3** — `xdr_parser::parse_transfer` over the decoded topics/data |
 
 ```sql
-SELECT id, event_type, topic0, event_index, transfer_from, transfer_to,
-       transfer_amount, ledger_sequence, transaction_id, created_at
-  FROM soroban_events
+SELECT contract_id, transaction_id, ledger_sequence, amount, created_at
+  FROM soroban_events_appearances
  WHERE contract_id = :contract_id
- ORDER BY created_at DESC, event_index DESC
+   AND (ledger_sequence, transaction_id) < (:cursor_ledger, :cursor_tx)
+ ORDER BY ledger_sequence DESC, transaction_id DESC
  LIMIT :limit;
 ```
 
-Hits `idx_events_contract`. Rich topic[1..N] / data resolved per-row
-against S3 lazily on detail expand.
+Hits `idx_sea_contract_ledger`. For each distinct `ledger_sequence` in the
+page, one public-archive `GetObject` + `xdr_parser::extract_events` decodes
+every event the contract emitted in that ledger; each appearance row then
+expands into its `amount` consecutive events. Request-scope memoisation
+keeps a ledger parsed once per page.
 
 ---
 

@@ -9,9 +9,10 @@ ALTER TABLE operations
     ADD CONSTRAINT uq_operations_tx_order
     UNIQUE (transaction_id, application_order, created_at);
 
-ALTER TABLE soroban_events
-    ADD CONSTRAINT uq_soroban_events_tx_index
-    UNIQUE (transaction_id, event_index, created_at);
+-- soroban_events_appearances (ADR 0033) gets replay idempotency for free:
+-- its primary key (contract_id, transaction_id, ledger_sequence, created_at)
+-- is already the natural key of an appearance row, so no extra constraint
+-- is needed here.
 
 ALTER TABLE soroban_invocations
     ADD CONSTRAINT uq_soroban_invocations_tx_index

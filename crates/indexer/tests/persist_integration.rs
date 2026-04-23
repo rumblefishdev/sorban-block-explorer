@@ -120,7 +120,14 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
     );
     assert!(counts_first.participants >= 2, "participants ≥ 2");
     assert_eq!(counts_first.operations, 2, "operations row count");
-    assert_eq!(counts_first.events, 1, "soroban_events row count");
+    assert_eq!(
+        counts_first.events, 1,
+        "soroban_events_appearances row count — one (contract, tx, ledger) trio"
+    );
+    assert_eq!(
+        counts_first.events_amount_sum, 1,
+        "SUM(amount) must equal the ingested non-diagnostic event count (ADR 0033)"
+    );
     assert_eq!(counts_first.invocations, 1, "soroban_invocations row count");
     assert!(counts_first.contracts >= 1, "contracts row count");
     assert_eq!(counts_first.wasm, 1, "wasm_interface_metadata row count");
@@ -251,7 +258,7 @@ async fn enum_label_helpers_match_rust_as_str() {
     check_all!(&pool, "op_type_name", OperationType);
     check_all!(&pool, "asset_type_name", AssetType);
     check_all!(&pool, "token_asset_type_name", TokenAssetType);
-    check_all!(&pool, "event_type_name", ContractEventType);
+    // ADR 0033: soroban_events.event_type no longer exists; no event_type_name helper.
     check_all!(&pool, "nft_event_type_name", NftEventType);
     check_all!(&pool, "contract_type_name", ContractType);
 }
@@ -458,7 +465,7 @@ async fn ensure_default_partitions(pool: &PgPool) {
         "transactions",
         "operations",
         "transaction_participants",
-        "soroban_events",
+        "soroban_events_appearances",
         "soroban_invocations",
         "nft_ownership",
         "liquidity_pool_snapshots",
@@ -506,9 +513,9 @@ async fn clean_test_ledger(pool: &PgPool) {
     .bind(vec![TOKEN_CONTRACT.to_string(), NFT_CONTRACT.to_string()])
     .execute(pool)
     .await;
-    // soroban_events / invocations / operations / participants cascade via FK
-    // on (transaction_id, created_at). Deleting the parent transactions wipes
-    // them.
+    // soroban_events_appearances / invocations / operations / participants
+    // cascade via FK on (transaction_id, created_at). Deleting the parent
+    // transactions wipes them.
     let _ = sqlx::query("DELETE FROM transactions WHERE hash = decode($1, 'hex')")
         .bind(TEST_TX_HASH)
         .execute(pool)
@@ -573,6 +580,7 @@ struct Counts {
     participants: i64,
     operations: i64,
     events: i64,
+    events_amount_sum: i64,
     invocations: i64,
     contracts: i64,
     wasm: i64,
@@ -603,7 +611,11 @@ async fn test_counts(pool: &PgPool) -> Counts {
           o AS (SELECT COUNT(*) AS n FROM operations op
                    JOIN transactions tx ON tx.id = op.transaction_id AND tx.created_at = op.created_at
                   WHERE tx.hash = decode($3, 'hex')),
-          e AS (SELECT COUNT(*) AS n FROM soroban_events ev
+          e AS (SELECT COUNT(*) AS n FROM soroban_events_appearances ev
+                   JOIN transactions tx ON tx.id = ev.transaction_id AND tx.created_at = ev.created_at
+                  WHERE tx.hash = decode($3, 'hex')),
+          es AS (SELECT COALESCE(SUM(ev.amount), 0)::BIGINT AS n
+                   FROM soroban_events_appearances ev
                    JOIN transactions tx ON tx.id = ev.transaction_id AND tx.created_at = ev.created_at
                   WHERE tx.hash = decode($3, 'hex')),
           iv AS (SELECT COUNT(*) AS n FROM soroban_invocations inv
@@ -633,9 +645,9 @@ async fn test_counts(pool: &PgPool) -> Counts {
                    JOIN accounts aa ON aa.id = abh.account_id
                   WHERE aa.account_id = ANY($2) AND abh.ledger_sequence = $1)
         SELECT l.n AS l, a.n AS a, t.n AS t, hi.n AS hi, p.n AS p, o.n AS o,
-               e.n AS e, iv.n AS iv, c.n AS c, w.n AS w, tk.n AS tk, n.n AS n,
+               e.n AS e, es.n AS es, iv.n AS iv, c.n AS c, w.n AS w, tk.n AS tk, n.n AS n,
                no.n AS no, pl.n AS pl, ps.n AS ps, lp.n AS lp, bc.n AS bc, bh.n AS bh
-          FROM l, a, t, hi, p, o, e, iv, c, w, tk, n, no, pl, ps, lp, bc, bh
+          FROM l, a, t, hi, p, o, e, es, iv, c, w, tk, n, no, pl, ps, lp, bc, bh
         "#,
     )
     .bind(ledger)
@@ -660,6 +672,7 @@ async fn test_counts(pool: &PgPool) -> Counts {
         participants: row.get("p"),
         operations: row.get("o"),
         events: row.get("e"),
+        events_amount_sum: row.get("es"),
         invocations: row.get("iv"),
         contracts: row.get("c"),
         wasm: row.get("w"),

@@ -1,8 +1,10 @@
 //! Soroban `ContractEventType` discriminator (3 variants).
 //!
-//! Maps to `soroban_events.event_type SMALLINT NOT NULL` with
-//! `CHECK (event_type BETWEEN 0 AND 15)`. Values mirror the XDR enum
-//! (`System = 0`, `Contract = 1`, `Diagnostic = 2`).
+//! ADR 0033 removed the DB column `soroban_events.event_type`; this enum is
+//! still the canonical in-memory classifier. The indexer uses it to filter
+//! diagnostic events out of the appearance aggregate, and the API uses it
+//! at read time to tag events extracted from the ledger XDR. Values mirror
+//! the XDR enum (`System = 0`, `Contract = 1`, `Diagnostic = 2`).
 
 use serde::{Deserialize, Serialize};
 

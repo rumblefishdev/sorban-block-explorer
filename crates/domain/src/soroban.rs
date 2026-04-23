@@ -1,11 +1,12 @@
 //! Soroban domain types matching the `soroban_contracts`,
-//! `wasm_interface_metadata`, `soroban_events`, and `soroban_invocations`
-//! PostgreSQL tables.
+//! `wasm_interface_metadata`, and `soroban_invocations` PostgreSQL tables.
 //!
-//! Schema: ADR 0027 Part I §7, §8, §9, §10.
+//! Schema: ADR 0027 Part I §7, §8, §10.
 //! `soroban_contracts.search_vector` is a generated TSVECTOR — DB-only, omitted.
-//! Event `topics[1..N]` / `data` and invocation `function_args` / `return_value`
-//! live in S3 per ADR 0018.
+//! Event detail (type, topics, data, transfer triple) lives exclusively on the
+//! public Stellar archive per ADR 0033; the `soroban_events_appearances` table
+//! is a pure index queried directly by the API without a domain mirror type.
+//! Invocation `function_args` / `return_value` live in S3 per ADR 0018.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -30,24 +31,6 @@ pub struct SorobanContract {
 pub struct WasmInterfaceMetadata {
     pub wasm_hash: Vec<u8>,
     pub metadata: serde_json::Value,
-}
-
-/// Typed transfer-prefix event row (ADR 0027 §9). Partitioned on `created_at`.
-/// Full topics/data payload lives in S3.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SorobanEvent {
-    pub id: i64,
-    pub transaction_id: i64,
-    pub contract_id: Option<String>,
-    pub event_type: String,
-    pub topic0: Option<String>,
-    pub event_index: i16,
-    pub transfer_from_id: Option<i64>,
-    pub transfer_to_id: Option<i64>,
-    /// NUMERIC(39,0) as decimal string.
-    pub transfer_amount: Option<String>,
-    pub ledger_sequence: i64,
-    pub created_at: DateTime<Utc>,
 }
 
 /// Caller / function / status row (ADR 0027 §10). Partitioned on `created_at`.

@@ -330,7 +330,7 @@ async fn ensure_local_default_partitions(
         "transactions",
         "operations",
         "transaction_participants",
-        "soroban_events",
+        "soroban_events_appearances",
         "soroban_invocations",
         "nft_ownership",
         "liquidity_pool_snapshots",
