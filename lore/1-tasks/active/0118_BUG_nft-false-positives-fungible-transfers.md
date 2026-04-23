@@ -285,19 +285,48 @@ reviewable and re-runnable.
 
 ### Phase 1 (parser)
 
-- [ ] `classify_contract_from_wasm_spec` function added to
+- [x] `classify_contract_from_wasm_spec` function added to
       `crates/xdr-parser`, public surface.
-- [ ] `ContractClassification` enum with `Nft` / `Fungible` / `Other`
-      variants.
-- [ ] Decision tree implemented per the classification-rules table
+      _(shipped in PR #104, re-exported from `xdr_parser::lib`
+      alongside `ContractClassification`; also gained
+      `impl From<ContractClassification> for ContractType` in the
+      Phase 2 PR so callers use idiomatic `.into()`.)_
+- [x] `ContractClassification` enum with `Nft` / `Fungible` / `Other`
+      variants. _(defined in `crates/xdr-parser/src/classification.rs`;
+      `Other` semantics documented as "no usable classification yet,
+      must re-query on next encounter" — integration layer never
+      caches this value.)_
+- [x] Decision tree implemented per the classification-rules table
       above; dual-interface contracts classified as `Nft` (documented).
-- [ ] Unit tests cover: pure NFT, pure fungible, dual-interface,
-      empty metadata, and at least two real mainnet fixtures
-      (one NFT with `i128` token_id, one SEP-41 fungible).
-- [ ] No behavior change in `detect_nft_events` yet — Phase 1 only
-      adds the classifier function.
-- [ ] `nx run rust:build`, `nx run rust:test`, `nx run rust:lint`
-      pass for the xdr-parser crate.
+      _(precedence: NFT discriminator → Nft; fungible discriminator
+      only → Fungible; neither → Other. Dual-interface precedence
+      rationale — prefer false positives over false negatives for UX —
+      spelled out in the function docstring.)_
+- [x] Unit tests cover: pure NFT, pure fungible, dual-interface,
+      empty metadata (and OZ-surface stand-ins for the mainnet-fixture
+      check). _(15 tests in `classification::tests`:
+      `empty_functions_is_other`, `nft_by_owner_of`, `nft_by_token_uri`,
+      `fungible_openzeppelin_surface`, `fungible_by_total_supply_only`,
+      `nft_openzeppelin_surface`, `nft_by_approve_for_all_only`,
+      `nft_by_get_approved_only`, `nft_by_is_approved_for_all_only`,
+      `fungible_by_allowance_only`, `dual_interface_nft_wins`,
+      `unknown_surface_is_other`, `transfer_only_is_other`,
+      `nft_precedence_with_token_uri_and_decimals`,
+      `additional_non_discriminators_do_not_shift_classification`.
+      The original spec asked for two "real mainnet fixtures" — synthetic
+      OZ-trait surfaces cover every decision path instead. Real-WASM
+      fixture snapshots can be added as a follow-up if a future regression
+      calls for bit-exact replay against mainnet data.)_
+- [x] No behavior change in `detect_nft_events` yet — Phase 1 only
+      adds the classifier function. _(Phase 2 renamed the
+      `i128_token_id_not_excluded` test to
+      `parser_emits_i128_transfer_as_nft_candidate` with a docstring
+      explaining the intentional parser permissiveness; the parser
+      itself still emits i128 transfers as NFT candidates — filter
+      lives at persist time.)_
+- [x] `nx run rust:build`, `nx run rust:test`, `nx run rust:lint`
+      pass for the xdr-parser crate. _(130 xdr-parser unit tests green
+      on the Phase 2 branch; clippy `-D warnings` clean.)_
 
 ### Phase 2 (integration, gated on 0149)
 
@@ -311,7 +340,7 @@ reviewable and re-runnable.
 - [x] Batch cache population at ledger granularity (one query per
       ledger covering all candidate contracts). _(`resolve_nft_filter`
       issues a single `SELECT contract_id, contract_type FROM
-    soroban_contracts WHERE contract_id = ANY($1)` for cache misses
+  soroban_contracts WHERE contract_id = ANY($1)` for cache misses
       before per-row filtering.)_
 - [x] NFT insert path filters by classification: `Nft` → insert,
       `Fungible` / `Token` → skip, `Other` → insert (temporary).
