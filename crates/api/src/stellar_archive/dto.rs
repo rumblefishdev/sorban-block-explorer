@@ -6,20 +6,17 @@
 //! the public Stellar archive. For E14 this means the entire event payload
 //! (type, topics, data, event index) is S3-sourced — there is no DB-side
 //! event row to merge against. E3 still carries its DB tx-light slice and
-//! composes it with an XDR heavy struct.
-//!
-//! Task 0046 (E3 transactions) emits a flat `TransactionDetailLight` per
-//! its spec, so the `E3Response<T>` wrapper below is unused on this branch
-//! but retained as part of the 0150 library for future endpoints.
+//! composes it with an XDR heavy struct via `merge_e3_response`.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// E3 (`GET /transactions/:hash`) — fields sourced from XDR parse.
 ///
-/// Internal carrier between `extract_e3_heavy` and the
-/// `transactions::handlers::get_transaction` handler. Task 0046 reads these
-/// fields and projects them onto a flat `TransactionDetailLight` response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Returned as the `heavy` block inside `E3Response<TransactionDetailLight>`.
+/// On upstream fetch failure the caller substitutes `None` and
+/// `merge_e3_response` sets `heavy_fields_status = "unavailable"`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct E3HeavyFields {
     /// Memo type as ASCII tag (`"text"`, `"id"`, `"hash"`, `"return"`, `"none"`).
     pub memo_type: Option<String>,
@@ -72,7 +69,7 @@ pub struct E14HeavyEventFields {
 }
 
 /// Single signature on a transaction envelope.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SignatureDto {
     /// 4-byte hint (lowercase hex, 8 chars).
     pub hint: String,
@@ -81,7 +78,7 @@ pub struct SignatureDto {
 }
 
 /// Common shape for contract events and diagnostic events.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct XdrEventDto {
     /// `"contract"`, `"system"`, or `"diagnostic"`.
     pub event_type: String,
@@ -96,7 +93,7 @@ pub struct XdrEventDto {
 }
 
 /// Operation raw parameters (XDR-decoded full details).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct XdrOperationDto {
     /// Operation type tag (e.g. `"payment"`, `"invoke_host_function"`).
     pub op_type: String,
@@ -110,22 +107,17 @@ pub struct XdrOperationDto {
 ///
 /// `heavy_fields_status` = `Ok` when `heavy` is `Some`, `Unavailable` when
 /// the public-archive fetch failed and the caller degraded gracefully.
-//
-// `0150` library type, retained per ADR 0033 alongside `merge_e3_response`.
-// Task 0046 emits a flat shape per its spec, so this wrapper is unused on
-// this branch — kept available for future endpoints that prefer the nested
-// `{light, heavy, status}` shape.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct E3Response<TxLight> {
     #[serde(flatten)]
+    #[schema(inline)]
     pub light: TxLight,
     pub heavy: Option<E3HeavyFields>,
     pub heavy_fields_status: HeavyFieldsStatus,
 }
 
 /// Indicates whether the XDR-sourced fields were loaded successfully.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HeavyFieldsStatus {
     Ok,

@@ -8,13 +8,11 @@ use domain::OperationType;
 
 use crate::openapi::schemas::{ErrorEnvelope, PageInfo, Paginated};
 use crate::state::AppState;
-use crate::stellar_archive::dto::XdrOperationDto;
 use crate::stellar_archive::extractors::extract_e3_heavy;
+use crate::stellar_archive::merge::merge_e3_response;
 
 use super::cursor;
-use super::dto::{
-    DetailParams, EventItem, ListParams, OperationItem, TransactionDetailLight, TransactionListItem,
-};
+use super::dto::{ListParams, OperationItem, TransactionDetailLight, TransactionListItem};
 use super::queries::{
     ResolvedListParams, fetch_detail, fetch_list, fetch_operations, lookup_hash_index,
     parse_op_type,
@@ -197,33 +195,31 @@ pub async fn list_transactions(
 
 /// Get a single transaction by hash.
 ///
-/// Both views fetch the parent ledger from the public Stellar archive
-/// (per ADR 0029) so the response always includes `memo`, `result_code`,
-/// `operation_tree`, `events`, and per-op `function_name`. Add
-/// `?view=advanced` to additionally include `envelope_xdr`, `result_xdr`,
-/// and per-op `raw_parameters`. On upstream failure all XDR-sourced
-/// fields degrade gracefully to `null` / empty.
+/// Returns the wrapped E3 response from task 0150: the DB-sourced
+/// `TransactionDetailLight` (flattened to the top level) plus a `heavy` block
+/// carrying every XDR-sourced field — memo, result_code, signatures, fee-bump
+/// source, envelope/result XDR, contract + diagnostic events, per-operation
+/// decoded details, and the nested `operation_tree`. `heavy_fields_status` is
+/// `"ok"` when the public-archive fetch succeeded and `"unavailable"` when it
+/// failed (graceful degradation per ADR 0029 — the light slice is always
+/// returned). Per ADR 0033 there is no separate "advanced" view; the wrapper
+/// always carries the full heavy payload when available.
 #[utoipa::path(
     get,
     path = "/transactions/{hash}",
     tag = "transactions",
     params(
         ("hash" = String, Path, description = "Transaction hash (64-char lowercase hex)"),
-        DetailParams,
     ),
     responses(
-        (status = 200, description = "Transaction detail (normal or advanced view)",
-         body = TransactionDetailLight),
-        (status = 400, description = "Invalid hash or view parameter", body = ErrorEnvelope),
-        (status = 404, description = "Transaction not found",          body = ErrorEnvelope),
-        (status = 500, description = "Internal server error",          body = ErrorEnvelope),
+        (status = 200, description = "Transaction detail (light + heavy block)",
+         body = crate::stellar_archive::dto::E3Response<TransactionDetailLight>),
+        (status = 400, description = "Invalid hash",          body = ErrorEnvelope),
+        (status = 404, description = "Transaction not found", body = ErrorEnvelope),
+        (status = 500, description = "Internal server error", body = ErrorEnvelope),
     ),
 )]
-pub async fn get_transaction(
-    State(state): State<AppState>,
-    Path(hash): Path<String>,
-    Query(params): Query<DetailParams>,
-) -> Response {
+pub async fn get_transaction(State(state): State<AppState>, Path(hash): Path<String>) -> Response {
     if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
         return err(
             StatusCode::BAD_REQUEST,
@@ -232,18 +228,6 @@ pub async fn get_transaction(
         );
     }
     let hash_bytes = hex::decode(&hash).expect("validated above");
-
-    let is_advanced = match params.view.as_deref() {
-        None | Some("") => false,
-        Some("advanced") => true,
-        _ => {
-            return err(
-                StatusCode::BAD_REQUEST,
-                "invalid_view_param",
-                "view must be 'advanced' or absent",
-            );
-        }
-    };
 
     let index = match lookup_hash_index(&state.db, &hash_bytes).await {
         Ok(Some(r)) => r,
@@ -284,10 +268,10 @@ pub async fn get_transaction(
             }
         };
 
-    // ADR 0029 read path: both normal and advanced views fetch the parent
-    // ledger from the public Stellar archive. Heavy fields (memo, result_code,
-    // operation_tree, events, per-op function_name) come from XDR. On upstream
-    // failure → graceful degradation: all XDR-sourced fields null / empty.
+    // ADR 0029 read path: fetch the parent ledger from the public Stellar
+    // archive. On upstream failure → graceful degradation: heavy = None,
+    // merge_e3_response sets heavy_fields_status = "unavailable" while still
+    // returning the light slice from DB.
     let heavy = match state
         .fetcher
         .fetch_ledger(index.ledger_sequence as u32)
@@ -303,36 +287,7 @@ pub async fn get_transaction(
         }
     };
 
-    let xdr_ops: &[XdrOperationDto] = heavy
-        .as_ref()
-        .map(|h| h.operations.as_slice())
-        .unwrap_or(&[]);
-
-    let events: Vec<EventItem> = heavy
-        .as_ref()
-        .map(|h| {
-            h.contract_events
-                .iter()
-                .map(|e| EventItem {
-                    event_type: e.event_type.clone(),
-                    contract_id: e.contract_id.clone(),
-                    topics: e.topics.clone(),
-                    data: e.data.clone(),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let (envelope_xdr, result_xdr) = if is_advanced {
-        heavy
-            .as_ref()
-            .map(|h| (h.envelope_xdr.clone(), h.result_xdr.clone()))
-            .unwrap_or((None, None))
-    } else {
-        (None, None)
-    };
-
-    let detail = TransactionDetailLight {
+    let light = TransactionDetailLight {
         hash: tx.hash,
         ledger_sequence: tx.ledger_sequence,
         source_account: tx.source_account,
@@ -340,46 +295,23 @@ pub async fn get_transaction(
         fee_charged: tx.fee_charged,
         created_at: tx.created_at,
         parse_error: tx.parse_error,
-        memo_type: heavy.as_ref().and_then(|h| h.memo_type.clone()),
-        memo: heavy.as_ref().and_then(|h| h.memo.clone()),
-        result_code: heavy.as_ref().and_then(|h| h.result_code.clone()),
-        operations: build_operations(&op_rows, xdr_ops, is_advanced),
-        operation_tree: heavy.as_ref().and_then(|h| h.operation_tree.clone()),
-        events,
-        envelope_xdr,
-        result_xdr,
+        operations: db_operations(&op_rows),
     };
 
-    Json(detail).into_response()
+    Json(merge_e3_response(light, heavy)).into_response()
 }
 
-/// Build the per-op response items. `function_name` is included whenever
-/// XDR is available (both views); `raw_parameters` is gated on `is_advanced`.
-fn build_operations(
-    op_rows: &[super::queries::OpRow],
-    xdr_ops: &[XdrOperationDto],
-    is_advanced: bool,
-) -> Vec<OperationItem> {
+/// Project DB-side operation rows onto the light `OperationItem` slice
+/// (type tag + contract_id only). XDR-decoded per-op details live in
+/// `heavy.operations[]`.
+fn db_operations(op_rows: &[super::queries::OpRow]) -> Vec<OperationItem> {
     op_rows
         .iter()
-        .map(|op| {
-            let xdr_op = xdr_ops
-                .iter()
-                .find(|x| x.application_order == op.application_order);
-            OperationItem {
-                op_type: OperationType::try_from(op.op_type)
-                    .map(|t: OperationType| t.to_string())
-                    .unwrap_or_else(|_| "unknown".to_string()),
-                contract_id: op.contract_id.clone(),
-                function_name: xdr_op
-                    .and_then(|x| x.details["functionName"].as_str())
-                    .map(str::to_string),
-                raw_parameters: if is_advanced {
-                    xdr_op.map(|x| x.details.clone())
-                } else {
-                    None
-                },
-            }
+        .map(|op| OperationItem {
+            op_type: OperationType::try_from(op.op_type)
+                .map(|t: OperationType| t.to_string())
+                .unwrap_or_else(|_| "unknown".to_string()),
+            contract_id: op.contract_id.clone(),
         })
         .collect()
 }

@@ -14,12 +14,6 @@ use super::dto::{E3HeavyFields, E3Response, HeavyFieldsStatus};
 /// `heavy = Some(_)` → `heavy_fields_status: Ok`.
 /// `heavy = None` (upstream fetch failed) → `heavy_fields_status: Unavailable`
 /// and the response still contains the DB light view.
-//
-// `0150` library helper, retained per ADR 0033 (E3 still has DB tx-light +
-// XDR heavy to merge). Task 0046 emits a flat `TransactionDetailLight` per
-// its spec, so the wrapper is unused on this branch — kept available for
-// future endpoints that prefer the nested `{light, heavy, status}` shape.
-#[allow(dead_code)]
 pub fn merge_e3_response<T>(light: T, heavy: Option<E3HeavyFields>) -> E3Response<T> {
     let heavy_fields_status = if heavy.is_some() {
         HeavyFieldsStatus::Ok

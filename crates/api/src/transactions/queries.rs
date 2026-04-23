@@ -42,7 +42,6 @@ pub struct HashIndexRow {
 
 #[derive(Debug)]
 pub struct OpRow {
-    pub application_order: i16,
     pub op_type: i16,
     pub contract_id: Option<String>,
 }
@@ -226,7 +225,7 @@ pub async fn fetch_operations(
     created_at: DateTime<Utc>,
 ) -> Result<Vec<OpRow>, sqlx::Error> {
     let raw: Vec<PgRow> = sqlx::query(
-        "SELECT o.application_order, o.type AS op_type, sc.contract_id \
+        "SELECT o.type AS op_type, sc.contract_id \
          FROM operations o \
          LEFT JOIN soroban_contracts sc ON sc.id = o.contract_id \
          WHERE o.transaction_id = $1 AND o.created_at = $2 \
@@ -240,7 +239,6 @@ pub async fn fetch_operations(
     Ok(raw
         .iter()
         .map(|r| OpRow {
-            application_order: r.get("application_order"),
             op_type: r.get("op_type"),
             contract_id: r.get("contract_id"),
         })

@@ -43,6 +43,27 @@ history:
       did not match the spec). 19 unit tests pass (14 cargo test + 5
       ignored S3-network), clippy clean. Tested manually against
       ledger 62248883.
+  - date: '2026-04-23'
+    status: completed
+    who: FilipDz
+    note: >
+      A2 re-alignment after merging task 0157 (ADR 0033) from develop.
+      Switched `GET /v1/transactions/:hash` to use 0150's
+      `E3Response<TransactionDetailLight>` wrapper via
+      `merge_e3_response`. Response shape is now `{light flattened,
+      heavy: {...}, heavy_fields_status: ok|unavailable}` — replaces
+      the earlier flat shape. `TransactionDetailLight` trimmed to
+      DB-only fields; all XDR-sourced fields (memo, result_code,
+      signatures, events, per-op decoded details, envelope/result XDR,
+      operation_tree) live in `heavy`. Dropped `view=advanced` query
+      param — wrapper always carries the full heavy payload when
+      available. Rationale: validates 0150's design intent (Mazur
+      explicitly kept `E3Response`/`merge_e3_response` for the first
+      real handler) and gives front-end an explicit
+      `heavy_fields_status` signal instead of inferring from null
+      fields. ADR 0033 doesn't dictate E3 shape but its principle
+      (handler emits canonical wrapper when merge applies) is honored.
+      15 cargo tests + 5 ignored S3 tests pass, clippy clean.
 ---
 
 # Backend: Transactions module (list + detail + filters)
@@ -131,13 +152,9 @@ Transactions are the primary explorer entity for activity browsing. The list end
 | --------- | ------ | ------------------------------ |
 | `hash`    | string | Transaction hash (64-char hex) |
 
-**Query Parameters:**
+**Query Parameters:** none. (Per A2 re-alignment — see Design Decisions §9 — the wrapper always carries the full heavy payload when available; the original `view=advanced` toggle is no longer meaningful.)
 
-| Parameter | Type   | Default | Description                               |
-| --------- | ------ | ------- | ----------------------------------------- |
-| `view`    | string | null    | Set to `advanced` for raw/advanced fields |
-
-**Response Shape (normal view):**
+**Response Shape (`E3Response<TransactionDetailLight>` from task 0150):**
 
 ```json
 {
@@ -146,90 +163,73 @@ Transactions are the primary explorer entity for activity browsing. The list end
   "source_account": "GABC...XYZ",
   "successful": true,
   "fee_charged": 100,
-  "result_code": null,
-  "memo_type": "text",
-  "memo": "payment for services",
   "created_at": "2026-03-20T12:00:00Z",
+  "parse_error": false,
   "operations": [
-    {
-      "type": "invoke_host_function",
-      "contract_id": "CCAB...DEF",
-      "function_name": "swap"
-    }
+    { "type": "invoke_host_function", "contract_id": "CCAB...DEF" }
   ],
-  "operation_tree": [],
-  "events": [
-    {
-      "event_type": "contract",
-      "topics": [],
-      "data": {}
-    }
-  ],
-  "parse_error": false
+  "heavy": {
+    "memo_type": "text",
+    "memo": "payment for services",
+    "signatures": [{ "hint": "abcd1234", "signature": "..." }],
+    "fee_bump_source": null,
+    "envelope_xdr": "AAAAAA...",
+    "result_xdr": "AAAAAA...",
+    "diagnostic_events": [],
+    "contract_events": [
+      { "event_type": "contract", "contract_id": "CCAB...DEF",
+        "topics": [...], "data": {...}, "event_index": 0 }
+    ],
+    "operations": [
+      { "op_type": "invoke_host_function", "application_order": 0,
+        "details": { "functionName": "swap", "args": [...] } }
+    ],
+    "result_code": "txSuccess",
+    "operation_tree": { "calls": [...] }
+  },
+  "heavy_fields_status": "ok"
 }
 ```
 
-**Response Shape (advanced view, `?view=advanced`):**
+When the public-archive fetch fails, `heavy: null` and `heavy_fields_status: "unavailable"` — light slice still returned.
 
-```json
-{
-  "hash": "7b2a8c...",
-  "ledger_sequence": 12345678,
-  "source_account": "GABC...XYZ",
-  "successful": true,
-  "fee_charged": 100,
-  "result_code": null,
-  "memo_type": "text",
-  "memo": "payment for services",
-  "created_at": "2026-03-20T12:00:00Z",
-  "operations": [
-    {
-      "type": "invoke_host_function",
-      "contract_id": "CCAB...DEF",
-      "function_name": "swap",
-      "raw_parameters": {},
-      "raw_event_payloads": []
-    }
-  ],
-  "operation_tree": [],
-  "events": [],
-  "envelope_xdr": "AAAAAA...",
-  "result_xdr": "AAAAAA...",
-  "parse_error": false
-}
-```
+**Detail fields (light vs heavy):**
 
-**Detail fields:**
+| Field                            | Block | Source | Description                                      |
+| -------------------------------- | ----- | ------ | ------------------------------------------------ |
+| `hash`                           | light | DB     | Transaction hash (64-char hex)                   |
+| `ledger_sequence`                | light | DB     | Ledger sequence                                  |
+| `source_account`                 | light | DB     | Source account                                   |
+| `successful`                     | light | DB     | Success status                                   |
+| `fee_charged`                    | light | DB     | Fee in stroops                                   |
+| `created_at`                     | light | DB     | ISO timestamp                                    |
+| `parse_error`                    | light | DB     | XDR parse error flag                             |
+| `operations[].type`              | light | DB     | Operation type tag                               |
+| `operations[].contract_id`       | light | DB     | Contract StrKey when applicable                  |
+| `heavy.memo_type` / `heavy.memo` | heavy | XDR    | Memo                                             |
+| `heavy.result_code`              | heavy | XDR    | Tx result code (e.g. `txSuccess`)                |
+| `heavy.signatures`               | heavy | XDR    | Envelope signatures                              |
+| `heavy.fee_bump_source`          | heavy | XDR    | Fee-bump StrKey if any                           |
+| `heavy.envelope_xdr`             | heavy | XDR    | Base64 envelope                                  |
+| `heavy.result_xdr`               | heavy | XDR    | Base64 result                                    |
+| `heavy.diagnostic_events`        | heavy | XDR    | Diagnostic events                                |
+| `heavy.contract_events`          | heavy | XDR    | Contract + system events with full topics + data |
+| `heavy.operations[]`             | heavy | XDR    | Per-op decoded JSON details                      |
+| `heavy.operation_tree`           | heavy | XDR    | Nested Soroban invocation tree                   |
+| `heavy_fields_status`            | meta  | —      | `"ok"` or `"unavailable"`                        |
 
-| Field             | Type           | Normal | Advanced | Description                   |
-| ----------------- | -------------- | ------ | -------- | ----------------------------- |
-| `hash`            | string         | yes    | yes      | Transaction hash              |
-| `ledger_sequence` | number         | yes    | yes      | Ledger sequence               |
-| `source_account`  | string         | yes    | yes      | Source account                |
-| `successful`      | boolean        | yes    | yes      | Success status                |
-| `fee_charged`     | number         | yes    | yes      | Fee in stroops                |
-| `result_code`     | string or null | yes    | yes      | Result code for failed txs    |
-| `memo_type`       | string         | yes    | yes      | Memo type                     |
-| `memo`            | string or null | yes    | yes      | Memo value                    |
-| `created_at`      | string         | yes    | yes      | ISO timestamp                 |
-| `operations`      | array          | yes    | yes      | Decoded/normalized operations |
-| `operation_tree`  | array          | yes    | yes      | Decoded invocation hierarchy  |
-| `events`          | array          | yes    | yes      | Events                        |
-| `envelope_xdr`    | string         | no     | yes      | Raw envelope XDR              |
-| `result_xdr`      | string         | no     | yes      | Raw result XDR                |
-| `parse_error`     | boolean        | yes    | yes      | Whether parse error occurred  |
+`result_meta_xdr` is **never** returned to the frontend (extraction-time only — `operation_tree` is its derived form).
 
-**Important:** `result_meta_xdr` is NOT returned to the frontend. It is used server-side only for decode/validation. The `operation_tree` (decoded from `result_meta_xdr` at ingestion) is returned instead.
+> **A2 re-alignment note:** earlier intermediate states of this spec showed a flat shape with `envelope_xdr` / `result_xdr` at the top level (advanced view) and a separate `?view=advanced` toggle. After merging task 0157 / ADR 0033 from develop, the endpoint adopted 0150's `E3Response<T>` wrapper instead — see Design Decisions §9.
 
 ### Behavioral Requirements
 
 - List responses optimized for table-style browsing (slim response types)
-- Detail supports both human-readable and advanced views via `?view=advanced`
-- Same endpoint, same resource -- two representations
+- Detail returns the full wrapped `E3Response<TransactionDetailLight>` per ADR 0029 + 0150 design
 - Filters applied at DB query level before pagination
-- `result_code` included for failed transactions
-- parse_error transactions visible with available fields; XDR-derived fields may be null
-- Unknown operations rendered as `{ type: 'unknown', raw_xdr: '...' }`
+- `result_code` present in `heavy.result_code` for every transaction (null when fetch fails or when `parse_error == true`)
+- `parse_error` transactions visible with `heavy: null` and `heavy_fields_status: "unavailable"` if the XDR fetch failed
+- Unknown operations rendered as `{ type: 'unknown', raw_xdr: '...' }` (deferred — see Future Work)
 
 ### Caching
 
@@ -240,7 +240,7 @@ Transactions are the primary explorer entity for activity browsing. The list end
 
 ### Error Handling
 
-- 400: Invalid filter values, invalid hash format, invalid view param
+- 400: Invalid filter values, invalid hash format
 - 404: Transaction hash not found
 - 500: Database errors
 
@@ -273,18 +273,18 @@ Implement source_account, contract_id, and operation_type filters at the DB quer
 ## Acceptance Criteria
 
 - [x] `GET /v1/transactions` returns paginated list with slim response types
-- [x] `GET /v1/transactions/:hash` returns flat detail JSON in normal view (per spec)
-- [x] `GET /v1/transactions/:hash?view=advanced` adds envelope_xdr, result_xdr, per-op raw_parameters
-- [x] result_meta_xdr never returned to frontend (also dropped from internal `E3HeavyFields`)
-- [x] operation_tree returned in BOTH views (sourced from XDR/S3, not DB — see Design Decisions §5; null on fetch failure)
-- [x] Events returned with full topics + data in BOTH views (sourced from XDR/S3, not `soroban_events` — see Design Decisions §5; empty on fetch failure)
-- [x] result_code present in BOTH views (null when fetch failed or `parse_error == true`)
+- [x] `GET /v1/transactions/:hash` returns wrapped `E3Response<TransactionDetailLight>` (light slice flattened + `heavy:` block + `heavy_fields_status`) per A2 — see Design Decisions §9
+- [x] `envelope_xdr`, `result_xdr`, per-op decoded `details` available inside `heavy.*` (no separate `view=advanced` query param needed — wrapper always carries full heavy when available)
+- [x] `result_meta_xdr` never returned to frontend (also dropped from internal `E3HeavyFields`)
+- [x] `heavy.operation_tree` populated when fetch succeeds (sourced from XDR/S3, not DB — see Design Decisions §5; null on fetch failure)
+- [x] `heavy.contract_events` carries full topics + data (sourced from XDR/S3, not `soroban_events` — see Design Decisions §5)
+- [x] `heavy.result_code` present (null when fetch failed or `parse_error == true`)
 - [x] filter[source_account], filter[contract_id], filter[operation_type] work and combine
-- [x] parse_error transactions visible with null XDR-derived fields
+- [x] `parse_error` transactions visible — light slice always returned; `heavy_fields_status: "unavailable"` when XDR fetch fails
 - [x] Standard pagination envelope on list endpoint (ADR 0008)
 - [x] Appropriate error responses (400, 404, 500) using `ErrorEnvelope` (ADR 0008)
 - [ ] Unknown operations rendered as `{ type: 'unknown', raw_xdr: '...' }` — currently `{ type: 'unknown' }` only (deferred, see Future Work)
-- [ ] Per-op `raw_event_payloads` (advanced view) — not implemented (deferred, see Future Work)
+- [ ] Per-op `raw_event_payloads` — not surfaced as a separate field; effectively folded into `heavy.contract_events` (per ADR 0033 events come from XDR globally, not per-op). See Future Work.
 
 ## Implementation Notes
 
@@ -293,23 +293,22 @@ Implement source_account, contract_id, and operation_type filters at the DB quer
 - `crates/api/src/state.rs` — `AppState { db: PgPool, fetcher: StellarArchiveFetcher }`
 - `crates/api/src/transactions/mod.rs` — `OpenApiRouter<AppState>` mounted under `/v1`
 - `crates/api/src/transactions/cursor.rs` — base64url(JSON) cursor encode/decode + 3 unit tests
-- `crates/api/src/transactions/dto.rs` — `ListParams`, `DetailParams`, `TransactionListItem`, `TransactionDetailLight`, `OperationItem`, `EventItem`
+- `crates/api/src/transactions/dto.rs` — `ListParams`, `TransactionListItem`, `TransactionDetailLight` (DB-only after A2), `OperationItem` (type + contract_id only)
 - `crates/api/src/transactions/queries.rs` — dynamic `QueryBuilder` list query, hash-index lookup, detail + operations fetch
-- `crates/api/src/transactions/handlers.rs` — `list_transactions`, `get_transaction`
+- `crates/api/src/transactions/handlers.rs` — `list_transactions`, `get_transaction` (uses `merge_e3_response` after A2)
 
 **Modified files**
 
 - `crates/api/src/main.rs` — async `main` builds real `PgPool` + unsigned S3 client; `app(&config, state)` takes `AppState`
-- `crates/api/src/stellar_archive/dto.rs` — added `result_code`, `operation_tree` to `E3HeavyFields`; removed `result_meta_xdr` and `XdrInvocationDto` (never surfaced); deleted `E3Response<T>` (Option A — flat shape per spec)
+- `crates/api/src/stellar_archive/dto.rs` — added `result_code`, `operation_tree` to `E3HeavyFields`; removed `result_meta_xdr` and `XdrInvocationDto` (never surfaced). After A2 / merging 0157: kept Mazur's `E3Response<T>` and dropped E14 wrappers per ADR 0033.
 - `crates/api/src/stellar_archive/extractors.rs` — populate `result_code` + `operation_tree` from `InvocationResult`
-- `crates/api/src/stellar_archive/merge.rs` — deleted `merge_e3_response` (consumer removed); kept `merge_e14_*` for future task 0050
-- `crates/api/src/stellar_archive/mod.rs` — deleted `merge_e3_stellar_heavy_with_fake_db_light` integration test (function it tested no longer exists)
-- `crates/api/src/openapi/mod.rs` — registered transactions schemas; dropped now-internal `E3Response` / `E3HeavyFields` / `SignatureDto` / `XdrEventDto` / `HeavyFieldsStatus` from public components
+- `crates/api/src/stellar_archive/merge.rs` — kept Mazur's `merge_e3_response` (used after A2); E14 helpers removed by 0157.
+- `crates/api/src/openapi/mod.rs` — registered `E3Response<TransactionDetailLight>` + helper schemas (`E3HeavyFields`, `SignatureDto`, `XdrEventDto`, `XdrOperationDto`, `HeavyFieldsStatus`)
 - `crates/api/Cargo.toml` — added `base64`, `chrono`, `hex` workspace deps
 
-**Test results:** 19 tests total — 14 pass on `cargo test -p api`, 5 ignored (require network access to `aws-public-blockchain`). All 5 ignored tests pass when run with `--ignored` against real S3. `cargo clippy --all-targets -- -D warnings` clean.
+**Test results:** 20 tests total — 15 pass on `cargo test -p api`, 5 ignored (require network access to `aws-public-blockchain`). All 5 ignored tests pass when run with `--ignored` against real S3. `cargo clippy --all-targets -- -D warnings` clean.
 
-**Tested manually** against ledger 62248883: confirmed `result_code`, `memo`, `events` (full topics + data), `operation_tree`, per-op `function_name` in normal view; `envelope_xdr`/`result_xdr`/per-op `raw_parameters` additionally in advanced view; all filters; all error cases.
+**Tested manually** against ledger 62248883 (pre-A2 state): confirmed `result_code`, `memo`, `events` (full topics + data), `operation_tree`, per-op `function_name`, `envelope_xdr`/`result_xdr`, all filters, all error cases. Post-A2 wrap re-tested via the 5 ignored S3 integration tests covering the underlying `extract_e3_heavy` + `merge_e3_response` path.
 
 ## Issues Encountered
 
@@ -332,7 +331,19 @@ Implement source_account, contract_id, and operation_type filters at the DB quer
 5. **`operation_tree` and `events` come from XDR (S3), not DB.** The original spec said "operation_tree pre-computed at ingestion, read from DB" and "events from soroban_events table". In practice: `soroban_invocations` stores flat rows (no serialized tree column) and `soroban_events` stores only `topic0` for indexing (no full topics array or data JSON). Full payloads only exist in XDR. The S3 read path is the only structurally possible source.
 6. **`result_code` and `operation_tree` added to `E3HeavyFields`** (task 0150 struct). `result_code` was already on `ExtractedTransaction` in `xdr_parser` but not surfaced; `operation_tree` required capturing `InvocationResult.operation_tree` (nested JSON) alongside the flat list during invocation extraction.
 7. **S3 client configured for anonymous access (`.no_credentials()`).** Production Lambda also accesses a public bucket — IAM credentials are irrelevant. Eliminates credential-resolution latency on Lambda cold starts.
-8. **Spec-literal flat response shape; `E3Response<T>` deleted.** An intermediate state had `?view=advanced` gating the S3 call (DB-only normal view) for performance. After re-reading ADR 0029 that deviation was reverted: 0029 explicitly accepts per-request S3 latency as the architecture's price (caching is deferred until measured), and the 0046 spec table lists memo / result*code / operation_tree / events as present in BOTH views. So both views call S3 unconditionally. 0150's `E3Response<T>` wrapper produced nested `{light, heavy, heavy_fields_status}` which doesn't match the flat spec — deleted, along with `merge_e3_response` (its only consumer). 0150's E14 equivalents (`E14EventResponse`, `merge_e14*\*`) preserved for task 0050.
+8. **Spec-literal flat response shape; `E3Response<T>` deleted.** An intermediate state had `?view=advanced` gating the S3 call (DB-only normal view) for performance. After re-reading ADR 0029 that deviation was reverted: 0029 explicitly accepts per-request S3 latency as the architecture's price (caching is deferred until measured), and the 0046 spec table lists memo / result_code / operation_tree / events as present in BOTH views. So both views call S3 unconditionally. 0150's `E3Response<T>` wrapper produced nested `{light, heavy, heavy_fields_status}` which doesn't match the flat spec — deleted, along with `merge_e3_response` (its only consumer). **Superseded by §9.**
+
+9. **A2 re-alignment: adopt 0150's `E3Response<T>` wrapper after merging task 0157 (ADR 0033) from develop.** Mazur explicitly _kept_ `E3Response<T>` and `merge_e3_response` in his 0157 refactor — his rationale: "E3 still has DB tx-light + XDR heavy to merge". His implicit assumption was that the first real handler (= this task) would consume the wrapper. Going with the flat shape (§8) would have left those types as dead code in his library — diminishing the design value of 0150 itself. After re-checking ADR 0033 and the original 0150 spec ("ready to merge with DB light row") we adopted the wrapper:
+
+   - `TransactionDetailLight` trimmed to DB-only (hash, ledger_sequence, source_account, successful, fee_charged, created_at, parse_error, operations[type+contract_id])
+   - `OperationItem` trimmed to `type` + `contract_id` only — XDR-decoded per-op details live in `heavy.operations[]`
+   - Handler returns `Json(merge_e3_response(light, heavy))`
+   - `?view=advanced` query param removed — wrapper always carries the full heavy payload when fetch succeeds
+   - `EventItem` DTO removed — events live in `heavy.contract_events` as `XdrEventDto`
+   - OpenAPI components register `E3Response<TransactionDetailLight>` plus helpers (`E3HeavyFields`, `SignatureDto`, `XdrEventDto`, `XdrOperationDto`, `HeavyFieldsStatus`)
+   - Frontend gets explicit `heavy_fields_status` ("ok" / "unavailable") instead of inferring from null fields
+
+   ADR 0033 doesn't dictate E3 response shape (it focuses on event sourcing — appearance index + S3) but its spirit is honored: the handler consumes the canonical 0150 wrapper. Trade-off: the 0046 spec table (drafted before 0150 existed) shows a flat shape; that table is now stale and the response shape table in this doc has been updated to reflect the wrapper. See `lore/3-wiki/0046-vs-0150-implementation-review.md` for the full provenance map.
 
 ## Future Work
 

@@ -11,9 +11,10 @@ pub mod schemas;
 
 use utoipa::OpenApi;
 
-use crate::transactions::dto::{
-    EventItem, OperationItem, TransactionDetailLight, TransactionListItem,
+use crate::stellar_archive::dto::{
+    E3HeavyFields, E3Response, HeavyFieldsStatus, SignatureDto, XdrEventDto, XdrOperationDto,
 };
+use crate::transactions::dto::{OperationItem, TransactionDetailLight, TransactionListItem};
 use schemas::{ErrorEnvelope, PageInfo, Paginated};
 
 /// Root OpenAPI document. Holds API metadata and declares shared
@@ -38,9 +39,14 @@ use schemas::{ErrorEnvelope, PageInfo, Paginated};
         PageInfo,
         Paginated<TransactionListItem>,
         TransactionListItem,
+        E3Response<TransactionDetailLight>,
         TransactionDetailLight,
         OperationItem,
-        EventItem,
+        E3HeavyFields,
+        SignatureDto,
+        XdrEventDto,
+        XdrOperationDto,
+        HeavyFieldsStatus,
     )),
 )]
 pub struct ApiDoc;
