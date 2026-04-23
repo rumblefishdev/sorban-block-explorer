@@ -249,6 +249,80 @@ pub(super) fn populate_cache_from_staged(staged: &Staged, cache: &Classification
 }
 
 // ---------------------------------------------------------------------------
+// Task 0120 — bridge late-WASM reclassification to the `tokens` table.
+// ---------------------------------------------------------------------------
+
+/// Insert a Soroban token row for every `soroban_contracts` row that was
+/// promoted to `Fungible` via a WASM upload observed in this ledger,
+/// unless such a tokens row already exists.
+///
+/// Why this step exists:
+///
+/// `detect_tokens` only emits rows for contracts whose WASM interface is
+/// present in the same ledger as the deployment. A two-ledger pattern
+/// (contract deployed in ledger N without WASM → WASM uploaded in
+/// ledger N+k) leaves `soroban_contracts.contract_type` correct after
+/// [`reclassify_contracts_from_wasm`], but no tokens row ever gets
+/// created — the deployment row has already been persisted and no longer
+/// passes through `detect_tokens`. This step closes that gap by consulting
+/// the DB after reclassification.
+///
+/// Semantics:
+///
+/// * Runs inside the persist tx, after both
+///   [`reclassify_contracts_from_wasm`] and [`upsert_tokens`] have
+///   executed earlier in the same transaction. That ordering guarantees
+///   (a) `soroban_contracts.contract_type` is authoritative, and (b)
+///   any row this ledger's `detect_tokens` already produced is present
+///   and won't be duplicated.
+/// * Idempotent on replay via `NOT EXISTS` + `ON CONFLICT DO NOTHING`.
+/// * Only acts on `Fungible` classifications (tokens side). `Nft` and
+///   `Other` are no-ops here — NFTs live in the `nfts` table and `Other`
+///   carries no token identity.
+pub(super) async fn insert_tokens_from_reclassified_contracts(
+    db_tx: &mut Transaction<'_, Postgres>,
+    staged: &Staged,
+) -> Result<(), HandlerError> {
+    // Collect only the Fungible wasm_hashes observed this ledger. NFT and
+    // Other verdicts are not token candidates.
+    let fungible_hashes: Vec<Vec<u8>> = staged
+        .wasm_classification
+        .iter()
+        .filter(|(_h, ty)| matches!(ty, ContractType::Fungible))
+        .map(|(h, _ty)| h.to_vec())
+        .collect();
+
+    if fungible_hashes.is_empty() {
+        return Ok(());
+    }
+
+    sqlx::query(
+        r#"
+        INSERT INTO tokens (asset_type, contract_id)
+        SELECT $1::SMALLINT, sc.id
+          FROM soroban_contracts sc
+         WHERE sc.wasm_hash = ANY($2::BYTEA[])
+           AND sc.contract_type = $3::SMALLINT
+           AND NOT EXISTS (
+                 SELECT 1 FROM tokens t
+                  WHERE t.contract_id = sc.id
+                    AND t.asset_type IN (2, 3)  -- sac, soroban
+               )
+        ON CONFLICT (contract_id)
+          WHERE asset_type IN (2, 3)
+          DO NOTHING
+        "#,
+    )
+    .bind(TokenAssetType::Soroban)
+    .bind(&fungible_hashes)
+    .bind(ContractType::Fungible)
+    .execute(&mut **db_tx)
+    .await?;
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // 3. soroban_contracts — upsert, returning StrKey → surrogate id map (ADR 0030)
 // ---------------------------------------------------------------------------
 
