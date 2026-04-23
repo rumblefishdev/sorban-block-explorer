@@ -27,7 +27,7 @@ history:
 
 `contract_type` classification is binary: SAC = "token", everything else = "other".
 WASM-based contracts implementing the SEP-0041 token interface are never detected as
-tokens and never added to the `tokens` table.
+tokens and never added to the `assets` table.
 
 ## Context
 
@@ -40,16 +40,16 @@ classification.
 
 1. After contract interface metadata is merged, check function signatures against SEP-0041
    required functions (`transfer`, `balance`, `decimals`, `name`, `symbol`).
-2. If a contract matches, classify `contract_type = "token"` and create a `tokens` entry
+2. If a contract matches, classify `contract_type = "token"` and create an `assets` entry
    with `asset_type = "soroban"`.
-3. Populate token `name` and `symbol` from contract metadata where available.
-4. Update `ON CONFLICT` logic in token upsert to handle `asset_type = 'soroban'` correctly
+3. Populate asset `name` and `symbol` from contract metadata where available.
+4. Update `ON CONFLICT` logic in asset upsert to handle `asset_type = 'soroban'` correctly
    (addresses audit finding F12).
 
 ## Acceptance Criteria
 
 - [ ] Contracts implementing SEP-0041 interface are classified as `contract_type = "token"`
-- [ ] Corresponding `tokens` row created with `asset_type = "soroban"` and `contract_id`
+- [ ] Corresponding `assets` row created with `asset_type = "soroban"` and `contract_id`
 - [ ] Token name/symbol populated from contract metadata when available
 - [ ] Existing SAC token detection unchanged
 - [ ] Test: WASM contract with SEP-0041 functions detected as token

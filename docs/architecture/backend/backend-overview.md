@@ -289,7 +289,7 @@ expanding the backend contract beyond what the frontend is expected to show.
 
 #### Assets
 
-**`GET /assets`** - Paginated list of assets (native XLM, classic credit assets, SACs, and Soroban-native tokens).
+**`GET /assets`** - Paginated list of assets (native XLM, classic credit assets, SACs, and Soroban-native assets).
 Query params: `limit`, `cursor`, `filter[type]` (native/classic_credit/sac/soroban), `filter[code]`.
 
 **`GET /assets/:id`** - Asset detail: asset code, issuer/contract, type, supply, holder

@@ -160,7 +160,7 @@ Account detail view for a Stellar account.
 
 #### Assets (`/assets`)
 
-List of all known assets (native XLM, classic credit assets, SACs, and Soroban-native tokens).
+List of all known assets (native XLM, classic credit assets, SACs, and Soroban-native assets).
 
 - Asset table — asset code, issuer / contract ID, type (native / classic credit / SAC / Soroban), total
   supply, holder count
@@ -367,7 +367,7 @@ account.
 
 #### Assets
 
-**`GET /assets`** — Paginated list of assets (native XLM, classic credit assets, SACs, Soroban-native tokens).
+**`GET /assets`** — Paginated list of assets (native XLM, classic credit assets, SACs, Soroban-native assets).
 Query params: `limit`, `cursor`, `filter[type]` (native/classic_credit/sac/soroban), `filter[code]`.
 
 **`GET /assets/:id`** — Asset detail: asset code, issuer/contract, type, supply, holder

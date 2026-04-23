@@ -385,7 +385,7 @@ Expanded behavior:
 
 ### 6.8 Assets (`/assets`)
 
-List of all known assets (native XLM, classic credit assets, SACs, and Soroban-native tokens).
+List of all known assets (native XLM, classic credit assets, SACs, and Soroban-native assets).
 
 - Asset table - asset code, issuer / contract ID, type (native / classic credit / SAC / Soroban), total
   supply, holder count
@@ -412,7 +412,7 @@ Single asset detail view.
 Expanded behavior:
 
 - The header must make it obvious whether the asset is native XLM, a classic credit asset,
-  a SAC, or a Soroban-native token.
+  a SAC, or a Soroban-native asset.
 - Metadata should tolerate partial availability because many assets will have incomplete
   or inconsistent descriptive fields.
 - The recent transactions section should be useful as a discovery path into the broader explorer.
