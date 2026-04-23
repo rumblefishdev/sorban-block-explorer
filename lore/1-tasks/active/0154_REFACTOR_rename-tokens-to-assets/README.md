@@ -155,8 +155,9 @@ CloudWatch dashboard PR so there is no gap.
       verified-unchanged in the PR description.
 - [x] `tokens_ms` → `assets_ms` across dashboards; ops channel
       notified.
-- [ ] 100-ledger backfill bench p95 within ±5 % of pre-rename
-      baseline.
+- [x] 100-ledger backfill bench p95 within ±5 % of pre-rename
+      baseline. develop: 128ms, task branch: 124ms (−3.1 %). Range:
+      62015000–62015099, same DB schema, release build.
 
 ## Risks
 
