@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 description = "Partition management Lambda for the Soroban block explorer (CloudFormation custom resource + EventBridge)"
 
+[lib]
+name = "db_partition_mgmt"
+path = "src/lib.rs"
+
 [[bin]]
 name = "db-partition-mgmt"
 path = "src/main.rs"

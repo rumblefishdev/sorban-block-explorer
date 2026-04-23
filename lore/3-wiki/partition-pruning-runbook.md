@@ -60,8 +60,11 @@ DROP TABLE soroban_events_y2024m02;
 
 ### 5. Repeat for other tables in the same month
 
-If pruning a month, drop from all three time-based tables:
+If pruning a month, drop from all six time-based tables:
 
+- `transactions_y{YYYY}m{MM}`
+- `operations_y{YYYY}m{MM}`
+- `transaction_participants_y{YYYY}m{MM}`
 - `soroban_invocations_y{YYYY}m{MM}`
 - `soroban_events_y{YYYY}m{MM}`
 - `liquidity_pool_snapshots_y{YYYY}m{MM}`
@@ -85,13 +88,10 @@ ALTER TABLE soroban_events
 
 **After `DROP TABLE`, data is gone.** Restore from RDS backup if needed.
 
-## Operations Table (transaction_id range)
+## All Partitioned Tables
 
-Same procedure but with range-based partition names (`operations_p0`, `operations_p1`, etc.):
-
-```sql
-ALTER TABLE operations DETACH PARTITION operations_p0 CONCURRENTLY;
-DROP TABLE operations_p0;
-```
-
-Only prune ranges that contain exclusively old transactions with no active references.
+Per ADR 0027, all six partitioned tables use `RANGE (created_at)` monthly
+partitioning: `transactions`, `operations`, `transaction_participants`,
+`soroban_invocations`, `soroban_events`, `liquidity_pool_snapshots`. The
+procedure above applies to all of them with table-appropriate names
+(`operations_y{YYYY}m{MM}`, etc.).

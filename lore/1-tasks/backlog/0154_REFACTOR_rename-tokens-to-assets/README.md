@@ -38,6 +38,17 @@ history:
       ~50-100 lines). Heavy per-file `docs/architecture/**` scope moved
       to `notes/G-docs-architecture-rename-scope.md`; label-remap
       reasoning moved to `notes/S-asset-type-label-remap.md`.
+  - date: '2026-04-22'
+    status: active
+    who: stkrolikiewicz
+    note: >
+      Activated for implementation. Scope: rename tokens→assets per
+      Stellar taxonomy, see README.
+  - date: '2026-04-22'
+    status: backlog
+    who: stkrolikiewicz
+    note: >
+      Zwolniony z active — priorytet na 0139. Wraca do backlog.
 ---
 
 # REFACTOR: rename `tokens` → `assets` (Stellar taxonomy alignment)

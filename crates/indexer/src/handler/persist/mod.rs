@@ -36,9 +36,11 @@ use xdr_parser::types::{
 
 use super::HandlerError;
 
+mod classification_cache;
 mod staging;
 mod write;
 
+pub use classification_cache::ClassificationCache;
 use staging::Staged;
 
 /// Max retries on transient serialization / deadlock errors (40001 / 40P01).
@@ -98,6 +100,7 @@ pub async fn persist_ledger(
     nft_events: &[ExtractedNftEvent],
     lp_positions: &[ExtractedLpPosition],
     inner_tx_hashes: &HashMap<String, Option<String>>,
+    classification_cache: &ClassificationCache,
 ) -> Result<(), HandlerError> {
     let stage_start = Instant::now();
     let staged = Staged::prepare(
@@ -127,7 +130,7 @@ pub async fn persist_ledger(
             ..StepTimings::default()
         };
 
-        match run_all_steps(&mut db_tx, &staged, &mut timings).await {
+        match run_all_steps(&mut db_tx, &staged, &mut timings, classification_cache).await {
             Ok(()) => match db_tx.commit().await {
                 Ok(()) => break timings,
                 Err(err) => {
@@ -215,6 +218,7 @@ async fn run_all_steps(
     db_tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     staged: &Staged,
     timings: &mut StepTimings,
+    classification_cache: &ClassificationCache,
 ) -> Result<(), HandlerError> {
     let ledger_sequence = staged.ledger_sequence;
 
@@ -234,11 +238,20 @@ async fn run_all_steps(
     let t = Instant::now();
     write::upsert_wasm_metadata(db_tx, staged).await?;
     write::stub_unknown_wasm_interfaces(db_tx, staged).await?;
+    // Task 0118 Phase 2 — apply classification from wasm specs processed
+    // this ledger to any `soroban_contracts` row sharing the wasm_hash.
+    // Runs inside the same tx so reclassification is visible to the NFT
+    // filter step further down.
+    write::reclassify_contracts_from_wasm(db_tx, staged).await?;
     timings.wasm_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
     let contract_ids = write::upsert_contracts_returning_id(db_tx, staged, &account_ids).await?;
     timings.contracts_ms = t.elapsed().as_millis();
+    // Populate per-worker cache with definitive classifications observed
+    // this ledger (SAC → Token, WASM-classified deployments → Nft/Fungible).
+    // Never cache `Other` — a later WASM upload can still promote it.
+    write::populate_cache_from_staged(staged, classification_cache);
 
     let t = Instant::now();
     write::insert_ledger(db_tx, staged).await?;
@@ -277,7 +290,20 @@ async fn run_all_steps(
     timings.tokens_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
-    write::upsert_nfts_and_ownership(db_tx, staged, &account_ids, &contract_ids, &tx_ids).await?;
+    // Task 0118 Phase 2 — `upsert_nfts_and_ownership` is responsible for
+    // hydrating the per-worker cache for any NFT-candidate contracts
+    // unseen so far and dropping rows whose contract is classified as
+    // `Token` or `Fungible`. Runs inside this tx so the batch SELECT sees
+    // the reclassification UPDATE we applied after the wasm upsert.
+    write::upsert_nfts_and_ownership(
+        db_tx,
+        staged,
+        &account_ids,
+        &contract_ids,
+        &tx_ids,
+        classification_cache,
+    )
+    .await?;
     timings.nfts_ms = t.elapsed().as_millis();
 
     let t = Instant::now();

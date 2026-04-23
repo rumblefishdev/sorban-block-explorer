@@ -42,6 +42,7 @@ async fn main() -> Result<(), Error> {
         s3_client,
         cw_client,
         db_pool,
+        classification_cache: handler::persist::ClassificationCache::new(),
     };
 
     info!("indexer ready — starting Lambda runtime");

@@ -120,34 +120,49 @@ Only **`operation_tree`** is updated after initial insert. All other columns are
 
 ### Description
 
-Stores individual Stellar operations extracted from transactions. Each transaction contains one or more operations. **Partitioned by range on `transaction_id`** (10M IDs per partition).
+Stores individual Stellar operations extracted from transactions. Each
+transaction contains one or more operations. Partitioned by `RANGE (created_at)`
+monthly (per ADR 0027).
 
 ### Columns
 
-| Column              | Type                   | Description                                                                      |
-| ------------------- | ---------------------- | -------------------------------------------------------------------------------- |
-| `id`                | `BIGSERIAL`            | Auto-generated surrogate key. Part of composite PK `(id, transaction_id)`.       |
-| `transaction_id`    | `BIGINT NOT NULL`      | FK to `transactions(id)` with CASCADE. Partition key.                            |
-| `application_order` | `SMALLINT NOT NULL`    | Zero-based index of this operation within its parent transaction.                |
-| `source_account`    | `VARCHAR(56) NOT NULL` | Source account for the operation (inherited from transaction if not overridden). |
-| `type`              | `VARCHAR(50) NOT NULL` | Operation type (e.g. `"INVOKE_HOST_FUNCTION"`, `"PAYMENT"`).                     |
-| `details`           | `JSONB NOT NULL`       | Type-specific operation details. Structure varies by type.                       |
+| Column              | Type                            | Description                                                                                   |
+| ------------------- | ------------------------------- | --------------------------------------------------------------------------------------------- |
+| `id`                | `BIGSERIAL NOT NULL`            | Auto-generated surrogate. Part of composite PK `(id, created_at)`.                            |
+| `transaction_id`    | `BIGINT NOT NULL`               | Parent transaction. FK `(transaction_id, created_at) → transactions(id, created_at)` CASCADE. |
+| `application_order` | `SMALLINT NOT NULL`             | Zero-based index of this operation within its parent transaction.                             |
+| `type`              | `SMALLINT NOT NULL`             | Operation type (ADR 0031 enum; label via `op_type_name`). CK `BETWEEN 0 AND 127`.             |
+| `source_id`         | `BIGINT` FK `accounts`          | Operation source account (nullable — inherited from transaction if not overridden).           |
+| `destination_id`    | `BIGINT` FK `accounts`          | Destination account for payment-like ops. Nullable.                                           |
+| `contract_id`       | `BIGINT` FK `soroban_contracts` | Contract touched by the op (ADR 0030 surrogate). Nullable.                                    |
+| `asset_code`        | `VARCHAR(12)`                   | Asset code for asset-denominated ops. Nullable.                                               |
+| `asset_issuer_id`   | `BIGINT` FK `accounts`          | Asset issuer account. Nullable.                                                               |
+| `pool_id`           | `BYTEA`                         | Liquidity pool 32-byte id (CK `octet_length = 32`). FK attached in migration 0006.            |
+| `transfer_amount`   | `NUMERIC(28,7)`                 | Amount for transfer-shaped ops. Nullable.                                                     |
+| `ledger_sequence`   | `BIGINT NOT NULL`               | Parent ledger sequence.                                                                       |
+| `created_at`        | `TIMESTAMPTZ NOT NULL`          | Partition key. Inherited from parent transaction.                                             |
 
 ### Partitioning
 
-- **Method:** `PARTITION BY RANGE (transaction_id)`, 10M IDs per partition.
-- **Initial:** `operations_p0` (0–10M), `operations_default`.
-- **Dynamic:** `db-partition-mgmt` Lambda auto-creates new partitions when >80% consumed.
+- **Method:** `PARTITION BY RANGE (created_at)`, monthly (per ADR 0027).
+- **Naming:** `operations_y{YYYY}m{MM}` (e.g. `operations_y2026m04`).
+- **Dynamic:** `db-partition-mgmt` Lambda creates future monthly partitions
+  daily (covers current month + 3 months ahead).
 
 ### Indexes & Constraints
 
-| Name                     | Type        | Columns                               |
-| ------------------------ | ----------- | ------------------------------------- |
-| PK                       | Primary key | `(id, transaction_id)`                |
-| `idx_operations_tx`      | B-tree      | `transaction_id`                      |
-| `idx_operations_source`  | B-tree      | `source_account`                      |
-| `idx_operations_details` | GIN         | `details`                             |
-| `uq_operations_tx_order` | Unique      | `(transaction_id, application_order)` |
+| Name                  | Type        | Columns                                                                         |
+| --------------------- | ----------- | ------------------------------------------------------------------------------- |
+| PK                    | Primary key | `(id, created_at)`                                                              |
+| FK                    | Foreign key | `(transaction_id, created_at) → transactions(id, created_at)` CASCADE           |
+| `idx_ops_tx`          | B-tree      | `transaction_id`                                                                |
+| `idx_ops_type`        | B-tree      | `(type, created_at DESC)`                                                       |
+| `idx_ops_contract`    | B-tree      | `(contract_id, created_at DESC)` WHERE `contract_id IS NOT NULL`                |
+| `idx_ops_asset`       | B-tree      | `(asset_code, asset_issuer_id, created_at DESC)` WHERE `asset_code IS NOT NULL` |
+| `idx_ops_pool`        | B-tree      | `(pool_id, created_at DESC)` WHERE `pool_id IS NOT NULL`                        |
+| `idx_ops_destination` | B-tree      | `(destination_id, created_at DESC)` WHERE `destination_id IS NOT NULL`          |
+| `ck_ops_pool_id_len`  | Check       | `pool_id IS NULL OR octet_length(pool_id) = 32`                                 |
+| `ck_ops_type_range`   | Check       | `type BETWEEN 0 AND 127`                                                        |
 
 ### Write Paths
 

@@ -1,15 +1,17 @@
 ---
 id: '0139'
-title: 'Partition Lambda fails when indexer outpaces range creation (default overflow)'
+title: 'Align partition Lambda to time-partitioned schema (post-ADR 0027)'
 type: BUG
 status: active
-related_adr: []
-related_tasks: ['0022', '0131']
+related_adr: ['0027']
+related_tasks: ['0022', '0131', '0140']
 tags: [priority-high, effort-small, layer-infra]
 milestone: 1
 links:
+  - crates/db-partition-mgmt/src/lib.rs
   - crates/db-partition-mgmt/src/main.rs
   - infra/src/lib/stacks/partition-stack.ts
+  - crates/db/migrations/0003_transactions_and_operations.sql
 history:
   - date: '2026-04-15'
     status: backlog
@@ -23,88 +25,169 @@ history:
     status: active
     who: stkrolikiewicz
     note: 'Activated. Scope: daily cron + Lambda self-heal + alarm fix, all in one task.'
+  - date: '2026-04-22'
+    status: active
+    who: stkrolikiewicz
+    note: >
+      SCOPE PIVOT. Discovered that ADR 0027 implementation in task 0140
+      (commit 998b774) already migrated operations from RANGE (transaction_id)
+      to RANGE (created_at) — same monthly scheme as other partitioned tables.
+      Original incident cannot recur. Lambda code for operations_pN self-heal
+      was dead code against new schema. New scope: delete dead code, add
+      operations to the time-partitioned list, remove OperationsRangeHigh
+      alarm. See Design Decisions → Emerged.
 ---
 
-# Partition Lambda fails when indexer outpaces range creation
+# Align partition Lambda to time-partitioned schema
 
 ## Summary
 
-`db-partition-mgmt` Lambda fails with "updated partition constraint for default
-partition would be violated by some row" when indexer writes `transaction_id`
-values beyond the current highest range partition between Lambda triggers.
-Rows land in `operations_default`, then subsequent `CREATE TABLE ... PARTITION OF
-operations FOR VALUES FROM ... TO ...` is blocked by Postgres because those
-rows would belong in the new partition.
+Post-ADR 0027 migration moved `operations` (and `transactions`,
+`transaction_participants`) from `RANGE (transaction_id)` to
+`RANGE (created_at)` monthly. The `db-partition-mgmt` Lambda still carried
+range-based code (`operations_pN`, 10M buckets, self-heal logic) that would
+fail against the new schema. This task strips the dead code and wires
+operations into the existing monthly partition pipeline.
 
 ## Context
 
-Lambda triggers:
+**Original incident (2026-04-15, old schema):** `operations_default`
+accumulated 1212 rows in range 10M-20M because the indexer crossed
+`operations_p0` boundary between monthly Lambda triggers. Manually created
+`operations_p1` standalone, moved rows, attached.
 
-- CDK custom resource (every deploy)
-- EventBridge cron (1st of month, 02:00)
+**Schema change that invalidated it:** `998b774 refactor(lore-0140):
+implement ADR 0027 schema from scratch`. Migration
+`0003_transactions_and_operations.sql` defines:
 
-Logic in `operations_ranges_to_create` (`crates/db-partition-mgmt/src/main.rs:180`):
-
-```rust
-if usage_percent > 80.0 || max_transaction_id >= highest_range_end {
+```sql
+CREATE TABLE operations (
+    ...
+    created_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (id, created_at),
+    ...
+) PARTITION BY RANGE (created_at);
 ```
 
-The 80% threshold assumes the next trigger fires before indexer reaches 100%.
-This assumption breaks when:
+Lambda code assumed integer range partitioning — would raise a type error
+if actually invoked against the new schema (`FOR VALUES FROM (10000000)`
+on a TIMESTAMPTZ key).
 
-- Gap between triggers is long (monthly cron + infrequent deploys)
-- Indexer backfills a large batch and crosses the boundary quickly
-
-The fallback `max_id >= highest_range_end` fires only AFTER rows already landed
-in default, so the Lambda tries to create the partition and Postgres rejects it.
-
-The CloudWatch alarm `OperationsRangeHigh` (`partition-stack.ts:144`) has the
-same blind spot — it only updates when the Lambda runs, and
-`treatMissingData: NOT_BREACHING` suppresses it between runs.
-
-## Incident (2026-04-15, staging)
-
-- `operations_p0` covered 0–10M
-- `MAX(transactions.id) = 12_162_606`
-- `operations_default` contained 1212 rows with `transaction_id` in [10_085_665, 12_162_606]
-- Deploy of `Explorer-staging-Partition` failed
-- Stack ended in `UPDATE_ROLLBACK_FAILED`; needed `continue-update-rollback`
-- Manual fix: `CREATE TABLE operations_p1 (LIKE operations INCLUDING ALL)`,
-  moved rows via `DELETE ... RETURNING` + `INSERT`, then
-  `ALTER TABLE operations ATTACH PARTITION operations_p1 FOR VALUES FROM (10_000_000) TO (20_000_000)`.
+**Related task 0131** ("Drop partitioning on operations / switch to
+time-based") was de-facto completed by 0140's ADR 0027 work. Marked
+as completed in this task.
 
 ## Implementation
 
-Recommended combo:
-
-1. **Daily cron instead of monthly** — change
-   `infra/src/lib/stacks/partition-stack.ts:107-113` to
-   `events.Schedule.cron({ minute: '0', hour: '2' })`. Shrinks trigger gap 30x.
-
-2. **Self-heal in Lambda** — when `CREATE TABLE ... PARTITION OF` fails with
-   SQLSTATE for "partition constraint violation by default" (check exact code),
-   fall back to:
-
-   - `CREATE TABLE <name> (LIKE operations INCLUDING ALL)` (standalone)
-   - `WITH moved AS (DELETE FROM operations_default WHERE <range> RETURNING *)
-INSERT INTO <name> SELECT * FROM moved`
-   - `ALTER TABLE operations ATTACH PARTITION <name> FOR VALUES FROM ... TO ...`
-     All in a single transaction.
-
-3. **Alarm fix** — switch `OperationsRangeHigh` to a metric based on actual
-   row-level usage queried directly against RDS (CloudWatch custom metric from
-   a separate cheap cron), or use `treatMissingData: BREACHING` so missing
-   data signals the Lambda itself is broken.
-
-Optional:
-
-- Proactive Lambda invocation from indexer when approaching range end.
-- Larger partition size (postpones problem; doesn't fix root cause).
+1. **Split `main.rs` → `lib.rs` + thin binary** — enables integration tests
+   and keeps handler importable.
+2. **Remove dead code** from `lib.rs`:
+   - `OPERATIONS_RANGE_SIZE`, `operations_ranges_to_create`, `OperationsResult`
+   - `ensure_operations_partitions`, `self_heal_operations_partition`
+   - `is_default_overflow_error`, `parse_operations_range_end`
+   - Related SQLSTATE constants
+3. **Add `operations`, `transactions`, `transaction_participants`** to
+   `TIME_PARTITIONED_TABLES` — reuses existing `ensure_time_partitions`.
+4. **Regression guard unit test** — assert `operations` is in
+   `TIME_PARTITIONED_TABLES`. Catches future re-regression.
+5. **Infra `partition-stack.ts`:**
+   - `MonthlyPartitionRule` → `DailyPartitionRule` (daily refresh of
+     `FuturePartitionCount` metric + partition safety margin)
+   - Remove `OperationsRangeHigh` alarm (metric `OperationsRangeUsagePercent`
+     no longer published)
+   - Extend `FuturePartitions-{table}` alarm loop to all 6 time-partitioned
+     tables
+6. **Wiki runbook** (`lore/3-wiki/partition-pruning-runbook.md`) — remove
+   the "Operations Table (transaction_id range)" section.
+7. **Architecture docs** (`docs/architecture/database-schema/database-schema-overview.md`)
+   — correct stale `PARTITION BY RANGE (transaction_id)` references.
+8. **Archive task 0131** as completed by 0140.
 
 ## Acceptance Criteria
 
-- [ ] Cron frequency increased (daily or more)
-- [ ] Lambda self-heals when default contains rows belonging to a new range
-- [ ] Regression test in `db-partition-mgmt` covering the default-overflow path
-- [ ] `OperationsRangeHigh` alarm meaningfully detects overflow between deploys
-- [ ] Manual SQL runbook retained in task 0131 or this task for future incidents
+- [x] Dead operations_pN code removed from Lambda
+- [x] `operations`, `transactions`, `transaction_participants` covered by
+      `ensure_time_partitions`
+- [x] Daily cron replaces monthly
+- [x] `OperationsRangeHigh` alarm removed
+- [x] Extended `FuturePartitionCount` alarm coverage to all 6 tables
+- [x] Regression unit test asserting operations in time-partitioned list
+- [x] `lib.rs`/`main.rs` split for testability
+- [x] Wiki runbook updated (operations section removed)
+- [x] Architecture docs corrected (`database-schema-overview.md`)
+- [x] Task 0131 archived as completed
+- [ ] Staging verification: `SELECT * FROM operations_default` returns 0 rows
+      (no leftover from old-schema era). **Manual check post-deploy.**
+
+## Design Decisions
+
+### From Plan
+
+1. **Reuse `ensure_time_partitions`** for operations rather than writing a
+   new code path. Consistent with other 3 partitioned tables, no special
+   case needed.
+
+2. **Daily cron, not hourly.** Monthly was too sparse; hourly overkill for
+   block-explorer write rate. Daily matches growth grain.
+
+### Emerged
+
+3. **Scope pivot from "self-heal + alarm" to "delete dead code"**
+   (2026-04-22). Discovered cherry-picked WIP (`59efef4`, 2026-04-17) was
+   implementing self-heal for a schema that no longer exists. Schema
+   migrated in 0140 (commit 998b774) between task creation (2026-04-15)
+   and WIP (2026-04-17), but WIP didn't account for it. Reset branch to
+   develop, rewrote from scratch.
+
+4. **Added `transactions` + `transaction_participants` to the time-partitioned
+   list** (not just `operations`). Plan mentioned only operations, but
+   migration 0003 makes all three `PARTITION BY RANGE (created_at)`. If we
+   skip them, their monthly partitions never get created — Lambda would
+   silently ignore the tables that need it most (transactions is the busiest
+   write path).
+
+5. **Removed `OperationsRangeHigh` alarm entirely** rather than repurposing.
+   Metric `OperationsRangeUsagePercent` is no longer published; keeping the
+   alarm would alarm on missing data permanently. Clean deletion.
+
+6. **No integration test for time-partitions.** `ensure_time_partitions` is
+   unchanged code with existing unit-test coverage. Integration test would
+   add container overhead (~$30/month CI Postgres) for no new behavior
+   coverage. Regression risk for "operations missing from table list" is
+   covered by the unit test `operations_in_time_partitioned_tables`.
+
+7. **Task 0131 archived as completed by 0140** rather than closed as
+   duplicate. 0140 (ADR 0027 schema rebuild) wasn't written as a fix for
+   0131, but its scope subsumed it. `completed` with cross-reference is
+   more honest than `superseded`.
+
+## Issues Encountered
+
+- **WIP commit `59efef4` targeted wrong schema** — written 2026-04-17,
+  2 days after 0140 merged (2026-04-15 for `89f4335`, 2026-04-16 for
+  `998b774` merge PR #98). Either WIP author missed the schema change,
+  or parked it without noting why. Task file gave no hint; only discovered
+  by cross-referencing migration `0003` with Lambda code during review.
+
+- **Architecture docs lagged schema** — `docs/architecture/database-schema/database-schema-overview.md`
+  still claimed `PARTITION BY RANGE (transaction_id)` on lines 189, 202, 513. Fixed as part of this task.
+
+## Manual Runbook (post-deploy verification)
+
+If staging/prod `operations_default` has stale rows from the old-schema era
+(transaction_id-based partitioning), they'd sit there invisibly. Check and
+clean:
+
+```sql
+SELECT COUNT(*) FROM operations_default;
+-- expect 0 after ADR 0027 migration ran; if >0, investigate before next deploy.
+```
+
+If old-schema `operations_p0` / `operations_p1` tables still exist as
+orphans (detached from parent after 0140 migration recreated `operations`):
+
+```sql
+SELECT relname FROM pg_class WHERE relname LIKE 'operations_p%';
+-- any results → orphaned, drop after verifying they are detached:
+DROP TABLE operations_p0;  -- etc.
+```

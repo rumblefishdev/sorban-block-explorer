@@ -184,9 +184,10 @@ CREATE TABLE operations (
     transaction_id  BIGINT REFERENCES transactions(id) ON DELETE CASCADE,
     type            VARCHAR(50) NOT NULL,
     details         JSONB NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL,
     INDEX idx_tx (transaction_id),
     INDEX idx_details (details) USING GIN
-) PARTITION BY RANGE (transaction_id);
+) PARTITION BY RANGE (created_at);
 ```
 
 Purpose:
@@ -199,8 +200,9 @@ Design notes:
 
 - `details` is JSONB because operation-specific fields vary heavily by operation type
 - `ON DELETE CASCADE` keeps child cleanup aligned with transaction lifecycle
-- the current schema partitions `operations` by `transaction_id`, keeping transaction
-  children aligned with the ingestion write pattern and cascade cleanup behavior
+- partitioned by `created_at` (monthly) per ADR 0027 — uniform with
+  `transactions`, `transaction_participants`, `soroban_events`,
+  `soroban_invocations`, `liquidity_pool_snapshots`
 
 ### 4.4 Soroban Contracts
 
@@ -497,20 +499,16 @@ Notable patterns already present in the source design:
 
 ### 6.2 Partitioning Strategy
 
-The source design specifies selective partitioning rather than partitioning every table.
+Per ADR 0027, all high-volume child tables are partitioned by month on
+`created_at`; lightweight anchor/registry tables stay unpartitioned:
 
-Current intent:
-
-- high-volume, time-oriented Soroban tables and liquidity-pool snapshot history are
-  partitioned by month
-- core timeline tables such as `ledgers` and `transactions` remain unpartitioned
-- partitioning exists to keep retention, maintenance, and time-sliced reads practical
-
-The general overview explicitly states:
-
-- `soroban_invocations`, `soroban_events`, and `liquidity_pool_snapshots` are partitioned
-  by month using native PostgreSQL range partitioning
-- `operations` is partitioned separately by `transaction_id` in the current schema
+- **Partitioned (`RANGE (created_at)` monthly):** `transactions`, `operations`,
+  `transaction_participants`, `soroban_invocations`, `soroban_events`,
+  `liquidity_pool_snapshots`
+- **Unpartitioned:** `ledgers`, `transaction_hash_index`, `accounts`,
+  `soroban_contracts`, `tokens`, `nfts`, `liquidity_pools`
+- Partitioning exists to keep retention, maintenance, and time-sliced reads
+  practical on the high-write tables
 
 ### 6.3 Retention Model
 

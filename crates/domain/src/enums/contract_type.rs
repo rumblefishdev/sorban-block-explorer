@@ -24,15 +24,19 @@ use super::EnumDecodeError;
 pub enum ContractType {
     Token = 0,
     Other = 1,
+    Nft = 2,
+    Fungible = 3,
 }
 
 impl ContractType {
-    pub const VARIANTS: &'static [Self] = &[Self::Token, Self::Other];
+    pub const VARIANTS: &'static [Self] = &[Self::Token, Self::Other, Self::Nft, Self::Fungible];
 
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Token => "token",
             Self::Other => "other",
+            Self::Nft => "nft",
+            Self::Fungible => "fungible",
         }
     }
 }
@@ -44,6 +48,8 @@ impl TryFrom<i16> for ContractType {
         match v {
             0 => Ok(Self::Token),
             1 => Ok(Self::Other),
+            2 => Ok(Self::Nft),
+            3 => Ok(Self::Fungible),
             _ => Err(EnumDecodeError::UnknownDiscriminant {
                 enum_name: "ContractType",
                 value: v,
