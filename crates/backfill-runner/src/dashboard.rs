@@ -70,9 +70,8 @@ impl Dashboard {
     /// `total_range` — all ledgers in the requested `[start, end]` window.
     /// `already_done` — count already in DB (resume state); the visual bar
     /// is pre-bumped so `pos / len / %` reflects the resumed run's real
-    /// starting position. Indicatif computes ETA from rolling rate (recent
-    /// position deltas), so the pre-bump is invisible to the estimate —
-    /// ETA only reflects this run's actual progress.
+    /// starting position. `reset_eta()` is called after the pre-bump so the
+    /// estimator starts fresh — ETA only reflects this run's actual progress.
     pub fn new(total_range: u64, already_done: u64, mp: &MultiProgress) -> Self {
         // Order matters — `MultiProgress::add` appends, so the first add
         // is the topmost sticky line and the last is bottom-most.
@@ -89,6 +88,10 @@ impl Dashboard {
             .unwrap(),
         );
         progress.inc(already_done);
+        // inc(already_done) fires record(already_done, t≈0) in the estimator,
+        // producing a spurious rate spike (already_done / ε). Reset so ETA
+        // starts from zero and reflects only ledgers processed in this run.
+        progress.reset_eta();
         // Keep elapsed + ETA refreshing between `inc(1)` calls (e.g. during
         // a multi-minute `aws s3 sync` where no ledger advances the bar).
         progress.enable_steady_tick(Duration::from_millis(500));
