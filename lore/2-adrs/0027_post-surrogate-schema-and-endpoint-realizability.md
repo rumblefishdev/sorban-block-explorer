@@ -254,7 +254,19 @@ CREATE TABLE wasm_interface_metadata (
 );
 ```
 
-#### 9. `soroban_events`
+#### 9. `soroban_events` — superseded for this table by ADR 0033
+
+> **Superseded for this table by [ADR 0033](0033_soroban-events-appearances-read-time-detail.md).**
+> The 11-column per-event table described below was replaced in-place by
+> the `soroban_events_appearances` appearance index (4 user-facing columns
+> plus `created_at` for partition pruning). All parsed event detail
+> (`event_type`, `topic0`, `event_index`, `transfer_from_id`,
+> `transfer_to_id`, `transfer_amount`, surrogate `id`) now lives exclusively
+> on the public Stellar archive and is re-materialised at read time by
+> `xdr_parser::extract_events`. The rest of ADR 0027 stands.
+>
+> Historical DDL kept below for archaeology; the live migration is
+> `crates/db/migrations/0004_soroban_activity.sql`.
 
 ```sql
 CREATE TABLE soroban_events (

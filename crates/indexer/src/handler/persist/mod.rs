@@ -13,7 +13,7 @@
 //!   7. transaction_participants
 //!   8. liquidity_pools + liquidity_pool_snapshots + lp_positions
 //!   9. operations           (FK → liquidity_pools.pool_id)
-//!  10. soroban_events
+//!  10. soroban_events_appearances  (ADR 0033 — aggregate index per trio)
 //!  11. soroban_invocations
 //!  12. tokens
 //!  13. nfts + nft_ownership
@@ -278,7 +278,7 @@ async fn run_all_steps(
     timings.operations_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
-    write::insert_events(db_tx, staged, &account_ids, &contract_ids, &tx_ids).await?;
+    write::insert_events(db_tx, staged, &contract_ids, &tx_ids).await?;
     timings.events_ms = t.elapsed().as_millis();
 
     let t = Instant::now();

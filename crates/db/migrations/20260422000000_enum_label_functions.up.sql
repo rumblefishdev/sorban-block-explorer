@@ -73,15 +73,8 @@ CREATE FUNCTION token_asset_type_name(ty SMALLINT) RETURNS TEXT
     END
 $$;
 
--- soroban_events.event_type — Rust `domain::ContractEventType` (3 variants).
-CREATE FUNCTION event_type_name(ty SMALLINT) RETURNS TEXT
-    IMMUTABLE PARALLEL SAFE LANGUAGE SQL AS $$
-    SELECT CASE ty
-        WHEN 0 THEN 'system'
-        WHEN 1 THEN 'contract'
-        WHEN 2 THEN 'diagnostic'
-    END
-$$;
+-- ADR 0033 removed `soroban_events.event_type` — the appearance index carries
+-- no event_type column, so no `event_type_name` helper is defined here.
 
 -- nft_ownership.event_type — Rust `domain::NftEventType` (3 variants).
 CREATE FUNCTION nft_event_type_name(ty SMALLINT) RETURNS TEXT

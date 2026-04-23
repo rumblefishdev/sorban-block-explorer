@@ -1,7 +1,7 @@
 //! Partition management logic for the Soroban block explorer.
 //!
 //! All six partitioned tables (`transactions`, `operations`,
-//! `transaction_participants`, `soroban_invocations`, `soroban_events`,
+//! `transaction_participants`, `soroban_invocations`, `soroban_events_appearances`,
 //! `liquidity_pool_snapshots`) partition by `RANGE (created_at)` per ADR 0027.
 //! This crate ensures monthly partitions exist from Soroban activation to
 //! `today + FUTURE_MONTHS`.
@@ -29,7 +29,7 @@ pub const TIME_PARTITIONED_TABLES: &[&str] = &[
     "operations",
     "transaction_participants",
     "soroban_invocations",
-    "soroban_events",
+    "soroban_events_appearances",
     "liquidity_pool_snapshots",
 ];
 
@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn parse_partition_month_valid() {
         assert_eq!(
-            parse_partition_month("soroban_events_y2026m04"),
+            parse_partition_month("soroban_events_appearances_y2026m04"),
             Some(NaiveDate::from_ymd_opt(2026, 4, 1).unwrap())
         );
         assert_eq!(
@@ -263,7 +263,10 @@ mod tests {
 
     #[test]
     fn parse_partition_month_invalid() {
-        assert_eq!(parse_partition_month("soroban_events_default"), None);
+        assert_eq!(
+            parse_partition_month("soroban_events_appearances_default"),
+            None
+        );
         assert_eq!(parse_partition_month("random_name"), None);
     }
 
@@ -292,23 +295,39 @@ mod tests {
     #[test]
     fn months_to_create_fills_gap() {
         // Existing: only Apr 2026. Today: Apr 2026.
-        let existing = vec!["soroban_events_y2026m04".to_string()];
+        let existing = vec!["soroban_events_appearances_y2026m04".to_string()];
         let today = NaiveDate::from_ymd_opt(2026, 4, 15).unwrap();
-        let missing = months_to_create("soroban_events", &existing, today);
+        let missing = months_to_create("soroban_events_appearances", &existing, today);
 
-        assert!(!missing.iter().any(|(n, _)| n == "soroban_events_y2026m04"));
-        assert!(missing.iter().any(|(n, _)| n == "soroban_events_y2024m02"));
-        assert!(missing.iter().any(|(n, _)| n == "soroban_events_y2026m07"));
-        assert!(!missing.iter().any(|(n, _)| n == "soroban_events_y2026m08"));
+        assert!(
+            !missing
+                .iter()
+                .any(|(n, _)| n == "soroban_events_appearances_y2026m04")
+        );
+        assert!(
+            missing
+                .iter()
+                .any(|(n, _)| n == "soroban_events_appearances_y2024m02")
+        );
+        assert!(
+            missing
+                .iter()
+                .any(|(n, _)| n == "soroban_events_appearances_y2026m07")
+        );
+        assert!(
+            !missing
+                .iter()
+                .any(|(n, _)| n == "soroban_events_appearances_y2026m08")
+        );
     }
 
     #[test]
     fn months_to_create_all_exist() {
         let today = NaiveDate::from_ymd_opt(2024, 3, 1).unwrap();
         let existing: Vec<String> = (2..=6)
-            .map(|m| format!("soroban_events_y2024m{m:02}"))
+            .map(|m| format!("soroban_events_appearances_y2024m{m:02}"))
             .collect();
-        let missing = months_to_create("soroban_events", &existing, today);
+        let missing = months_to_create("soroban_events_appearances", &existing, today);
         assert!(missing.is_empty());
     }
 
@@ -316,11 +335,11 @@ mod tests {
     fn months_to_create_upper_bound() {
         let today = NaiveDate::from_ymd_opt(2024, 3, 1).unwrap();
         let existing: Vec<String> = (2..=5)
-            .map(|m| format!("soroban_events_y2024m{m:02}"))
+            .map(|m| format!("soroban_events_appearances_y2024m{m:02}"))
             .collect();
-        let missing = months_to_create("soroban_events", &existing, today);
+        let missing = months_to_create("soroban_events_appearances", &existing, today);
         assert_eq!(missing.len(), 1);
-        assert_eq!(missing[0].0, "soroban_events_y2024m06");
+        assert_eq!(missing[0].0, "soroban_events_appearances_y2024m06");
     }
 
     #[test]
