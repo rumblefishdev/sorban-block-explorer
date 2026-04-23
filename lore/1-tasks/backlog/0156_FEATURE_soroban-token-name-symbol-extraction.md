@@ -17,8 +17,8 @@ history:
     who: stkrolikiewicz
     note: >
       Spawned from 0120 future work. 0120 wires Soroban token detection
-      but leaves `ExtractedToken.name` / `.symbol` / `.total_supply` as
-      `None`. `upsert_tokens_soroban` COALESCE-es NULL so a later run
+      but leaves `ExtractedAsset.name` / `.symbol` / `.total_supply` as
+      `None`. `upsert_assets_soroban` COALESCE-es NULL so a later run
       can populate without regressing existing rows.
 ---
 
@@ -26,8 +26,8 @@ history:
 
 ## Summary
 
-After 0120, Soroban-native (WASM-based) `Fungible` contracts produce a
-`tokens` row at deploy time with `asset_type = Soroban` and `contract_id`
+After 0120, Soroban-native (WASM-based) `Fungible` contracts produce an
+`assets` row at deploy time with `asset_type = Soroban` and `contract_id`
 set, but `name` / `symbol` / `total_supply` are NULL. The explorer UI
 therefore shows these tokens without a human-readable label. This task
 populates those fields at ingest time by reading the contract's
@@ -40,7 +40,7 @@ of Soroban token handling. It deliberately defers metadata population to
 avoid scope creep while the classification + persist wiring lands.
 
 Sibling task 0124 (backlog) addresses a different enrichment path: a
-scheduled Lambda that scans `tokens WHERE metadata IS NULL` and fetches
+scheduled Lambda that scans `assets WHERE metadata IS NULL` and fetches
 SEP-1 TOML from issuer home_domains. That Lambda is the right fit for
 **classic / SAC** tokens whose metadata is off-chain.
 
@@ -72,12 +72,12 @@ Keys and decoding follow the OpenZeppelin Stellar contracts
 library's `FungibleToken` reference implementation (see classification
 code's references).
 
-### 2. Thread name/symbol into `ExtractedToken`
+### 2. Thread name/symbol into `ExtractedAsset`
 
-Update `detect_tokens` (task 0120) so the Fungible branch reads
+Update `detect_assets` (task 0120) so the Fungible branch reads
 `deployment.metadata["name"]` / `["symbol"]` and places them on the
-emitted `ExtractedToken` row. `upsert_tokens_soroban` already handles
-partial data via `COALESCE(EXCLUDED.name, tokens.name)`.
+emitted `ExtractedAsset` row. `upsert_assets_soroban` already handles
+partial data via `COALESCE(EXCLUDED.name, assets.name)`.
 
 ### 3. Bridge path — scheduled follow-up, not same tx
 
@@ -87,7 +87,7 @@ reclassification. Two options:
 
 **Option A (preferred):** on the next ledger that touches the contract
 (any invocation), scan the changes for `contract_data` keys on that
-contract id and backfill via `UPDATE tokens SET name = COALESCE(name, …)`.
+contract id and backfill via `UPDATE assets SET name = COALESCE(name, …)`.
 
 **Option B:** extend 0124's scheduled enrichment Lambda to decode
 on-chain storage for Soroban tokens in addition to SEP-1 TOML. Keeps
@@ -100,17 +100,17 @@ Decision deferred to implementation; documenting both for the author.
 - **Unit** (`state.rs`): deployment with ContractData changes containing
   `Symbol("name")` = "MyToken" produces deployment.metadata with that
   name.
-- **Unit** (`state.rs`): `detect_tokens` propagates name/symbol from
-  deployment metadata into `ExtractedToken`.
+- **Unit** (`state.rs`): `detect_assets` propagates name/symbol from
+  deployment metadata into `ExtractedAsset`.
 - **Integration**: synthetic ledger with Fungible deploy + ContractData
-  changes → `tokens` row has `name` / `symbol` populated.
+  changes → `assets` row has `name` / `symbol` populated.
 
 ## Acceptance Criteria
 
 - [ ] `extract_contract_deployments` populates `metadata.name` and
       `metadata.symbol` when standard ContractData keys are present.
-- [ ] `detect_tokens` threads those values into `ExtractedToken`.
-- [ ] `upsert_tokens_soroban` writes non-NULL name/symbol.
+- [ ] `detect_assets` threads those values into `ExtractedAsset`.
+- [ ] `upsert_assets_soroban` writes non-NULL name/symbol.
 - [ ] Late-WASM path — either Option A implemented, or 0124 scope
       explicitly extended (not both).
 - [ ] Unit + integration coverage as above.

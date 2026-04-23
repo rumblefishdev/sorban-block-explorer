@@ -447,17 +447,17 @@ resolver documented in ADR 0020 §Role reconstruction (4 roles from DB,
 | ---------------------- | ------------------------------------------------------------------------------------------------------------- |
 | `asset_code`           | `tokens.asset_code`                                                                                           |
 | `issuer / contract ID` | `tokens.issuer_address` or `tokens.contract_id`                                                               |
-| `type`                 | `tokens.asset_type` (native/classic/sac/soroban)                                                              |
+| `type`                 | `assets.asset_type` (native/classic_credit/sac/soroban)                                                       |
 | `total_supply`         | **computed** — `SUM(balance) FROM account_balances_current WHERE asset matches`                               |
 | `holder_count`         | **computed** — `COUNT(DISTINCT account_id) FROM account_balances_current WHERE asset matches AND balance > 0` |
 
-Filter `filter[type]` uses `idx_tokens_type`.
-Filter `filter[code]` uses `idx_tokens_code_trgm` (trigram substring).
+Filter `filter[type]` uses `idx_assets_type`.
+Filter `filter[code]` uses `idx_assets_code_trgm` (trigram substring).
 
 ```sql
 SELECT t.id, t.asset_type, t.asset_code, t.issuer_address,
        t.contract_id, t.name
-  FROM tokens t
+  FROM assets t
  WHERE (:type IS NULL OR t.asset_type = :type)
    AND (:code IS NULL OR t.asset_code ILIKE '%' || :code || '%')
  ORDER BY t.id DESC
@@ -938,7 +938,7 @@ materialized. Monthly partitioning keeps long-range scans cheap.
 | Starts with `G` (56 chars) | `accounts` (exact or prefix)      | `idx_accounts_prefix` (text_pattern_ops)    |
 | Starts with `C` (56 chars) | `soroban_contracts`               | `idx_contracts_prefix`                      |
 | Pool ID prefix             | `liquidity_pools`                 | `idx_pools_prefix`                          |
-| Short asset code           | `tokens` full-text + trigram      | `idx_tokens_search`, `idx_tokens_code_trgm` |
+| Short asset code           | `assets` full-text + trigram      | `idx_assets_search`, `idx_assets_code_trgm` |
 | Contract name              | `soroban_contracts.search_vector` | `idx_contracts_search` (GIN)                |
 | NFT name / collection      | `nfts` trigram / collection       | `idx_nfts_name_trgm`, `idx_nfts_collection` |
 

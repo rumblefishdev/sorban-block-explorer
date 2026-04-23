@@ -284,7 +284,7 @@ pub(super) async fn insert_assets_from_reclassified_contracts(
     staged: &Staged,
 ) -> Result<(), HandlerError> {
     // Collect only the Fungible wasm_hashes observed this ledger. NFT and
-    // Other verdicts are not token candidates.
+    // Other verdicts are not asset candidates.
     let fungible_hashes: Vec<Vec<u8>> = staged
         .wasm_classification
         .iter()

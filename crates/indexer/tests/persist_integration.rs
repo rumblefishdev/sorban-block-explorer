@@ -637,8 +637,8 @@ async fn test_counts(pool: &PgPool) -> Counts {
           w AS (SELECT COUNT(*) AS n FROM wasm_interface_metadata WHERE wasm_hash = decode($5, 'hex')),
           -- ADR 0030: assets/nfts.contract_id is BIGINT → join soroban_contracts
           -- to filter by StrKey.
-          tk AS (SELECT COUNT(*) AS n FROM assets tk
-                   JOIN soroban_contracts sc ON sc.id = tk.contract_id
+          ast AS (SELECT COUNT(*) AS n FROM assets ast
+                   JOIN soroban_contracts sc ON sc.id = ast.contract_id
                   WHERE sc.contract_id = ANY($4)),
           n AS (SELECT COUNT(*) AS n FROM nfts n
                    JOIN soroban_contracts sc ON sc.id = n.contract_id
@@ -657,9 +657,9 @@ async fn test_counts(pool: &PgPool) -> Counts {
                    JOIN accounts aa ON aa.id = abh.account_id
                   WHERE aa.account_id = ANY($2) AND abh.ledger_sequence = $1)
         SELECT l.n AS l, a.n AS a, t.n AS t, hi.n AS hi, p.n AS p, o.n AS o,
-               e.n AS e, es.n AS es, iv.n AS iv, ivs.n AS ivs, c.n AS c, w.n AS w, tk.n AS tk, n.n AS n,
+               e.n AS e, es.n AS es, iv.n AS iv, ivs.n AS ivs, c.n AS c, w.n AS w, ast.n AS ast, n.n AS n,
                no.n AS no, pl.n AS pl, ps.n AS ps, lp.n AS lp, bc.n AS bc, bh.n AS bh
-          FROM l, a, t, hi, p, o, e, es, iv, ivs, c, w, tk, n, no, pl, ps, lp, bc, bh
+          FROM l, a, t, hi, p, o, e, es, iv, ivs, c, w, ast, n, no, pl, ps, lp, bc, bh
         "#,
     )
     .bind(ledger)
@@ -689,7 +689,7 @@ async fn test_counts(pool: &PgPool) -> Counts {
         invocations_amount_sum: row.get("ivs"),
         contracts: row.get("c"),
         wasm: row.get("w"),
-        assets: row.get("tk"),
+        assets: row.get("ast"),
         nfts: row.get("n"),
         nft_ownership: row.get("no"),
         pools: row.get("pl"),
