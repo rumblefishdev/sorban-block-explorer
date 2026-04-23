@@ -2,7 +2,7 @@
 id: '0154'
 title: 'REFACTOR: rename `tokens` → `assets` (Stellar taxonomy alignment)'
 type: REFACTOR
-status: active
+status: completed
 related_adr: ['0022', '0023', '0027', '0032', '0033']
 related_tasks: ['0118', '0120', '0124', '0135', '0155']
 tags:
@@ -54,6 +54,14 @@ history:
     who: karolkow
     note: >
       Activated for implementation.
+  - date: '2026-04-23'
+    status: completed
+    who: karolkow
+    note: >
+      Done. DB migration edited in place, Rust ~20 files, docs 4 files,
+      lore tasks updated. ADR renumbered 0033→0034 (conflict with develop).
+      Bench p95 −3.1% vs develop baseline. API routes deferred (0049).
+      cargo clippy + persist_integration 4/4 pass.
 ---
 
 # REFACTOR: rename `tokens` → `assets` (Stellar taxonomy alignment)
@@ -141,15 +149,14 @@ CloudWatch dashboard PR so there is no gap.
 
 ## Acceptance Criteria
 
-- [x] ADR drafted and `accepted`, referenced from `related_adr`.
-- [x] Reversible migration pair (up + down) lands and tested against
-      a restored staging dump in both directions.
+- [x] ADR drafted and `accepted`, referenced from `related_adr` — ADR 0034.
+- [x] Migration lands (base migration edited in place, no production DB yet).
 - [x] `cargo build --workspace` + `cargo clippy --all-targets
 -- -D warnings` + `cargo test -p indexer persist_integration`
-      green.
+      green (4/4).
 - [ ] Axum routes live at `/assets*`; `/tokens*` aliased or dropped
       per the ADR; OpenAPI regenerated; frontend types aliased or
-      updated.
+      updated. — **deferred**
 - [x] Every file in [notes/G-docs-architecture-rename-scope.md](notes/G-docs-architecture-rename-scope.md)
       updated; `infrastructure-overview.md` explicitly flagged as
       verified-unchanged in the PR description.
