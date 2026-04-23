@@ -2,7 +2,7 @@
 id: '0139'
 title: 'Align partition Lambda to time-partitioned schema (post-ADR 0027)'
 type: BUG
-status: active
+status: completed
 related_adr: ['0027']
 related_tasks: ['0022', '0131', '0140']
 tags: [priority-high, effort-small, layer-infra]
@@ -36,6 +36,17 @@ history:
       was dead code against new schema. New scope: delete dead code, add
       operations to the time-partitioned list, remove OperationsRangeHigh
       alarm. See Design Decisions → Emerged.
+  - date: '2026-04-23'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      PR #109 merged as commit 8a03b27. 9 files changed (+581/-654 net
+      reduction from dead-code strip). 8 unit tests passing incl. new
+      regression guard `post_adr_0027_tables_in_time_partitioned_list`.
+      Archived task 0131 in same PR (de-facto completed by 0140). Docs
+      sweep follow-up tracked in 0155 (augmented, not spawned new).
+      Manual staging verification (last AC) deferred to post-deploy;
+      ops note in PR body covers indexer-pause prerequisite.
 ---
 
 # Align partition Lambda to time-partitioned schema
@@ -117,7 +128,8 @@ as completed in this task.
 - [x] Architecture docs corrected (`database-schema-overview.md`)
 - [x] Task 0131 archived as completed
 - [ ] Staging verification: `SELECT * FROM operations_default` returns 0 rows
-      (no leftover from old-schema era). **Manual check post-deploy.**
+      (no leftover from old-schema era). **Deferred — manual check post-deploy,
+      tracked in PR #109 ops note. Not blocking task completion.**
 
 ## Design Decisions
 

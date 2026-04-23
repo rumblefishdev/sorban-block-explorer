@@ -2,8 +2,8 @@
 id: '0046'
 title: 'Backend: Transactions module (list + detail + filters)'
 type: FEATURE
-status: backlog
-related_adr: ['0005']
+status: active
+related_adr: ['0005', '0029']
 related_tasks: ['0023', '0043', '0044', '0092']
 tags: [layer-backend, transactions, filters, xdr]
 milestone: 2
@@ -25,6 +25,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated: removed event_interpretations references — table removed from architecture (task 0098).'
+  - date: '2026-04-23'
+    status: active
+    who: FilipDz
+    note: 'Activated — task 0150 (stellar_archive library) completed. Implementing GET /v1/transactions + GET /v1/transactions/:hash.'
 ---
 
 # Backend: Transactions module (list + detail + filters)
