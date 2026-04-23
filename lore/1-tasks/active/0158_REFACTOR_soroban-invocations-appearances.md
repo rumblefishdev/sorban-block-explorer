@@ -42,12 +42,13 @@ caller, success flag, per-node invocation index) moves to read-time XDR
 fetch through `xdr_parser::extract_invocations`. The DB becomes a pointer
 to `(contract, tx, ledger, amount)` trios.
 
-## Status: Backlog
+## Status: Active
 
-**Current state:** Not started. Proposed after task 0157 closed the same
-refactor for `soroban_events`. Follow-up ADR required (tentative number
-TBD — reuses ADR 0033's pattern but different table and different
-endpoints, so deserves its own decision record).
+**Current state:** Activated after task 0157 closed the same refactor
+for `soroban_events`. Not yet in flight; waits for owner to pick up the
+10-step sequence. Follow-up ADR required (tentative number TBD —
+reuses ADR 0033's pattern but different table and different endpoints,
+so deserves its own decision record).
 
 ## Context
 

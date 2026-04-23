@@ -79,9 +79,14 @@ fn address_topic(topic: &Value) -> Option<String> {
     }
 }
 
-/// Extract a NUMERIC(39,0)-compatible decimal string from a ScVal-typed JSON
-/// value. Accepts signed/unsigned 32/64 bit ints directly, and 128/256 bit
-/// ints which stellar-xdr encodes as JSON strings.
+/// Extract a NUMERIC(39,0)-compatible decimal string from a ScVal-typed
+/// JSON value. Accepts signed/unsigned 32/64/128 bit ints; 128-bit values
+/// are pre-formatted as decimal strings by `scval_to_typed_json`.
+///
+/// u256/i256 are intentionally not supported: `scval_to_typed_json` encodes
+/// them as concatenated hex (4 × 16 hex chars), not decimal, and SEP-0041
+/// transfer amounts in practice never exceed i128. Returning `None` for
+/// u256/i256 is safer than emitting a hex string into a NUMERIC bind.
 fn numeric_scval(data: &Value) -> Option<String> {
     let ty = data.get("type").and_then(Value::as_str)?;
     let val = data.get("value")?;
@@ -90,7 +95,7 @@ fn numeric_scval(data: &Value) -> Option<String> {
             .as_i64()
             .map(|n| n.to_string())
             .or_else(|| val.as_u64().map(|n| n.to_string())),
-        "u128" | "i128" | "u256" | "i256" => val.as_str().map(str::to_string),
+        "u128" | "i128" => val.as_str().map(str::to_string),
         _ => None,
     }
 }
@@ -210,13 +215,20 @@ mod tests {
     }
 
     #[test]
-    fn parse_transfer_extracts_u256_amount_from_string() {
+    fn parse_transfer_returns_none_amount_for_u256() {
+        // `scval_to_typed_json` encodes u256/i256 as 64-char concatenated
+        // hex — not a decimal NUMERIC-compatible string. `numeric_scval`
+        // intentionally drops these rather than emit a hex blob into a
+        // NUMERIC(39,0) bind.
         let t = parse_transfer(
             &transfer_topics("GA", "GB"),
-            &json!({ "type": "u256", "value": "999999999999999999999999" }),
+            &json!({
+                "type": "u256",
+                "value": "0000000000000000000000000000000000000000000000000000000000000001"
+            }),
         )
         .unwrap();
-        assert_eq!(t.amount.as_deref(), Some("999999999999999999999999"));
+        assert!(t.amount.is_none());
     }
 
     #[test]

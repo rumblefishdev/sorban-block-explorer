@@ -65,17 +65,17 @@ for partition pruning). Move all parsed event detail — type, topics,
 transfer fields, event_index — to read-time XDR fetch from the public
 Stellar archive. Rewrite the write path (`insert_events`) to aggregate
 and upsert. Rewrite the read paths for E3, E10, E14 to expand
-appearances through `crates/xdr-parser::extract_contract_events`.
+appearances through `crates/xdr-parser::extract_events`.
 
-## Status: Active (schema + write path delivered; read path deferred)
+## Status: Completed (schema + write path delivered; read path deferred)
 
-**Current state:** Schema change and every non-API consumer are in place;
+**Delivered state:** Schema change and every non-API consumer in place;
 ADR 0033 flipped from `proposed` to `accepted` for its delivered half.
-Read-path wire-up (E3/E10/E14 handlers) is deferred — the API crate has
+Read-path wire-up (E3/E10/E14 handlers) was deferred — the API crate has
 no `AppState`, no error/IntoResponse type, and no handlers module, so
 the three endpoints would have to build on infrastructure that doesn't
-exist yet. Splitting that out keeps this task bounded to the schema and
-leaves the API bootstrap to a dedicated follow-up.
+exist yet. Splitting that out kept this task bounded to the schema and
+left the API bootstrap to a dedicated follow-up.
 
 ## Context
 
@@ -183,7 +183,7 @@ classification from this function entirely.
 
 Appearances query paginated by `(ledger_sequence DESC,
 transaction_id DESC)`. For each distinct `ledger_sequence` on the
-page, one S3 `GetObject` + `xdr_parser::extract_contract_events`
+page, one S3 `GetObject` + `xdr_parser::extract_events`
 filtered by `contract_id`. Expand each appearance row into its
 `amount` consecutive events. Memoise the decoded ledger in a
 request-scoped `HashMap` so back-to-back appearances in the same
@@ -311,11 +311,13 @@ transfer_participants, Transfer}`, 13 unit tests
 ## Issues Encountered
 
 - **Parser function name mismatch.** ADR 0033 and the original task
-  plan reference `xdr_parser::extract_contract_events`. Actual symbol
-  in `crates/xdr-parser/src/event.rs:17` is `extract_events`. Not a
-  blocker — the same function is the single source of truth — but
-  the ADR / task prose were drifting. Flagged in implementation and
-  the matrix update uses the correct name.
+  plan referenced `xdr_parser::extract_contract_events`. Actual
+  symbol in `crates/xdr-parser/src/event.rs:17` is `extract_events`.
+  Not a blocker — the same function is the single source of truth —
+  but the ADR / task prose were drifting. The ADR-0021 matrix update
+  used the correct name on first land; ADR 0033 pseudocode + task
+  summary were corrected in a follow-up fixup after Copilot review
+  of the PR.
 - **Handler infrastructure absent.** The API crate has no
   `AppState`, no `IntoResponse` error type, no handlers module, no
   DB-pool/S3-fetcher injection. Three endpoints (E3/E10/E14) were

@@ -153,7 +153,7 @@ DO NOTHING`. Re-processing the same ledger is a no-op because the
    API request → DB: page of appearances by (contract_id, ledger_sequence DESC)
               → for each unique ledger in the page, one public S3 GetObject
               → xdr_parser::decompress_zstd + deserialize_batch
-              → xdr_parser::extract_contract_events, filtered by
+              → xdr_parser::extract_events, filtered by
                 contract_id (and transaction_id when E3 / E10 need it)
               → expand each appearance into its `amount` events in
                 response order
@@ -205,7 +205,7 @@ an index, S3 is the source of truth for event content.
 
 E3, E10, E14 now share the same assembly: DB page → ledger-grouped
 S3 fetches → parser → filter → expand. The `crates/xdr-parser`
-`extract_contract_events` function already exists (used at ingest and
+`extract_events` function already exists (used at ingest and
 at read time for E3/E14 heavy fields). The new call site is a
 superset of the existing one.
 

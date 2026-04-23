@@ -739,14 +739,19 @@ pub(super) async fn insert_events(
     }
 
     // Key: (contract_id, transaction_id, ledger_sequence, created_at).
+    //
+    // `upsert_contracts_returning_id` seeds `contract_ids` from every
+    // `contract_id` referenced in `staged.event_rows`, so a present
+    // `contract_id` here MUST resolve — a miss is an invariant violation
+    // (hard error, not silent skip). A missing `tx_id` still skips
+    // silently per repo convention (tx may be dropped at staging for
+    // parse errors that don't abort the whole ledger).
     let mut agg: HashMap<(i64, i64, i64, DateTime<Utc>), i64> = HashMap::new();
     for r in &staged.event_rows {
         let Some(contract_key) = r.contract_id.as_deref() else {
             continue;
         };
-        let Some(&contract_id) = contract_ids.get(contract_key) else {
-            continue;
-        };
+        let contract_id = resolve_contract_id(contract_ids, contract_key, "event.contract")?;
         let Some(&tx_id) = tx_ids.get(&r.tx_hash_hex) else {
             continue;
         };
