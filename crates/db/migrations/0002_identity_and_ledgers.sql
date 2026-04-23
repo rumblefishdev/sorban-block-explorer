@@ -5,7 +5,7 @@
 --   3. wasm_interface_metadata — ABI keyed by wasm_hash, referenced by soroban_contracts
 --   4. soroban_contracts     — surrogate BIGSERIAL PK (ADR 0030); contract_id VARCHAR(56)
 --      stays as a UNIQUE natural key for StrKey lookup, display, and E22 search.
---      All FK columns on operations/events/invocations/tokens/nfts target
+--      All FK columns on operations/events/invocations/assets/nfts target
 --      soroban_contracts.id (BIGINT), not contract_id (VARCHAR).
 --      contract_type is SMALLINT (ADR 0031) — Rust `ContractType` enum is the
 --      source of truth for the mapping; see crates/domain/src/enums/contract_type.rs.

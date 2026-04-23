@@ -79,7 +79,7 @@ The current schema shape is centered around a small set of core explorer entitie
 - `operations` as transaction children for classic and mixed transaction inspection
 - `soroban_contracts`, `soroban_invocations`, and `soroban_events` as the Soroban-native
   contract activity model
-- `tokens`, `accounts`, `nfts`, and `liquidity_pools` as derived, query-oriented explorer
+- `assets`, `accounts`, `nfts`, and `liquidity_pools` as derived, query-oriented explorer
   entities built on indexed state
 
 High-level relationship sketch:
@@ -94,7 +94,7 @@ ledgers
 soroban_contracts
   ├─ soroban_invocations
   ├─ soroban_events
-  ├─ tokens
+  ├─ assets
   └─ nfts
 
 liquidity_pools
@@ -296,35 +296,51 @@ Design notes:
 - `event_type` distinguishes contract/system/diagnostic event classes
 - `idx_topics` exists to support query patterns based on event signatures or topic structure
 
-### 4.7 Tokens
+### 4.7 Assets
 
 ```sql
-CREATE TABLE tokens (
-    id               SERIAL PRIMARY KEY,
-    asset_type       VARCHAR(10) NOT NULL CHECK (asset_type IN ('classic', 'sac', 'soroban')),
-    asset_code       VARCHAR(12),
-    issuer_address   VARCHAR(56),
-    contract_id      VARCHAR(56) REFERENCES soroban_contracts(contract_id),
-    name             VARCHAR(100),
-    total_supply     NUMERIC(28, 7),
-    holder_count     INT DEFAULT 0,
-    metadata         JSONB,
-    UNIQUE (asset_code, issuer_address),
-    UNIQUE (contract_id)
+CREATE TABLE assets (
+    id          SERIAL   PRIMARY KEY,
+    asset_type  SMALLINT NOT NULL,  -- TokenAssetType: 0=native, 1=classic_credit, 2=sac, 3=soroban
+    asset_code  VARCHAR(12),
+    issuer_id   BIGINT   REFERENCES accounts(id),
+    contract_id BIGINT   REFERENCES soroban_contracts(id),
+    name        VARCHAR(256),
+    total_supply NUMERIC(28,7),
+    holder_count INTEGER,
+    description TEXT,
+    icon_url    VARCHAR(1024),
+    home_page   VARCHAR(256),
+    CONSTRAINT ck_assets_asset_type_range CHECK (asset_type BETWEEN 0 AND 15),
+    CONSTRAINT ck_assets_identity CHECK (
+        (asset_type = 0 AND asset_code IS NULL     AND issuer_id IS NULL     AND contract_id IS NULL)
+     OR (asset_type = 1 AND asset_code IS NOT NULL AND issuer_id IS NOT NULL AND contract_id IS NULL)
+     OR (asset_type = 2 AND asset_code IS NOT NULL AND issuer_id IS NOT NULL AND contract_id IS NOT NULL)
+     OR (asset_type = 3 AND issuer_id IS NULL      AND contract_id IS NOT NULL)
+    )
 );
+-- partial unique indexes enforce one row per logical asset:
+CREATE UNIQUE INDEX uidx_assets_native        ON assets ((asset_type)) WHERE asset_type = 0;
+CREATE UNIQUE INDEX uidx_assets_classic_asset ON assets (asset_code, issuer_id) WHERE asset_type IN (1, 2);
+CREATE UNIQUE INDEX uidx_assets_soroban       ON assets (contract_id)           WHERE asset_type IN (2, 3);
 ```
 
 Purpose:
 
-- unify classic Stellar assets and Soroban token contracts in one explorer-facing model
-- support token lists and detail pages without splitting the UI into separate products
-- preserve the identity differences between classic and contract-based tokens
+- unify all Stellar asset classes (native XLM, classic credit assets, SACs, Soroban-native
+  tokens) in one explorer-facing model — renamed from `tokens` in task 0154 to align with
+  the official Stellar taxonomy
+- support asset lists and detail pages without splitting the UI into separate products
+- preserve the identity differences between asset classes via `ck_assets_identity`
 
 Design notes:
 
-- classic assets are uniquely identified by `asset_code + issuer_address`
-- Soroban-backed tokens are uniquely identified by `contract_id`
-- `asset_type` is required because the same table serves multiple token classes
+- `asset_type` is a `SMALLINT` enum (`TokenAssetType`), not a `VARCHAR` CHECK — label helper
+  `token_asset_type_name(ty)` maps discriminants to readable strings
+- native XLM is uniquely identified by `asset_type = 0`; classic credit and SAC assets by
+  `asset_code + issuer_id`; SAC and Soroban assets by `contract_id`
+- `soroban_contracts.contract_type = 'token'` classifies a contract's SEP-41 role and is
+  intentionally distinct from this table's name — the two coexist without ambiguity
 
 ### 4.8 Accounts
 
@@ -459,7 +475,7 @@ At a high level:
 - one ledger close produces one ledger record
 - each ledger produces many transaction records
 - each transaction may produce operations, contract invocations, and events
-- derived explorer entities such as tokens, accounts, NFTs, and liquidity pools are updated
+- derived explorer entities such as assets, accounts, NFTs, and liquidity pools are updated
   from extracted state and known event patterns
 - liquidity pool snapshots are appended as time-series records for chart-oriented reads
 
@@ -506,7 +522,7 @@ Per ADR 0027, all high-volume child tables are partitioned by month on
   `transaction_participants`, `soroban_invocations`, `soroban_events`,
   `liquidity_pool_snapshots`
 - **Unpartitioned:** `ledgers`, `transaction_hash_index`, `accounts`,
-  `soroban_contracts`, `tokens`, `nfts`, `liquidity_pools`
+  `soroban_contracts`, `assets`, `nfts`, `liquidity_pools`
 - Partitioning exists to keep retention, maintenance, and time-sliced reads
   practical on the high-write tables
 
@@ -532,7 +548,7 @@ Write-side characteristics:
   transactions
 - batch insertion of child rows per processed ledger file with replay-safe replacement or
   de-duplication for the same ledger sequence
-- derived-state upserts for entities such as `tokens`, `accounts`, `nfts`, and
+- derived-state upserts for entities such as `assets`, `accounts`, `nfts`, and
   `liquidity_pools`, guarded by ledger-sequence watermarks so older batches cannot overwrite
   newer state
 - append-only writes for `liquidity_pool_snapshots` used by chart endpoints
@@ -542,10 +558,10 @@ Write-side characteristics:
 The backend and frontend imply predictable read categories:
 
 - recent ledgers and recent transactions lists
-- exact lookup by transaction hash, contract ID, account ID, token identity, NFT identity,
+- exact lookup by transaction hash, contract ID, account ID, asset identity, NFT identity,
   pool ID, or ledger sequence
 - contract-centric timelines for invocations and events
-- token-centric, account-centric, and NFT-centric recent-activity views
+- asset-centric, account-centric, and NFT-centric recent-activity views
 - liquidity-pool detail, transaction, and chart reads
 - search over metadata and canonical identifiers
 

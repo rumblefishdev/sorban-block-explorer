@@ -24,10 +24,10 @@ use indexer::handler::persist::{ClassificationCache, persist_ledger};
 use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
 use xdr_parser::types::{
-    ContractFunction, ExtractedAccountState, ExtractedContractDeployment,
+    ContractFunction, ExtractedAccountState, ExtractedAsset, ExtractedContractDeployment,
     ExtractedContractInterface, ExtractedEvent, ExtractedInvocation, ExtractedLedger,
     ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot, ExtractedLpPosition, ExtractedNft,
-    ExtractedNftEvent, ExtractedOperation, ExtractedToken, ExtractedTransaction,
+    ExtractedNftEvent, ExtractedOperation, ExtractedTransaction,
 };
 
 const TEST_LEDGER_SEQ: u32 = 90_000_001;
@@ -76,7 +76,7 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
     let account_states = vec![make_account_state()];
     let liquidity_pools = vec![make_liquidity_pool()];
     let pool_snapshots = vec![make_pool_snapshot()];
-    let tokens = vec![make_sac_token()];
+    let assets = vec![make_sac_asset()];
     let nfts = vec![make_nft()];
     let nft_events: Vec<ExtractedNftEvent> = Vec::new();
     let lp_positions: Vec<ExtractedLpPosition> = Vec::new();
@@ -97,7 +97,7 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
         &account_states,
         &liquidity_pools,
         &pool_snapshots,
-        &tokens,
+        &assets,
         &nfts,
         &nft_events,
         &lp_positions,
@@ -138,7 +138,7 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
     );
     assert!(counts_first.contracts >= 1, "contracts row count");
     assert_eq!(counts_first.wasm, 1, "wasm_interface_metadata row count");
-    assert_eq!(counts_first.tokens, 1, "tokens row count");
+    assert_eq!(counts_first.assets, 1, "assets row count");
     assert_eq!(counts_first.nfts, 1, "nfts row count");
     assert_eq!(counts_first.pools, 1, "liquidity_pools row count");
     assert_eq!(
@@ -192,7 +192,7 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
         &account_states,
         &liquidity_pools,
         &pool_snapshots,
-        &tokens,
+        &assets,
         &nfts,
         &nft_events,
         &lp_positions,
@@ -427,8 +427,8 @@ fn make_pool_snapshot() -> ExtractedLiquidityPoolSnapshot {
     }
 }
 
-fn make_sac_token() -> ExtractedToken {
-    ExtractedToken {
+fn make_sac_asset() -> ExtractedAsset {
+    ExtractedAsset {
         asset_type: TokenAssetType::Sac,
         asset_code: Some("USDC".to_string()),
         issuer_address: Some(ISSUER_STRKEY.to_string()),
@@ -484,7 +484,7 @@ async fn ensure_default_partitions(pool: &PgPool) {
 
 async fn clean_test_ledger(pool: &PgPool) {
     // Children cascade on DELETE FROM transactions via composite FK. Pools,
-    // accounts, tokens, nfts etc need explicit cleanup so repeated runs start
+    // accounts, assets, nfts etc need explicit cleanup so repeated runs start
     // from zero state for the test fixture's identifiers.
     let sql_stmts = [
         // Delete test-specific leaves first.
@@ -495,7 +495,7 @@ async fn clean_test_ledger(pool: &PgPool) {
     for sql in sql_stmts {
         let _ = sqlx::query(sql).bind(POOL_ID).execute(pool).await;
     }
-    // ADR 0030: tokens/nfts/nft_ownership.contract_id is now BIGINT → join via
+    // ADR 0030: assets/nfts/nft_ownership.contract_id is now BIGINT → join via
     // soroban_contracts to filter by StrKey.
     let _ = sqlx::query(
         "DELETE FROM nft_ownership WHERE nft_id IN (
@@ -530,10 +530,10 @@ async fn clean_test_ledger(pool: &PgPool) {
         .bind(i64::from(TEST_LEDGER_SEQ))
         .execute(pool)
         .await;
-    // tokens — delete anything referencing our SAC contract_id to start clean.
-    // ADR 0030: tokens.contract_id is BIGINT; resolve StrKey → id first.
+    // assets — delete anything referencing our SAC/soroban contract_id to start clean.
+    // ADR 0030: assets.contract_id is BIGINT; resolve StrKey → id first.
     let _ = sqlx::query(
-        "DELETE FROM tokens WHERE contract_id IN (
+        "DELETE FROM assets WHERE contract_id IN (
             SELECT id FROM soroban_contracts WHERE contract_id = ANY($1)
          )",
     )
@@ -541,7 +541,7 @@ async fn clean_test_ledger(pool: &PgPool) {
     .execute(pool)
     .await;
     let _ = sqlx::query(
-        "DELETE FROM tokens WHERE asset_type IN ('classic','sac') AND issuer_id IN (SELECT id FROM accounts WHERE account_id = $1)"
+        "DELETE FROM assets WHERE asset_type IN (1, 2) AND issuer_id IN (SELECT id FROM accounts WHERE account_id = $1)"
     )
     .bind(ISSUER_STRKEY)
     .execute(pool)
@@ -583,7 +583,7 @@ struct Counts {
     invocations_amount_sum: i64,
     contracts: i64,
     wasm: i64,
-    tokens: i64,
+    assets: i64,
     nfts: i64,
     nft_ownership: i64,
     pools: i64,
@@ -625,10 +625,10 @@ async fn test_counts(pool: &PgPool) -> Counts {
                    WHERE tx.hash = decode($3, 'hex')),
           c AS (SELECT COUNT(*) AS n FROM soroban_contracts WHERE contract_id = ANY($4)),
           w AS (SELECT COUNT(*) AS n FROM wasm_interface_metadata WHERE wasm_hash = decode($5, 'hex')),
-          -- ADR 0030: tokens/nfts.contract_id is BIGINT → join soroban_contracts
+          -- ADR 0030: assets/nfts.contract_id is BIGINT → join soroban_contracts
           -- to filter by StrKey.
-          tk AS (SELECT COUNT(*) AS n FROM tokens tk
-                   JOIN soroban_contracts sc ON sc.id = tk.contract_id
+          ast AS (SELECT COUNT(*) AS n FROM assets ast
+                   JOIN soroban_contracts sc ON sc.id = ast.contract_id
                   WHERE sc.contract_id = ANY($4)),
           n AS (SELECT COUNT(*) AS n FROM nfts n
                    JOIN soroban_contracts sc ON sc.id = n.contract_id
@@ -644,9 +644,9 @@ async fn test_counts(pool: &PgPool) -> Counts {
                    JOIN accounts aa ON aa.id = abc.account_id
                   WHERE aa.account_id = ANY($2))
         SELECT l.n AS l, a.n AS a, t.n AS t, hi.n AS hi, p.n AS p, o.n AS o,
-               e.n AS e, es.n AS es, iv.n AS iv, ivs.n AS ivs, c.n AS c, w.n AS w, tk.n AS tk, n.n AS n,
+               e.n AS e, es.n AS es, iv.n AS iv, ivs.n AS ivs, c.n AS c, w.n AS w, ast.n AS ast, n.n AS n,
                no.n AS no, pl.n AS pl, ps.n AS ps, lp.n AS lp, bc.n AS bc
-          FROM l, a, t, hi, p, o, e, es, iv, ivs, c, w, tk, n, no, pl, ps, lp, bc
+          FROM l, a, t, hi, p, o, e, es, iv, ivs, c, w, ast, n, no, pl, ps, lp, bc
         "#,
     )
     .bind(ledger)
@@ -676,7 +676,7 @@ async fn test_counts(pool: &PgPool) -> Counts {
         invocations_amount_sum: row.get("ivs"),
         contracts: row.get("c"),
         wasm: row.get("w"),
-        tokens: row.get("tk"),
+        assets: row.get("ast"),
         nfts: row.get("n"),
         nft_ownership: row.get("no"),
         pools: row.get("pl"),
@@ -770,7 +770,7 @@ async fn stub_wasm_unblocks_unknown_hash_and_real_upload_upgrades_it() {
     let no_account_states: Vec<ExtractedAccountState> = Vec::new();
     let no_pools: Vec<ExtractedLiquidityPool> = Vec::new();
     let no_snapshots: Vec<ExtractedLiquidityPoolSnapshot> = Vec::new();
-    let no_tokens: Vec<ExtractedToken> = Vec::new();
+    let no_assets: Vec<ExtractedAsset> = Vec::new();
     let no_nfts: Vec<ExtractedNft> = Vec::new();
     let no_nft_events: Vec<ExtractedNftEvent> = Vec::new();
     let no_lp_positions: Vec<ExtractedLpPosition> = Vec::new();
@@ -790,7 +790,7 @@ async fn stub_wasm_unblocks_unknown_hash_and_real_upload_upgrades_it() {
         &no_account_states,
         &no_pools,
         &no_snapshots,
-        &no_tokens,
+        &no_assets,
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
@@ -869,7 +869,7 @@ async fn stub_wasm_unblocks_unknown_hash_and_real_upload_upgrades_it() {
         &no_account_states,
         &no_pools,
         &no_snapshots,
-        &no_tokens,
+        &no_assets,
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
@@ -978,7 +978,7 @@ async fn nft_filter_drops_fungible_classified_contract() {
     let no_account_states: Vec<ExtractedAccountState> = Vec::new();
     let no_pools: Vec<ExtractedLiquidityPool> = Vec::new();
     let no_snapshots: Vec<ExtractedLiquidityPoolSnapshot> = Vec::new();
-    let no_tokens: Vec<ExtractedToken> = Vec::new();
+    let no_assets: Vec<ExtractedAsset> = Vec::new();
     let no_nft_events: Vec<ExtractedNftEvent> = Vec::new();
     let no_lp_positions: Vec<ExtractedLpPosition> = Vec::new();
     let no_inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
@@ -997,7 +997,7 @@ async fn nft_filter_drops_fungible_classified_contract() {
         &no_account_states,
         &no_pools,
         &no_snapshots,
-        &no_tokens,
+        &no_assets,
         &nfts,
         &no_nft_events,
         &no_lp_positions,
@@ -1171,10 +1171,10 @@ const TK_WASM_HASH: &str = "eeee555555555555555555555555555555555555555555555555
 /// End-to-end check of task 0120's same-ledger detection path.
 ///
 /// A WASM deployment classified as `Fungible` (SEP-0041 surface) lands in
-/// the `tokens` table with `asset_type = Soroban` and `contract_id` set
+/// the `assets` table with `asset_type = Soroban` and `contract_id` set
 /// to the surrogate bigint id of the deployed contract.
 #[tokio::test]
-async fn soroban_fungible_contract_produces_tokens_row() {
+async fn soroban_fungible_contract_produces_assets_row() {
     let Ok(database_url) = std::env::var("DATABASE_URL") else {
         eprintln!("DATABASE_URL unset — skipping 0120 same-ledger test");
         return;
@@ -1230,15 +1230,15 @@ async fn soroban_fungible_contract_produces_tokens_row() {
         metadata: json!({}),
     }];
     // Drive the real parser → persist wiring end-to-end so a regression in
-    // detect_tokens signature/behaviour fails this test, not just an
+    // detect_assets signature/behaviour fails this test, not just an
     // isolated unit test.
-    let tokens = xdr_parser::detect_tokens(&deployments, &interfaces);
+    let assets = xdr_parser::detect_assets(&deployments, &interfaces);
     assert_eq!(
-        tokens.len(),
+        assets.len(),
         1,
-        "parser must emit exactly one Soroban token for this deploy"
+        "parser must emit exactly one Soroban asset for this deploy"
     );
-    assert_eq!(tokens[0].asset_type, TokenAssetType::Soroban);
+    assert_eq!(assets[0].asset_type, TokenAssetType::Soroban);
 
     let empty_operations: Vec<(String, Vec<ExtractedOperation>)> = Vec::new();
     let empty_events: Vec<(String, Vec<ExtractedEvent>)> = Vec::new();
@@ -1266,7 +1266,7 @@ async fn soroban_fungible_contract_produces_tokens_row() {
         &no_account_states,
         &no_pools,
         &no_snapshots,
-        &tokens,
+        &assets,
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
@@ -1289,10 +1289,10 @@ async fn soroban_fungible_contract_produces_tokens_row() {
         "contract_type must be Fungible"
     );
 
-    // Exactly one Soroban token row for this contract.
+    // Exactly one Soroban asset row for this contract.
     let count: i64 = sqlx::query_scalar(
         r#"SELECT COUNT(*)
-             FROM tokens t
+             FROM assets t
              JOIN soroban_contracts sc ON sc.id = t.contract_id
             WHERE sc.contract_id = $1
               AND t.asset_type = $2"#,
@@ -1301,10 +1301,10 @@ async fn soroban_fungible_contract_produces_tokens_row() {
     .bind(TokenAssetType::Soroban)
     .fetch_one(&pool)
     .await
-    .expect("tokens count query succeeds");
+    .expect("assets count query succeeds");
     assert_eq!(
         count, 1,
-        "exactly one Soroban tokens row per Fungible contract"
+        "exactly one Soroban assets row per Fungible contract"
     );
 
     clean_tk_test(&pool).await;
@@ -1313,14 +1313,14 @@ async fn soroban_fungible_contract_produces_tokens_row() {
 /// End-to-end check of task 0120's late-WASM bridge path.
 ///
 /// Two-ledger pattern: contract deploys in L1 referencing a wasm_hash
-/// whose interface is not in L1. `detect_tokens` skips it. `stub_wasm`
+/// whose interface is not in L1. `detect_assets` skips it. `stub_wasm`
 /// path leaves `soroban_contracts.contract_type = Other`. In L2 the real
 /// WASM upload arrives with SEP-0041 discriminators;
 /// `reclassify_contracts_from_wasm` promotes contract_type to Fungible,
-/// and `insert_tokens_from_reclassified_contracts` backfills the missing
-/// tokens row.
+/// and `insert_assets_from_reclassified_contracts` backfills the missing
+/// assets row.
 #[tokio::test]
-async fn late_wasm_upload_backfills_tokens_row() {
+async fn late_wasm_upload_backfills_assets_row() {
     let Ok(database_url) = std::env::var("DATABASE_URL") else {
         eprintln!("DATABASE_URL unset — skipping 0120 late-WASM test");
         return;
@@ -1336,7 +1336,7 @@ async fn late_wasm_upload_backfills_tokens_row() {
     ensure_default_partitions(&pool).await;
     clean_tk_test(&pool).await;
 
-    // ── L1: deploy without the WASM upload. Parser emits no token row. ──
+    // ── L1: deploy without the WASM upload. Parser emits no asset row. ──
     let ledger1 = ExtractedLedger {
         sequence: TK_LEDGER_SEQ_1,
         hash: TK_LEDGER_HASH_1.to_string(),
@@ -1379,7 +1379,7 @@ async fn late_wasm_upload_backfills_tokens_row() {
     let no_account_states: Vec<ExtractedAccountState> = Vec::new();
     let no_pools: Vec<ExtractedLiquidityPool> = Vec::new();
     let no_snapshots: Vec<ExtractedLiquidityPoolSnapshot> = Vec::new();
-    let no_tokens: Vec<ExtractedToken> = Vec::new();
+    let no_assets: Vec<ExtractedAsset> = Vec::new();
     let no_nfts: Vec<ExtractedNft> = Vec::new();
     let no_nft_events: Vec<ExtractedNftEvent> = Vec::new();
     let no_lp_positions: Vec<ExtractedLpPosition> = Vec::new();
@@ -1399,7 +1399,7 @@ async fn late_wasm_upload_backfills_tokens_row() {
         &no_account_states,
         &no_pools,
         &no_snapshots,
-        &no_tokens,
+        &no_assets,
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
@@ -1409,10 +1409,10 @@ async fn late_wasm_upload_backfills_tokens_row() {
     .await
     .expect("L1 persist_ledger (no-WASM deploy) must succeed");
 
-    // After L1: contract exists with contract_type = Other, no tokens row.
+    // After L1: contract exists with contract_type = Other, no assets row.
     let count_before: i64 = sqlx::query_scalar(
         r#"SELECT COUNT(*)
-             FROM tokens t
+             FROM assets t
              JOIN soroban_contracts sc ON sc.id = t.contract_id
             WHERE sc.contract_id = $1
               AND t.asset_type = $2"#,
@@ -1421,11 +1421,11 @@ async fn late_wasm_upload_backfills_tokens_row() {
     .bind(TokenAssetType::Soroban)
     .fetch_one(&pool)
     .await
-    .expect("tokens count succeeds");
-    assert_eq!(count_before, 0, "no tokens row yet (WASM not observed)");
+    .expect("assets count succeeds");
+    assert_eq!(count_before, 0, "no assets row yet (WASM not observed)");
 
     // ── L2: WASM upload arrives. Interface has SEP-0041 surface.
-    //   Reclassify promotes Other → Fungible; bridge inserts tokens row.
+    //   Reclassify promotes Other → Fungible; bridge inserts assets row.
     let ledger2 = ExtractedLedger {
         sequence: TK_LEDGER_SEQ_2,
         hash: TK_LEDGER_HASH_2.to_string(),
@@ -1469,7 +1469,7 @@ async fn late_wasm_upload_backfills_tokens_row() {
         &no_account_states,
         &no_pools,
         &no_snapshots,
-        &no_tokens,
+        &no_assets,
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
@@ -1479,7 +1479,7 @@ async fn late_wasm_upload_backfills_tokens_row() {
     .await
     .expect("L2 persist_ledger (late-WASM upload) must succeed");
 
-    // After L2: contract promoted to Fungible, tokens row inserted.
+    // After L2: contract promoted to Fungible, assets row inserted.
     let fun_ty: Option<i16> =
         sqlx::query_scalar("SELECT contract_type FROM soroban_contracts WHERE contract_id = $1")
             .bind(TK_CONTRACT)
@@ -1494,7 +1494,7 @@ async fn late_wasm_upload_backfills_tokens_row() {
 
     let count_after: i64 = sqlx::query_scalar(
         r#"SELECT COUNT(*)
-             FROM tokens t
+             FROM assets t
              JOIN soroban_contracts sc ON sc.id = t.contract_id
             WHERE sc.contract_id = $1
               AND t.asset_type = $2"#,
@@ -1503,8 +1503,8 @@ async fn late_wasm_upload_backfills_tokens_row() {
     .bind(TokenAssetType::Soroban)
     .fetch_one(&pool)
     .await
-    .expect("tokens count succeeds");
-    assert_eq!(count_after, 1, "bridge inserted Soroban tokens row");
+    .expect("assets count succeeds");
+    assert_eq!(count_after, 1, "bridge inserted Soroban assets row");
 
     // Re-run the same ledger (replay) — must be idempotent, still exactly one row.
     let classification_cache2 = ClassificationCache::new();
@@ -1536,7 +1536,7 @@ async fn late_wasm_upload_backfills_tokens_row() {
         &no_account_states,
         &no_pools,
         &no_snapshots,
-        &no_tokens,
+        &no_assets,
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
@@ -1548,7 +1548,7 @@ async fn late_wasm_upload_backfills_tokens_row() {
 
     let count_replay: i64 = sqlx::query_scalar(
         r#"SELECT COUNT(*)
-             FROM tokens t
+             FROM assets t
              JOIN soroban_contracts sc ON sc.id = t.contract_id
             WHERE sc.contract_id = $1
               AND t.asset_type = $2"#,
@@ -1557,8 +1557,8 @@ async fn late_wasm_upload_backfills_tokens_row() {
     .bind(TokenAssetType::Soroban)
     .fetch_one(&pool)
     .await
-    .expect("tokens count succeeds");
-    assert_eq!(count_replay, 1, "replay does not duplicate tokens row");
+    .expect("assets count succeeds");
+    assert_eq!(count_replay, 1, "replay does not duplicate assets row");
 
     clean_tk_test(&pool).await;
 }
@@ -1569,7 +1569,7 @@ async fn clean_tk_test(pool: &PgPool) {
         hex::decode(TK_TX_HASH_2).unwrap(),
     ];
     let _ = sqlx::query(
-        "DELETE FROM tokens
+        "DELETE FROM assets
           WHERE contract_id IN (SELECT id FROM soroban_contracts WHERE contract_id = $1)",
     )
     .bind(TK_CONTRACT)

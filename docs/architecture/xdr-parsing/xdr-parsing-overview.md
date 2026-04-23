@@ -96,7 +96,7 @@ The frontend receives pre-decoded data for:
 - operation lists and details
 - Soroban invocations
 - Soroban events
-- account, token, NFT, and pool views derived from indexed chain state
+- account, asset, NFT, and pool views derived from indexed chain state
 
 Raw XDR is exposed only for advanced transaction inspection.
 
@@ -234,7 +234,7 @@ Structured artifacts retained for normal explorer reads:
 - `transactions.operation_tree`
 - `soroban_invocations`
 - `soroban_events`
-- explorer-facing derived entities such as accounts, tokens, NFTs, and liquidity pools
+- explorer-facing derived entities such as accounts, assets, NFTs, and liquidity pools
 
 This is not accidental duplication. It is a deliberate tradeoff to support both fast
 explorer reads and protocol-level debugging.
@@ -249,7 +249,7 @@ That includes:
 - operation records
 - Soroban invocation rows
 - Soroban event rows
-- derived account, token, NFT, and liquidity-pool state where current product scope needs it
+- derived account, asset, NFT, and liquidity-pool state where current product scope needs it
 
 The API reads those materialized results. It should not become the main materialization
 layer.

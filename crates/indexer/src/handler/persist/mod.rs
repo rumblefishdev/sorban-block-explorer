@@ -15,7 +15,7 @@
 //!   9. operations           (FK → liquidity_pools.pool_id)
 //!  10. soroban_events_appearances       (ADR 0033 — aggregate index per trio)
 //!  11. soroban_invocations_appearances  (ADR 0034 — aggregate index per trio + caller payload)
-//!  12. tokens
+//!  12. assets
 //!  13. nfts + nft_ownership
 //!  14. account_balances_current + trustline deletes   (ADR 0035 dropped history)
 //!
@@ -28,10 +28,10 @@ use std::time::{Duration, Instant};
 use sqlx::PgPool;
 use tracing::{info, warn};
 use xdr_parser::types::{
-    ExtractedAccountState, ExtractedContractDeployment, ExtractedContractInterface, ExtractedEvent,
-    ExtractedInvocation, ExtractedLedger, ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot,
-    ExtractedLpPosition, ExtractedNft, ExtractedNftEvent, ExtractedOperation, ExtractedToken,
-    ExtractedTransaction,
+    ExtractedAccountState, ExtractedAsset, ExtractedContractDeployment, ExtractedContractInterface,
+    ExtractedEvent, ExtractedInvocation, ExtractedLedger, ExtractedLiquidityPool,
+    ExtractedLiquidityPoolSnapshot, ExtractedLpPosition, ExtractedNft, ExtractedNftEvent,
+    ExtractedOperation, ExtractedTransaction,
 };
 
 use super::HandlerError;
@@ -59,7 +59,7 @@ struct StepTimings {
     operations_ms: u128,
     events_ms: u128,
     invocations_ms: u128,
-    tokens_ms: u128,
+    assets_ms: u128,
     nfts_ms: u128,
     pools_ms: u128,
     balances_ms: u128,
@@ -95,7 +95,7 @@ pub async fn persist_ledger(
     account_states: &[ExtractedAccountState],
     liquidity_pools: &[ExtractedLiquidityPool],
     pool_snapshots: &[ExtractedLiquidityPoolSnapshot],
-    tokens: &[ExtractedToken],
+    assets: &[ExtractedAsset],
     nfts: &[ExtractedNft],
     nft_events: &[ExtractedNftEvent],
     lp_positions: &[ExtractedLpPosition],
@@ -114,7 +114,7 @@ pub async fn persist_ledger(
         account_states,
         liquidity_pools,
         pool_snapshots,
-        tokens,
+        assets,
         nfts,
         nft_events,
         lp_positions,
@@ -183,7 +183,7 @@ pub async fn persist_ledger(
         + timings.operations_ms
         + timings.events_ms
         + timings.invocations_ms
-        + timings.tokens_ms
+        + timings.assets_ms
         + timings.nfts_ms
         + timings.pools_ms
         + timings.balances_ms;
@@ -202,7 +202,7 @@ pub async fn persist_ledger(
         operations_ms = timings.operations_ms,
         events_ms = timings.events_ms,
         invocations_ms = timings.invocations_ms,
-        tokens_ms = timings.tokens_ms,
+        assets_ms = timings.assets_ms,
         nfts_ms = timings.nfts_ms,
         pools_ms = timings.pools_ms,
         balances_ms = timings.balances_ms,
@@ -286,12 +286,12 @@ async fn run_all_steps(
     timings.invocations_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
-    write::upsert_tokens(db_tx, staged, &account_ids, &contract_ids).await?;
-    // Task 0120 — bridge late-WASM reclassification into the `tokens` table.
+    write::upsert_assets(db_tx, staged, &account_ids, &contract_ids).await?;
+    // Task 0120 — bridge late-WASM reclassification into the `assets` table.
     // Handles the two-ledger deploy pattern (contract deployed earlier,
-    // WASM uploaded now) that `detect_tokens` cannot observe in-memory.
-    write::insert_tokens_from_reclassified_contracts(db_tx, staged).await?;
-    timings.tokens_ms = t.elapsed().as_millis();
+    // WASM uploaded now) that `detect_assets` cannot observe in-memory.
+    write::insert_assets_from_reclassified_contracts(db_tx, staged).await?;
+    timings.assets_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
     // Task 0118 Phase 2 — `upsert_nfts_and_ownership` is responsible for

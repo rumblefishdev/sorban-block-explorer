@@ -2,15 +2,15 @@
 //!
 //! Processes `ExtractedLedgerEntryChange` records to produce higher-level
 //! entities: contract deployments, account states, liquidity pools,
-//! tokens, and NFTs. This is the final parsing stage before DB persistence.
+//! assets, and NFTs. This is the final parsing stage before DB persistence.
 
 use serde_json::Value;
 
 use crate::classification::{ContractClassification, classify_contract_from_wasm_spec};
 use crate::types::{
-    ExtractedAccountState, ExtractedContractDeployment, ExtractedContractInterface,
+    ExtractedAccountState, ExtractedAsset, ExtractedContractDeployment, ExtractedContractInterface,
     ExtractedLedgerEntryChange, ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot,
-    ExtractedNft, ExtractedToken, NftEvent,
+    ExtractedNft, NftEvent,
 };
 use domain::{ContractType, TokenAssetType};
 
@@ -53,7 +53,7 @@ pub fn extract_contract_deployments(
         let is_sac = is_sac_from_data(data);
         let wasm_hash = extract_wasm_hash(data);
         // ADR 0031: synthetic 2-variant classification. SACs wrap a classic
-        // asset and are always tokens; everything else is `Other` until the
+        // asset and are always assets; everything else is `Other` until the
         // explorer learns to recognise a richer taxonomy.
         let contract_type = if is_sac {
             ContractType::Token
@@ -228,7 +228,7 @@ pub fn extract_account_states(
                             .get("type")
                             .and_then(|v| v.as_str())
                             .unwrap_or("unknown");
-                        // Skip pool_share trustlines — LP positions, not token balances
+                        // Skip pool_share trustlines — LP positions, not asset balances
                         if asset_type == "pool_share" {
                             continue;
                         }
@@ -463,12 +463,12 @@ pub fn extract_liquidity_pools(
 }
 
 // ---------------------------------------------------------------------------
-// Step 5: Token Detection
+// Step 5: Asset Detection
 // ---------------------------------------------------------------------------
 
-/// Detect tokens from contract deployments.
+/// Detect assets from contract deployments.
 ///
-/// Two paths produce an [`ExtractedToken`]:
+/// Two paths produce an [`ExtractedAsset`]:
 ///
 /// 1. **SAC deployments** — [`TokenAssetType::Sac`] row; identity is
 ///    `contract_id`, plus the underlying classic asset_code/issuer if
@@ -480,21 +480,21 @@ pub fn extract_liquidity_pools(
 ///    interface function list.
 ///
 /// NFT-classified contracts (SEP-0050 surface: `owner_of`, `token_uri`, …)
-/// do **not** produce a tokens row — they live in the `nfts` table via
+/// do **not** produce an assets row — they live in the `nfts` table via
 /// the NFT pipeline (task 0118). `Other`-classified contracts also produce
 /// no row: a later WASM upload may promote them, in which case the
-/// reclassification write step backfills the missing tokens row
-/// (`write::insert_tokens_from_reclassified_contracts`, task 0120).
+/// reclassification write step backfills the missing assets row
+/// (`write::insert_assets_from_reclassified_contracts`, task 0120).
 ///
 /// `name` / `total_supply` / `holder_count` are left `None` for Soroban
 /// rows: on-chain name/symbol extraction from ContractData storage entries
 /// is tracked as follow-up task 0156; `holder_count` is task 0135; a
 /// separate scheduled-Lambda enrichment path for SEP-1 metadata lives
 /// under task 0124.
-pub fn detect_tokens(
+pub fn detect_assets(
     deployments: &[ExtractedContractDeployment],
     interfaces: &[ExtractedContractInterface],
-) -> Vec<ExtractedToken> {
+) -> Vec<ExtractedAsset> {
     // Pre-index interfaces by wasm_hash so the inner loop is O(1) per
     // deployment. Classification itself is O(|functions|) but amortised
     // across all deployments sharing that wasm_hash (shared-library
@@ -508,10 +508,10 @@ pub fn detect_tokens(
             .or_insert_with(|| classify_contract_from_wasm_spec(&iface.functions));
     }
 
-    let mut tokens = Vec::new();
+    let mut assets = Vec::new();
     for deployment in deployments {
         if deployment.is_sac {
-            tokens.push(ExtractedToken {
+            assets.push(ExtractedAsset {
                 asset_type: TokenAssetType::Sac,
                 asset_code: None,
                 issuer_address: None,
@@ -531,7 +531,7 @@ pub fn detect_tokens(
             continue;
         };
         if verdict_by_hash.get(wasm_hash) == Some(&ContractClassification::Fungible) {
-            tokens.push(ExtractedToken {
+            assets.push(ExtractedAsset {
                 asset_type: TokenAssetType::Soroban,
                 asset_code: None,
                 issuer_address: None,
@@ -543,7 +543,7 @@ pub fn detect_tokens(
         }
     }
 
-    tokens
+    assets
 }
 
 // ---------------------------------------------------------------------------
@@ -1126,7 +1126,7 @@ mod tests {
         assert_eq!(snapshots[0].reserves["b"], 20000);
     }
 
-    // -- Token Detection Tests --
+    // -- Asset Detection Tests --
 
     use crate::types::ContractFunction;
 
@@ -1147,7 +1147,7 @@ mod tests {
     }
 
     #[test]
-    fn sac_deployment_produces_token() {
+    fn sac_deployment_produces_asset() {
         let deployments = vec![ExtractedContractDeployment {
             contract_id: "CSAC456".into(),
             wasm_hash: None,
@@ -1158,10 +1158,10 @@ mod tests {
             metadata: json!({}),
         }];
 
-        let tokens = detect_tokens(&deployments, &[]);
-        assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0].asset_type, TokenAssetType::Sac);
-        assert_eq!(tokens[0].contract_id.as_deref(), Some("CSAC456"));
+        let assets = detect_assets(&deployments, &[]);
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets[0].asset_type, TokenAssetType::Sac);
+        assert_eq!(assets[0].contract_id.as_deref(), Some("CSAC456"));
     }
 
     #[test]
@@ -1178,13 +1178,13 @@ mod tests {
             metadata: json!({}),
         }];
 
-        let tokens = detect_tokens(&deployments, &[]);
-        assert!(tokens.is_empty());
+        let assets = detect_assets(&deployments, &[]);
+        assert!(assets.is_empty());
     }
 
     #[test]
-    fn fungible_wasm_deployment_produces_soroban_token() {
-        // SEP-0041 surface → ContractClassification::Fungible → Soroban token row.
+    fn fungible_wasm_deployment_produces_soroban_asset() {
+        // SEP-0041 surface → ContractClassification::Fungible → Soroban asset row.
         let wasm = "aa".repeat(32);
         let deployments = vec![ExtractedContractDeployment {
             contract_id: "CFUN001".into(),
@@ -1200,18 +1200,18 @@ mod tests {
             &["transfer", "balance", "decimals", "name", "symbol"],
         )];
 
-        let tokens = detect_tokens(&deployments, &interfaces);
-        assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0].asset_type, TokenAssetType::Soroban);
-        assert_eq!(tokens[0].contract_id.as_deref(), Some("CFUN001"));
-        assert!(tokens[0].asset_code.is_none());
-        assert!(tokens[0].issuer_address.is_none());
-        assert!(tokens[0].name.is_none()); // deferred to 0124 enrichment
+        let assets = detect_assets(&deployments, &interfaces);
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets[0].asset_type, TokenAssetType::Soroban);
+        assert_eq!(assets[0].contract_id.as_deref(), Some("CFUN001"));
+        assert!(assets[0].asset_code.is_none());
+        assert!(assets[0].issuer_address.is_none());
+        assert!(assets[0].name.is_none()); // deferred to 0124 enrichment
     }
 
     #[test]
-    fn nft_wasm_deployment_produces_no_token() {
-        // NFT-classified contracts live in the `nfts` table, not `tokens`.
+    fn nft_wasm_deployment_produces_no_asset() {
+        // NFT-classified contracts live in the `nfts` table, not `assets`.
         let wasm = "bb".repeat(32);
         let deployments = vec![ExtractedContractDeployment {
             contract_id: "CNFT002".into(),
@@ -1224,13 +1224,13 @@ mod tests {
         }];
         let interfaces = vec![iface(&wasm, &["owner_of", "token_uri", "transfer"])];
 
-        let tokens = detect_tokens(&deployments, &interfaces);
-        assert!(tokens.is_empty());
+        let assets = detect_assets(&deployments, &interfaces);
+        assert!(assets.is_empty());
     }
 
     #[test]
-    fn other_wasm_deployment_produces_no_token() {
-        // Unknown contract surface — no token row; a later WASM upload
+    fn other_wasm_deployment_produces_no_asset() {
+        // Unknown contract surface — no asset row; a later WASM upload
         // may promote it via reclassify_contracts_from_wasm.
         let wasm = "cc".repeat(32);
         let deployments = vec![ExtractedContractDeployment {
@@ -1244,15 +1244,15 @@ mod tests {
         }];
         let interfaces = vec![iface(&wasm, &["execute", "admin", "init"])];
 
-        let tokens = detect_tokens(&deployments, &interfaces);
-        assert!(tokens.is_empty());
+        let assets = detect_assets(&deployments, &interfaces);
+        assert!(assets.is_empty());
     }
 
     #[test]
-    fn dual_interface_contract_produces_no_token_row() {
+    fn dual_interface_contract_produces_no_asset_row() {
         // Precedence in classify_contract_from_wasm_spec: NFT wins over
         // Fungible when both discriminators present. Correct downstream
-        // behaviour: the contract goes to `nfts` filter — NOT `tokens`.
+        // behaviour: the contract goes to `nfts` filter — NOT `assets`.
         let wasm = "dd".repeat(32);
         let deployments = vec![ExtractedContractDeployment {
             contract_id: "CDUAL04".into(),
@@ -1265,12 +1265,12 @@ mod tests {
         }];
         let interfaces = vec![iface(&wasm, &["owner_of", "decimals", "transfer"])];
 
-        let tokens = detect_tokens(&deployments, &interfaces);
-        assert!(tokens.is_empty());
+        let assets = detect_assets(&deployments, &interfaces);
+        assert!(assets.is_empty());
     }
 
     #[test]
-    fn sac_and_fungible_in_same_batch_both_produce_tokens() {
+    fn sac_and_fungible_in_same_batch_both_produce_assets() {
         let wasm = "ee".repeat(32);
         let deployments = vec![
             ExtractedContractDeployment {
@@ -1294,9 +1294,9 @@ mod tests {
         ];
         let interfaces = vec![iface(&wasm, &["transfer", "decimals", "allowance"])];
 
-        let tokens = detect_tokens(&deployments, &interfaces);
-        assert_eq!(tokens.len(), 2);
-        let by_contract: std::collections::HashMap<_, _> = tokens
+        let assets = detect_assets(&deployments, &interfaces);
+        assert_eq!(assets.len(), 2);
+        let by_contract: std::collections::HashMap<_, _> = assets
             .iter()
             .map(|t| (t.contract_id.as_deref().unwrap(), t.asset_type))
             .collect();

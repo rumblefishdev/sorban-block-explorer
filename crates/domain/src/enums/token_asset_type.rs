@@ -1,7 +1,7 @@
-//! Explorer-synthetic `tokens.asset_type` domain (4 variants).
+//! Explorer-synthetic `assets.asset_type` domain (4 variants).
 //!
-//! Maps to `tokens.asset_type SMALLINT NOT NULL`. The variants overlap
-//! with XDR `AssetType` on `native` / `classic` but diverge for Soroban
+//! Maps to `assets.asset_type SMALLINT NOT NULL`. The variants overlap
+//! with XDR `AssetType` on `native` / `classic_credit` but diverge for Soroban
 //! assets — an `sac` (Stellar-Asset-Contract-wrapped classic asset) and
 //! a pure `soroban` (bespoke contract token) cannot be expressed in the
 //! raw XDR discriminator. Kept as a separate enum so each column tells
@@ -18,18 +18,19 @@ use super::EnumDecodeError;
 #[repr(i16)]
 pub enum TokenAssetType {
     Native = 0,
-    Classic = 1,
+    ClassicCredit = 1,
     Sac = 2,
     Soroban = 3,
 }
 
 impl TokenAssetType {
-    pub const VARIANTS: &'static [Self] = &[Self::Native, Self::Classic, Self::Sac, Self::Soroban];
+    pub const VARIANTS: &'static [Self] =
+        &[Self::Native, Self::ClassicCredit, Self::Sac, Self::Soroban];
 
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Native => "native",
-            Self::Classic => "classic",
+            Self::ClassicCredit => "classic_credit",
             Self::Sac => "sac",
             Self::Soroban => "soroban",
         }
@@ -42,7 +43,7 @@ impl TryFrom<i16> for TokenAssetType {
     fn try_from(v: i16) -> Result<Self, Self::Error> {
         match v {
             0 => Ok(Self::Native),
-            1 => Ok(Self::Classic),
+            1 => Ok(Self::ClassicCredit),
             2 => Ok(Self::Sac),
             3 => Ok(Self::Soroban),
             _ => Err(EnumDecodeError::UnknownDiscriminant {

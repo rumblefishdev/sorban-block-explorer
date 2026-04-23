@@ -1,17 +1,17 @@
-//! Token domain type matching the `tokens` PostgreSQL table.
+//! Asset domain type matching the `assets` PostgreSQL table.
 //!
-//! Schema: ADR 0027 Part I §11. SEP-1 metadata promoted to typed columns
+//! Schema: ADR 0027 Part I §11 + ADR 0036 rename. SEP-1 metadata promoted to typed columns
 //! per ADR 0023 (`description`, `icon_url`, `home_page`) — legacy
 //! `metadata JSONB` is gone.
 //!
-//! `asset_type ∈ {"native", "classic", "sac", "soroban"}`. Identity by:
-//! - classic/SAC: UNIQUE `(asset_code, issuer_id)` (partial)
+//! `asset_type ∈ {"native", "classic_credit", "sac", "soroban"}`. Identity by:
+//! - classic_credit/SAC: UNIQUE `(asset_code, issuer_id)` (partial)
 //! - soroban/SAC: UNIQUE `(contract_id)` (partial)
 
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Token {
+pub struct Asset {
     pub id: i32,
     pub asset_type: String,
     pub asset_code: Option<String>,

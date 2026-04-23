@@ -117,7 +117,7 @@ shared secrets; API protection belongs at the API Gateway/WAF boundary, not in t
 ```
 ┌────────┐     ┌──────────────────────────────────────────────────┐
 │  User  │────>│  Global Search Bar                               │
-│        │     │  (contracts, transactions, tokens, accounts, …)  │
+│        │     │  (contracts, transactions, assets, accounts, …)  │
 │        │     └──────────────────────────────────────────────────┘
 │        │
 │        │     ┌─────────────────────────────────────────────────────────────┐
@@ -129,8 +129,8 @@ shared secrets; API protection belongs at the API Gateway/WAF boundary, not in t
                │  /ledgers                   ── GET /ledgers ────────────┤   │
                │  /ledgers/:seq              ── GET /ledgers/:seq ───────┤   │
                │  /accounts/:id              ── GET /accounts/:id ───────┤   │
-               │  /tokens                    ── GET /tokens ─────────────┤   │
-               │  /tokens/:id                ── GET /tokens/:id ─────────┤   │
+               │  /assets                    ── GET /assets ─────────────┤   │
+               │  /assets/:id                ── GET /assets/:id ─────────┤   │
                │  /contracts/:id             ── GET /contracts/:id ──────┤   │
                │  /nfts                      ── GET /nfts ───────────────┤   │
                │  /nfts/:id                  ── GET /nfts/:id ───────────┤   │
@@ -244,8 +244,8 @@ Navigation rules:
 | `/ledgers`               | Ledgers         | `GET /ledgers`                                                              |
 | `/ledgers/:sequence`     | Ledger          | `GET /ledgers/:sequence`                                                    |
 | `/accounts/:accountId`   | Account         | `GET /accounts/:account_id`, `GET /accounts/:account_id/transactions`       |
-| `/tokens`                | Tokens          | `GET /tokens`                                                               |
-| `/tokens/:id`            | Token           | `GET /tokens/:id`, `GET /tokens/:id/transactions`                           |
+| `/assets`                | Assets          | `GET /assets`                                                               |
+| `/assets/:id`            | Asset           | `GET /assets/:id`, `GET /assets/:id/transactions`                           |
 | `/contracts/:contractId` | Contract        | `GET /contracts/:contract_id`, `GET /contracts/:contract_id/interface`      |
 | `/nfts`                  | NFTs            | `GET /nfts`                                                                 |
 | `/nfts/:id`              | NFT             | `GET /nfts/:id`                                                             |
@@ -372,7 +372,7 @@ Expanded behavior:
 Account detail view for a Stellar account.
 
 - Account summary - account ID (full, copyable), sequence number, first seen ledger, last seen ledger
-- Balances - native XLM balance and trustline/token balances
+- Balances - native XLM balance and credit asset balances
 - Recent transactions - paginated table of transactions involving this account
 
 Expanded behavior:
@@ -383,36 +383,36 @@ Expanded behavior:
 - Balances should be visually separated from transaction history.
 - Linked transactions should reuse the same visual conventions as the global transactions page.
 
-### 6.8 Tokens (`/tokens`)
+### 6.8 Assets (`/assets`)
 
-List of all known tokens (classic Stellar assets and Soroban token contracts).
+List of all known assets (native XLM, classic credit assets, SACs, and Soroban-native assets).
 
-- Token table - asset code, issuer / contract ID, type (classic / SAC / Soroban), total
+- Asset table - asset code, issuer / contract ID, type (native / classic credit / SAC / Soroban), total
   supply, holder count
-- Filters - type (classic, SAC, Soroban), asset code search
+- Filters - type (native, classic_credit, SAC, Soroban), asset code search
 - Cursor-based pagination controls
 
 Expanded behavior:
 
-- Classic assets and Soroban token contracts should be browseable from one surface while
-  still making their type differences explicit.
-- Token identity rendering must be careful because classic assets are defined by code plus
+- All asset types should be browseable from one surface while still making their type
+  differences explicit.
+- Asset identity rendering must be careful because classic assets are defined by code plus
   issuer, while contracts are defined by contract ID.
 - Type badges and display formatting should prevent users from confusing similarly named assets.
 
-### 6.9 Token (`/tokens/:id`)
+### 6.9 Asset (`/assets/:id`)
 
-Single token detail view.
+Single asset detail view.
 
-- Token summary - asset code, issuer or contract ID (copyable), type badge, total supply,
+- Asset summary - asset code, issuer or contract ID (copyable), type badge, total supply,
   holder count, deployed at ledger (if Soroban)
 - Metadata - name, description, icon (if available), domain/home page
-- Latest transactions - paginated table of recent transactions involving this token
+- Latest transactions - paginated table of recent transactions involving this asset
 
 Expanded behavior:
 
-- The header must make it obvious whether the token is a classic asset, SAC, or a custom
-  Soroban token contract.
+- The header must make it obvious whether the asset is native XLM, a classic credit asset,
+  a SAC, or a Soroban-native asset.
 - Metadata should tolerate partial availability because many assets will have incomplete
   or inconsistent descriptive fields.
 - The recent transactions section should be useful as a discovery path into the broader explorer.
@@ -505,7 +505,7 @@ Generic search across all entity types. For exact matches (transaction hash, con
 account ID), redirects directly to the detail page. Otherwise displays grouped results.
 
 - Search input - pre-filled with current query, allows refinement
-- Results grouped by type - transactions, contracts, tokens, accounts, NFTs, liquidity
+- Results grouped by type - transactions, contracts, assets, accounts, NFTs, liquidity
   pools (with type headers and counts)
 - Each result row - identifier (linked), type badge, brief context
 - Empty state - "No results found" with suggestions
@@ -522,7 +522,7 @@ Expanded behavior:
 Present across all pages:
 
 - **Header** - logo, global search bar, network indicator (mainnet/testnet)
-- **Navigation** - links to home, transactions, ledgers, tokens, contracts, NFTs,
+- **Navigation** - links to home, transactions, ledgers, assets, contracts, NFTs,
   liquidity pools
 - **Linked identifiers** - all hashes, account IDs, contract IDs, token IDs, pool IDs,
   and ledger sequences are clickable links to their respective detail pages
