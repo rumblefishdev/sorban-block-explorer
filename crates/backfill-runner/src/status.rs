@@ -31,16 +31,16 @@ pub async fn execute(database_url: &str, start: u32, end: u32) -> Result<(), Bac
     );
     println!();
     println!(
-        "  {:>10}   {:>15}   {:>9}   {:<20}",
+        "  {:>10}   {:>21}   {:>9}   {:<20}",
         "partition", "indexed / range", "pending", "progress"
     );
-    println!("  {:─<10}   {:─<15}   {:─<9}   {:─<20}", "", "", "", "");
+    println!("  {:─<10}   {:─<21}   {:─<9}   {:─<20}", "", "", "", "");
 
     for p in &partitions {
         let row = partition_row(p, start, end, &completed);
         let pct = percent(row.indexed, row.range_len);
         println!(
-            "  {:>10}   {:>15}   {:>9}   {} {:>5.1}%",
+            "  {:>10}   {:>21}   {:>9}   {} {:>5.1}%",
             p.start,
             format!("{} / {}", row.indexed, row.range_len),
             row.pending,
@@ -51,9 +51,9 @@ pub async fn execute(database_url: &str, start: u32, end: u32) -> Result<(), Bac
     }
 
     let pct = percent(totals.indexed, totals.range_len);
-    println!("  {:─<10}   {:─<15}   {:─<9}   {:─<20}", "", "", "", "");
+    println!("  {:─<10}   {:─<21}   {:─<9}   {:─<20}", "", "", "", "");
     println!(
-        "  {:>10}   {:>15}   {:>9}   {} {:>5.1}%",
+        "  {:>10}   {:>21}   {:>9}   {} {:>5.1}%",
         "total",
         format!("{} / {}", totals.indexed, totals.range_len),
         totals.pending,
