@@ -19,6 +19,21 @@ history:
     status: active
     who: FilipDz
     note: 'Activated for implementation'
+  - date: '2026-04-23'
+    status: active
+    who: stkrolikiewicz
+    note: >
+      Ownership handover from FilipDz. Scope needs re-evaluation:
+      task 0118 Phase 2 (PR #110) landed WASM-spec classification
+      including `ContractType::Fungible` via
+      `xdr_parser::classify_contract_from_wasm_spec` + cache-backed
+      `reclassify_contracts_from_wasm`. 0120's original scope bullets
+      1-2 (classify + set contract_type) are de-facto already done.
+      Remaining work for this task: bullets 3-4 — **populate the
+      `tokens` row** (asset_type=soroban SMALLINT per ADR 0031, name
+      + symbol from metadata, ON CONFLICT handling). Also pending:
+      AC text mentions legacy `asset_type = "soroban"` string —
+      needs rewrite for SMALLINT enum (`TokenAssetType::Soroban = 3`).
 ---
 
 # Indexer: detect Soroban-native tokens (non-SAC)
