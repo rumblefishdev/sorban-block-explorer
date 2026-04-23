@@ -145,6 +145,15 @@ history:
 
       **SIGTERM / Ctrl-C:** abort in place; the two resume filters
       cover the restart. No graceful-shutdown plumbing.
+  - date: '2026-04-23'
+    status: active
+    who: karolkow
+    note: >
+      Dashboard emerged (off-plan) + three inline cleanups
+      (ETA via indicatif, `install_panic_hook` relocated,
+      `record_ledger` collapse). Full collapse-to-single-bar
+      considered and rejected. Details in
+      `## Design Decisions → ### Emerged` #11–14.
 ---
 
 # Backfill runner: public Stellar S3 → Postgres (ADR 0027)
@@ -601,3 +610,70 @@ it's a bug in the cleanup path, not a config knob.
   have ranges provisioned for the backfill window. If 0149 / the
   partition-management Lambda doesn't cover the historical range at
   run time, the runner fails fast rather than auto-provisioning.
+
+## Design Decisions
+
+### From Plan
+
+1. **Sink = Postgres via `process_ledger`** — runner consumes the
+   shared parse-and-persist function, never reimplements write-path
+   logic. (Scope point 5, Onboarding "Fixed contract".)
+2. **Unit of work = one 64k-ledger partition synced via `aws s3 sync`
+   subprocess** — no `aws-sdk-s3`, no per-ledger `GetObject`. (Scope
+   point 4.)
+3. **Single-threaded indexer + single-slot N+1 prefetch** — no worker
+   pool, no `JoinSet`. (Scope points 7, 8.)
+4. **Two-layer DB-only resume** — pre-sync partition skip + per-ledger
+   skip; no state file, no marker, no manifest. (Scope point 6.)
+5. **Cleanup-after-index is mandatory + hard error on failure** —
+   bounds disk at ~2 × partition_size; cleanup deliberately skipped on
+   error paths for forensics + partial-sync resume. (Scope point 8,
+   Risks "No cleanup-on-error".)
+6. **Hand-rolled retry around `aws s3 sync` only** — 3 attempts, 2s
+   base, ×2, 30s cap, hardcoded consts. Parse / persist not retried.
+   (Scope point 9.)
+7. **Debug-first error stance** — parse / persist / post-sync missing
+   file panic rather than warn-and-continue while 0149's write-path
+   is in flux. (Scope point 9.)
+8. **Observability = tracing stream (key=value, default formatter) +
+   `println!` final summary + `println!`-only `status`** — no JSON,
+   no metrics, `tail -f` is the live UX. `--verbose` is the only
+   log-level dial. (Scope point 10.)
+9. **Pre-flight panics** — `aws --version` + `SELECT 1`; both are
+   environment errors, not transient. (Scope point 11.)
+10. **Partition helpers copied 1:1 from `backfill-bench`** — no shared
+    crate extraction yet. Revisit on third consumer. (Onboarding,
+    Risks "Single-threaded throughput".)
+
+### Emerged
+
+11. **Sticky-at-bottom dashboard** (`indicatif` + `tracing-indicatif`)
+    — `dashboard.rs`: partition / parse / persist text lines + a real
+    progress bar, coordinated with tracing via `IndicatifWriter` so
+    logs don't clobber the bar. Plan called for tracing-only live UX
+    (point 10) on the assumption operators would `tail -f`. Added
+    during implementation for visual feedback during multi-day runs.
+    A full collapse-to-single-bar slim-down was considered and
+    **rejected**: operators need rolling avg/min/max parse & persist
+    visible at a glance, and those don't fit a single-line template
+    without sacrificing the info. Cost accepted: 2 extra crates,
+    `Mutex<State>`, parse/persist rolling stats that overlap
+    (but don't duplicate — different scope) with
+    `ingest::PartitionStats`.
+12. **ETA computed by indicatif, not by hand** — initial version
+    recomputed ETA on every `inc_ledger` from
+    `elapsed × remaining / indexed_this_run`. Replaced with
+    indicatif's `{elapsed_precise}` + `{eta_precise}` template tokens
+    on the main progress bar, plus `enable_steady_tick(500ms)` so
+    the bar keeps refreshing during slow segments (e.g. while
+    `aws s3 sync` runs and no ledger advances). Side benefit: ETA no
+    longer inflated by the initial sync; indicatif uses rolling rate.
+    Drops manual `format_hms`, `run_start`, `already_done` field.
+13. **`install_panic_hook` moved from `run.rs` to `dashboard.rs`** —
+    semantically part of the dashboard's contract (abandon bars
+    before backtrace); lives next to the type it operates on.
+14. **3-call-per-ledger API collapsed to one** — `inc_ledger` +
+    `observe_parse` + `observe_persist` → `record_ledger(parse_ms,
+persist_ms)`. Adding a new per-ledger metric is now a one-place
+    change in `dashboard.rs` instead of three call sites in
+    `ingest.rs`.

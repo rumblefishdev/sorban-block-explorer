@@ -21,76 +21,87 @@ pub async fn execute(database_url: &str, start: u32, end: u32) -> Result<(), Bac
     let completed = load_completed(&pool, start, end).await?;
 
     let partitions = partitions_for_range(start, end);
-    let mut totals = Totals::default();
-    let mut fully_done = 0usize;
+    let mut totals = PartitionCounts::default();
 
-    println!("range: {start}..={end}   partitions: {}", partitions.len());
+    println!();
     println!(
-        "{:>12} {:>21} {:>10} {:>10}",
+        "  range  {start}..={end}   ({} partition{})",
+        partitions.len(),
+        if partitions.len() == 1 { "" } else { "s" },
+    );
+    println!();
+    println!(
+        "  {:>10}   {:>15}   {:>9}   {:<20}",
         "partition", "indexed / range", "pending", "progress"
     );
+    println!("  {:─<10}   {:─<15}   {:─<9}   {:─<20}", "", "", "", "");
 
     for p in &partitions {
         let row = partition_row(p, start, end, &completed);
-        if row.pending == 0 && row.range_len > 0 {
-            fully_done += 1;
-        }
+        let pct = percent(row.indexed, row.range_len);
         println!(
-            "{:>12} {:>21} {:>10} {:>9.1}%",
+            "  {:>10}   {:>15}   {:>9}   {} {:>5.1}%",
             p.start,
             format!("{} / {}", row.indexed, row.range_len),
             row.pending,
-            percent(row.indexed, row.range_len),
+            bar(pct, 12),
+            pct,
         );
         totals.add(&row);
     }
 
-    println!("{:-<58}", "");
+    let pct = percent(totals.indexed, totals.range_len);
+    println!("  {:─<10}   {:─<15}   {:─<9}   {:─<20}", "", "", "", "");
     println!(
-        "{:>12} {:>21} {:>10} {:>9.1}%",
+        "  {:>10}   {:>15}   {:>9}   {} {:>5.1}%",
         "total",
         format!("{} / {}", totals.indexed, totals.range_len),
         totals.pending,
-        percent(totals.indexed, totals.range_len),
+        bar(pct, 12),
+        pct,
     );
-
     println!();
-    println!("=== summary ===");
-    println!(
-        "partitions fully indexed: {} / {}",
-        fully_done,
-        partitions.len()
-    );
-    println!(
-        "ledgers indexed:          {} / {}  ({:.1}%)",
-        totals.indexed,
-        totals.range_len,
-        percent(totals.indexed, totals.range_len)
-    );
-    println!("ledgers pending:          {}", totals.pending);
 
     Ok(())
 }
 
+/// Unicode block-element progress bar of `width` cells. Uses eighth-block
+/// partials so small percentage deltas show up — a pure full/empty bar
+/// would look identical for 0.1% and 7%.
+fn bar(percent: f64, width: usize) -> String {
+    const BLOCKS: [char; 9] = [' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
+    let filled_eighths = ((percent / 100.0) * (width as f64) * 8.0).round() as usize;
+    let full = filled_eighths / 8;
+    let rem = filled_eighths % 8;
+    let mut s = String::with_capacity(width * 3 + 2);
+    s.push('[');
+    for _ in 0..full.min(width) {
+        s.push('█');
+    }
+    if full < width {
+        s.push(BLOCKS[rem]);
+        for _ in (full + 1)..width {
+            s.push(' ');
+        }
+    }
+    s.push(']');
+    s
+}
+
+/// Counts for either a single partition's clamped slice or a running
+/// total across partitions — same shape, same arithmetic.
 #[derive(Default)]
-struct Row {
+struct PartitionCounts {
     range_len: usize,
     indexed: usize,
     pending: usize,
 }
 
-#[derive(Default)]
-struct Totals {
-    range_len: usize,
-    indexed: usize,
-    pending: usize,
-}
-
-impl Totals {
-    fn add(&mut self, r: &Row) {
-        self.range_len += r.range_len;
-        self.indexed += r.indexed;
-        self.pending += r.pending;
+impl PartitionCounts {
+    fn add(&mut self, other: &PartitionCounts) {
+        self.range_len += other.range_len;
+        self.indexed += other.indexed;
+        self.pending += other.pending;
     }
 }
 
@@ -107,7 +118,7 @@ fn partition_row(
     run_start: u32,
     run_end: u32,
     completed: &std::collections::HashSet<u32>,
-) -> Row {
+) -> PartitionCounts {
     // Clamp to the intersection with the requested range — partitions at
     // either edge may stick out of `[run_start, run_end]`.
     let (first, last) = p.clamped(run_start, run_end);
@@ -121,7 +132,7 @@ fn partition_row(
     // underflows; `saturating_sub` is defense against future bugs.
     let pending = range_len.saturating_sub(indexed);
 
-    Row {
+    PartitionCounts {
         range_len,
         indexed,
         pending,

@@ -31,11 +31,8 @@ const RETRY_MULTIPLIER: u32 = 2;
 
 /// Sync one partition from S3 to `temp_dir`. Idempotent by virtue of
 /// `aws s3 sync` itself — a second call over a fully-synced dir is a
-/// cheap LIST with no GETs.
-///
-/// Emits a `partition sync complete` event with duration + file count +
-/// total bytes; the caller does not need the values programmatically, so
-/// we return `()` rather than a struct nobody reads.
+/// cheap LIST with no GETs. Sync duration is surfaced via the
+/// `partition sync complete` tracing event; no return value carries it.
 pub async fn sync_partition(partition: &Partition, temp_dir: &Path) -> Result<(), BackfillError> {
     let local = partition.local_folder(temp_dir);
     tokio::fs::create_dir_all(&local).await?;

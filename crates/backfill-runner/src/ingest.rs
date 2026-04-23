@@ -14,8 +14,9 @@ use indexer::handler::HandlerError;
 use sqlx::PgPool;
 use tracing::info;
 
+use crate::dashboard::Dashboard;
 use crate::error::BackfillError;
-use crate::partition::{Partition, local_ledger_path};
+use crate::partition::Partition;
 
 /// Per-ledger parse + persist timings. Decompression isn't timed —
 /// it's deterministic work on a fixed input and not a useful diagnostic
@@ -67,11 +68,34 @@ pub async fn ingest_ledger_from_file(
     let compressed = tokio::fs::read(path).await?;
     let bytes = compressed.len();
 
+    // Emit context BEFORE the parse/persist steps that can panic (task
+    // 0145 debug-first stance). Without this, a panic in `process_ledger`
+    // or the `deserialize_batch` invariant `assert_eq!` below leaves the
+    // operator with just a backtrace — the `ledger ingested` event only
+    // fires on the success path, so the feral ledger's seq / partition
+    // would be invisible in the log stream. This line is the last one
+    // written before any panic, guaranteeing the context is always
+    // visible.
+    info!(seq, partition = partition_start, bytes, "ledger starting");
+
     let xdr_bytes = xdr_parser::decompress_zstd(&compressed).map_err(HandlerError::from)?;
 
     let parse_start = Instant::now();
     let batch = xdr_parser::deserialize_batch(&xdr_bytes).map_err(HandlerError::from)?;
     let parse_ms = parse_start.elapsed().as_millis();
+
+    // Public Stellar archive layout is one ledger per `.xdr.zst` file
+    // (file named after the seq). If that ever changes the per-ledger
+    // `info!` event below would log `seq` for a multi-ledger batch and
+    // mislead. Debug-first stance → assert the invariant instead of
+    // silently looping.
+    assert_eq!(
+        batch.ledger_close_metas.len(),
+        1,
+        "expected 1 ledger per file in public archive layout; got {} at {}",
+        batch.ledger_close_metas.len(),
+        path.display()
+    );
 
     let persist_start = Instant::now();
     for meta in batch.ledger_close_metas.iter() {
@@ -114,6 +138,7 @@ pub async fn index_partition(
     range_start: u32,
     range_end: u32,
     completed: &HashSet<u32>,
+    dashboard: &Dashboard,
 ) -> Result<PartitionStats, BackfillError> {
     let (first, last) = partition.clamped(range_start, range_end);
 
@@ -130,7 +155,7 @@ pub async fn index_partition(
             stats.skipped_completed += 1;
             continue;
         }
-        let path = local_ledger_path(partition, seq, temp_dir);
+        let path = partition.local_ledger_path(seq, temp_dir);
         assert!(
             path.exists(),
             "ledger file missing post-sync: partition={} seq={} path={}",
@@ -147,6 +172,7 @@ pub async fn index_partition(
         let ledger_ms = t.total_ms();
         stats.min_ledger_ms = Some(stats.min_ledger_ms.map_or(ledger_ms, |m| m.min(ledger_ms)));
         stats.max_ledger_ms = Some(stats.max_ledger_ms.map_or(ledger_ms, |m| m.max(ledger_ms)));
+        dashboard.record_ledger(t.parse_ms, t.persist_ms);
     }
 
     stats.wall_clock = wall_start.elapsed();

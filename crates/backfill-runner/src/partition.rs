@@ -66,18 +66,17 @@ impl Partition {
     pub fn clamped(&self, run_start: u32, run_end: u32) -> (u32, u32) {
         (run_start.max(self.start), run_end.min(self.end))
     }
-}
 
-/// Local filesystem path for a single ledger within its partition's local
-/// folder: `{temp_dir}/{HEX}--{start}-{end}/{HEX}--{seq}.xdr.zst`.
-///
-/// Filename layout mirrors the S3 layout 1:1 so `aws s3 sync` produces
-/// exactly these paths without transformation.
-pub fn local_ledger_path(partition: &Partition, seq: u32, temp_dir: &Path) -> PathBuf {
-    let file_hex = format!("{:08X}", u32::MAX - seq);
-    partition
-        .local_folder(temp_dir)
-        .join(format!("{file_hex}--{seq}.xdr.zst"))
+    /// Local filesystem path for a single ledger within this partition's
+    /// local folder: `{temp_dir}/{HEX}--{start}-{end}/{HEX}--{seq}.xdr.zst`.
+    ///
+    /// Filename layout mirrors the S3 layout 1:1 so `aws s3 sync` produces
+    /// exactly these paths without transformation.
+    pub fn local_ledger_path(&self, seq: u32, temp_dir: &Path) -> PathBuf {
+        let file_hex = format!("{:08X}", u32::MAX - seq);
+        self.local_folder(temp_dir)
+            .join(format!("{file_hex}--{seq}.xdr.zst"))
+    }
 }
 
 /// Enumerate the partitions covering `[start, end]` inclusive, in
@@ -183,7 +182,7 @@ mod tests {
         let p = Partition::from_ledger(62_026_937);
         let temp = Path::new("/var/tmp/backfill");
         assert_eq!(
-            local_ledger_path(&p, 62_026_937, temp),
+            p.local_ledger_path(62_026_937, temp),
             PathBuf::from(
                 "/var/tmp/backfill/FC4DB5FF--62016000-62079999/FC4D8B46--62026937.xdr.zst"
             )

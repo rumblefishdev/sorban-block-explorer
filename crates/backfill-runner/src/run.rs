@@ -12,13 +12,16 @@
 
 use std::collections::HashSet;
 use std::path::Path;
-use std::time::Instant;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
+use indicatif::MultiProgress;
 use sqlx::PgPool;
 use tokio::process::Command;
 use tokio::task::JoinHandle;
 use tracing::info;
 
+use crate::dashboard::{Dashboard, install_panic_hook};
 use crate::error::BackfillError;
 use crate::ingest::{PartitionStats, index_partition};
 use crate::partition::{Partition, partitions_for_range};
@@ -30,6 +33,7 @@ pub async fn execute(
     temp_dir: &Path,
     start: u32,
     end: u32,
+    mp: &MultiProgress,
 ) -> Result<(), BackfillError> {
     assert!(
         start <= end,
@@ -83,12 +87,25 @@ pub async fn execute(
     let run_start = Instant::now();
     let mut totals = PartitionStats::default();
 
+    // Sticky dashboard. Visual bar covers the full range and is pre-
+    // bumped by `completed.len()` (handled inside `Dashboard::new`);
+    // `timing` is scoped only to the work this run actually has to do.
+    let total_range = (end - start + 1) as u64;
+    let already_done = completed.len() as u64;
+    let dashboard = Arc::new(Dashboard::new(total_range, already_done, mp));
+
+    install_panic_hook(dashboard.clone());
+
     // Prime: foreground sync of the first partition that still needs work.
     // Subsequent partitions arrive via the background prefetch spawned at
     // the end of each iteration.
+    dashboard.set_partition(0, todo.len(), todo[0].start);
+    dashboard.set_stage("syncing");
     sync_partition(todo[0], temp_dir).await?;
 
     for (i, partition) in todo.iter().enumerate() {
+        dashboard.set_partition(i, todo.len(), partition.start);
+
         // Kick off prefetch for N+1 BEFORE indexing N — so the sync runs
         // while the indexer is busy. Exactly one in flight.
         let next_handle: Option<JoinHandle<Result<(), BackfillError>>> =
@@ -102,7 +119,11 @@ pub async fn execute(
                 None
             };
 
-        let stats = index_partition(partition, temp_dir, &pool, start, end, &completed).await?;
+        dashboard.set_stage("indexing");
+        let stats = index_partition(
+            partition, temp_dir, &pool, start, end, &completed, &dashboard,
+        )
+        .await?;
 
         // Fold per-partition stats into the run-wide accumulator.
         // `wall_clock` is per-partition and not summed.
@@ -119,6 +140,7 @@ pub async fn execute(
         // prefetch reclaims disk sooner in the sync-slower-than-index
         // case. A failure here is a hard error — silent warn-and-
         // continue would accumulate the garbage we just removed.
+        dashboard.set_stage("cleaning");
         let local = partition.local_folder(temp_dir);
         tokio::fs::remove_dir_all(&local).await?;
         info!(
@@ -129,13 +151,18 @@ pub async fn execute(
 
         // Await prefetch so its error (if any) surfaces synchronously
         // before we advance. Happy path: already resolved, zero wait.
+        // The returned `Duration` is dropped — per-partition sync time
+        // lives in the `partition sync complete` tracing event.
         if let Some(h) = next_handle {
+            dashboard.set_stage("syncing");
             h.await.expect("prefetch task panicked")?;
         }
     }
 
+    dashboard.finish_and_clear();
+
     let elapsed = run_start.elapsed();
-    print_run_summary(&todo, &totals, elapsed);
+    print_run_summary(todo.len(), &totals, elapsed);
 
     Ok(())
 }
@@ -144,14 +171,14 @@ pub async fn execute(
 /// not gated by `--verbose`. The per-ledger and per-partition info logs
 /// are the debugging stream; this is the single "what just happened"
 /// block an operator sees when a run wraps up.
-fn print_run_summary(todo: &[&Partition], totals: &PartitionStats, elapsed: std::time::Duration) {
+fn print_run_summary(partitions_processed: usize, totals: &PartitionStats, elapsed: Duration) {
     let (min_str, max_str) = match (totals.min_ledger_ms, totals.max_ledger_ms) {
         (Some(min), Some(max)) => (format!("{min} ms"), format!("{max} ms")),
         _ => ("n/a".into(), "n/a".into()),
     };
     println!();
     println!("=== backfill complete ===");
-    println!("partitions processed:    {}", todo.len());
+    println!("partitions processed:    {partitions_processed}");
     println!("ledgers indexed:         {}", totals.indexed);
     println!("ledgers already in DB:   {}", totals.skipped_completed);
     println!("parse total:             {} ms", totals.parse_total_ms);
