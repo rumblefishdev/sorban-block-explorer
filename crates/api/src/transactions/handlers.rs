@@ -34,6 +34,17 @@ fn err(status: StatusCode, code: &str, msg: &str) -> Response {
         .into_response()
 }
 
+/// Shape-validate a Stellar StrKey: required prefix character + 56 total chars
+/// (case-sensitive uppercase base32). CRC validation is deliberately skipped —
+/// shape check catches the common typo / wrong-prefix cases that produce empty
+/// query results, while keeping the validator dependency-free.
+fn is_valid_strkey(s: &str, prefix: char) -> bool {
+    s.len() == 56
+        && s.starts_with(prefix)
+        && s.chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+}
+
 // ---------------------------------------------------------------------------
 // GET /v1/transactions
 // ---------------------------------------------------------------------------
@@ -95,6 +106,28 @@ pub async fn list_transactions(
         },
     };
 
+    // Validate StrKey shape for source_account (G…) and contract_id (C…) —
+    // spec promises 400 for invalid filter values; without this check an
+    // invalid StrKey would silently produce an empty result set.
+    if let Some(acct) = params.filter_source_account.as_deref()
+        && !is_valid_strkey(acct, 'G')
+    {
+        return err(
+            StatusCode::BAD_REQUEST,
+            "invalid_filter",
+            "filter[source_account] is not a valid Stellar account StrKey (G…, 56 chars)",
+        );
+    }
+    if let Some(cid) = params.filter_contract_id.as_deref()
+        && !is_valid_strkey(cid, 'C')
+    {
+        return err(
+            StatusCode::BAD_REQUEST,
+            "invalid_filter",
+            "filter[contract_id] is not a valid Stellar contract StrKey (C…, 56 chars)",
+        );
+    }
+
     let resolved = ResolvedListParams {
         limit: i64::from(raw_limit),
         cursor,
@@ -130,12 +163,20 @@ pub async fn list_transactions(
 
     // Collect unique ledger sequences and fetch XDR heavy fields concurrently
     // for memo_type / memo (ADR 0029). Failures degrade gracefully to null memo.
+    // Out-of-range BIGINT → u32 conversions skip the row with a warn rather
+    // than wrapping silently and fetching an unrelated ledger.
     let unique_seqs: Vec<u32> = {
         let mut seen = std::collections::HashSet::new();
         rows.iter()
-            .filter_map(|r| {
-                let seq = r.ledger_sequence as u32;
-                seen.insert(seq).then_some(seq)
+            .filter_map(|r| match u32::try_from(r.ledger_sequence) {
+                Ok(seq) => seen.insert(seq).then_some(seq),
+                Err(_) => {
+                    tracing::warn!(
+                        "skipping out-of-u32-range ledger_sequence {} for memo enrichment",
+                        r.ledger_sequence
+                    );
+                    None
+                }
             })
             .collect()
     };
@@ -158,8 +199,9 @@ pub async fn list_transactions(
     let data: Vec<TransactionListItem> = rows
         .into_iter()
         .map(|row| {
-            let (memo_type, memo) = ledger_map
-                .get(&(row.ledger_sequence as u32))
+            let (memo_type, memo) = u32::try_from(row.ledger_sequence)
+                .ok()
+                .and_then(|seq| ledger_map.get(&seq))
                 .and_then(|meta| extract_e3_memo(meta, &row.hash))
                 .unwrap_or((None, None));
 
@@ -274,16 +316,19 @@ pub async fn get_transaction(State(state): State<AppState>, Path(hash): Path<Str
     // ADR 0029 read path: fetch the parent ledger from the public Stellar
     // archive. On upstream failure → graceful degradation: heavy = None,
     // merge_e3_response sets heavy_fields_status = "unavailable" while still
-    // returning the light slice from DB.
-    let heavy = match state
-        .fetcher
-        .fetch_ledger(index.ledger_sequence as u32)
-        .await
-    {
-        Ok(meta) => extract_e3_heavy(&meta, &hash),
-        Err(e) => {
+    // returning the light slice from DB. Out-of-range BIGINT → u32 also
+    // degrades to heavy = None rather than wrapping silently.
+    let heavy = match u32::try_from(index.ledger_sequence) {
+        Ok(seq) => match state.fetcher.fetch_ledger(seq).await {
+            Ok(meta) => extract_e3_heavy(&meta, &hash),
+            Err(e) => {
+                tracing::warn!("failed to fetch ledger {seq} for tx detail: {e}");
+                None
+            }
+        },
+        Err(_) => {
             tracing::warn!(
-                "failed to fetch ledger {} for tx detail: {e}",
+                "out-of-u32-range ledger_sequence {} for tx detail; degrading to heavy = unavailable",
                 index.ledger_sequence
             );
             None
