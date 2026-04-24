@@ -37,11 +37,14 @@ memo, claimants, function args, predicates, …) is re-materialised in the API
 from XDR archived in S3 — the DB only records _that_ an operation of a given
 shape occurred in a given transaction.
 
-## Status: Active
+## Status: Completed
 
-**Current state:** Task just created. No code changes yet. Design agreed with
-owner: drop `transfer_amount` and `application_order`, collapse duplicates with
-a `COUNT(*) → amount BIGINT` aggregate (mirrors `soroban_*_appearances.amount`).
+**Final state:** Rewrite-in-place migration landed. Indexer staging moved to
+in-memory `HashMap<identity, count>` aggregation. Domain model renamed
+`Operation` → `OperationAppearance`. All 6 persist integration tests green.
+Fresh backfill: 55 506 rows for 76 882 operations (28% compression); type-14
+CCB collapses to 1.000 row per CCB-carrying transaction. No API breakage —
+per-op detail already served from XDR via the `stellar_archive` path.
 
 ## Context
 

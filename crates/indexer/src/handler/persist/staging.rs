@@ -589,10 +589,34 @@ impl Staged {
                 created_at: k.9,
             })
             .collect();
-        // Deterministic order for downstream chunking / replay.
+        // Deterministic order for downstream chunking / replay — full identity
+        // tuple is the tie-breaker, otherwise rows sharing a type in the same
+        // tx fall back to HashMap iteration order.
         op_rows.sort_by(|a, b| {
-            (a.tx_hash_hex.as_str(), a.op_type as i16)
-                .cmp(&(b.tx_hash_hex.as_str(), b.op_type as i16))
+            (
+                a.tx_hash_hex.as_str(),
+                a.op_type as i16,
+                a.source_str_key.as_deref(),
+                a.destination_str_key.as_deref(),
+                a.contract_id.as_deref(),
+                a.asset_code.as_deref(),
+                a.asset_issuer_str_key.as_deref(),
+                a.pool_id.as_ref(),
+                a.ledger_sequence,
+                a.created_at,
+            )
+                .cmp(&(
+                    b.tx_hash_hex.as_str(),
+                    b.op_type as i16,
+                    b.source_str_key.as_deref(),
+                    b.destination_str_key.as_deref(),
+                    b.contract_id.as_deref(),
+                    b.asset_code.as_deref(),
+                    b.asset_issuer_str_key.as_deref(),
+                    b.pool_id.as_ref(),
+                    b.ledger_sequence,
+                    b.created_at,
+                ))
         });
 
         // --- events flatten for appearance aggregation ---------------------

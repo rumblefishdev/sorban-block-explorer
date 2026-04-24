@@ -11,13 +11,17 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::enums::OperationType;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationAppearance {
     pub id: i64,
     pub transaction_id: i64,
-    /// DDL column name is `type` (reserved in Rust).
+    /// DDL column name is `type` (reserved in Rust). Stored as SMALLINT per
+    /// ADR 0031; `OperationType` derives `sqlx::Type` under the `sqlx`
+    /// feature for round-tripping through the DB.
     #[serde(rename = "type")]
-    pub op_type: String,
+    pub op_type: OperationType,
     /// Muxed source override; inherited from transaction when NULL.
     pub source_id: Option<i64>,
     pub destination_id: Option<i64>,

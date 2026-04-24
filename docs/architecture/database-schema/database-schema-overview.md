@@ -535,8 +535,11 @@ Notable patterns already present in the source design:
 - unique identifier indexes on `ledgers.hash` and `transactions.hash`
 - time-oriented indexes such as `idx_closed_at` and `idx_last_seen`
 - GIN indexes for full-text fields such as `soroban_contracts.search_vector`
-  (legacy `operations.details` / `soroban_events.topics` JSONB GIN indexes
-  were dropped when those payloads moved to the XDR archive — ADR 0018, task 0163)
+  (legacy `operations.details` JSONB GIN indexes were dropped when per-op
+  payloads moved to the XDR archive — ADR 0018, task 0163; legacy
+  `soroban_events.topics` JSONB GIN indexes were dropped when Soroban event
+  payloads moved to the `soroban_events_appearances` appearance-index
+  model — ADR 0033, migration 0004)
 
 ### 6.2 Partitioning Strategy
 
