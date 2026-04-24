@@ -41,7 +41,7 @@ history:
     note: 'Addendum to §11 tokens — added ck_tokens_identity CHECK (ties nullable identifying columns to asset_type) and uidx_tokens_native partial UNIQUE. Closes NULL-in-UNIQUE loophole flagged during PR #98 review; migration 0005_tokens_nfts.sql updated accordingly.'
   - date: 2026-04-21
     status: superseded
-    by: '0030'
+    by: ['0030']
     who: fmazur
     note: >
       Superseded by ADR 0030 (contracts surrogate BIGINT id). ADR 0030
@@ -52,7 +52,7 @@ history:
       source-of-truth shape).
   - date: 2026-04-23
     status: superseded
-    by: '0035'
+    by: ['0035']
     who: fmazur
     note: >
       §18 `account_balance_history` specifically superseded by ADR 0035
