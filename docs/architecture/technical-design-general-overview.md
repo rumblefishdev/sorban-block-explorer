@@ -303,14 +303,19 @@ The backend serves data from the block explorer's own database, adding:
 - **Search** — unified search across transaction hashes, account IDs, contract IDs, token
   identifiers, NFT identifiers, pool IDs, and indexed metadata using PostgreSQL full-text
   indexes
-- **Raw XDR on demand** — the `envelope_xdr`, `result_xdr`, and `result_meta_xdr` fields
-  are stored verbatim for advanced inspection; the backend returns the first two in the
-  advanced transaction view, decodes the raw payloads on request using
-  `@stellar/stellar-sdk`, and can serve a stored `operation_tree` for transaction-detail
-  debugging sections
+- **Raw XDR on demand** — for heavy-field endpoints (E3 `/transactions/:hash`,
+  E14 `/contracts/:id/events`) the backend fetches the corresponding `.xdr.zst`
+  from the public Stellar ledger archive, decompresses and parses it, and merges
+  the decoded envelope / result / result-meta / events / invocation tree into the
+  response. Per
+  [ADR 0029](../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md),
+  the DB does not store raw XDR — typed summary columns on `transactions` /
+  `operations_appearances` are sufficient for list endpoints, and read-time archive fetch
+  powers the detail endpoints
 
-The backend does **not** call Horizon or any external chain API. All chain data lives in
-the block explorer's RDS.
+The backend does **not** call Horizon or any private chain API. Its dependencies are
+(1) the explorer's own RDS for every partition-pruned read and (2) the public Stellar
+ledger archive for read-time XDR expansion on E3 / E14.
 
 ### 2.3 Endpoints
 
@@ -466,9 +471,12 @@ Caching operates at two levels:
 │                             │                                                 │
 │  ┌──────────────────────────▼───────────────────────────┐                     │
 │  │ RDS PostgreSQL (block explorer's own schema)         │                     │
-│  │ ledgers · transactions · operations · accounts       │                     │
-│  │ contracts · soroban_invocations · events · assets    │                     │
-│  │ nfts · liquidity_pools · liquidity_pool_snapshots    │                     │
+│  │ ledgers · transactions · operations_appearances      │                     │
+│  │ accounts · transaction_participants · tx_hash_index  │                     │
+│  │ soroban_contracts · wasm_interface_metadata · assets │                     │
+│  │ soroban_events_appearances · soroban_invocations_…   │                     │
+│  │ nfts · nft_ownership · liquidity_pools · lp_…        │                     │
+│  │ account_balances_current (ADR 0035: history dropped) │                     │
 │  └──────────────────────────┬───────────────────────────┘                     │
 │                             │                                                 │
 │  API LAYER                  │                                                 │
@@ -480,7 +488,7 @@ Caching operates at two levels:
 
 Connections:
   Stellar network peers → Galexie (Captive Core, live ledger stream)
-  Stellar history archives → Galexie backfill task (one-time, batch)
+  Stellar history archives → `backfill-runner` (production) or `backfill-bench` (benchmark) CLI on developer workstation (one-time, per ADR 0010)
   Galexie → S3 (LedgerCloseMeta XDR files)
   S3 PutObject event → Lambda Ledger Processor
   Lambda Ledger Processor → RDS (write)
@@ -523,22 +531,22 @@ expanding to multi-AZ when SLA requirements demand it.
 
 **Hosted by Rumble Fish (AWS sub-account):**
 
-| Component                       | Service                            | Role                                                                   |
-| ------------------------------- | ---------------------------------- | ---------------------------------------------------------------------- |
-| Galexie process                 | ECS Fargate (1 task, continuous)   | Streams live ledger data from Stellar network to S3                    |
-| Historical backfill task        | ECS Fargate (batch, one-time)      | Processes history archives to backfill from Soroban mainnet activation |
-| S3 bucket `stellar-ledger-data` | AWS S3                             | Receives `LedgerCloseMeta` XDR files; triggers Ledger Processor        |
-| Lambda — Ledger Processor       | AWS Lambda (S3 event-driven)       | Parses XDR; writes explorer records and derived state to RDS           |
-| Lambda — Rust/axum API handlers | AWS Lambda (per API Gateway route) | Serves all public API requests                                         |
-| RDS PostgreSQL                  | AWS RDS (db.r6g.large, Single-AZ)  | Block explorer database                                                |
-| API Gateway                     | AWS API Gateway                    | REST API, throttling, request validation, response caching             |
-| AWS WAF                         | AWS WAF                            | Managed rules and abuse protection for public ingress                  |
-| CloudFront CDN                  | AWS CloudFront                     | Serves React frontend                                                  |
-| Swagger UI                      | utoipa-swagger-ui `/api-docs`      | OpenAPI spec + interactive documentation                               |
-| EventBridge Scheduler           | AWS EventBridge                    | Cron triggers for operational tasks (e.g. partition management)        |
-| Secrets Manager                 | AWS Secrets Manager                | DB credentials, non-browser integration keys                           |
-| CloudWatch + X-Ray              | AWS CloudWatch                     | Logs, metrics, alarms, distributed tracing                             |
-| CI/CD pipeline                  | GitHub Actions → AWS CDK           | Infrastructure-as-code deploy                                          |
+| Component                               | Service                              | Role                                                                                   |
+| --------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------- |
+| Galexie process                         | ECS Fargate (1 task, continuous)     | Streams live ledger data from Stellar network to S3                                    |
+| Historical backfill (`backfill-runner`) | Developer workstation CLI (ADR 0010) | Streams history archives locally; writes directly to RDS. Production tool (task 0145). |
+| S3 bucket `stellar-ledger-data`         | AWS S3                               | Receives `LedgerCloseMeta` XDR files; triggers Ledger Processor                        |
+| Lambda — Ledger Processor               | AWS Lambda (S3 event-driven)         | Parses XDR; writes explorer records and derived state to RDS                           |
+| Lambda — Rust/axum API handlers         | AWS Lambda (per API Gateway route)   | Serves all public API requests                                                         |
+| RDS PostgreSQL                          | AWS RDS (db.r6g.large, Single-AZ)    | Block explorer database                                                                |
+| API Gateway                             | AWS API Gateway                      | REST API, throttling, request validation, response caching                             |
+| AWS WAF                                 | AWS WAF                              | Managed rules and abuse protection for public ingress                                  |
+| CloudFront CDN                          | AWS CloudFront                       | Serves React frontend                                                                  |
+| Swagger UI                              | utoipa-swagger-ui `/api-docs`        | OpenAPI spec + interactive documentation                                               |
+| EventBridge Scheduler                   | AWS EventBridge                      | Cron triggers for operational tasks (e.g. partition management)                        |
+| Secrets Manager                         | AWS Secrets Manager                  | DB credentials, non-browser integration keys                                           |
+| CloudWatch + X-Ray                      | AWS CloudWatch                       | Logs, metrics, alarms, distributed tracing                                             |
+| CI/CD pipeline                          | GitHub Actions → AWS CDK             | Infrastructure-as-code deploy                                                          |
 
 **External services consumed (read-only):**
 
@@ -653,22 +661,34 @@ Stellar Network (mainnet peers)
 ┌─────────────────────────────────────────────────────────┐
 │  Lambda "Ledger Processor"  (event-driven, per file)    │
 │  1. Download + decompress XDR                           │
-│  2. Parse LedgerCloseMeta via @stellar/stellar-sdk      │
-│  3. Extract ledger header (sequence, close_at, proto)   │
-│  4. Extract all transactions: hash, source, fee,        │
-│     success/failure, envelope XDR, result XDR           │
-│  5. Extract operations: type, details per operation     │
-│  6. Extract Soroban invocations (INVOKE_HOST_FUNCTION): │
-│     contract ID, function name, args, return value      │
-│  7. Extract CAP-67 events (SorobanTransactionMeta       │
-│     .events): all contract events in one stream         │
-│  8. Extract contract deployments (new C-addresses,      │
-│     WASM hashes) from LedgerEntryChanges                │
-│  9. Extract account state snapshots (sequence, balances,│
-│     home_domain) from LedgerEntryChanges                │
-│ 10. Detect token contracts (SEP-41), NFT contracts,     │
-│     liquidity pools from deployment events              │
-│ 11. Write all above to RDS PostgreSQL                   │
+│  2. Parse LedgerCloseMeta via Rust `stellar-xdr` crate  │
+│  3. Extract ledger header → ledgers row                 │
+│  4. Extract transactions: hash (BYTEA32), source_id,    │
+│     fee, successful, application_order, operation_count,│
+│     has_soroban, inner_tx_hash → transactions           │
+│     (no raw envelope/result XDR — ADR 0029)             │
+│  5. Aggregate operations by identity (type, source_id,  │
+│     destination_id, contract_id, asset_code,            │
+│     asset_issuer_id, pool_id) → `operations_appearances`│
+│     with `amount BIGINT` counting collapsed duplicates  │
+│     (ADR 0163 — no transfer_amount, no application_order,│
+│     no details JSONB)                                   │
+│  6. Resolve StrKeys → surrogate ids for accounts and    │
+│     soroban_contracts (ADRs 0026/0030)                  │
+│  7. Soroban events: one appearance row per              │
+│     (contract, tx, ledger) trio → soroban_events_…      │
+│     (full event detail fetched at read time — ADR 0033) │
+│  8. Soroban invocations: appearance rows + root         │
+│     caller_id → soroban_invocations_appearances         │
+│     (per-node detail fetched at read time — ADR 0034)   │
+│  9. Contract deployments + classic account state →      │
+│     soroban_contracts, wasm_interface_metadata,         │
+│     accounts, account_balances_current                  │
+│ 10. Detect SEP-41 token contracts, NFT contracts,       │
+│     classic LPs → assets, nfts, liquidity_pools,        │
+│     nft_ownership, lp_positions                         │
+│ 11. Commit the whole 14-step persist_ledger in a        │
+│     single DB transaction (ADR 0027)                    │
 └─────────────────────────────────────────────────────────┘
                │
                ▼
@@ -678,7 +698,11 @@ Stellar Network (mainnet peers)
 ### 4.2 What `LedgerCloseMeta` Contains
 
 The `LedgerCloseMeta` XDR produced by Galexie contains the complete ledger close.
-Everything a block explorer needs is present; no external API is required.
+Everything the block explorer needs to populate its typed summary columns is
+present; no private chain API is required at ingestion time. The public Stellar
+ledger archive is a read-time dependency for heavy-field endpoints
+([ADR 0029](../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md)),
+not an ingest-time one.
 
 | Data needed                                       | Where it lives in LedgerCloseMeta                                         |
 | ------------------------------------------------- | ------------------------------------------------------------------------- |
@@ -693,18 +717,23 @@ Everything a block explorer needs is present; no external API is required.
 
 ### 4.3 Historical Backfill
 
-For historical data, a separate ECS Fargate task reads from Stellar's **public history
-archives** (the same archives that Horizon used for `db reingest`). It writes
-`LedgerCloseMeta` files in the same format to the same S3 bucket, triggering the same
-Ledger Processor Lambda. No separate code path is required.
+Per [ADR 0010](../../lore/2-adrs/0010_local-backfill-over-fargate.md), historical
+backfill is not a production Fargate task. It runs as a **local CLI tool**
+(`crates/backfill-runner` for production, `crates/backfill-bench` for benchmarking)
+on a developer workstation that streams from Stellar's
+**public history archives** (the same archives Horizon used for `db reingest`),
+invokes the same `process_ledger` pipeline used by the Lambda, and writes
+directly to the target RDS (dev or staging).
 
 - **Scope:** from Soroban mainnet activation ledger (late 2023) to the present
-- **Parallelism:** backfill runs in configurable ledger-range batches. Batches may execute
-  in parallel only when they own non-overlapping ledger ranges and preserve deterministic
-  replay semantics
-- **Timing:** runs as a one-time batch during Phase 1 (Deliverable 1); live ingestion
-  continues in parallel, and live-derived state remains authoritative for the newest
-  ledgers
+- **Parallelism:** backfill runs in configurable ledger-range batches. Batches
+  may execute in parallel only when they own non-overlapping ledger ranges and
+  preserve deterministic replay semantics
+- **Timing:** one-time batch during Phase 1 (Deliverable 1); live ingestion
+  continues in parallel via the Galexie → S3 → Ledger Processor path and
+  live-derived state remains authoritative for the newest ledgers
+- **No production infrastructure:** no Fargate task, no ECS task definitions,
+  no EventBridge schedule; the CLI runs on demand from an operator's machine
 
 ### 4.4 Background Workers
 
@@ -745,8 +774,9 @@ batch cannot overwrite fresher live state.
 pipeline before deploying new Lambda code.
 
 **Protocol upgrades:** when Stellar introduces a new CAP that changes `LedgerCloseMeta`
-structure, we update `@stellar/stellar-sdk` XDR types. Protocol upgrades are infrequent
-and well-announced in advance.
+structure, we update the pinned `stellar-xdr` Rust crate version; the frontend consumes
+typed API responses via OpenAPI-generated TS client (task 0096). Protocol
+upgrades are infrequent and well-announced in advance.
 
 **Open-source re-deployability:** the full CDK stack is public; Stellar or any third party
 can fork the repository and deploy the entire system in a fresh AWS account.
@@ -757,71 +787,109 @@ can fork the repository and deploy the entire system in a fresh AWS account.
 
 ### 5.1 Parsing Strategy
 
-XDR parsing happens in two places:
+XDR parsing happens in two places, each with a different scope:
 
-- **Ledger Processor Lambda (at ingestion time):** the primary parsing path. Every ledger's
-  `LedgerCloseMeta` is fully deserialized using `@stellar/stellar-sdk` XDR types.
-  Structured results are written to RDS. The frontend receives pre-decoded data for all
-  normal operations.
+- **Ledger Processor Lambda (ingestion time):** the primary parsing path. Every
+  ledger's `LedgerCloseMeta` is fully deserialized using the Rust `stellar-xdr`
+  crate (ADR 0004). The ingestion path extracts the **typed summary columns**
+  that populate `transactions`, `operations_appearances`, `soroban_contracts`, `assets`,
+  `nfts`, `liquidity_pools`, and the surrogate-keyed hubs (`accounts`,
+  `soroban_contracts`), plus the appearance-index rows for
+  `soroban_events_appearances` and `soroban_invocations_appearances`. No raw XDR
+  is written to RDS
+  ([ADR 0029](../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md)).
 
-- **REST API (on request):** the raw `envelope_xdr`, `result_xdr`, and `result_meta_xdr`
-  strings are stored verbatim in RDS. The API returns `envelope_xdr` and `result_xdr` to
-  the frontend for the advanced view, and can decode all three on request using
-  `@stellar/stellar-sdk` to serve additional structured fields or validate the stored
-  invocation tree when needed.
+- **Backend API (request time):** the envelope / result / result-meta payloads
+  and the parsed event / invocation tree for E3 and E14 are fetched from the
+  **public Stellar ledger archive** (`.xdr.zst` files), decompressed, parsed
+  with the same `stellar-xdr` crate (shared via `crates/xdr-parser`), and
+  merged into the response on the fly.
 
 ### 5.2 Data Extracted at Ingestion (Ledger Processor)
 
 **From `LedgerHeader`:**
 
-- `sequence`, `closeTime`, `protocolVersion`, `baseFee`, `txSetResultHash`
+- `sequence`, `closeTime`, `protocolVersion`, `baseFee`
 
 **From `TransactionEnvelope` + `TransactionResult`:**
 
-- `hash` (computed by hashing the envelope XDR), `sourceAccount`, `feeCharged`,
-  `successful`, `resultCode`
-- Raw `envelopeXdr`, `resultXdr`, and `resultMetaXdr` stored verbatim for advanced view
-  and transaction-tree debugging
+- `hash` (32-byte, stored as `BYTEA` per
+  [ADR 0024](../../lore/2-adrs/0024_hashes-bytea-binary-storage.md))
+- `source_id` resolved to `accounts.id` at ingest
+  ([ADR 0026](../../lore/2-adrs/0026_accounts-surrogate-bigint-id.md))
+- `fee_charged`, `successful`, `application_order`, `operation_count`,
+  `has_soroban`, `inner_tx_hash`
+- **No raw envelope / result / result-meta XDR is stored.** Those are fetched
+  on demand from the public archive when E3 needs them.
 
 **From `OperationMeta` per transaction:**
 
-- Operation `type`, structured `details` JSONB (type-specific fields)
-- For `INVOKE_HOST_FUNCTION`: `contractId`, `functionName`, `functionArgs` (decoded
-  `ScVal`), `returnValue` (decoded `ScVal`)
+- Operation `type` (`SMALLINT` Rust `OperationType` enum per
+  [ADR 0031](../../lore/2-adrs/0031_enum-columns-smallint-with-rust-enum.md))
+- Typed summary columns: `source_id`, `destination_id`, `contract_id` (surrogate
+  FK per [ADR 0030](../../lore/2-adrs/0030_contracts-surrogate-bigint-id.md)),
+  `asset_code`, `asset_issuer_id`, `pool_id`, `transfer_amount`
+- No per-operation `details` JSONB — list endpoints use the typed columns; the
+  detail endpoint re-derives from the archive
 
 **From `SorobanTransactionMeta.events`:**
 
-- `eventType` (contract/system/diagnostic), `contractId`, `topics` (decoded `ScVal[]`),
-  `data` (decoded `ScVal`)
-- Known NFT contract patterns interpreted into derived NFT ownership and metadata updates
+- An **appearance row** per (contract, transaction, ledger) tuple in
+  `soroban_events_appearances` with an `amount` count of non-diagnostic events
+  (ADR 0033). Full event detail (type, topics, data, per-event index) is not
+  persisted; E14 re-expands it from the archive via
+  `xdr_parser::extract_events`
+- Known SEP-41 / NFT transfer patterns also drive derived-state upserts on
+  `assets`, `nfts`, `nft_ownership`, and `account_balances_current`
+
+**From `SorobanTransactionMeta.diagnosticEvents` / invocation tree:**
+
+- An appearance row per (contract, transaction, ledger) in
+  `soroban_invocations_appearances` with `amount` (node count) and the
+  root-level `caller_id` (ADR 0034). Per-node detail (function name,
+  arguments, return value, depth) is re-expanded at read time by
+  `xdr_parser::extract_invocations`
 
 **From `LedgerEntryChanges`:**
 
-- Contract deployments: `contractId`, `wasmHash`, `deployerAccount`
-- Account changes and account-state snapshots (`sequence_number`, `balances`, `home_domain`)
-- Liquidity pool state changes (`poolId`, asset pair, reserves, total shares)
+- Contract deployments: `soroban_contracts` row (contract_id, wasm_hash BYTEA,
+  deployer_id surrogate, deployed_at_ledger, is_sac)
+- Classic account state: `accounts` row (account_id, first/last-seen ledgers,
+  sequence number, home_domain); balances to `account_balances_current`
+- Liquidity pool state: `liquidity_pools` row with typed `asset_*_type`
+  SMALLINT + `asset_*_code` + `asset_*_issuer_id` per leg, plus a
+  `liquidity_pool_snapshots` time-series row
 
 ### 5.3 Soroban-Specific Handling
 
-- **CAP-67 events** are decoded from `SorobanTransactionMeta.events` at ingestion time
-  and stored in the `soroban_events` table as structured JSONB. The API serves them
-  decoded — the frontend does not need to handle raw XDR for events.
-- **Return values** — the return value of `invokeHostFunction` is an XDR `ScVal` decoded
-  to a typed value (integer, string, address, bytes, map, etc.) and stored in the
-  `soroban_invocations` table.
-- **Invocation tree** — complex transactions with nested contract-to-contract calls have
-  their full invocation hierarchy decoded from `result_meta_xdr`, stored in
-  `transactions.operation_tree`, and served directly to the transaction detail tree view.
-  The raw `result_meta_xdr` is preserved for advanced decode/debug use.
-- **Contract interface** — function signatures (names, parameter types) are extracted from
-  the contract WASM at deployment time and stored inside `soroban_contracts.metadata`.
+- **CAP-67 events** are indexed at ingest (one row per contract × transaction
+  tuple in `soroban_events_appearances`, with a non-diagnostic-event count).
+  Full decoded event detail is served at read time from the public archive via
+  E14 — there is no `soroban_events` JSONB table
+- **Return values** — the `invokeHostFunction` return value and the per-node
+  invocation tree live at read time in the archive and are expanded on demand
+  by `xdr_parser::extract_invocations`; the DB only indexes the appearance per
+  trio in `soroban_invocations_appearances`
+- **Invocation tree rendering** — the transaction-detail page fetches
+  `envelope.xdr.zst` + `meta.xdr.zst` from the archive and renders the full
+  per-node tree on demand (no `transactions.operation_tree` JSONB)
+- **Contract interface** — function signatures (names, parameter types) are
+  extracted from the contract WASM on upload and stored as JSONB in
+  `wasm_interface_metadata.metadata`, keyed by `wasm_hash` (BYTEA 32). The
+  contract page joins `soroban_contracts.wasm_hash → wasm_interface_metadata`
+  for display ([ADR 0022](../../lore/2-adrs/0022_schema-correction-and-token-metadata-enrichment.md))
 
 ### 5.4 Error Handling
 
-- **Malformed XDR** — if `fromXDR()` throws, the Ledger Processor logs the error with the
-  transaction hash, stores the raw XDR verbatim, and marks the record with a
-  `parse_error` flag. The API returns the raw XDR to the frontend with a decode-failure
-  indicator. The transaction is still displayed with all available non-XDR fields.
+- **Malformed XDR at ingest** — if the Rust parser returns an error on a
+  transaction, the indexer logs the hash, writes the typed summary columns it
+  was able to extract, and sets `transactions.parse_error = true`. The
+  transaction is still displayed with the partial columns. The detail page
+  retries the archive fetch; if that also fails, the UI shows a decode-failure
+  indicator
+- **Archive fetch failure at read time** — E3 / E14 return an upstream-error
+  envelope with retry-after semantics; list endpoints are unaffected since they
+  do not call the archive
 - **Unknown operation types** — new protocol versions may introduce operation types not
   yet supported by the SDK. These are rendered as "Unknown operation" with raw XDR shown,
   and a CloudWatch alarm is raised to trigger an SDK update.
@@ -833,21 +901,54 @@ XDR parsing happens in two places:
 The block explorer owns its full PostgreSQL schema. All chain data is stored here;
 there is no dependency on an external database.
 
-High-volume Soroban activity tables, `operations_appearances`, and liquidity-pool
-time series use **native range partitioning by month** on `created_at` for
-efficient time-range queries and instant partition drops.
+This section is the narrative overview. Authoritative DDL for every table (column types,
+constraints, indexes, partition names) lives in
+[`database-schema/database-schema-overview.md`](database-schema/database-schema-overview.md),
+which is kept in sync with the live migrations under `crates/db/migrations/` per
+[ADR 0032](../../lore/2-adrs/0032_docs-architecture-evergreen-maintenance.md).
+
+Cross-cutting schema disciplines applied to every table:
+
+- **Surrogate primary keys** on `accounts` and `soroban_contracts`
+  ([ADR 0026](../../lore/2-adrs/0026_accounts-surrogate-bigint-id.md),
+  [ADR 0030](../../lore/2-adrs/0030_contracts-surrogate-bigint-id.md)):
+  `BIGSERIAL id` is the join key; the `VARCHAR(56)` StrKey (`account_id`, `contract_id`)
+  stays as a UNIQUE natural key for display, route lookup, and E22 search.
+  Every FK column elsewhere in the schema targets the surrogate `id`.
+- **Binary hashes** ([ADR 0024](../../lore/2-adrs/0024_hashes-bytea-binary-storage.md)):
+  every 32-byte chain hash (`ledgers.hash`, `transactions.hash`, `wasm_hash`, `pool_id`)
+  is `BYTEA` with `CHECK (octet_length(...) = 32)` — rendered as lowercase hex at the
+  API layer.
+- **SMALLINT enums** ([ADR 0031](../../lore/2-adrs/0031_enum-columns-smallint-with-rust-enum.md)):
+  every closed-domain "type" column (`operations_appearances.type`, `assets.asset_type`,
+  `soroban_contracts.contract_type`, `nft_ownership.event_type`, etc.) is `SMALLINT`
+  backed by a Rust `#[repr(i16)]` enum with a `CHECK` range constraint and a
+  `<name>_name(ty)` SQL helper for psql/BI.
+- **Monthly range partitioning on `created_at`** for high-volume child tables
+  (see §6.12). Partitions follow the `<table>_y{YYYY}m{MM}` naming convention and are
+  provisioned by the partition-management Lambda in `crates/db-partition-mgmt`
+  (see task 0139).
+- **No raw XDR in the DB** ([ADR 0029](../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md)):
+  `transactions` carries only typed summary columns. Full envelope / result / result-meta
+  XDR for E3 `/transactions/:hash` and decoded event / invocation payloads for
+  E14 `/contracts/:id/events` are fetched at request time from the public Stellar ledger
+  archive (`.xdr.zst` files) and re-parsed on demand.
+
+The illustrative DDL below shows the main structural features of each table; for the
+full CHECKs, indexes, and FK wiring see the overview doc. Snippets use `…` where
+additional fields exist in the live schema.
 
 ### 6.1 Ledgers
 
 ```sql
 CREATE TABLE ledgers (
-    sequence          BIGINT PRIMARY KEY,
-    hash              VARCHAR(64) UNIQUE NOT NULL,
+    sequence          BIGINT      PRIMARY KEY,
+    hash              BYTEA       NOT NULL UNIQUE,             -- 32-byte (ADR 0024)
     closed_at         TIMESTAMPTZ NOT NULL,
-    protocol_version  INT NOT NULL,
-    transaction_count INT NOT NULL,
-    base_fee          BIGINT NOT NULL,
-    INDEX idx_closed_at (closed_at DESC)
+    protocol_version  INTEGER     NOT NULL,
+    transaction_count INTEGER     NOT NULL,
+    base_fee          BIGINT      NOT NULL
+    -- CHECK (octet_length(hash) = 32)
 );
 ```
 
@@ -855,41 +956,47 @@ CREATE TABLE ledgers (
 
 ```sql
 CREATE TABLE transactions (
-    id               BIGSERIAL PRIMARY KEY,
-    hash             VARCHAR(64) UNIQUE NOT NULL,
-    ledger_sequence  BIGINT REFERENCES ledgers(sequence),
-    source_account   VARCHAR(56) NOT NULL,
-    fee_charged      BIGINT NOT NULL,
-    successful       BOOLEAN NOT NULL,
-    result_code      VARCHAR(50),
-    envelope_xdr     TEXT NOT NULL,
-    result_xdr       TEXT NOT NULL,
-    result_meta_xdr  TEXT,
-    memo_type        VARCHAR(20),
-    memo             TEXT,
-    created_at       TIMESTAMPTZ NOT NULL,
-    parse_error      BOOLEAN DEFAULT FALSE,
-    operation_tree   JSONB,
-    INDEX idx_hash (hash),
-    INDEX idx_source (source_account, created_at DESC),
-    INDEX idx_ledger (ledger_sequence)
-);
+    id                BIGSERIAL   NOT NULL,
+    hash              BYTEA       NOT NULL,                    -- 32-byte (ADR 0024)
+    ledger_sequence   BIGINT      NOT NULL,
+    application_order SMALLINT    NOT NULL,
+    source_id         BIGINT      NOT NULL REFERENCES accounts(id),  -- ADR 0026 surrogate
+    fee_charged       BIGINT      NOT NULL,
+    inner_tx_hash     BYTEA,                                   -- fee-bump inner, 32-byte
+    successful        BOOLEAN     NOT NULL,
+    operation_count   SMALLINT    NOT NULL,
+    has_soroban       BOOLEAN     NOT NULL DEFAULT false,
+    parse_error       BOOLEAN     NOT NULL DEFAULT false,
+    created_at        TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (id, created_at)                               -- partition-key rule
+) PARTITION BY RANGE (created_at);
+-- hash uniqueness lives in the companion `transaction_hash_index` table,
+-- because a partitioned parent cannot carry a hash-only UNIQUE (the partition
+-- key would have to be part of every unique index).
 ```
 
-### 6.3 Operations Appearances
+No raw envelope / result / result-meta XDR and no decoded `operation_tree` JSONB are
+stored on the row — those fields are fetched and parsed on demand per ADR 0029.
+
+### 6.3 Operations — Appearance Index
+
+Per task 0163, `operations` was collapsed into an appearance index (pattern from
+ADRs 0033/0034) and renamed to `operations_appearances`. One row per distinct
+operation identity per transaction, `amount BIGINT` counts collapsed duplicates;
+per-op detail re-materialised from XDR at read time.
 
 ```sql
 CREATE TABLE operations_appearances (
     id                BIGSERIAL    NOT NULL,
     transaction_id    BIGINT       NOT NULL,
-    type              SMALLINT     NOT NULL,   -- ADR 0031 OperationType
-    source_id         BIGINT       REFERENCES accounts(id),
-    destination_id    BIGINT       REFERENCES accounts(id),
-    contract_id       BIGINT       REFERENCES soroban_contracts(id),
+    type              SMALLINT     NOT NULL,                               -- ADR 0031
+    source_id         BIGINT       REFERENCES accounts(id),                -- ADR 0026
+    destination_id    BIGINT       REFERENCES accounts(id),                -- ADR 0026
+    contract_id       BIGINT       REFERENCES soroban_contracts(id),       -- ADR 0030
     asset_code        VARCHAR(12),
-    asset_issuer_id   BIGINT       REFERENCES accounts(id),
-    pool_id           BYTEA,
-    amount            BIGINT       NOT NULL,   -- count of collapsed identical-identity ops
+    asset_issuer_id   BIGINT       REFERENCES accounts(id),                -- ADR 0026
+    pool_id           BYTEA,                                               -- 32-byte LP hash
+    amount            BIGINT       NOT NULL,                               -- collapsed-duplicate count
     ledger_sequence   BIGINT       NOT NULL,
     created_at        TIMESTAMPTZ  NOT NULL,
     PRIMARY KEY (id, created_at),
@@ -902,82 +1009,88 @@ CREATE TABLE operations_appearances (
 ) PARTITION BY RANGE (created_at);
 ```
 
-Appearance index (task 0163): one row per distinct operation identity in a
-transaction, `amount` counts how many operations of that shape were folded.
-Per-op detail (transfer amount, application order, memo, claimants, function
-args, predicates) is re-materialised from XDR by the API
-(`xdr_parser::extract_operations`) and is not stored in the DB.
+`transfer_amount` and `application_order` are no longer stored; per-operation
+JSONB `details` was never stored. The typed summary columns above support
+filtered list endpoints; full decoded payloads come from the archive via
+`stellar_archive` extractors at request time (ADR 0029).
 
 ### 6.4 Soroban Contracts
 
 ```sql
 CREATE TABLE soroban_contracts (
-    contract_id        VARCHAR(56) PRIMARY KEY,
-    wasm_hash          VARCHAR(64),
-    deployer_account   VARCHAR(56),
-    deployed_at_ledger BIGINT REFERENCES ledgers(sequence),
-    contract_type      VARCHAR(50),  -- 'token', 'dex', 'lending', 'nft', 'other'
-    is_sac             BOOLEAN DEFAULT FALSE,
-    metadata           JSONB,        -- explorer metadata incl. optional interface signatures
-    search_vector      TSVECTOR GENERATED ALWAYS AS (
-                           to_tsvector('english', coalesce(metadata->>'name', ''))
-                       ) STORED,
-    INDEX idx_type (contract_type),
-    INDEX idx_search (search_vector) USING GIN
+    id                      BIGSERIAL   PRIMARY KEY,                             -- ADR 0030 surrogate
+    contract_id             VARCHAR(56) NOT NULL UNIQUE,                         -- StrKey natural key
+    wasm_hash               BYTEA       REFERENCES wasm_interface_metadata(wasm_hash),  -- 32-byte (ADR 0024)
+    wasm_uploaded_at_ledger BIGINT,
+    deployer_id             BIGINT      REFERENCES accounts(id),                 -- ADR 0026
+    deployed_at_ledger      BIGINT,
+    contract_type           SMALLINT,                                            -- ADR 0031, nullable
+    is_sac                  BOOLEAN     NOT NULL DEFAULT false,
+    metadata                JSONB,
+    search_vector           TSVECTOR GENERATED ALWAYS AS (
+                                to_tsvector('simple', COALESCE(metadata->>'name', '') || ' ' || contract_id)
+                            ) STORED
 );
 ```
 
-### 6.5 Soroban Invocations
+### 6.5 Soroban Invocations — Appearance Index
+
+Per [ADR 0034](../../lore/2-adrs/0034_soroban-invocations-appearances-read-time-detail.md),
+the former per-node `soroban_invocations` table was replaced with a pure appearance
+index; full per-node decode happens at read time from the public archive
+(pattern shared with ADR 0033 for events).
 
 ```sql
-CREATE TABLE soroban_invocations (
-    id               BIGSERIAL PRIMARY KEY,
-    transaction_id   BIGINT REFERENCES transactions(id) ON DELETE CASCADE,
-    contract_id      VARCHAR(56) REFERENCES soroban_contracts(contract_id),
-    caller_account   VARCHAR(56),
-    function_name    VARCHAR(100) NOT NULL,
-    function_args    JSONB,
-    return_value     JSONB,
-    successful       BOOLEAN NOT NULL,
-    ledger_sequence  BIGINT NOT NULL,
-    created_at       TIMESTAMPTZ NOT NULL,
-    INDEX idx_contract (contract_id, created_at DESC),
-    INDEX idx_function (contract_id, function_name)
+CREATE TABLE soroban_invocations_appearances (
+    contract_id      BIGINT       NOT NULL REFERENCES soroban_contracts(id),  -- ADR 0030
+    transaction_id   BIGINT       NOT NULL,
+    ledger_sequence  BIGINT       NOT NULL,
+    caller_id        BIGINT       REFERENCES accounts(id),                    -- ADR 0026
+    amount           INTEGER      NOT NULL,                                   -- invocation nodes in trio
+    created_at       TIMESTAMPTZ  NOT NULL,
+    PRIMARY KEY (contract_id, transaction_id, ledger_sequence, created_at)
 ) PARTITION BY RANGE (created_at);
 ```
 
-### 6.6 Soroban Events (CAP-67)
+### 6.6 Soroban Events — Appearance Index
+
+Mirrors §6.5 for contract events (ADR 0033):
 
 ```sql
-CREATE TABLE soroban_events (
-    id               BIGSERIAL PRIMARY KEY,
-    transaction_id   BIGINT REFERENCES transactions(id) ON DELETE CASCADE,
-    contract_id      VARCHAR(56) REFERENCES soroban_contracts(contract_id),
-    event_type       VARCHAR(20) NOT NULL,  -- 'contract', 'system', 'diagnostic'
-    topics           JSONB NOT NULL,
-    data             JSONB NOT NULL,
-    ledger_sequence  BIGINT NOT NULL,
-    created_at       TIMESTAMPTZ NOT NULL,
-    INDEX idx_contract (contract_id, created_at DESC),
-    INDEX idx_topics (topics) USING GIN
+CREATE TABLE soroban_events_appearances (
+    contract_id     BIGINT       NOT NULL REFERENCES soroban_contracts(id),   -- ADR 0030
+    transaction_id  BIGINT       NOT NULL,
+    ledger_sequence BIGINT       NOT NULL,
+    amount          BIGINT       NOT NULL,                                    -- non-diagnostic events in trio
+    created_at      TIMESTAMPTZ  NOT NULL,
+    PRIMARY KEY (contract_id, transaction_id, ledger_sequence, created_at)
 ) PARTITION BY RANGE (created_at);
 ```
+
+Parsed event type, topics, and data live at read time in the public archive and are
+re-expanded on demand via `xdr_parser::extract_events`.
 
 ### 6.7 Assets
 
+Renamed from `tokens` in
+[ADR 0036](../../lore/2-adrs/0036_rename-tokens-to-assets.md) / task 0154. Four asset
+classes under a single registry (`native`, `classic_credit`, `sac`, `soroban`).
+
 ```sql
 CREATE TABLE assets (
-    id          SERIAL   PRIMARY KEY,
-    asset_type  SMALLINT NOT NULL,  -- TokenAssetType: 0=native, 1=classic_credit, 2=sac, 3=soroban
-    asset_code  VARCHAR(12),
-    issuer_id   BIGINT   REFERENCES accounts(id),
-    contract_id BIGINT   REFERENCES soroban_contracts(id),
-    name        VARCHAR(256),
-    total_supply NUMERIC(28,7),
+    id           SERIAL        PRIMARY KEY,
+    asset_type   SMALLINT      NOT NULL,  -- TokenAssetType: 0=native, 1=classic_credit, 2=sac, 3=soroban (ADR 0031)
+    asset_code   VARCHAR(12),
+    issuer_id    BIGINT        REFERENCES accounts(id),              -- ADR 0026
+    contract_id  BIGINT        REFERENCES soroban_contracts(id),     -- ADR 0030
+    name         VARCHAR(256),
+    total_supply NUMERIC(28,7),                                      -- populated by metadata worker (ADR 0022)
     holder_count INTEGER,
-    description TEXT,
-    icon_url    VARCHAR(1024),
-    home_page   VARCHAR(256)
+    description  TEXT,                                               -- typed SEP-1 (ADR 0023)
+    icon_url     VARCHAR(1024),                                      -- ditto
+    home_page    VARCHAR(256)                                        -- ditto
+    -- CHECK ck_assets_identity: required NULL/NOT NULL columns per asset_type
+    -- partial UNIQUE indexes enforce one row per logical asset
 );
 ```
 
@@ -985,79 +1098,94 @@ CREATE TABLE assets (
 
 ```sql
 CREATE TABLE accounts (
-    account_id        VARCHAR(56) PRIMARY KEY,
-    first_seen_ledger BIGINT REFERENCES ledgers(sequence),
-    last_seen_ledger  BIGINT REFERENCES ledgers(sequence),
-    sequence_number   BIGINT,
-    balances          JSONB NOT NULL DEFAULT '[]'::jsonb,
-    home_domain       VARCHAR(255),
-    INDEX idx_last_seen (last_seen_ledger DESC)
+    id                BIGSERIAL    PRIMARY KEY,               -- ADR 0026 surrogate
+    account_id        VARCHAR(56)  NOT NULL UNIQUE,           -- StrKey G... natural key
+    first_seen_ledger BIGINT       NOT NULL,
+    last_seen_ledger  BIGINT       NOT NULL,
+    sequence_number   BIGINT       NOT NULL,
+    home_domain       VARCHAR(256)
 );
 ```
+
+Balances are not persisted on this row; see `account_balances_current` in
+[`database-schema-overview.md` §4.17](database-schema/database-schema-overview.md#417-account-balances-current).
+The parallel `account_balance_history` table was dropped per
+[ADR 0035](../../lore/2-adrs/0035_drop-account-balance-history.md).
 
 ### 6.9 NFTs
 
 ```sql
 CREATE TABLE nfts (
-    id                BIGSERIAL PRIMARY KEY,
-    contract_id       VARCHAR(56) REFERENCES soroban_contracts(contract_id),
-    token_id          VARCHAR(128) NOT NULL,
-    collection_name   VARCHAR(100),
-    owner_account     VARCHAR(56),
-    name              VARCHAR(100),
-    media_url         TEXT,
-    metadata          JSONB,
-    minted_at_ledger  BIGINT REFERENCES ledgers(sequence),
-    last_seen_ledger  BIGINT REFERENCES ledgers(sequence),
-    UNIQUE (contract_id, token_id),
-    INDEX idx_contract (contract_id),
-    INDEX idx_owner (owner_account)
+    id                   SERIAL       PRIMARY KEY,
+    contract_id          BIGINT       NOT NULL REFERENCES soroban_contracts(id),   -- ADR 0030
+    token_id             VARCHAR(256) NOT NULL,
+    collection_name      VARCHAR(256),
+    name                 VARCHAR(256),
+    media_url            TEXT,
+    metadata             JSONB,
+    minted_at_ledger     BIGINT,
+    current_owner_id     BIGINT       REFERENCES accounts(id),                     -- ADR 0026
+    current_owner_ledger BIGINT,
+    UNIQUE (contract_id, token_id)
 );
+-- companion table nft_ownership (partitioned) records mint/transfer/burn history
+-- with event_type SMALLINT (NftEventType) per ADR 0031.
 ```
 
 ### 6.10 Liquidity Pools
 
 ```sql
 CREATE TABLE liquidity_pools (
-    pool_id             VARCHAR(64) PRIMARY KEY,
-    asset_a             JSONB NOT NULL,
-    asset_b             JSONB NOT NULL,
-    fee_bps             INT,
-    reserves            JSONB NOT NULL,
-    total_shares        NUMERIC(28, 7),
-    tvl                 NUMERIC(28, 7),
-    created_at_ledger   BIGINT REFERENCES ledgers(sequence),
-    last_updated_ledger BIGINT REFERENCES ledgers(sequence),
-    INDEX idx_last_updated (last_updated_ledger DESC)
+    pool_id            BYTEA       PRIMARY KEY,                    -- 32-byte pool hash (ADR 0024)
+    asset_a_type       SMALLINT    NOT NULL,                       -- XDR AssetType (ADR 0031)
+    asset_a_code       VARCHAR(12),
+    asset_a_issuer_id  BIGINT      REFERENCES accounts(id),        -- ADR 0026
+    asset_b_type       SMALLINT    NOT NULL,
+    asset_b_code       VARCHAR(12),
+    asset_b_issuer_id  BIGINT      REFERENCES accounts(id),        -- ADR 0026
+    fee_bps            INTEGER     NOT NULL,
+    created_at_ledger  BIGINT      NOT NULL
 );
 ```
+
+The asset pair is modeled with typed columns per leg (type + code + issuer_id) rather
+than JSONB blobs. Current reserves / total_shares are read from the most recent
+`liquidity_pool_snapshots` row; per-account LP positions live in `lp_positions`.
 
 ### 6.11 Liquidity Pool Snapshots
 
 ```sql
 CREATE TABLE liquidity_pool_snapshots (
-    id               BIGSERIAL PRIMARY KEY,
-    pool_id          VARCHAR(64) REFERENCES liquidity_pools(pool_id) ON DELETE CASCADE,
-    ledger_sequence  BIGINT NOT NULL,
-    created_at       TIMESTAMPTZ NOT NULL,
-    reserves         JSONB NOT NULL,
-    total_shares     NUMERIC(28, 7),
-    tvl              NUMERIC(28, 7),
-    volume           NUMERIC(28, 7),
-    fee_revenue      NUMERIC(28, 7),
-    INDEX idx_pool_time (pool_id, created_at DESC)
+    id              BIGSERIAL     NOT NULL,
+    pool_id         BYTEA         NOT NULL REFERENCES liquidity_pools(pool_id),  -- ADR 0024
+    ledger_sequence BIGINT        NOT NULL,
+    reserve_a       NUMERIC(28,7) NOT NULL,
+    reserve_b       NUMERIC(28,7) NOT NULL,
+    total_shares    NUMERIC(28,7) NOT NULL,
+    tvl             NUMERIC(28,7),
+    volume          NUMERIC(28,7),
+    fee_revenue     NUMERIC(28,7),
+    created_at      TIMESTAMPTZ   NOT NULL,
+    PRIMARY KEY (id, created_at)
 ) PARTITION BY RANGE (created_at);
 ```
 
 ### 6.12 Partitioning and Retention
 
-Tables `transactions`, `operations_appearances`, `transaction_participants`,
-`soroban_invocations_appearances`, `soroban_events_appearances`,
-`nft_ownership`, and `liquidity_pool_snapshots` are partitioned by month on
-`created_at` using native PostgreSQL range partitioning. A cleanup Lambda
-(EventBridge daily) creates partitions 2 months ahead and drops partitions
-older than the retention window if storage constraints require it. Ledger
-and registry tables are not partitioned and are kept indefinitely.
+Partitioned (`PARTITION BY RANGE (created_at)`, monthly):
+`transactions`, `operations_appearances`, `transaction_participants`,
+`soroban_events_appearances`, `soroban_invocations_appearances`,
+`liquidity_pool_snapshots`, `nft_ownership`.
+
+Unpartitioned anchors and registries:
+`ledgers`, `transaction_hash_index`, `accounts`, `soroban_contracts`,
+`wasm_interface_metadata`, `assets`, `nfts`, `liquidity_pools`, `lp_positions`,
+`account_balances_current`.
+
+Partition names follow `<table>_y{YYYY}m{MM}` (e.g. `operations_y2026m04`). The
+partition-management Lambda in `crates/db-partition-mgmt` provisions partitions two
+months ahead of the leading edge and drops only if storage constraints require it.
+Ledger and transaction history are kept indefinitely.
 
 ---
 
@@ -1210,8 +1338,11 @@ infrastructure-as-code. CI/CD pipeline. CloudWatch dashboards and ingestion lag 
    mainnet ledger close times
 2. RDS `ledgers` table contains all ledgers from backfill start through current tip with
    no gaps
-3. RDS `soroban_events` table contains CAP-67 events for known Soroswap/Aquarius/Phoenix
-   transactions (spot-checked by transaction hashes)
+3. RDS `soroban_events_appearances` table contains appearance-index rows for CAP-67
+   events in known Soroswap/Aquarius/Phoenix transactions (spot-checked by
+   transaction hashes); full decoded events are confirmed by fetching the
+   corresponding `.xdr.zst` from the public archive and re-expanding via
+   `xdr_parser::extract_events`
 4. `cdk deploy` from a clean AWS account produces the full working stack with no manual
    steps
 5. CloudWatch dashboard accessible; Galexie lag alarm fires correctly in staging
