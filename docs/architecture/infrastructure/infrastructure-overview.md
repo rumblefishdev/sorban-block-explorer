@@ -71,10 +71,11 @@ That shows up as:
 - RDS PostgreSQL for relational storage
 - API Gateway and CloudFront for public delivery
 - Secrets Manager, CloudWatch, and X-Ray for operational concerns
-- local `crates/backfill-bench` CLI (developer workstation) for historical
+- local `crates/backfill-runner` (production) or `crates/backfill-bench`
+  (benchmark) CLI on a developer workstation for historical
   backfill per [ADR 0010](../../../lore/2-adrs/0010_local-backfill-over-fargate.md) —
   **not** a Fargate task; streams from Stellar public archives into the same
-  `process_ledger` pipeline, writes directly to the development/staging RDS
+  `process_ledger` pipeline, writes directly to the database
 
 This keeps the runtime model operationally narrow and aligned with the serverless/event-
 driven shape of the product.
@@ -207,10 +208,10 @@ That split should remain stable even if the network layout expands later.
 
 **Historical backfill task**
 
-- runs on ECS Fargate as a batch/one-time process
+- runs as a **local CLI tool** (`crates/backfill-runner` or `crates/backfill-bench`)
+  on a developer workstation per [ADR 0010](../../../lore/2-adrs/0010_local-backfill-over-fargate.md)
 - reads from Stellar public history archives
-- writes the same XDR artifact format to the same S3 bucket so normal processing can be
-  reused
+- invokes the same `process_ledger` code path used by the Ledger Processor Lambda
 
 ### 5.2 Storage Components
 
@@ -350,7 +351,7 @@ External runtime dependencies are limited to read-only canonical Stellar data so
 
 - Stellar network peers — live data feed for Galexie (ingest-time)
 - Stellar public history archives — one-time backfill feed for the local
-  `backfill-bench` CLI run from a developer workstation per
+  `backfill-runner` or `backfill-bench` CLI run from a developer workstation per
   [ADR 0010](../../../lore/2-adrs/0010_local-backfill-over-fargate.md)
   (no Fargate task in production topology)
 - Stellar public ledger archive — read-time XDR fetch for E3 / E14 at the API

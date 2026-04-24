@@ -488,7 +488,7 @@ Caching operates at two levels:
 
 Connections:
   Stellar network peers → Galexie (Captive Core, live ledger stream)
-  Stellar history archives → `backfill-bench` CLI on developer workstation (one-time, per ADR 0010)
+  Stellar history archives → `backfill-runner` (production) or `backfill-bench` (benchmark) CLI on developer workstation (one-time, per ADR 0010)
   Galexie → S3 (LedgerCloseMeta XDR files)
   S3 PutObject event → Lambda Ledger Processor
   Lambda Ledger Processor → RDS (write)
@@ -531,22 +531,22 @@ expanding to multi-AZ when SLA requirements demand it.
 
 **Hosted by Rumble Fish (AWS sub-account):**
 
-| Component                              | Service                              | Role                                                                              |
-| -------------------------------------- | ------------------------------------ | --------------------------------------------------------------------------------- |
-| Galexie process                        | ECS Fargate (1 task, continuous)     | Streams live ledger data from Stellar network to S3                               |
-| Historical backfill (`backfill-bench`) | Developer workstation CLI (ADR 0010) | Streams history archives locally; writes directly to dev/staging RDS. No Fargate. |
-| S3 bucket `stellar-ledger-data`        | AWS S3                               | Receives `LedgerCloseMeta` XDR files; triggers Ledger Processor                   |
-| Lambda — Ledger Processor              | AWS Lambda (S3 event-driven)         | Parses XDR; writes explorer records and derived state to RDS                      |
-| Lambda — Rust/axum API handlers        | AWS Lambda (per API Gateway route)   | Serves all public API requests                                                    |
-| RDS PostgreSQL                         | AWS RDS (db.r6g.large, Single-AZ)    | Block explorer database                                                           |
-| API Gateway                            | AWS API Gateway                      | REST API, throttling, request validation, response caching                        |
-| AWS WAF                                | AWS WAF                              | Managed rules and abuse protection for public ingress                             |
-| CloudFront CDN                         | AWS CloudFront                       | Serves React frontend                                                             |
-| Swagger UI                             | utoipa-swagger-ui `/api-docs`        | OpenAPI spec + interactive documentation                                          |
-| EventBridge Scheduler                  | AWS EventBridge                      | Cron triggers for operational tasks (e.g. partition management)                   |
-| Secrets Manager                        | AWS Secrets Manager                  | DB credentials, non-browser integration keys                                      |
-| CloudWatch + X-Ray                     | AWS CloudWatch                       | Logs, metrics, alarms, distributed tracing                                        |
-| CI/CD pipeline                         | GitHub Actions → AWS CDK             | Infrastructure-as-code deploy                                                     |
+| Component                               | Service                              | Role                                                                                   |
+| --------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------- |
+| Galexie process                         | ECS Fargate (1 task, continuous)     | Streams live ledger data from Stellar network to S3                                    |
+| Historical backfill (`backfill-runner`) | Developer workstation CLI (ADR 0010) | Streams history archives locally; writes directly to RDS. Production tool (task 0145). |
+| S3 bucket `stellar-ledger-data`         | AWS S3                               | Receives `LedgerCloseMeta` XDR files; triggers Ledger Processor                        |
+| Lambda — Ledger Processor               | AWS Lambda (S3 event-driven)         | Parses XDR; writes explorer records and derived state to RDS                           |
+| Lambda — Rust/axum API handlers         | AWS Lambda (per API Gateway route)   | Serves all public API requests                                                         |
+| RDS PostgreSQL                          | AWS RDS (db.r6g.large, Single-AZ)    | Block explorer database                                                                |
+| API Gateway                             | AWS API Gateway                      | REST API, throttling, request validation, response caching                             |
+| AWS WAF                                 | AWS WAF                              | Managed rules and abuse protection for public ingress                                  |
+| CloudFront CDN                          | AWS CloudFront                       | Serves React frontend                                                                  |
+| Swagger UI                              | utoipa-swagger-ui `/api-docs`        | OpenAPI spec + interactive documentation                                               |
+| EventBridge Scheduler                   | AWS EventBridge                      | Cron triggers for operational tasks (e.g. partition management)                        |
+| Secrets Manager                         | AWS Secrets Manager                  | DB credentials, non-browser integration keys                                           |
+| CloudWatch + X-Ray                      | AWS CloudWatch                       | Logs, metrics, alarms, distributed tracing                                             |
+| CI/CD pipeline                          | GitHub Actions → AWS CDK             | Infrastructure-as-code deploy                                                          |
 
 **External services consumed (read-only):**
 
@@ -719,7 +719,8 @@ not an ingest-time one.
 
 Per [ADR 0010](../../lore/2-adrs/0010_local-backfill-over-fargate.md), historical
 backfill is not a production Fargate task. It runs as a **local CLI tool**
-(`crates/backfill-bench`) on a developer workstation that streams from Stellar's
+(`crates/backfill-runner` for production, `crates/backfill-bench` for benchmarking)
+on a developer workstation that streams from Stellar's
 **public history archives** (the same archives Horizon used for `db reingest`),
 invokes the same `process_ledger` pipeline used by the Lambda, and writes
 directly to the target RDS (dev or staging).

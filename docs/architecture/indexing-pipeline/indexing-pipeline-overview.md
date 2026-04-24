@@ -218,7 +218,8 @@ an ingest-path one; the indexing pipeline itself never calls the public archive.
 ### 6.1 Backfill Source and Runtime
 
 Per [ADR 0010](../../../lore/2-adrs/0010_local-backfill-over-fargate.md),
-historical backfill runs as a **local CLI tool** (`crates/backfill-bench`)
+historical backfill runs as a **local CLI tool** (`crates/backfill-runner` for
+production runs, `crates/backfill-bench` for benchmarks/prototypes)
 on a developer workstation. It streams from Stellar's **public history
 archives** (the same archives Horizon used for `db reingest`) and writes
 directly to the target RDS.
@@ -231,7 +232,7 @@ delivery medium:
 
 - **live:** Galexie (ECS Fargate) → S3 `stellar-ledger-data` → Ledger
   Processor Lambda → RDS
-- **backfill:** `backfill-bench` CLI → same `process_ledger` call → RDS
+- **backfill:** `backfill-runner` (production) or `backfill-bench` (benchmark) CLI → same `process_ledger` call → RDS
 
 Keeping the write-path identical means backfill and live ingest produce
 byte-for-byte the same rows for a given ledger, and the replay-safe
