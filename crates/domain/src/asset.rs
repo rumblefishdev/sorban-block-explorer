@@ -1,8 +1,10 @@
 //! Asset domain type matching the `assets` PostgreSQL table.
 //!
-//! Schema: ADR 0027 Part I §11 + ADR 0036 rename. SEP-1 metadata promoted to typed columns
-//! per ADR 0023 (`description`, `icon_url`, `home_page`) — legacy
-//! `metadata JSONB` is gone.
+//! Schema: ADR 0027 Part I §11 + ADR 0036 rename. Current shape recorded in
+//! ADR 0037 (task 0164): `icon_url` is the only SEP-1 field on the DB row
+//! and serves list-level thumbnail rendering. Asset-detail metadata
+//! (`description`, `home_page`) lives per-entity in S3 at
+//! `s3://<bucket>/assets/{id}.json`. Legacy `metadata JSONB` is also gone.
 //!
 //! `asset_type ∈ {"native", "classic_credit", "sac", "soroban"}`. Identity by:
 //! - classic_credit/SAC: UNIQUE `(asset_code, issuer_id)` (partial)
@@ -21,7 +23,5 @@ pub struct Asset {
     /// NUMERIC(28,7) as decimal string.
     pub total_supply: Option<String>,
     pub holder_count: Option<i32>,
-    pub description: Option<String>,
     pub icon_url: Option<String>,
-    pub home_page: Option<String>,
 }
