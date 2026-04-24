@@ -158,13 +158,13 @@ These are the authoritative "what the docs must now say":
    - `operations.type` (0-127)
    - `soroban_events.event_type` (0-15)
    - `assets.asset_type` (0-15): `0=native`, `1=classic_credit`, `2=sac`, `3=soroban`
-   - `account_balances_current.asset_type`, `account_balances_history.asset_type` (0-15)
+   - `account_balances_current.asset_type` (0-15)
    - `nft_ownership.event_type` (0-15): `0=mint`, `1=transfer`, `2=burn`
    - `liquidity_pools.asset_a_type`, `liquidity_pools.asset_b_type` (0-15)
    - `soroban_contracts.contract_type` (0-15; nullable) — task 20260422000100 added `nft`/`fungible_token` variants.
 6. **Partitioning**: `PARTITION BY RANGE (created_at)` monthly on `transactions`,
    `operations`, `transaction_participants`, `soroban_events`, `soroban_invocations`,
-   `nft_ownership`, `liquidity_pool_snapshots`, `account_balances_history`.
+   `nft_ownership`, `liquidity_pool_snapshots`.
    Partitions provisioned by partition-management Lambda (task 0139, `crates/db-partition-mgmt`).
    **No `operations_pN` naming** — follow monthly `operations_y{YYYY}m{MM}` convention.
 7. **No parsed-ledger S3 artifact** (ADR 0029). Ingest writes directly to RDS (ADR 0027).
