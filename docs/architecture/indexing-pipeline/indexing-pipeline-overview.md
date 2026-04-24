@@ -153,8 +153,9 @@ For each arriving ledger artifact, the current pipeline model is the 14-step
 committed in a single atomic DB transaction:
 
 1. download and decompress the XDR file from S3
-2. parse `LedgerCloseMeta` using the Rust `stellar-xdr` crate (ADR 0004); staging
-   is done in `crates/xdr-parser`
+2. parse `LedgerCloseMeta` using the Rust `stellar-xdr` crate (ADR 0004) and
+   extract the shared canonical data needed from it via `crates/xdr-parser`;
+   persistence-oriented staging/aggregation is then handled in the indexer
 3. resolve every observed StrKey (`G...`, `C...`) to the relevant `BIGINT`
    surrogate via `accounts` and `soroban_contracts` (two-pass upsert pattern per
    ADRs [0026](../../../lore/2-adrs/0026_accounts-surrogate-bigint-id.md) /
