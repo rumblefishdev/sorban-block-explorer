@@ -8,7 +8,7 @@ use domain::OperationType;
 
 use crate::openapi::schemas::{ErrorEnvelope, PageInfo, Paginated};
 use crate::state::AppState;
-use crate::stellar_archive::extractors::extract_e3_heavy;
+use crate::stellar_archive::extractors::{extract_e3_heavy, extract_e3_memo};
 use crate::stellar_archive::merge::merge_e3_response;
 
 use super::cursor;
@@ -160,8 +160,7 @@ pub async fn list_transactions(
         .map(|row| {
             let (memo_type, memo) = ledger_map
                 .get(&(row.ledger_sequence as u32))
-                .and_then(|meta| extract_e3_heavy(meta, &row.hash))
-                .map(|h| (h.memo_type, h.memo))
+                .and_then(|meta| extract_e3_memo(meta, &row.hash))
                 .unwrap_or((None, None));
 
             TransactionListItem {
@@ -224,9 +223,13 @@ pub async fn get_transaction(State(state): State<AppState>, Path(hash): Path<Str
         return err(
             StatusCode::BAD_REQUEST,
             "invalid_hash",
-            "hash must be a 64-character lowercase hexadecimal string",
+            "hash must be a 64-character hexadecimal string",
         );
     }
+    // Normalize to lowercase: extract_e3_heavy does case-sensitive matching
+    // against ExtractedTransaction.hash (always lowercase hex), so an
+    // uppercase request would otherwise degrade silently to heavy = None.
+    let hash = hash.to_ascii_lowercase();
     let hash_bytes = hex::decode(&hash).expect("validated above");
 
     let index = match lookup_hash_index(&state.db, &hash_bytes).await {

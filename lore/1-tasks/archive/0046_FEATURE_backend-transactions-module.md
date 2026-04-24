@@ -117,8 +117,9 @@ Transactions are the primary explorer entity for activity browsing. The list end
       "memo": "payment for services"
     }
   ],
-  "pagination": {
-    "next_cursor": "eyJpZCI6MTIzfQ==",
+  "page": {
+    "cursor": "eyJ0cyI6IjIwMjYtMDMtMjBUMTI6MDA6MDBaIiwiaWQiOjEyM30=",
+    "limit": 20,
     "has_more": true
   }
 }

@@ -76,7 +76,9 @@ pub struct TransactionDetailLight {
 /// DB-sourced operation row in `TransactionDetailLight`.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct OperationItem {
-    /// Operation type tag (e.g. `"invoke_host_function"`, `"payment"`).
+    /// Operation type tag in canonical SCREAMING_SNAKE_CASE
+    /// (e.g. `"INVOKE_HOST_FUNCTION"`, `"PAYMENT"`) — produced by
+    /// `domain::OperationType`'s `Display` impl.
     #[serde(rename = "type")]
     pub op_type: String,
     /// Contract StrKey (C…) involved in the operation, if applicable.

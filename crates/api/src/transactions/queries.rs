@@ -53,9 +53,9 @@ pub struct OpRow {
 pub struct ResolvedListParams {
     pub limit: i64,
     pub cursor: Option<(DateTime<Utc>, i64)>,
-    /// `filter[source_account]` StrKey string (validated non-empty).
+    /// Raw `filter[source_account]` StrKey string, if provided.
     pub source_account: Option<String>,
-    /// `filter[contract_id]` StrKey string (validated non-empty).
+    /// Raw `filter[contract_id]` StrKey string, if provided.
     pub contract_id: Option<String>,
     /// `filter[operation_type]` mapped to SMALLINT via `domain::OperationType`.
     pub op_type: Option<i16>,
@@ -122,12 +122,11 @@ pub async fn fetch_list(
 
     let mut has_where = params.contract_id.is_some();
 
-    // source_account filter via subquery.
+    // source_account filter on the already-joined accounts alias.
     if let Some(acct) = &params.source_account {
         qb.push(if has_where { " AND" } else { " WHERE" });
-        qb.push(" t.source_id = (SELECT id FROM accounts WHERE account_id = ");
+        qb.push(" a.account_id = ");
         qb.push_bind(acct.as_str());
-        qb.push(")");
         has_where = true;
     }
 
