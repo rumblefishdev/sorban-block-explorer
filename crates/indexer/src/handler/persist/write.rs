@@ -1118,6 +1118,14 @@ async fn upsert_assets_classic_like(
         // ADR 0031: bind asset_type as SMALLINT enum; partial UNIQUE index on
         // `assets (asset_code, issuer_id) WHERE asset_type IN (1, 2)` (classic_credit, sac)
         // matches numeric ordinals — see migration 0005.
+        //
+        // Task 0160: `asset_type = GREATEST(...)` ensures monotonic
+        // ClassicCredit(1) → Sac(2) promotion. Under parallel backfill,
+        // a future classic-path writer may commit a type=1 row after a
+        // SAC writer has already committed type=2 with contract_id; a
+        // naive DO UPDATE of asset_type would downgrade to 1 and
+        // violate `ck_assets_identity` (type=1 requires contract_id
+        // IS NULL). GREATEST is order-independent and parallel-safe.
         sqlx::query(
             r#"
             INSERT INTO assets (asset_type, asset_code, issuer_id, contract_id, name, total_supply, holder_count)
@@ -1128,6 +1136,7 @@ async fn upsert_assets_classic_like(
             ON CONFLICT (asset_code, issuer_id)
               WHERE asset_type IN (1, 2)  -- classic_credit, sac
               DO UPDATE SET
+                asset_type = GREATEST(EXCLUDED.asset_type, assets.asset_type),
                 contract_id = COALESCE(EXCLUDED.contract_id, assets.contract_id),
                 name = COALESCE(EXCLUDED.name, assets.name),
                 total_supply = COALESCE(EXCLUDED.total_supply, assets.total_supply),
