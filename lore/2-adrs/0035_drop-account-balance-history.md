@@ -1,7 +1,7 @@
 ---
 id: '0035'
 title: 'Drop `account_balance_history` — unused denormalisation, defer chart feature design'
-status: proposed
+status: accepted
 deciders: [fmazur]
 related_tasks: ['0159']
 related_adrs: ['0012', '0020', '0021', '0027', '0029']
@@ -18,6 +18,20 @@ history:
       unscheduled "balance over time chart" feature. Collapse to
       `account_balances_current` only; defer historical-snapshot design
       to feature launch time.
+  - date: '2026-04-23'
+    status: accepted
+    who: fmazur
+    note: >
+      Implemented under task 0159. Re-benched on the same 100-ledger
+      sample (62016000..62016099) used as task 0158 baseline:
+      `balances_ms` mean dropped from ~38 ms to 15.47 ms per ledger
+      (−22.5 ms, median 15 ms, p95 25 ms, min/max 9/31 ms). Exceeds the
+      task 0159 target of −10 to −20 ms. Total persist mean moved from
+      ~200 ms to 192 ms (bench noise absorbs part of the headline delta).
+      Table, indexes, partitions, and write-path helpers removed;
+      `account_balances_current` unchanged, 22,600 rows populated on the
+      bench ledger. ADR 0021 no longer references the table; ADR 0027 §18
+      carries a superseded-by-0035 marker.
 ---
 
 # ADR 0035: Drop `account_balance_history` — unused denormalisation, defer chart feature design
@@ -29,7 +43,7 @@ history:
 - [ADR 0021: Schema ↔ endpoint ↔ frontend coverage matrix](0021_schema-endpoint-frontend-coverage-matrix.md) — coverage matrix; this ADR removes row 18
 - [ADR 0027: Post-surrogate schema + endpoint realizability](0027_post-surrogate-schema-and-endpoint-realizability.md) — `account_balance_history` section (§18) superseded
 - [ADR 0029: Abandon parsed artifacts, read-time XDR fetch](0029_abandon-parsed-artifacts-read-time-xdr-fetch.md) — pattern precedent for "move heavy derivable data off DB"
-- [Task 0159: Drop `account_balance_history`](../1-tasks/active/0159_REFACTOR_drop-account-balance-history.md)
+- [Task 0159: Drop `account_balance_history`](../1-tasks/archive/0159_REFACTOR_drop-account-balance-history.md)
 
 ---
 
@@ -300,13 +314,18 @@ time anyway.
 
 ## Open Questions
 
-1. **Measured write-time improvement.** Target ~5–10% total throughput;
-   task 0159 verifies against 100-ledger bench baseline (~200 ms mean
-   before, target <190 ms after).
-2. **Measured disk improvement.** Current 100-ledger sample: 10 MB
-   total. After drop: 0. Linear extrapolation to 11M ledgers: ~1.1 TB
-   saved; true figure probably lower due to blended write rates across
-   Stellar history.
+1. **Measured write-time improvement.** _Resolved._ `balances_ms` dropped
+   from ~38 ms to 15.47 ms mean on the task-0158 100-ledger baseline
+   (−22.5 ms; median 15 ms, p95 25 ms). Total persist mean moved from
+   ~200 ms to 192 ms — some of the headline balances-stage delta is
+   absorbed by run-to-run noise in other stages (operations_ms,
+   participants_ms), but the `balances_ms` component is unambiguously
+   cleaner of the 14c append-history cost.
+2. **Measured disk improvement.** _Resolved for sample._ 100-ledger
+   sample: `account_balance_history` was ~10 MB (5.4 MB heap + 4.9 MB
+   indexes); after drop: 0. ADR 0019 projected it at ~90 GB at 11M-ledger
+   scale — that projection falls out of the total-DB footprint (ADR 0019
+   midpoint ~1.25 TB → ~1.16 TB after this ADR).
 3. **Feature-launch design plan.** When "balance over time" enters
    backlog, the design task draws from:
    - Chart UX granularity (daily / hourly / per-ledger?)

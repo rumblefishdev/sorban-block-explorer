@@ -1,9 +1,9 @@
 //! Partition management logic for the Soroban block explorer.
 //!
-//! All eight partitioned tables (`transactions`, `operations`,
+//! All seven partitioned tables (`transactions`, `operations`,
 //! `transaction_participants`, `soroban_invocations_appearances`,
-//! `soroban_events_appearances`, `nft_ownership`, `liquidity_pool_snapshots`,
-//! `account_balance_history`) partition by `RANGE (created_at)` per ADR 0027.
+//! `soroban_events_appearances`, `nft_ownership`, `liquidity_pool_snapshots`)
+//! partition by `RANGE (created_at)` per ADR 0027.
 //! This crate ensures monthly partitions exist from Soroban activation to
 //! `today + FUTURE_MONTHS`.
 //!
@@ -33,7 +33,6 @@ pub const TIME_PARTITIONED_TABLES: &[&str] = &[
     "soroban_events_appearances",
     "nft_ownership",
     "liquidity_pool_snapshots",
-    "account_balance_history",
 ];
 
 // ───────────────────────── Handler ─────────────────────────

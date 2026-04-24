@@ -1,8 +1,7 @@
 //! Account domain type matching the `accounts` PostgreSQL table.
 //!
 //! Schema: ADR 0027 Part I §2 (surrogate PK — ADR 0026).
-//! Balances moved to `account_balances_current` / `account_balance_history`
-//! (see `crate::balance`).
+//! Balances moved to `account_balances_current` (see `crate::balance`).
 
 use serde::{Deserialize, Serialize};
 
