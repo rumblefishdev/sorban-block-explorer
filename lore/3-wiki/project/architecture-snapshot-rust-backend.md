@@ -36,17 +36,15 @@ DDL, endpoint contracts, or deployment details; it points to where those live.
 ├── crates/               # 9 Rust crates (edition 2024)
 ├── web/                  # React 19 SPA (Vite 7, MUI 7, TanStack Query 5)
 ├── libs/ui/              # Shared React component library
-│                         # (libs/domain, libs/shared hold build artifacts only)
 ├── infra/                # TypeScript CDK (stacks in infra/src/lib/stacks/)
 ├── docs/architecture/    # Evergreen architecture docs (per ADR 0032)
 ├── docs/audits/          # Point-in-time audit reports
 ├── .github/workflows/    # ci.yml, deploy-staging.yml, deploy-board.yml
 ├── docker-compose.yml    # Local Postgres 16
-├── scripts/  tools/      # Dev tooling
+├── scripts/              # Dev tooling
+├── tools/                # Dev tooling
 └── lore/                 # Task / ADR / wiki knowledge base
 ```
-
-`apps/*/` subdirectories contain build output only — not source.
 
 ## Crates
 

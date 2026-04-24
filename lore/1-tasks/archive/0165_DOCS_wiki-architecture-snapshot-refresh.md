@@ -29,7 +29,6 @@ related_tasks:
     '0140',
     '0145',
     '0146',
-    '0147',
     '0148',
     '0149',
     '0150',
@@ -198,8 +197,8 @@ separate backlog task with `related_tasks: ["0165"]` if drift confirmed.
 
 1. **Overwrite in place, no dated filename.** Per wiki CLAUDE.md "living doc,
    current state" rule. Git history is the archive.
-2. **Link to `docs/architecture/**`, do not duplicate.\*\* Snapshot is a
-   narrative cross-cut; evergreen docs own the detail.
+2. **Link, do not duplicate.** Snapshot points to `docs/architecture/**` as
+   a narrative cross-cut; evergreen docs own the detail.
 3. **ADR 0037 as schema reference.** No DDL in snapshot.
 
 ### Emerged
