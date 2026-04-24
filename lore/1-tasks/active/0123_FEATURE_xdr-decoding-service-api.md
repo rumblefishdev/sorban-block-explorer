@@ -16,7 +16,7 @@ history:
     note: 'Spawned from pipeline audit — tech design allocates 4 days for XDR decode service but no task existed.'
   - date: '2026-04-24'
     status: active
-    who: kkowalczyk
+    who: karolkow
     note: 'Promoted to active to start work.'
 ---
 
