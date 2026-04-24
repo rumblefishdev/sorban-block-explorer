@@ -140,6 +140,36 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
     assert_eq!(counts_first.wasm, 1, "wasm_interface_metadata row count");
     assert_eq!(counts_first.assets, 1, "assets row count");
     assert_eq!(counts_first.nfts, 1, "nfts row count");
+
+    // Task 0160 regression: SAC row must now carry the wrapped classic
+    // asset's code + issuer_id + contract_id — previously all three
+    // landed NULL / missing because `upsert_assets_classic_like`
+    // silently dropped SAC rows lacking code/issuer.
+    let sac_identity: (String, Option<i64>, Option<i64>) = sqlx::query_as(
+        r#"
+        SELECT a.asset_code,
+               a.issuer_id,
+               a.contract_id
+          FROM assets a
+          JOIN soroban_contracts sc ON sc.id = a.contract_id
+         WHERE sc.contract_id = $1
+           AND a.asset_type = $2
+        "#,
+    )
+    .bind(TOKEN_CONTRACT)
+    .bind(TokenAssetType::Sac)
+    .fetch_one(&pool)
+    .await
+    .expect("SAC row exists with asset_type = Sac");
+    assert_eq!(sac_identity.0, "USDC", "SAC asset_code populated");
+    assert!(
+        sac_identity.1.is_some(),
+        "SAC issuer_id resolved to accounts.id"
+    );
+    assert!(
+        sac_identity.2.is_some(),
+        "SAC contract_id resolved to soroban_contracts.id"
+    );
     assert_eq!(counts_first.pools, 1, "liquidity_pools row count");
     assert_eq!(
         counts_first.pool_snapshots, 1,
@@ -1643,6 +1673,369 @@ async fn clean_stub_test(pool: &PgPool) {
         .await;
     let _ = sqlx::query("DELETE FROM wasm_interface_metadata WHERE wasm_hash = decode($1, 'hex')")
         .bind(STUB_WASM_HASH)
+        .execute(pool)
+        .await;
+}
+
+// ---------------------------------------------------------------------------
+// Task 0160 — SAC underlying asset identity extraction
+// ---------------------------------------------------------------------------
+
+const SAC160_LEDGER_SEQ: u32 = 90_000_401;
+const SAC160_CLOSED_AT: i64 = 1_777_212_000;
+const SAC160_LEDGER_HASH: &str = "ddd0000000000000000000000000000000000000000000000000000000000160";
+const SAC160_TX_HASH: &str = "ddd0160000000000000000000000000000000000000000000000000000000001";
+const SAC160_XLM_CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAXLMSAC";
+const SAC160_CREDIT_CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUSDSAC";
+
+/// XLM-SAC deployment (Asset::Native preimage) → `assets` row gets the
+/// sentinel identity: asset_code = "XLM", issuer_id resolves to the
+/// migration-seeded sentinel account. Covers option (c) end-to-end.
+#[tokio::test]
+async fn xlm_sac_deployment_lands_with_sentinel_identity() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping 0160 XLM-SAC test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping 0160 XLM-SAC test");
+            return;
+        }
+    };
+
+    ensure_default_partitions(&pool).await;
+    clean_sac160_test(&pool).await;
+
+    let ledger = ExtractedLedger {
+        sequence: SAC160_LEDGER_SEQ,
+        hash: SAC160_LEDGER_HASH.to_string(),
+        closed_at: SAC160_CLOSED_AT,
+        protocol_version: 22,
+        transaction_count: 1,
+        base_fee: 100,
+    };
+    let tx = ExtractedTransaction {
+        hash: SAC160_TX_HASH.to_string(),
+        ledger_sequence: SAC160_LEDGER_SEQ,
+        source_account: SRC_STRKEY.to_string(),
+        fee_charged: 100,
+        successful: true,
+        result_code: "txSuccess".to_string(),
+        envelope_xdr: "AAAAAA...".to_string(),
+        result_xdr: "AAAAAA...".to_string(),
+        result_meta_xdr: None,
+        operation_tree: None,
+        memo_type: None,
+        memo: None,
+        created_at: SAC160_CLOSED_AT,
+        parse_error: false,
+    };
+    // XLM-SAC deployment: sac_asset_code / sac_asset_issuer None ⇒
+    // detect_assets would apply the sentinel. We bypass detect_assets
+    // here and feed the sentinel-populated ExtractedAsset directly so
+    // the test focuses on the persist path.
+    let deployments = vec![ExtractedContractDeployment {
+        contract_id: SAC160_XLM_CONTRACT.to_string(),
+        wasm_hash: None,
+        deployer_account: Some(SRC_STRKEY.to_string()),
+        deployed_at_ledger: SAC160_LEDGER_SEQ,
+        contract_type: ContractType::Token,
+        is_sac: true,
+        metadata: json!({}),
+        sac_asset_code: None,
+        sac_asset_issuer: None,
+    }];
+    let assets = vec![ExtractedAsset {
+        asset_type: TokenAssetType::Sac,
+        asset_code: Some(xdr_parser::XLM_SAC_ASSET_CODE.to_string()),
+        issuer_address: Some(xdr_parser::XLM_SAC_ISSUER_SENTINEL.to_string()),
+        contract_id: Some(SAC160_XLM_CONTRACT.to_string()),
+        name: None,
+        total_supply: None,
+        holder_count: None,
+    }];
+
+    let empty_ops: Vec<(String, Vec<ExtractedOperation>)> = Vec::new();
+    let empty_events: Vec<(String, Vec<ExtractedEvent>)> = Vec::new();
+    let empty_invocations: Vec<(String, Vec<ExtractedInvocation>)> = Vec::new();
+    let empty_trees: Vec<(String, serde_json::Value)> = Vec::new();
+    let no_interfaces: Vec<ExtractedContractInterface> = Vec::new();
+    let no_account_states: Vec<ExtractedAccountState> = Vec::new();
+    let no_pools: Vec<ExtractedLiquidityPool> = Vec::new();
+    let no_snapshots: Vec<ExtractedLiquidityPoolSnapshot> = Vec::new();
+    let no_nfts: Vec<ExtractedNft> = Vec::new();
+    let no_nft_events: Vec<ExtractedNftEvent> = Vec::new();
+    let no_lp_positions: Vec<ExtractedLpPosition> = Vec::new();
+    let no_inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
+    let cache = ClassificationCache::new();
+
+    persist_ledger(
+        &pool,
+        &ledger,
+        &[tx],
+        &empty_ops,
+        &empty_events,
+        &empty_invocations,
+        &empty_trees,
+        &no_interfaces,
+        &deployments,
+        &no_account_states,
+        &no_pools,
+        &no_snapshots,
+        &assets,
+        &no_nfts,
+        &no_nft_events,
+        &no_lp_positions,
+        &no_inner_tx_hashes,
+        &cache,
+    )
+    .await
+    .expect("XLM-SAC persist_ledger must succeed");
+
+    let row: (String, String) = sqlx::query_as(
+        r#"
+        SELECT a.asset_code, acc.account_id
+          FROM assets a
+          JOIN soroban_contracts sc ON sc.id = a.contract_id
+          JOIN accounts acc ON acc.id = a.issuer_id
+         WHERE sc.contract_id = $1
+           AND a.asset_type = $2
+        "#,
+    )
+    .bind(SAC160_XLM_CONTRACT)
+    .bind(TokenAssetType::Sac)
+    .fetch_one(&pool)
+    .await
+    .expect("XLM-SAC row lands with sentinel identity");
+    assert_eq!(row.0, xdr_parser::XLM_SAC_ASSET_CODE);
+    assert_eq!(row.1, xdr_parser::XLM_SAC_ISSUER_SENTINEL);
+
+    clean_sac160_test(&pool).await;
+}
+
+/// GREATEST promotion — a ClassicCredit(1) write arriving after a SAC(2)
+/// write for the same (asset_code, issuer) MUST NOT downgrade asset_type
+/// back to 1. Parallel-backfill safety: order-independent final state.
+#[tokio::test]
+async fn classic_to_sac_greatest_promotion_is_monotonic() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping 0160 GREATEST test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping 0160 GREATEST test");
+            return;
+        }
+    };
+
+    ensure_default_partitions(&pool).await;
+    clean_sac160_test(&pool).await;
+
+    let ledger = ExtractedLedger {
+        sequence: SAC160_LEDGER_SEQ,
+        hash: SAC160_LEDGER_HASH.to_string(),
+        closed_at: SAC160_CLOSED_AT,
+        protocol_version: 22,
+        transaction_count: 1,
+        base_fee: 100,
+    };
+    let tx = ExtractedTransaction {
+        hash: SAC160_TX_HASH.to_string(),
+        ledger_sequence: SAC160_LEDGER_SEQ,
+        source_account: SRC_STRKEY.to_string(),
+        fee_charged: 100,
+        successful: true,
+        result_code: "txSuccess".to_string(),
+        envelope_xdr: "AAAAAA...".to_string(),
+        result_xdr: "AAAAAA...".to_string(),
+        result_meta_xdr: None,
+        operation_tree: None,
+        memo_type: None,
+        memo: None,
+        created_at: SAC160_CLOSED_AT,
+        parse_error: false,
+    };
+
+    let empty_ops: Vec<(String, Vec<ExtractedOperation>)> = Vec::new();
+    let empty_events: Vec<(String, Vec<ExtractedEvent>)> = Vec::new();
+    let empty_invocations: Vec<(String, Vec<ExtractedInvocation>)> = Vec::new();
+    let empty_trees: Vec<(String, serde_json::Value)> = Vec::new();
+    let no_interfaces: Vec<ExtractedContractInterface> = Vec::new();
+    let no_account_states: Vec<ExtractedAccountState> = Vec::new();
+    let no_pools: Vec<ExtractedLiquidityPool> = Vec::new();
+    let no_snapshots: Vec<ExtractedLiquidityPoolSnapshot> = Vec::new();
+    let no_nfts: Vec<ExtractedNft> = Vec::new();
+    let no_nft_events: Vec<ExtractedNftEvent> = Vec::new();
+    let no_lp_positions: Vec<ExtractedLpPosition> = Vec::new();
+    let no_inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
+
+    // ---- Phase 1: SAC(type=2) lands first with a populated contract_id.
+    let sac_deployments = vec![ExtractedContractDeployment {
+        contract_id: SAC160_CREDIT_CONTRACT.to_string(),
+        wasm_hash: None,
+        deployer_account: Some(SRC_STRKEY.to_string()),
+        deployed_at_ledger: SAC160_LEDGER_SEQ,
+        contract_type: ContractType::Token,
+        is_sac: true,
+        metadata: json!({}),
+        sac_asset_code: Some("USDC".to_string()),
+        sac_asset_issuer: Some(ISSUER_STRKEY.to_string()),
+    }];
+    let sac_assets = vec![ExtractedAsset {
+        asset_type: TokenAssetType::Sac,
+        asset_code: Some("USDC".to_string()),
+        issuer_address: Some(ISSUER_STRKEY.to_string()),
+        contract_id: Some(SAC160_CREDIT_CONTRACT.to_string()),
+        name: None,
+        total_supply: None,
+        holder_count: None,
+    }];
+    let cache = ClassificationCache::new();
+    persist_ledger(
+        &pool,
+        &ledger,
+        &[tx.clone()],
+        &empty_ops,
+        &empty_events,
+        &empty_invocations,
+        &empty_trees,
+        &no_interfaces,
+        &sac_deployments,
+        &no_account_states,
+        &no_pools,
+        &no_snapshots,
+        &sac_assets,
+        &no_nfts,
+        &no_nft_events,
+        &no_lp_positions,
+        &no_inner_tx_hashes,
+        &cache,
+    )
+    .await
+    .expect("Phase 1 (SAC first) must succeed");
+
+    // ---- Phase 2: ClassicCredit(type=1) arrives second for the same
+    //      (code, issuer). Would-be downgrade blocked by GREATEST.
+    //      Replay the same ledger — idempotent write shape.
+    let classic_assets = vec![ExtractedAsset {
+        asset_type: TokenAssetType::ClassicCredit,
+        asset_code: Some("USDC".to_string()),
+        issuer_address: Some(ISSUER_STRKEY.to_string()),
+        contract_id: None,
+        name: None,
+        total_supply: None,
+        holder_count: None,
+    }];
+    let no_deployments: Vec<ExtractedContractDeployment> = Vec::new();
+    let cache2 = ClassificationCache::new();
+    persist_ledger(
+        &pool,
+        &ledger,
+        &[tx],
+        &empty_ops,
+        &empty_events,
+        &empty_invocations,
+        &empty_trees,
+        &no_interfaces,
+        &no_deployments,
+        &no_account_states,
+        &no_pools,
+        &no_snapshots,
+        &classic_assets,
+        &no_nfts,
+        &no_nft_events,
+        &no_lp_positions,
+        &no_inner_tx_hashes,
+        &cache2,
+    )
+    .await
+    .expect("Phase 2 (classic second) must succeed — ck_assets_identity holds");
+
+    // Final row — asset_type stayed Sac(2), contract_id preserved.
+    let final_type: i16 = sqlx::query_scalar(
+        r#"
+        SELECT a.asset_type
+          FROM assets a
+          JOIN accounts acc ON acc.id = a.issuer_id
+         WHERE a.asset_code = $1 AND acc.account_id = $2
+        "#,
+    )
+    .bind("USDC")
+    .bind(ISSUER_STRKEY)
+    .fetch_one(&pool)
+    .await
+    .expect("classic/SAC row exists post order-swap");
+    assert_eq!(
+        final_type,
+        TokenAssetType::Sac as i16,
+        "GREATEST pinned asset_type at Sac(2) — no downgrade"
+    );
+
+    let contract_id_after: Option<i64> = sqlx::query_scalar(
+        r#"
+        SELECT a.contract_id
+          FROM assets a
+          JOIN accounts acc ON acc.id = a.issuer_id
+         WHERE a.asset_code = $1 AND acc.account_id = $2
+        "#,
+    )
+    .bind("USDC")
+    .bind(ISSUER_STRKEY)
+    .fetch_one(&pool)
+    .await
+    .expect("fetch contract_id");
+    assert!(
+        contract_id_after.is_some(),
+        "contract_id preserved (COALESCE kept SAC's value through the classic write)"
+    );
+
+    clean_sac160_test(&pool).await;
+}
+
+async fn clean_sac160_test(pool: &PgPool) {
+    let _ = sqlx::query(
+        "DELETE FROM assets
+          WHERE contract_id IN (
+                 SELECT id FROM soroban_contracts WHERE contract_id = ANY($1))",
+    )
+    .bind(vec![
+        SAC160_XLM_CONTRACT.to_string(),
+        SAC160_CREDIT_CONTRACT.to_string(),
+    ])
+    .execute(pool)
+    .await;
+    // Classic/SAC share (code, issuer) unique — also clean by issuer.
+    let _ = sqlx::query(
+        "DELETE FROM assets
+          WHERE asset_type IN (1, 2)
+            AND issuer_id IN (SELECT id FROM accounts WHERE account_id = $1)
+            AND asset_code = 'USDC'",
+    )
+    .bind(ISSUER_STRKEY)
+    .execute(pool)
+    .await;
+    let tx_hash = hex::decode(SAC160_TX_HASH).unwrap();
+    let _ = sqlx::query("DELETE FROM transactions WHERE hash = $1")
+        .bind(&tx_hash)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM transaction_hash_index WHERE hash = $1")
+        .bind(&tx_hash)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM ledgers WHERE sequence = $1")
+        .bind(i64::from(SAC160_LEDGER_SEQ))
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM soroban_contracts WHERE contract_id = ANY($1)")
+        .bind(vec![
+            SAC160_XLM_CONTRACT.to_string(),
+            SAC160_CREDIT_CONTRACT.to_string(),
+        ])
         .execute(pool)
         .await;
 }
