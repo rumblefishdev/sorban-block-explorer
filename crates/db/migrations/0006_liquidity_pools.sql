@@ -7,7 +7,7 @@
 --   15. liquidity_pool_snapshots  (partitioned)
 --   16. lp_positions
 --
--- Also: attach the deferred operations.pool_id FK now that liquidity_pools exists.
+-- Also: attach the deferred operations_appearances.pool_id FK now that liquidity_pools exists.
 
 -- 14. liquidity_pools (ADR 0027 §14 + ADR 0031)
 -- `asset_*_type` SMALLINT carries the raw XDR AssetType
@@ -61,7 +61,7 @@ CREATE TABLE lp_positions (
 );
 CREATE INDEX idx_lpp_shares ON lp_positions (pool_id, shares DESC) WHERE shares > 0;
 
--- Deferred FK from migration 0003: operations.pool_id → liquidity_pools(pool_id)
-ALTER TABLE operations
-    ADD CONSTRAINT fk_ops_pool_id
+-- Deferred FK from migration 0003: operations_appearances.pool_id → liquidity_pools(pool_id)
+ALTER TABLE operations_appearances
+    ADD CONSTRAINT fk_ops_app_pool_id
     FOREIGN KEY (pool_id) REFERENCES liquidity_pools(pool_id);

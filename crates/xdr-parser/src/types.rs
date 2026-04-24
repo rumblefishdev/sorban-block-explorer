@@ -363,26 +363,33 @@ pub struct ExtractedLpPosition {
     pub last_updated_ledger: u32,
 }
 
-/// Extracted operation data, maps to the `operations` table.
+/// Extracted operation data. Feeds the `operations_appearances` indexer path
+/// (task 0163) where operations of identical identity are collapsed into a
+/// single appearance row, and the API's XDR re-materialisation path
+/// (`stellar_archive::extractors`) where `operation_index` is surfaced as
+/// `application_order` in the DTO.
 ///
-/// **Note:** field names do not directly mirror DB column names for this struct:
+/// **Note:** field names do not directly mirror DB column names:
 /// - `transaction_hash` → resolved to `transaction_id` (BIGSERIAL) by the persistence layer
-/// - `operation_index` → `application_order` (Rust keyword `type` forces `op_type` similarly)
+/// - `operation_index` → not persisted in `operations_appearances` (ordering is
+///   re-derived from XDR by the API when needed); still surfaced in the
+///   `stellar_archive` DTO as `application_order`
 /// - `op_type` → `type` (`type` is a Rust keyword)
-/// - `source_account: None` → persistence layer must substitute the transaction source account
-///   (DB column is `NOT NULL`; `None` means no per-operation override)
+/// - `source_account: None` → operation inherits the transaction source account
 #[derive(Debug, Clone)]
 pub struct ExtractedOperation {
     /// Parent transaction hash, hex-encoded (64 chars). Used to resolve the
     /// surrogate `transaction_id` FK at persistence time.
     pub transaction_hash: String,
-    /// Zero-based index of this operation within the transaction (maps to `application_order`).
+    /// Zero-based index of this operation within the transaction. Not persisted
+    /// in `operations_appearances` — the API re-derives ordering from XDR.
     pub operation_index: u32,
-    /// Operation type (ADR 0031). Maps to `operations.type SMALLINT`.
+    /// Operation type (ADR 0031). Maps to `operations_appearances.type SMALLINT`.
     pub op_type: OperationType,
     /// Per-operation source account override. `None` if the operation inherits the transaction
-    /// source. Persistence layer must resolve `None` to the transaction source (column is NOT NULL).
+    /// source.
     pub source_account: Option<String>,
-    /// Type-specific details as a JSON value, stored as JSONB in PostgreSQL.
+    /// Type-specific details as a JSON value. Consumed by staging to extract
+    /// identity columns; not persisted as JSONB anywhere in the DB.
     pub details: serde_json::Value,
 }

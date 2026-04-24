@@ -76,7 +76,7 @@ The current schema shape is centered around a small set of core explorer entitie
 
 - `ledgers` as the ledger-close timeline
 - `transactions` as the primary explorer activity entity
-- `operations` as transaction children for classic and mixed transaction inspection
+- `operations_appearances` as a transaction-scoped appearance index for classic and mixed transaction inspection (per-op detail recovered from XDR on demand, task 0163)
 - `soroban_contracts`, `soroban_invocations`, and `soroban_events` as the Soroban-native
   contract activity model
 - `assets`, `accounts`, `nfts`, and `liquidity_pools` as derived, query-oriented explorer
@@ -87,7 +87,7 @@ High-level relationship sketch:
 ```text
 ledgers
   └─ transactions
-       ├─ operations
+       ├─ operations_appearances
        ├─ soroban_invocations
        └─ soroban_events
 
@@ -176,33 +176,57 @@ Design notes:
 - `operation_tree` stores decoded invocation hierarchy for detail renderers
 - `parse_error` allows partial retention even when full decode fails
 
-### 4.3 Operations
+### 4.3 Operations Appearances
 
 ```sql
-CREATE TABLE operations (
-    id              BIGSERIAL PRIMARY KEY,
-    transaction_id  BIGINT REFERENCES transactions(id) ON DELETE CASCADE,
-    type            VARCHAR(50) NOT NULL,
-    details         JSONB NOT NULL,
-    created_at      TIMESTAMPTZ NOT NULL,
-    INDEX idx_tx (transaction_id),
-    INDEX idx_details (details) USING GIN
+CREATE TABLE operations_appearances (
+    id                BIGSERIAL    NOT NULL,
+    transaction_id    BIGINT       NOT NULL,
+    type              SMALLINT     NOT NULL,  -- ADR 0031 OperationType
+    source_id         BIGINT       REFERENCES accounts(id),
+    destination_id    BIGINT       REFERENCES accounts(id),
+    contract_id       BIGINT       REFERENCES soroban_contracts(id),
+    asset_code        VARCHAR(12),
+    asset_issuer_id   BIGINT       REFERENCES accounts(id),
+    pool_id           BYTEA,
+    amount            BIGINT       NOT NULL,  -- count of collapsed identical-identity ops
+    ledger_sequence   BIGINT       NOT NULL,
+    created_at        TIMESTAMPTZ  NOT NULL,
+    PRIMARY KEY (id, created_at),
+    FOREIGN KEY (transaction_id, created_at)
+        REFERENCES transactions (id, created_at) ON DELETE CASCADE,
+    CONSTRAINT uq_ops_app_identity UNIQUE NULLS NOT DISTINCT
+        (transaction_id, type, source_id, destination_id,
+         contract_id, asset_code, asset_issuer_id, pool_id,
+         ledger_sequence, created_at)
 ) PARTITION BY RANGE (created_at);
 ```
 
-Purpose:
+Purpose (task 0163):
 
-- store per-operation structure for transaction analysis
-- support human-readable transaction rendering without reparsing XDR on every request
-- retain operation-specific payloads with flexible shape in `details`
+- serve as an **appearance index** (pattern from `soroban_events_appearances` /
+  `soroban_invocations_appearances`, ADR 0033/0034) — one row per distinct
+  operation identity in a transaction; `amount` counts how many operations of
+  that shape were folded into the row
+- let filter/search endpoints answer _whether_ an operation of a given shape
+  occurred against a given account / contract / asset / pool, without reading
+  XDR
+- delegate per-op detail (transfer amount, application order, memo, claimants,
+  function args, predicates, …) to the XDR archive — the API re-materialises
+  it on demand via `xdr_parser::extract_operations`
 
 Design notes:
 
-- `details` is JSONB because operation-specific fields vary heavily by operation type
-- `ON DELETE CASCADE` keeps child cleanup aligned with transaction lifecycle
+- identity columns (`type` … `pool_id`) match the `uq_ops_app_identity`
+  natural key; `NULLS NOT DISTINCT` (PG 15+) makes NULL-heavy shapes (e.g.
+  `CREATE_CLAIMABLE_BALANCE`, source inherited from tx) idempotent on replay
+  via `ON CONFLICT DO NOTHING`
+- no `transfer_amount` / `application_order` column — both are recoverable
+  from XDR; keeping them here duplicated write-only data with no reader
+- `ON DELETE CASCADE` via the composite FK mirrors the rest of the schema
 - partitioned by `created_at` (monthly) per ADR 0027 — uniform with
-  `transactions`, `transaction_participants`, `soroban_events`,
-  `soroban_invocations`, `liquidity_pool_snapshots`
+  `transactions`, `transaction_participants`, `soroban_events_appearances`,
+  `soroban_invocations_appearances`, `liquidity_pool_snapshots`
 
 ### 4.4 Soroban Contracts
 
@@ -430,7 +454,7 @@ Design notes:
 
 - asset pair and reserve payloads are JSONB because pool assets may span classic and
   Soroban-native identities
-- pool transaction history is derived from transactions, operations, and Soroban events
+- pool transaction history is derived from transactions, operations_appearances, and Soroban events
   rather than a dedicated canonical pool-transactions table in the current baseline schema
 
 ### 4.11 Liquidity Pool Snapshots
@@ -474,7 +498,7 @@ At a high level:
 
 - one ledger close produces one ledger record
 - each ledger produces many transaction records
-- each transaction may produce operations, contract invocations, and events
+- each transaction may produce operation appearances, contract invocation appearances, and event appearances (detailed payloads re-materialised from XDR)
 - derived explorer entities such as assets, accounts, NFTs, and liquidity pools are updated
   from extracted state and known event patterns
 - liquidity pool snapshots are appended as time-series records for chart-oriented reads
@@ -483,7 +507,7 @@ At a high level:
 
 The schema models a parent-child structure where appropriate:
 
-- deleting a transaction should clean up dependent operations, invocations, and events
+- deleting a transaction should clean up dependent operation, invocation, and event appearance rows
 - contract-linked entities remain queryable through `contract_id` relationships
 
 ### 5.3 Public Lookup Keys vs Internal Keys
@@ -510,17 +534,19 @@ Notable patterns already present in the source design:
 
 - unique identifier indexes on `ledgers.hash` and `transactions.hash`
 - time-oriented indexes such as `idx_closed_at` and `idx_last_seen`
-- GIN indexes for JSONB and full-text fields such as `operations.details`,
-  `soroban_events.topics`, and `soroban_contracts.search_vector`
+- GIN indexes for full-text fields such as `soroban_contracts.search_vector`
+  (legacy `operations.details` / `soroban_events.topics` JSONB GIN indexes
+  were dropped when those payloads moved to the XDR archive — ADR 0018, task 0163)
 
 ### 6.2 Partitioning Strategy
 
 Per ADR 0027, all high-volume child tables are partitioned by month on
 `created_at`; lightweight anchor/registry tables stay unpartitioned:
 
-- **Partitioned (`RANGE (created_at)` monthly):** `transactions`, `operations`,
-  `transaction_participants`, `soroban_invocations`, `soroban_events`,
-  `liquidity_pool_snapshots`
+- **Partitioned (`RANGE (created_at)` monthly):** `transactions`,
+  `operations_appearances`, `transaction_participants`,
+  `soroban_invocations_appearances`, `soroban_events_appearances`,
+  `nft_ownership`, `liquidity_pool_snapshots`
 - **Unpartitioned:** `ledgers`, `transaction_hash_index`, `accounts`,
   `soroban_contracts`, `assets`, `nfts`, `liquidity_pools`
 - Partitioning exists to keep retention, maintenance, and time-sliced reads
@@ -573,8 +599,9 @@ The design deliberately stores both raw and derived forms where needed:
 
 - raw XDR for advanced inspection (`transactions.envelope_xdr`, `transactions.result_xdr`,
   `transactions.result_meta_xdr`)
-- decoded, structured forms for normal explorer views (`operations.details`,
-  `transactions.operation_tree`, `soroban_invocations`, `soroban_events`)
+- appearance indexes for normal explorer views (`operations_appearances`,
+  `soroban_invocations_appearances`, `soroban_events_appearances`) — per-row
+  detail is re-materialised from the XDR archive by the API on demand
 - time-series derived forms in `liquidity_pool_snapshots`
 
 This is a core architectural choice, not accidental duplication.

@@ -48,11 +48,13 @@ pub(super) struct TxRow {
     pub created_at: DateTime<Utc>,
 }
 
-/// `operations` row. `source` and `destination` StrKeys are resolved by the
-/// write layer; `pool_id` is pre-decoded.
+/// `operations_appearances` row (task 0163). `source` and `destination`
+/// StrKeys are resolved by the write layer; `pool_id` is pre-decoded.
+/// `amount` counts how many operations of identical identity were folded
+/// into this row within the same transaction. Identity keys match the
+/// `uq_ops_app_identity` UNIQUE NULLS NOT DISTINCT constraint.
 pub(super) struct OpRow {
     pub tx_hash_hex: String,
-    pub application_order: i16,
     pub op_type: OperationType,
     pub source_str_key: Option<String>,
     pub destination_str_key: Option<String>,
@@ -60,7 +62,7 @@ pub(super) struct OpRow {
     pub asset_code: Option<String>,
     pub asset_issuer_str_key: Option<String>,
     pub pool_id: Option<[u8; 32]>,
-    pub transfer_amount: Option<String>,
+    pub amount: i64,
     pub ledger_sequence: i64,
     pub created_at: DateTime<Utc>,
 }
@@ -521,12 +523,31 @@ impl Staged {
             }
         }
 
-        // --- operations flatten + details unpack ---------------------------
-        let mut op_rows: Vec<OpRow> = Vec::new();
+        // --- operations flatten + identity aggregation ---------------------
+        //
+        // Task 0163: collapse operations with identical identity within a
+        // transaction into a single appearance row with `amount = COUNT(*)`.
+        // Identity columns match the DB `uq_ops_app_identity` constraint.
+        // Per-op detail (transfer amount, application order, memo, claimants,
+        // function args, …) is not carried — the API re-materialises it from
+        // XDR via `xdr_parser::extract_operations`.
+        type OpIdentity = (
+            String,           // tx_hash_hex
+            OperationType,    // op_type
+            Option<String>,   // source_str_key
+            Option<String>,   // destination_str_key
+            Option<String>,   // contract_id
+            Option<String>,   // asset_code
+            Option<String>,   // asset_issuer_str_key
+            Option<[u8; 32]>, // pool_id
+            i64,              // ledger_sequence
+            DateTime<Utc>,    // created_at
+        );
         let tx_created_at: HashMap<String, DateTime<Utc>> = tx_rows
             .iter()
             .map(|t| (t.hash_hex.clone(), t.created_at))
             .collect();
+        let mut op_agg: HashMap<OpIdentity, i64> = HashMap::new();
         for (tx_hash, ops) in operations {
             let Some(&created_at) = tx_created_at.get(tx_hash) else {
                 continue;
@@ -537,25 +558,42 @@ impl Staged {
                     Some(hex_str) => Some(decode_hash(hex_str, "op.pool_id")?),
                     None => None,
                 };
-                op_rows.push(OpRow {
-                    tx_hash_hex: tx_hash.clone(),
-                    application_order: op
-                        .operation_index
-                        .try_into()
-                        .map_err(|_| staging_err("op application_order overflow"))?,
-                    op_type: op.op_type,
-                    source_str_key: op.source_account.clone(),
-                    destination_str_key: typed.destination,
-                    contract_id: typed.contract_id,
-                    asset_code: typed.asset_code,
-                    asset_issuer_str_key: typed.asset_issuer,
+                let key: OpIdentity = (
+                    tx_hash.clone(),
+                    op.op_type,
+                    op.source_account.clone(),
+                    typed.destination,
+                    typed.contract_id,
+                    typed.asset_code,
+                    typed.asset_issuer,
                     pool_id,
-                    transfer_amount: typed.transfer_amount,
-                    ledger_sequence: ledger_sequence_i64,
+                    ledger_sequence_i64,
                     created_at,
-                });
+                );
+                *op_agg.entry(key).or_insert(0) += 1;
             }
         }
+        let mut op_rows: Vec<OpRow> = op_agg
+            .into_iter()
+            .map(|(k, amount)| OpRow {
+                tx_hash_hex: k.0,
+                op_type: k.1,
+                source_str_key: k.2,
+                destination_str_key: k.3,
+                contract_id: k.4,
+                asset_code: k.5,
+                asset_issuer_str_key: k.6,
+                pool_id: k.7,
+                amount,
+                ledger_sequence: k.8,
+                created_at: k.9,
+            })
+            .collect();
+        // Deterministic order for downstream chunking / replay.
+        op_rows.sort_by(|a, b| {
+            (a.tx_hash_hex.as_str(), a.op_type as i16)
+                .cmp(&(b.tx_hash_hex.as_str(), b.op_type as i16))
+        });
 
         // --- events flatten for appearance aggregation ---------------------
         //
@@ -1012,7 +1050,9 @@ fn tx_has_soroban_map(
     out
 }
 
-/// Typed column values unpacked from an `ExtractedOperation.details` JSON.
+/// Identity columns for the `operations_appearances` natural key (task 0163).
+/// Transfer amount, starting balance, etc. are intentionally *not* extracted —
+/// per-op detail lives in XDR and is re-materialised by the API.
 #[derive(Default)]
 struct OpTyped {
     destination: Option<String>,
@@ -1020,8 +1060,6 @@ struct OpTyped {
     asset_code: Option<String>,
     asset_issuer: Option<String>,
     pool_id_hex: Option<String>,
-    /// NUMERIC(28,7) as TEXT — written with 7 decimal places from stroops.
-    transfer_amount: Option<String>,
 }
 
 impl OpTyped {
@@ -1030,7 +1068,6 @@ impl OpTyped {
         match op_type {
             OperationType::CreateAccount => {
                 out.destination = str_field(details, "destination");
-                out.transfer_amount = stroops_as_numeric(details.get("startingBalance"));
             }
             OperationType::Payment => {
                 out.destination = str_field(details, "destination");
@@ -1039,25 +1076,14 @@ impl OpTyped {
                     out.asset_code = code;
                     out.asset_issuer = issuer;
                 }
-                out.transfer_amount = stroops_as_numeric(details.get("amount"));
             }
-            OperationType::PathPaymentStrictReceive => {
+            OperationType::PathPaymentStrictReceive | OperationType::PathPaymentStrictSend => {
                 out.destination = str_field(details, "destination");
                 if let Some(asset) = details.get("destAsset") {
                     let (code, issuer) = split_asset_ref(asset);
                     out.asset_code = code;
                     out.asset_issuer = issuer;
                 }
-                out.transfer_amount = stroops_as_numeric(details.get("destAmount"));
-            }
-            OperationType::PathPaymentStrictSend => {
-                out.destination = str_field(details, "destination");
-                if let Some(asset) = details.get("destAsset") {
-                    let (code, issuer) = split_asset_ref(asset);
-                    out.asset_code = code;
-                    out.asset_issuer = issuer;
-                }
-                out.transfer_amount = stroops_as_numeric(details.get("destMin"));
             }
             OperationType::AccountMerge => {
                 out.destination = str_field(details, "destination");
@@ -1069,14 +1095,9 @@ impl OpTyped {
                     out.asset_code = code;
                     out.asset_issuer = issuer;
                 }
-                out.transfer_amount = stroops_as_numeric(details.get("amount"));
             }
-            OperationType::LiquidityPoolDeposit => {
+            OperationType::LiquidityPoolDeposit | OperationType::LiquidityPoolWithdraw => {
                 out.pool_id_hex = str_field(details, "liquidityPoolId");
-            }
-            OperationType::LiquidityPoolWithdraw => {
-                out.pool_id_hex = str_field(details, "liquidityPoolId");
-                out.transfer_amount = stroops_as_numeric(details.get("amount"));
             }
             OperationType::InvokeHostFunction => {
                 out.contract_id = str_field(details, "contractId");
@@ -1107,12 +1128,12 @@ impl OpTyped {
             OperationType::BeginSponsoringFutureReserves => {
                 out.destination = str_field(details, "sponsoredId");
             }
-            // Other op types carry no per-row typed columns beyond the base
+            // Other op types carry no identity columns beyond the base
             // (source / type / created_at). New op types added by future
             // protocol upgrades must extend `OperationType` first; the
-            // exhaustive match below is intentionally left to `_` so the
-            // compiler doesn't force a dummy arm per addition — all the
-            // typed fields stay as their `Option::None` defaults.
+            // match below is intentionally left to `_` so the compiler
+            // doesn't force a dummy arm per addition — all identity
+            // fields stay as their `Option::None` defaults.
             _ => {}
         }
         out
@@ -1202,17 +1223,6 @@ fn format_stroops_str(s: &str) -> String {
     } else {
         s.to_string()
     }
-}
-
-fn stroops_as_numeric(val: Option<&Value>) -> Option<String> {
-    let v = val?;
-    if let Some(n) = v.as_i64() {
-        return Some(format_stroops(n));
-    }
-    if let Some(s) = v.as_str() {
-        return Some(format_stroops_str(s));
-    }
-    None
 }
 
 /// Quick StrKey-account shape check (G... or M..., length 56/69). Used to
