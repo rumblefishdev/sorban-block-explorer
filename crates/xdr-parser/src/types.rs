@@ -229,6 +229,17 @@ pub struct ExtractedContractDeployment {
     pub contract_type: ContractType,
     pub is_sac: bool,
     pub metadata: serde_json::Value,
+    /// Task 0160 — SAC underlying asset identity (from the creating
+    /// tx's `CreateContract` preimage `FromAsset` variant).
+    ///
+    /// * `Some(code)` for `credit_alphanum4` / `credit_alphanum12`
+    ///   SAC deployments.
+    /// * `None` for native XLM-SAC (`detect_assets` applies the
+    ///   XLM-SAC sentinel) and for non-SAC deployments.
+    pub sac_asset_code: Option<String>,
+    /// Issuer `G...` StrKey for classic-credit SAC deployments.
+    /// `None` for native XLM-SAC and for non-SAC deployments.
+    pub sac_asset_issuer: Option<String>,
 }
 
 /// Extracted account state from LedgerEntryChanges.

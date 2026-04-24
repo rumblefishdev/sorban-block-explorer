@@ -15,6 +15,29 @@ use crate::types::{
 use domain::{ContractType, OperationType, TokenAssetType};
 
 // ---------------------------------------------------------------------------
+// Task 0160 — XLM-SAC sentinel
+// ---------------------------------------------------------------------------
+
+/// XLM-SAC synthetic asset code.
+///
+/// Applied in [`detect_assets`] when a SAC deployment wraps the native
+/// Stellar asset (`Asset::Native` in the CreateContract preimage).
+/// `ck_assets_identity` requires `asset_code IS NOT NULL` for
+/// `asset_type = 2` (Sac), so we synthesise this label rather than
+/// relax the CHECK (option c from task 0160 plan).
+pub const XLM_SAC_ASSET_CODE: &str = "XLM";
+
+/// XLM-SAC synthetic issuer — all-zero Ed25519 public key encoded as
+/// StrKey. Not a real Stellar account; seeded into `accounts` via
+/// migration so the FK from `assets.issuer_id` resolves.
+///
+/// Derived at runtime check time from
+/// `AccountId(PublicKey::PublicKeyTypeEd25519(Uint256([0; 32])))`
+/// — see regression test in the tests module.
+pub const XLM_SAC_ISSUER_SENTINEL: &str =
+    "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+
+// ---------------------------------------------------------------------------
 // Step 1 + Step 7: Contract Deployment + SAC Detection
 // ---------------------------------------------------------------------------
 
@@ -22,9 +45,19 @@ use domain::{ContractType, OperationType, TokenAssetType};
 ///
 /// Identifies new contract instances by looking for `contract_data` entries
 /// with the contract instance key. Detects SACs from the executable type.
+///
+/// `sac_asset_identity` is the classic asset identity carried by this
+/// transaction's `CreateContract` operation (task 0160). `None` means
+/// either the tx had no `CreateContract FromAsset` op (non-SAC
+/// deployment path) or the correlation was not supplied. For `is_sac`
+/// deployments the caller is expected to pass the identity captured
+/// from `extract_sac_asset_from_create_contract`; absence is
+/// tolerated (deployment still lands, but downstream `detect_assets`
+/// treats it as native → sentinel).
 pub fn extract_contract_deployments(
     changes: &[ExtractedLedgerEntryChange],
     tx_source_account: &str,
+    sac_asset_identity: Option<&SacAssetIdentity>,
 ) -> Vec<ExtractedContractDeployment> {
     let mut deployments = Vec::new();
 
@@ -61,6 +94,18 @@ pub fn extract_contract_deployments(
             ContractType::Other
         };
 
+        // Task 0160: SAC identity comes from the creating tx's
+        // CreateContract preimage, not the ContractInstance entry.
+        // Caller correlates by tx_hash and passes the result here.
+        let (sac_asset_code, sac_asset_issuer) = match (is_sac, sac_asset_identity) {
+            (true, Some(SacAssetIdentity::Credit { code, issuer })) => {
+                (Some(code.clone()), Some(issuer.clone()))
+            }
+            // Native XLM-SAC or absent correlation — leave raw None/None;
+            // detect_assets applies the sentinel.
+            _ => (None, None),
+        };
+
         deployments.push(ExtractedContractDeployment {
             contract_id,
             wasm_hash,
@@ -69,6 +114,8 @@ pub fn extract_contract_deployments(
             contract_type,
             is_sac,
             metadata: serde_json::json!({}),
+            sac_asset_code,
+            sac_asset_issuer,
         });
     }
 
@@ -470,9 +517,13 @@ pub fn extract_liquidity_pools(
 ///
 /// Two paths produce an [`ExtractedAsset`]:
 ///
-/// 1. **SAC deployments** — [`TokenAssetType::Sac`] row; identity is
-///    `contract_id`, plus the underlying classic asset_code/issuer if
-///    available (not yet populated here).
+/// 1. **SAC deployments** — [`TokenAssetType::Sac`] row. Identity is
+///    `asset_code` + issuer `G...` StrKey (from the creating tx's
+///    `CreateContract FromAsset` preimage, captured in
+///    `deployment.sac_asset_code` / `.sac_asset_issuer`) plus
+///    `contract_id`. XLM-SAC (native) uses the sentinel label
+///    (`XLM_SAC_ASSET_CODE` + `XLM_SAC_ISSUER_SENTINEL`) to satisfy
+///    `ck_assets_identity` without schema change — task 0160.
 /// 2. **WASM-based deployments classifying as
 ///    [`ContractClassification::Fungible`]** — [`TokenAssetType::Soroban`]
 ///    row; identity is `contract_id` only. Classification uses
@@ -511,10 +562,24 @@ pub fn detect_assets(
     let mut assets = Vec::new();
     for deployment in deployments {
         if deployment.is_sac {
+            // Task 0160: populate classic asset identity for the SAC row.
+            // None/None from the parser means native XLM-SAC → apply the
+            // XLM-SAC sentinel so the row satisfies ck_assets_identity
+            // for asset_type = 2 without loosening the CHECK.
+            let (asset_code, issuer_address) = match (
+                deployment.sac_asset_code.as_deref(),
+                deployment.sac_asset_issuer.as_deref(),
+            ) {
+                (Some(code), Some(issuer)) => (Some(code.to_string()), Some(issuer.to_string())),
+                _ => (
+                    Some(XLM_SAC_ASSET_CODE.to_string()),
+                    Some(XLM_SAC_ISSUER_SENTINEL.to_string()),
+                ),
+            };
             assets.push(ExtractedAsset {
                 asset_type: TokenAssetType::Sac,
-                asset_code: None,
-                issuer_address: None,
+                asset_code,
+                issuer_address,
                 contract_id: Some(deployment.contract_id.clone()),
                 name: None,
                 total_supply: None,
@@ -712,7 +777,7 @@ mod tests {
             })),
         )];
 
-        let deployments = extract_contract_deployments(&changes, "GDEPLOYER");
+        let deployments = extract_contract_deployments(&changes, "GDEPLOYER", None);
         assert_eq!(deployments.len(), 1);
         assert_eq!(deployments[0].contract_id, "CABC123");
         assert_eq!(
@@ -744,7 +809,7 @@ mod tests {
             })),
         )];
 
-        let deployments = extract_contract_deployments(&changes, "GDEPLOYER");
+        let deployments = extract_contract_deployments(&changes, "GDEPLOYER", None);
         assert_eq!(deployments.len(), 1);
         assert!(deployments[0].is_sac);
         assert_eq!(deployments[0].contract_type, ContractType::Token);
@@ -769,7 +834,7 @@ mod tests {
             })),
         )];
 
-        let deployments = extract_contract_deployments(&changes, "GDEPLOYER");
+        let deployments = extract_contract_deployments(&changes, "GDEPLOYER", None);
         assert!(deployments.is_empty());
     }
 
@@ -793,7 +858,7 @@ mod tests {
             })),
         )];
 
-        let deployments = extract_contract_deployments(&changes, "GDEPLOYER");
+        let deployments = extract_contract_deployments(&changes, "GDEPLOYER", None);
         assert!(deployments.is_empty());
     }
 
@@ -1216,12 +1281,62 @@ mod tests {
             contract_type: ContractType::Token,
             is_sac: true,
             metadata: json!({}),
+            sac_asset_code: Some("USDC".to_string()),
+            sac_asset_issuer: Some(
+                "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN".to_string(),
+            ),
         }];
 
         let assets = detect_assets(&deployments, &[]);
         assert_eq!(assets.len(), 1);
         assert_eq!(assets[0].asset_type, TokenAssetType::Sac);
         assert_eq!(assets[0].contract_id.as_deref(), Some("CSAC456"));
+        // Task 0160 regression: SAC identity must survive through to the asset row.
+        assert_eq!(assets[0].asset_code.as_deref(), Some("USDC"));
+        assert_eq!(
+            assets[0].issuer_address.as_deref(),
+            Some("GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+        );
+    }
+
+    #[test]
+    fn sac_deployment_without_identity_applies_xlm_sentinel() {
+        // SAC deploy wrapping native XLM — parser leaves identity fields None;
+        // detect_assets applies the XLM-SAC sentinel so ck_assets_identity
+        // stays satisfied (asset_type = 2 requires code + issuer + contract).
+        let deployments = vec![ExtractedContractDeployment {
+            contract_id: "CXLM_SAC".into(),
+            wasm_hash: None,
+            deployer_account: None,
+            deployed_at_ledger: 100,
+            contract_type: ContractType::Token,
+            is_sac: true,
+            metadata: json!({}),
+            sac_asset_code: None,
+            sac_asset_issuer: None,
+        }];
+
+        let assets = detect_assets(&deployments, &[]);
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets[0].asset_type, TokenAssetType::Sac);
+        assert_eq!(assets[0].contract_id.as_deref(), Some("CXLM_SAC"));
+        assert_eq!(assets[0].asset_code.as_deref(), Some(XLM_SAC_ASSET_CODE));
+        assert_eq!(
+            assets[0].issuer_address.as_deref(),
+            Some(XLM_SAC_ISSUER_SENTINEL)
+        );
+    }
+
+    #[test]
+    fn xlm_sac_issuer_sentinel_const_matches_all_zero_ed25519_strkey() {
+        // Regression guard for the hard-coded constant: if stellar-xdr /
+        // strkey encoding ever changes, this test catches the drift before
+        // the sentinel desyncs from the migration-seeded account row.
+        use stellar_xdr::curr::{AccountId, PublicKey, Uint256};
+        let computed = AccountId(PublicKey::PublicKeyTypeEd25519(Uint256([0u8; 32])))
+            .0
+            .to_string();
+        assert_eq!(computed, XLM_SAC_ISSUER_SENTINEL);
     }
 
     #[test]
@@ -1236,6 +1351,8 @@ mod tests {
             contract_type: ContractType::Other,
             is_sac: false,
             metadata: json!({}),
+            sac_asset_code: None,
+            sac_asset_issuer: None,
         }];
 
         let assets = detect_assets(&deployments, &[]);
@@ -1254,6 +1371,8 @@ mod tests {
             contract_type: ContractType::Fungible,
             is_sac: false,
             metadata: json!({}),
+            sac_asset_code: None,
+            sac_asset_issuer: None,
         }];
         let interfaces = vec![iface(
             &wasm,
@@ -1281,6 +1400,8 @@ mod tests {
             contract_type: ContractType::Nft,
             is_sac: false,
             metadata: json!({}),
+            sac_asset_code: None,
+            sac_asset_issuer: None,
         }];
         let interfaces = vec![iface(&wasm, &["owner_of", "token_uri", "transfer"])];
 
@@ -1301,6 +1422,8 @@ mod tests {
             contract_type: ContractType::Other,
             is_sac: false,
             metadata: json!({}),
+            sac_asset_code: None,
+            sac_asset_issuer: None,
         }];
         let interfaces = vec![iface(&wasm, &["execute", "admin", "init"])];
 
@@ -1322,6 +1445,8 @@ mod tests {
             contract_type: ContractType::Nft,
             is_sac: false,
             metadata: json!({}),
+            sac_asset_code: None,
+            sac_asset_issuer: None,
         }];
         let interfaces = vec![iface(&wasm, &["owner_of", "decimals", "transfer"])];
 
@@ -1341,6 +1466,10 @@ mod tests {
                 contract_type: ContractType::Token,
                 is_sac: true,
                 metadata: json!({}),
+                sac_asset_code: Some("USDC".to_string()),
+                sac_asset_issuer: Some(
+                    "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN".to_string(),
+                ),
             },
             ExtractedContractDeployment {
                 contract_id: "CFUN006".into(),
@@ -1350,6 +1479,8 @@ mod tests {
                 contract_type: ContractType::Fungible,
                 is_sac: false,
                 metadata: json!({}),
+                sac_asset_code: None,
+                sac_asset_issuer: None,
             },
         ];
         let interfaces = vec![iface(&wasm, &["transfer", "decimals", "allowance"])];

@@ -126,8 +126,26 @@ pub async fn process_ledger(
     let mut all_pool_snapshots = Vec::new();
     let mut all_assets = Vec::new();
 
-    for (_tx_hash, tx_source, changes) in &all_ledger_entry_changes {
-        let deployments = xdr_parser::extract_contract_deployments(changes, tx_source);
+    // Task 0160 — correlate SAC deployments with the classic asset wrapped
+    // by the creating tx's CreateContract op. The ContractInstance ledger
+    // entry carries no asset data (marker-only `StellarAsset` variant);
+    // the identity lives in the operation's `contract_id_preimage.FromAsset`.
+    // MVP assumption: at most one SAC CreateContract per tx. Multi-SAC-per-tx
+    // is a known edge case flagged as future work in the 0160 README.
+    let sac_identity_by_tx: HashMap<String, xdr_parser::SacAssetIdentity> = all_operations
+        .iter()
+        .flat_map(|(tx_hash, ops)| {
+            ops.iter().find_map(|op| {
+                xdr_parser::extract_sac_asset_from_create_contract(op)
+                    .map(|id| (tx_hash.clone(), id))
+            })
+        })
+        .collect();
+
+    for (tx_hash, tx_source, changes) in &all_ledger_entry_changes {
+        let sac_identity = sac_identity_by_tx.get(tx_hash);
+        let deployments =
+            xdr_parser::extract_contract_deployments(changes, tx_source, sac_identity);
         // detect_assets uses WASM interfaces to classify non-SAC deployments
         // as Soroban-native assets (task 0120). Contracts deployed in this
         // ledger without a matching interface are skipped here and picked up

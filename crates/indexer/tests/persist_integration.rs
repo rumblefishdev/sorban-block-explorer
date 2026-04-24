@@ -380,6 +380,10 @@ fn make_contract_deployment() -> ExtractedContractDeployment {
         contract_type: ContractType::Token,
         is_sac: true,
         metadata: json!({"name": "TEST"}),
+        // Task 0160: match the SAC asset row fixture (make_sac_asset) so
+        // integration tests exercise a complete SAC identity end-to-end.
+        sac_asset_code: Some("USDC".to_string()),
+        sac_asset_issuer: Some(ISSUER_STRKEY.to_string()),
     }
 }
 
@@ -760,6 +764,8 @@ async fn stub_wasm_unblocks_unknown_hash_and_real_upload_upgrades_it() {
         contract_type: ContractType::Other,
         is_sac: false,
         metadata: json!({}),
+        sac_asset_code: None,
+        sac_asset_issuer: None,
     };
 
     let empty_operations: Vec<(String, Vec<ExtractedOperation>)> = Vec::new();
@@ -1096,6 +1102,8 @@ fn deploy_with(contract_id: &str, wasm_hash: &str) -> ExtractedContractDeploymen
         contract_type: ContractType::Other, // parser default; staging overrides
         is_sac: false,
         metadata: json!({}),
+        sac_asset_code: None,
+        sac_asset_issuer: None,
     }
 }
 
@@ -1228,6 +1236,8 @@ async fn soroban_fungible_contract_produces_assets_row() {
         contract_type: ContractType::Other, // staging overrides via classifier
         is_sac: false,
         metadata: json!({}),
+        sac_asset_code: None,
+        sac_asset_issuer: None,
     }];
     // Drive the real parser → persist wiring end-to-end so a regression in
     // detect_assets signature/behaviour fails this test, not just an
@@ -1369,6 +1379,8 @@ async fn late_wasm_upload_backfills_assets_row() {
         contract_type: ContractType::Other,
         is_sac: false,
         metadata: json!({}),
+        sac_asset_code: None,
+        sac_asset_issuer: None,
     }];
 
     let empty_operations: Vec<(String, Vec<ExtractedOperation>)> = Vec::new();
