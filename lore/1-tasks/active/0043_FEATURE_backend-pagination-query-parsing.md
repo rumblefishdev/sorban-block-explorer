@@ -2,9 +2,9 @@
 id: '0043'
 title: 'Backend: cursor-based pagination, query parsing, and base CRUD service'
 type: FEATURE
-status: backlog
-related_adr: ['0005']
-related_tasks: ['0023', '0015', '0092']
+status: active
+related_adr: ['0005', '0008']
+related_tasks: ['0023', '0015', '0092', '0046', '0050']
 tags: [layer-backend, pagination, query-parsing, crud]
 milestone: 2
 links: []
@@ -21,6 +21,16 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
+  - date: '2026-04-24'
+    status: active
+    who: karolkow
+    note: >
+      Promoted per team sync with stkrolikiewicz — 0043 must land before
+      0046/0050 code is refactored to use shared pagination + CrudResource
+      abstractions. 0046 shipped with inline cursor/pagination; 0050 is
+      active (FilipDz) and will otherwise repeat the pattern. Scope extends
+      to retroactive refactor of 0046 and sync with 0050 to adopt the shared
+      abstractions.
 ---
 
 # Backend: cursor-based pagination, query parsing, and base CRUD service
