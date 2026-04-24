@@ -10,9 +10,9 @@ use crate::classification::{ContractClassification, classify_contract_from_wasm_
 use crate::types::{
     ExtractedAccountState, ExtractedAsset, ExtractedContractDeployment, ExtractedContractInterface,
     ExtractedLedgerEntryChange, ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot,
-    ExtractedNft, NftEvent,
+    ExtractedNft, ExtractedOperation, NftEvent,
 };
-use domain::{ContractType, TokenAssetType};
+use domain::{ContractType, OperationType, TokenAssetType};
 
 // ---------------------------------------------------------------------------
 // Step 1 + Step 7: Contract Deployment + SAC Detection
@@ -544,6 +544,66 @@ pub fn detect_assets(
     }
 
     assets
+}
+
+// ---------------------------------------------------------------------------
+// Task 0160: SAC underlying asset identity from CreateContract preimage
+// ---------------------------------------------------------------------------
+
+/// Underlying classic asset identity carried by a SAC deployment.
+///
+/// Sourced from `CreateContractArgs.contract_id_preimage` with variant
+/// `FromAsset(Asset)`. The ContractInstance XDR entry for a SAC is a
+/// marker-only `{"type": "stellar_asset"}` and carries no asset data,
+/// so this is the sole path for populating `assets.asset_code` /
+/// `.issuer_id` for SAC rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SacAssetIdentity {
+    /// XLM-SAC — wraps the native Stellar asset. No code / issuer.
+    /// Downstream (`detect_assets`) applies the XLM-SAC sentinel.
+    Native,
+    /// Classic-credit SAC — wraps a `credit_alphanum4` or
+    /// `credit_alphanum12` asset with a real issuer.
+    Credit {
+        /// Asset code (trailing NULs already stripped by the parser).
+        code: String,
+        /// Issuer `G...` StrKey.
+        issuer: String,
+    },
+}
+
+/// Pull the underlying classic asset out of a CreateContract / CreateContractV2
+/// operation whose preimage is `FromAsset`.
+///
+/// Returns `None` when the operation is not a `CreateContract*` op, when the
+/// preimage is not `FromAsset` (i.e. regular `FromAddress` Soroban deploy),
+/// or when the JSON shape is malformed.
+///
+/// Reads `ExtractedOperation.details["contractIdPreimage"]` populated by
+/// `format_contract_id_preimage` in `operation.rs` — both paths must stay
+/// in sync.
+pub fn extract_sac_asset_from_create_contract(op: &ExtractedOperation) -> Option<SacAssetIdentity> {
+    if op.op_type != OperationType::InvokeHostFunction {
+        return None;
+    }
+    let host_fn_type = op.details.get("hostFunctionType").and_then(Value::as_str)?;
+    if host_fn_type != "createContract" && host_fn_type != "createContractV2" {
+        return None;
+    }
+    let preimage = op.details.get("contractIdPreimage")?;
+    if preimage.get("type").and_then(Value::as_str) != Some("from_asset") {
+        return None;
+    }
+    let asset = preimage.get("asset")?;
+    match asset.get("type").and_then(Value::as_str)? {
+        "native" => Some(SacAssetIdentity::Native),
+        "credit_alphanum4" | "credit_alphanum12" => {
+            let code = asset.get("asset_code").and_then(Value::as_str)?.to_string();
+            let issuer = asset.get("issuer").and_then(Value::as_str)?.to_string();
+            Some(SacAssetIdentity::Credit { code, issuer })
+        }
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1302,6 +1362,127 @@ mod tests {
             .collect();
         assert_eq!(by_contract.get("CSAC005"), Some(&TokenAssetType::Sac));
         assert_eq!(by_contract.get("CFUN006"), Some(&TokenAssetType::Soroban));
+    }
+
+    // -- Task 0160: SAC asset identity extraction tests --
+
+    fn make_create_contract_op(details: Value) -> ExtractedOperation {
+        ExtractedOperation {
+            transaction_hash: "txhash".into(),
+            operation_index: 0,
+            op_type: OperationType::InvokeHostFunction,
+            source_account: None,
+            details,
+        }
+    }
+
+    #[test]
+    fn sac_asset_credit4_identity_extracted() {
+        let op = make_create_contract_op(json!({
+            "hostFunctionType": "createContract",
+            "executable": { "type": "stellar_asset" },
+            "contractIdPreimage": {
+                "type": "from_asset",
+                "asset": {
+                    "type": "credit_alphanum4",
+                    "asset_code": "USDC",
+                    "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                }
+            }
+        }));
+        let identity = extract_sac_asset_from_create_contract(&op);
+        assert_eq!(
+            identity,
+            Some(SacAssetIdentity::Credit {
+                code: "USDC".into(),
+                issuer: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn sac_asset_credit12_identity_extracted() {
+        let op = make_create_contract_op(json!({
+            "hostFunctionType": "createContractV2",
+            "executable": { "type": "stellar_asset" },
+            "contractIdPreimage": {
+                "type": "from_asset",
+                "asset": {
+                    "type": "credit_alphanum12",
+                    "asset_code": "YXLM",
+                    "issuer": "GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55",
+                }
+            }
+        }));
+        let identity = extract_sac_asset_from_create_contract(&op);
+        assert_eq!(
+            identity,
+            Some(SacAssetIdentity::Credit {
+                code: "YXLM".into(),
+                issuer: "GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn sac_asset_native_identity_extracted() {
+        let op = make_create_contract_op(json!({
+            "hostFunctionType": "createContract",
+            "executable": { "type": "stellar_asset" },
+            "contractIdPreimage": {
+                "type": "from_asset",
+                "asset": { "type": "native" }
+            }
+        }));
+        let identity = extract_sac_asset_from_create_contract(&op);
+        assert_eq!(identity, Some(SacAssetIdentity::Native));
+    }
+
+    #[test]
+    fn from_address_preimage_returns_none() {
+        let op = make_create_contract_op(json!({
+            "hostFunctionType": "createContract",
+            "executable": { "type": "wasm", "hash": "de".repeat(32) },
+            "contractIdPreimage": {
+                "type": "from_address",
+                "address": "GDEPLOYER...",
+                "salt": "ab".repeat(32),
+            }
+        }));
+        assert_eq!(extract_sac_asset_from_create_contract(&op), None);
+    }
+
+    #[test]
+    fn non_create_contract_op_returns_none() {
+        let op = make_create_contract_op(json!({
+            "hostFunctionType": "invokeContract",
+            "contractId": "CABC123",
+            "functionName": "transfer",
+        }));
+        assert_eq!(extract_sac_asset_from_create_contract(&op), None);
+    }
+
+    #[test]
+    fn non_invoke_host_function_op_returns_none() {
+        let op = ExtractedOperation {
+            transaction_hash: "txhash".into(),
+            operation_index: 0,
+            op_type: OperationType::Payment,
+            source_account: None,
+            details: json!({ "asset": "USDC:GA5Z..." }),
+        };
+        assert_eq!(extract_sac_asset_from_create_contract(&op), None);
+    }
+
+    #[test]
+    fn malformed_preimage_returns_none() {
+        // Missing `asset` subtree entirely.
+        let op = make_create_contract_op(json!({
+            "hostFunctionType": "createContract",
+            "executable": { "type": "stellar_asset" },
+            "contractIdPreimage": { "type": "from_asset" }
+        }));
+        assert_eq!(extract_sac_asset_from_create_contract(&op), None);
     }
 
     // -- NFT Detection Tests --
