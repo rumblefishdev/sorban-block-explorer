@@ -157,26 +157,33 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
     );
     assert_eq!(counts_first.lp_positions, 0, "lp_positions expected empty");
 
-    // ADR 0031 round-trip — operations.type SMALLINT decodes back to the
-    // typed enum, and the SQL helper renders the same canonical label as
-    // OperationType::as_str(). Closes the Rust ↔ SQL drift gap on every run.
-    let ops: Vec<(OperationType, String)> = sqlx::query_as(
+    // ADR 0031 round-trip — operations_appearances.type SMALLINT decodes back
+    // to the typed enum, and the SQL helper renders the same canonical label
+    // as OperationType::as_str(). Closes the Rust ↔ SQL drift gap on every run.
+    // Task 0163: each fixture op has distinct identity so amount == 1 per row.
+    let ops: Vec<(OperationType, String, i64)> = sqlx::query_as(
         r#"
-        SELECT type, op_type_name(type)
-          FROM operations
+        SELECT type, op_type_name(type), amount
+          FROM operations_appearances
          WHERE ledger_sequence = $1
-         ORDER BY application_order
+         ORDER BY type
         "#,
     )
     .bind(i64::from(TEST_LEDGER_SEQ))
     .fetch_all(&pool)
     .await
-    .expect("fetch operations as typed enum");
-    assert_eq!(ops.len(), 2, "two ops inserted by the fixture");
+    .expect("fetch operations_appearances as typed enum");
+    assert_eq!(
+        ops.len(),
+        2,
+        "two distinct op identities inserted by the fixture"
+    );
     assert_eq!(ops[0].0, OperationType::Payment);
     assert_eq!(ops[0].1, "PAYMENT");
+    assert_eq!(ops[0].2, 1, "payment appears once");
     assert_eq!(ops[1].0, OperationType::InvokeHostFunction);
     assert_eq!(ops[1].1, "INVOKE_HOST_FUNCTION");
+    assert_eq!(ops[1].2, 1, "invoke appears once");
 
     // --- Replay — counts must not change ---
     persist_ledger(
@@ -466,7 +473,7 @@ async fn ensure_default_partitions(pool: &PgPool) {
     // test we rely on these defaults so the per-ledger inserts land somewhere.
     for table in [
         "transactions",
-        "operations",
+        "operations_appearances",
         "transaction_participants",
         "soroban_events_appearances",
         "soroban_invocations_appearances",
@@ -606,7 +613,7 @@ async fn test_counts(pool: &PgPool) -> Counts {
           p AS (SELECT COUNT(*) AS n FROM transaction_participants tp
                    JOIN transactions tx ON tx.id = tp.transaction_id AND tx.created_at = tp.created_at
                   WHERE tx.hash = decode($3, 'hex')),
-          o AS (SELECT COUNT(*) AS n FROM operations op
+          o AS (SELECT COUNT(*) AS n FROM operations_appearances op
                    JOIN transactions tx ON tx.id = op.transaction_id AND tx.created_at = op.created_at
                   WHERE tx.hash = decode($3, 'hex')),
           e AS (SELECT COUNT(*) AS n FROM soroban_events_appearances ev

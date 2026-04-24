@@ -5,10 +5,10 @@
 -- previously append-only inserts into idempotent ON CONFLICT DO NOTHING
 -- upserts — a replay of the same ledger produces zero duplicate rows.
 
-ALTER TABLE operations
-    ADD CONSTRAINT uq_operations_tx_order
-    UNIQUE (transaction_id, application_order, created_at);
-
+-- operations_appearances (task 0163) ships its natural-key UNIQUE
+-- (uq_ops_app_identity, NULLS NOT DISTINCT) inline in migration 0003;
+-- no extra constraint is needed here.
+--
 -- soroban_events_appearances (ADR 0033) and soroban_invocations_appearances
 -- (ADR 0034) get replay idempotency for free: their primary keys
 -- (contract_id, transaction_id, ledger_sequence, created_at) are already the

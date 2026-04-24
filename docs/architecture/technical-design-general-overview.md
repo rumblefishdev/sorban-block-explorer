@@ -833,10 +833,9 @@ XDR parsing happens in two places:
 The block explorer owns its full PostgreSQL schema. All chain data is stored here;
 there is no dependency on an external database.
 
-High-volume Soroban activity tables and liquidity-pool time series use **native range
-partitioning by month** for efficient time-range queries and instant partition drops. The
-`operations` table remains partitioned separately by `transaction_id` in the current
-schema.
+High-volume Soroban activity tables, `operations_appearances`, and liquidity-pool
+time series use **native range partitioning by month** on `created_at` for
+efficient time-range queries and instant partition drops.
 
 ### 6.1 Ledgers
 
@@ -877,18 +876,37 @@ CREATE TABLE transactions (
 );
 ```
 
-### 6.3 Operations
+### 6.3 Operations Appearances
 
 ```sql
-CREATE TABLE operations (
-    id              BIGSERIAL PRIMARY KEY,
-    transaction_id  BIGINT REFERENCES transactions(id) ON DELETE CASCADE,
-    type            VARCHAR(50) NOT NULL,
-    details         JSONB NOT NULL,
-    INDEX idx_tx (transaction_id),
-    INDEX idx_details (details) USING GIN
-) PARTITION BY RANGE (transaction_id);
+CREATE TABLE operations_appearances (
+    id                BIGSERIAL    NOT NULL,
+    transaction_id    BIGINT       NOT NULL,
+    type              SMALLINT     NOT NULL,   -- ADR 0031 OperationType
+    source_id         BIGINT       REFERENCES accounts(id),
+    destination_id    BIGINT       REFERENCES accounts(id),
+    contract_id       BIGINT       REFERENCES soroban_contracts(id),
+    asset_code        VARCHAR(12),
+    asset_issuer_id   BIGINT       REFERENCES accounts(id),
+    pool_id           BYTEA,
+    amount            BIGINT       NOT NULL,   -- count of collapsed identical-identity ops
+    ledger_sequence   BIGINT       NOT NULL,
+    created_at        TIMESTAMPTZ  NOT NULL,
+    PRIMARY KEY (id, created_at),
+    FOREIGN KEY (transaction_id, created_at)
+        REFERENCES transactions (id, created_at) ON DELETE CASCADE,
+    CONSTRAINT uq_ops_app_identity UNIQUE NULLS NOT DISTINCT
+        (transaction_id, type, source_id, destination_id,
+         contract_id, asset_code, asset_issuer_id, pool_id,
+         ledger_sequence, created_at)
+) PARTITION BY RANGE (created_at);
 ```
+
+Appearance index (task 0163): one row per distinct operation identity in a
+transaction, `amount` counts how many operations of that shape were folded.
+Per-op detail (transfer amount, application order, memo, claimants, function
+args, predicates) is re-materialised from XDR by the API
+(`xdr_parser::extract_operations`) and is not stored in the DB.
 
 ### 6.4 Soroban Contracts
 
@@ -1033,12 +1051,13 @@ CREATE TABLE liquidity_pool_snapshots (
 
 ### 6.12 Partitioning and Retention
 
-Tables `soroban_invocations`, `soroban_events`, and `liquidity_pool_snapshots` are
-partitioned by month using native PostgreSQL range partitioning. The `operations` table is
-partitioned separately by `transaction_id` in the current schema. A cleanup Lambda
-(EventBridge daily) creates partitions 2 months ahead and drops partitions older than the
-retention window if storage constraints require it. Ledger and transaction tables are not
-partitioned and are kept indefinitely.
+Tables `transactions`, `operations_appearances`, `transaction_participants`,
+`soroban_invocations_appearances`, `soroban_events_appearances`,
+`nft_ownership`, and `liquidity_pool_snapshots` are partitioned by month on
+`created_at` using native PostgreSQL range partitioning. A cleanup Lambda
+(EventBridge daily) creates partitions 2 months ahead and drops partitions
+older than the retention window if storage constraints require it. Ledger
+and registry tables are not partitioned and are kept indefinitely.
 
 ---
 
