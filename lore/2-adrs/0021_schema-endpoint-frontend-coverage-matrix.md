@@ -84,7 +84,6 @@ of truth.
 | 15  | `liquidity_pool_snapshots`        |      yes      | Per-ledger pool state + derived TVL/volume/fees                                                                                  |
 | 16  | `lp_positions`                    |      no       | Current LP shares per (pool, account)                                                                                            |
 | 17  | `account_balances_current`        |      no       | Current balance per (account, asset)                                                                                             |
-| 18  | `account_balance_history`         |      yes      | Balance history per (account, ledger, asset)                                                                                     |
 
 **Bridges to S3:** every time-series table carries `ledger_sequence`.
 Detail lookup path is always `ledger_sequence → parsed_ledger_{N}.json`.
@@ -388,8 +387,9 @@ SELECT asset_type, asset_code, issuer, balance, last_updated_ledger
 ```
 
 **Schema headroom:** `home_domain` exposed as "Home Domain" row.
-`account_balance_history` supports a future "balance over time" chart.
-`lp_positions` supports a future "pool positions" tab.
+`lp_positions` supports a future "pool positions" tab. A "balance over time"
+chart is deferred (ADR 0035 dropped `account_balance_history`; storage shape
+re-chosen at chart-feature launch time).
 
 ---
 

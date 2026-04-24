@@ -17,7 +17,7 @@
 //!  11. soroban_invocations_appearances  (ADR 0034 — aggregate index per trio + caller payload)
 //!  12. assets
 //!  13. nfts + nft_ownership
-//!  14. account_balances_current + account_balance_history + trustline deletes
+//!  14. account_balances_current + trustline deletes   (ADR 0035 dropped history)
 //!
 //! Every write uses UNNEST batching; pool.begin()/commit() is retried with
 //! exponential backoff on SQLSTATE 40001 (serialization) / 40P01 (deadlock).

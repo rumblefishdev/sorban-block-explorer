@@ -41,7 +41,7 @@ history:
     note: 'Addendum to §11 tokens — added ck_tokens_identity CHECK (ties nullable identifying columns to asset_type) and uidx_tokens_native partial UNIQUE. Closes NULL-in-UNIQUE loophole flagged during PR #98 review; migration 0005_tokens_nfts.sql updated accordingly.'
   - date: 2026-04-21
     status: superseded
-    by: '0030'
+    by: ['0030']
     who: fmazur
     note: >
       Superseded by ADR 0030 (contracts surrogate BIGINT id). ADR 0030
@@ -50,6 +50,15 @@ history:
       the contract_id VARCHAR(56) FK decisions here flipped to BIGINT.
       Landed via task 0151 (migrations 0002-0005 rewritten to post-0030
       source-of-truth shape).
+  - date: 2026-04-23
+    status: superseded
+    by: ['0035']
+    who: fmazur
+    note: >
+      §18 `account_balance_history` specifically superseded by ADR 0035
+      under task 0159 — table dropped entirely (zero read consumers,
+      write-only cost ~10-20 ms/ledger). `account_balances_current` (§17)
+      remains. In-body marker added at §18; DDL retained historically.
 ---
 
 # ADR 0027: Post-surrogate schema snapshot + endpoint realizability (post ADR 0011–0026)
@@ -480,7 +489,13 @@ CREATE INDEX idx_abc_asset ON account_balances_current (asset_code, issuer_id)
     WHERE asset_code IS NOT NULL;
 ```
 
-#### 18. `account_balance_history`
+#### 18. `account_balance_history` — **SUPERSEDED by ADR 0035**
+
+> **Superseded by [ADR 0035](0035_drop-account-balance-history.md)** — dropped
+> as write-only dead load (zero read consumers, ~10-20 ms/ledger cost).
+> `account_balances_current` remains the single source of truth for balance
+> state. Historical balance storage will be re-designed at "balance over
+> time" chart-feature launch time; retained below for history only.
 
 ```sql
 CREATE TABLE account_balance_history (

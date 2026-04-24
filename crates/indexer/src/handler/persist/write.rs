@@ -1644,7 +1644,8 @@ pub(super) async fn upsert_pools_and_snapshots(
 }
 
 // ---------------------------------------------------------------------------
-// 14. account_balances_current + account_balance_history + trustline DELETEs
+// 14. account_balances_current + trustline DELETEs
+// ADR 0035: `account_balance_history` dropped — no read consumers.
 // ---------------------------------------------------------------------------
 
 pub(super) async fn upsert_balances(
@@ -1702,10 +1703,6 @@ pub(super) async fn upsert_balances(
 
     upsert_balances_native(db_tx, &natives, account_ids).await?;
     upsert_balances_credit(db_tx, &credits, account_ids).await?;
-
-    // 14c. account_balance_history — partitioned; append-only, idempotent via
-    // partial uidx_abh_native / uidx_abh_credit.
-    append_balance_history(db_tx, &staged.balance_history_rows, account_ids).await?;
 
     Ok(())
 }
@@ -1834,140 +1831,6 @@ async fn upsert_balances_credit(
         .bind(&issuers)
         .bind(&bals)
         .bind(&last)
-        .execute(&mut **db_tx)
-        .await?;
-    }
-    Ok(())
-}
-
-async fn append_balance_history(
-    db_tx: &mut Transaction<'_, Postgres>,
-    rows: &[BalanceRow],
-    account_ids: &HashMap<String, i64>,
-) -> Result<(), HandlerError> {
-    if rows.is_empty() {
-        return Ok(());
-    }
-    // Partition by identity class — the partial unique indexes
-    // (uidx_abh_native / uidx_abh_credit) are disjoint, so each class gets
-    // its own INSERT with ON CONFLICT DO NOTHING against the matching index.
-    // Replaces the prior anti-join (which scanned account_balance_history
-    // per row) with a direct unique-index lookup — O(log n) instead of O(n).
-    let (natives, credits): (Vec<&BalanceRow>, Vec<&BalanceRow>) =
-        rows.iter().partition(|r| r.asset_type == AssetType::Native);
-
-    append_balance_history_native(db_tx, &natives, account_ids).await?;
-    append_balance_history_credit(db_tx, &credits, account_ids).await?;
-    Ok(())
-}
-
-async fn append_balance_history_native(
-    db_tx: &mut Transaction<'_, Postgres>,
-    rows: &[&BalanceRow],
-    account_ids: &HashMap<String, i64>,
-) -> Result<(), HandlerError> {
-    if rows.is_empty() {
-        return Ok(());
-    }
-    for chunk in rows.chunks(CHUNK_SIZE) {
-        let mut accts: Vec<i64> = Vec::with_capacity(chunk.len());
-        let mut ls: Vec<i64> = Vec::with_capacity(chunk.len());
-        let mut bals: Vec<String> = Vec::with_capacity(chunk.len());
-        let mut ca: Vec<DateTime<Utc>> = Vec::with_capacity(chunk.len());
-
-        for r in chunk {
-            accts.push(resolve_id(
-                account_ids,
-                &r.account_str_key,
-                "abh.native.account",
-            )?);
-            ls.push(r.last_updated_ledger);
-            bals.push(r.balance.clone());
-            ca.push(r.created_at);
-        }
-
-        sqlx::query(
-            r#"
-            INSERT INTO account_balance_history
-                (account_id, ledger_sequence, asset_type, asset_code, issuer_id, balance, created_at)
-            SELECT acct, ls, 0, NULL, NULL, bal::NUMERIC(28,7), ca   -- AssetType::Native
-              FROM UNNEST($1::BIGINT[], $2::BIGINT[], $3::TEXT[], $4::TIMESTAMPTZ[])
-                AS t(acct, ls, bal, ca)
-            ON CONFLICT (account_id, ledger_sequence, created_at) WHERE asset_type = 0   -- native
-            DO NOTHING
-            "#,
-        )
-        .bind(&accts)
-        .bind(&ls)
-        .bind(&bals)
-        .bind(&ca)
-        .execute(&mut **db_tx)
-        .await?;
-    }
-    Ok(())
-}
-
-async fn append_balance_history_credit(
-    db_tx: &mut Transaction<'_, Postgres>,
-    rows: &[&BalanceRow],
-    account_ids: &HashMap<String, i64>,
-) -> Result<(), HandlerError> {
-    if rows.is_empty() {
-        return Ok(());
-    }
-    for chunk in rows.chunks(CHUNK_SIZE) {
-        let mut accts: Vec<i64> = Vec::with_capacity(chunk.len());
-        let mut ls: Vec<i64> = Vec::with_capacity(chunk.len());
-        // ADR 0031: account_balance_history.asset_type is SMALLINT (Rust AssetType).
-        let mut types: Vec<AssetType> = Vec::with_capacity(chunk.len());
-        let mut codes: Vec<String> = Vec::with_capacity(chunk.len());
-        let mut issuers: Vec<i64> = Vec::with_capacity(chunk.len());
-        let mut bals: Vec<String> = Vec::with_capacity(chunk.len());
-        let mut ca: Vec<DateTime<Utc>> = Vec::with_capacity(chunk.len());
-
-        for r in chunk {
-            let Some(code) = r.asset_code.as_ref() else {
-                continue;
-            };
-            let Some(issuer_key) = r.issuer_str_key.as_ref() else {
-                continue;
-            };
-            accts.push(resolve_id(
-                account_ids,
-                &r.account_str_key,
-                "abh.credit.account",
-            )?);
-            ls.push(r.last_updated_ledger);
-            types.push(r.asset_type);
-            codes.push(code.clone());
-            issuers.push(resolve_id(account_ids, issuer_key, "abh.credit.issuer")?);
-            bals.push(r.balance.clone());
-            ca.push(r.created_at);
-        }
-        if accts.is_empty() {
-            continue;
-        }
-
-        sqlx::query(
-            r#"
-            INSERT INTO account_balance_history
-                (account_id, ledger_sequence, asset_type, asset_code, issuer_id, balance, created_at)
-            SELECT acct, ls, ty, code, issuer, bal::NUMERIC(28,7), ca
-              FROM UNNEST(
-                $1::BIGINT[], $2::BIGINT[], $3::SMALLINT[], $4::VARCHAR[], $5::BIGINT[], $6::TEXT[], $7::TIMESTAMPTZ[]
-              ) AS t(acct, ls, ty, code, issuer, bal, ca)
-            ON CONFLICT (account_id, ledger_sequence, asset_code, issuer_id, created_at)
-              WHERE asset_type <> 0   -- credit (not native)
-            DO NOTHING
-            "#,
-        )
-        .bind(&accts)
-        .bind(&ls)
-        .bind(&types)
-        .bind(&codes)
-        .bind(&issuers)
-        .bind(&bals)
-        .bind(&ca)
         .execute(&mut **db_tx)
         .await?;
     }
