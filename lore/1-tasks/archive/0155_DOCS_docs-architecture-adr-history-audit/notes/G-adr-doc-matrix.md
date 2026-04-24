@@ -153,10 +153,9 @@ These are the authoritative "what the docs must now say":
    `liquidity_pools.pool_id`, `liquidity_pool_snapshots.pool_id`.
    Domain layer: `Hash32` newtype; serde renders lowercase hex. **API surface unchanged**.
 5. **Enum columns are `SMALLINT`** with CHECK range + Rust `#[repr(i16)]` enums + SQL helper
-   functions (`op_type_name`, `event_type_name`, `token_asset_type_name`,
-   `nft_event_type_name`, `lp_asset_type_name`, `contract_type_name`):
+   functions (`op_type_name`, `asset_type_name`, `token_asset_type_name`,
+   `nft_event_type_name`, `contract_type_name`):
    - `operations.type` (0-127)
-   - `soroban_events.event_type` (0-15)
    - `assets.asset_type` (0-15): `0=native`, `1=classic_credit`, `2=sac`, `3=soroban`
    - `account_balances_current.asset_type` (0-15)
    - `nft_ownership.event_type` (0-15): `0=mint`, `1=transfer`, `2=burn`
