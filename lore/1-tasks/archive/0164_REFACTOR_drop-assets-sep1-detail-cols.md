@@ -68,9 +68,11 @@ per list response is not acceptable. `icon_url` stays in DB and gets
 re-classified in the new ADR from "SEP-1 detail enrichment" to "list-level
 thumbnail".
 
-No data loss: per the 2026-04-10 pipeline audit, the enrichment worker from
-ADR 0023 was never implemented (`crates/indexer/.../convert.rs` hardcodes
-`None`); every row has `description IS NULL` and `home_page IS NULL`.
+No data loss: per the 2026-04-10 pipeline audit
+(`docs/audits/2026-04-10-pipeline-data-audit.md §"tokens / metadata"`),
+ADR 0023 Part 3 was never implemented and no current code path writes
+these columns; every row has `description IS NULL` and
+`home_page IS NULL`.
 
 ## Implementation Plan
 
@@ -100,7 +102,7 @@ Verify migration applies cleanly on both empty and populated databases.
 ### Step 3: Rust domain + indexer cleanup
 
 - `crates/domain/src/asset.rs`: drop `description` and `home_page` fields;
-  update doc-comment to reference `ADR 0023 + 0038`; keep `icon_url`
+  update doc-comment to reference `ADR 0037 / task 0164`; keep `icon_url`
 - Audit any `INSERT INTO assets (..., description, home_page, ...)` —
   none expected (fields were never written), but confirm with
   `rg "description|home_page" crates/indexer/src/handler/persist/`

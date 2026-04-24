@@ -50,7 +50,7 @@ history:
 
 ## Status
 
-`proposed` — documentation / snapshot. No new decisions. Records the **live state of the Dockerized Postgres schema** as of 2026-04-24 (after all 11 SQLx migrations applied — latest: `20260422000100 contract type add nft fungible`). Supersedes the DDL shown in ADR 0019 wherever they diverge.
+`proposed` — documentation / snapshot. No new decisions. Records the **live state of the Dockerized Postgres schema** as of 2026-04-24 (after all 12 SQLx migrations applied — latest: `20260424000000 drop assets sep1 detail cols`). Supersedes the DDL shown in ADR 0019 wherever they diverge.
 
 ---
 
@@ -75,11 +75,11 @@ This ADR records the schema as it actually exists in the local Docker Postgres 1
 
 ### Schema surface
 
-**17 business tables** (excluding `_sqlx_migrations`), 11 non-partitioned + 6 partitioned (each with a `_default` partition attached):
+**17 business tables** (excluding `_sqlx_migrations`), 10 non-partitioned + 7 partitioned (each with a `_default` partition attached):
 
-Non-partitioned (11): `ledgers`, `accounts`, `assets`, `soroban_contracts`, `wasm_interface_metadata`, `nfts`, `liquidity_pools`, `lp_positions`, `account_balances_current`, `transaction_hash_index`.
+Non-partitioned (10): `ledgers`, `accounts`, `assets`, `soroban_contracts`, `wasm_interface_metadata`, `nfts`, `liquidity_pools`, `lp_positions`, `account_balances_current`, `transaction_hash_index`.
 
-Partitioned by monthly `created_at` range (6): `transactions`, `operations_appearances`, `transaction_participants`, `soroban_events_appearances`, `soroban_invocations_appearances`, `nft_ownership`, `liquidity_pool_snapshots`.
+Partitioned by monthly `created_at` range (7): `transactions`, `operations_appearances`, `transaction_participants`, `soroban_events_appearances`, `soroban_invocations_appearances`, `nft_ownership`, `liquidity_pool_snapshots`.
 
 ### Column conventions (consolidated)
 
@@ -543,7 +543,7 @@ None. This ADR documents state.
 ## References
 
 - Extracted from live `sorban-block-explorer-postgres-1` (Postgres 16.13) on 2026-04-24 via `pg_dump --schema-only`.
-- Anchor migration: `20260422000100 contract type add nft fungible` (11 migrations applied).
+- Anchor migration: `20260424000000 drop assets sep1 detail cols` (12 migrations applied).
 - [ADR 0019](0019_schema-snapshot-and-sizing-11m-ledgers.md) — previous snapshot (partially superseded).
 
 ---

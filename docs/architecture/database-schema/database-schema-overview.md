@@ -610,8 +610,9 @@ Design notes:
   [ADR 0037](../../../lore/2-adrs/0037_current-schema-snapshot.md) / task 0164;
   this narrows the original typed-columns plan from
   [ADR 0023](../../../lore/2-adrs/0023_tokens-typed-metadata-columns.md) Part 3
-- the SEP-1 / SEP-41 enrichment worker (ADR 0022 pattern) writes `icon_url`
-  to the DB and the detail JSON document to S3; not inline with ledger ingest
+- the SEP-1 / SEP-41 enrichment worker (ADR 0022 pattern) is planned and
+  currently unimplemented; when built, it will write `icon_url` to the DB
+  and the detail JSON document to S3; not inline with ledger ingest
 - `total_supply` and `holder_count` are stock fields also populated post-ingest
 - `soroban_contracts.contract_type = 'token'` classifies a contract's SEP-41 role
   and is intentionally distinct from this table's name — the two coexist without
