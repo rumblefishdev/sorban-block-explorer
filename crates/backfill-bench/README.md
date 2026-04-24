@@ -13,6 +13,17 @@ docker compose up -d
 npm run db:migrate
 ```
 
+### Drop INDEXES
+```bash
+docker compose exec -T postgres psql -U postgres -d soroban_block_explorer < scripts/backfill-test/drop_secondary_indexes.sql
+```
+
+### Create INDEXES
+```bash
+docker compose exec -T postgres psql -U postgres -d soroban_block_explorer < scripts/backfill-test/create_secondary_indexes.sql
+```
+
+
 ## Usage
 
 ```bash
