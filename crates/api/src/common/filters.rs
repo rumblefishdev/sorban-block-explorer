@@ -12,6 +12,8 @@
 //! or a fully built 400 [`Response`] on failure, so handlers can
 //! `?`-propagate into their list endpoint bodies.
 
+#![allow(clippy::result_large_err)]
+
 use std::str::FromStr;
 
 use axum::response::Response;

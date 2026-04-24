@@ -15,8 +15,6 @@
 //!   DATABASE_URL=postgres://postgres:postgres@localhost:5432/soroban_block_explorer \
 //!       cargo test -p api --bin api tests_integration -- --test-threads=1
 
-#![cfg(test)]
-
 use axum::Router;
 use axum::body::{self, Body};
 use axum::http::{Request, StatusCode};

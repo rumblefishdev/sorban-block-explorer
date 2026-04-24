@@ -15,6 +15,8 @@
 //! Both paths enforce the same validation rules and surface the same
 //! `ErrorEnvelope` codes (`INVALID_LIMIT`, `INVALID_CURSOR`) on failure.
 
+#![allow(clippy::result_large_err)]
+
 use axum::extract::{FromRequestParts, Query};
 use axum::http::request::Parts;
 use axum::response::Response;
