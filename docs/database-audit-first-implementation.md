@@ -6,36 +6,6 @@ and post-insert mutability.
 
 Generated: 2026-04-15
 
-> **Historical snapshot (2026-04-15; snapshot notice added task 0155, 2026-04-23).**
-> This audit is an **intentional point-in-time snapshot** of per-table column
-> shape and write-path references as of the generation date. It is kept for
-> historical context and is **not** maintained evergreen — later schema
-> changes are reflected only in the authoritative docs below, not here. Task
-> 0155 deliberately chose not to regenerate the body; the two documents serve
-> different purposes (snapshot audit vs living design reference).
->
-> Key schema changes that landed after the generation date and therefore make
-> parts of the per-table bodies below historical rather than current:
->
-> - ADR 0030 — `soroban_contracts.id BIGSERIAL` surrogate + `contract_id VARCHAR(56) UNIQUE`
-> - ADR 0031 — enum-like columns flipped from `VARCHAR` to `SMALLINT`
-> - ADR 0033 / 0034 — `soroban_events` / `soroban_invocations` replaced with pure appearance indexes
->   (`soroban_events_appearances`, `soroban_invocations_appearances`); parsed event / invocation
->   payloads now live at read time in the public Stellar ledger archive per ADR 0029
-> - ADR 0035 — `account_balance_history` dropped (unused)
-> - ADR 0036 (task 0154) — `tokens` table renamed to `assets`
->
-> **Authoritative sources for current state:**
->
-> - [`docs/architecture/database-schema/database-schema-overview.md`](architecture/database-schema/database-schema-overview.md)
->   for current column types, constraints, relationships, and indexing
-> - `crates/db/migrations/` for the live DDL
-> - `crates/indexer/src/handler/persist/*.rs` for current write-path code
->
-> The three most-changed sections below (`soroban_events`, `soroban_invocations`,
-> `tokens`/`assets`) carry per-section pointers to their current counterpart in
-> the overview.
-
 ---
 
 ## Table of Contents
@@ -44,10 +14,10 @@ Generated: 2026-04-15
 2. [transactions](#transactions)
 3. [operations](#operations)
 4. [soroban_contracts](#soroban_contracts)
-5. [soroban_events](#soroban_events) — superseded by `soroban_events_appearances` (ADR 0033)
-6. [soroban_invocations](#soroban_invocations) — superseded by `soroban_invocations_appearances` (ADR 0034)
+5. [soroban_events](#soroban_events)
+6. [soroban_invocations](#soroban_invocations)
 7. [accounts](#accounts)
-8. [assets (formerly `tokens`)](#assets-formerly-tokens) — renamed by ADR 0036
+8. [tokens](#tokens)
 9. [nfts](#nfts)
 10. [liquidity_pools](#liquidity_pools)
 11. [liquidity_pool_snapshots](#liquidity_pool_snapshots)
@@ -249,14 +219,6 @@ Stores one row per deployed Soroban smart contract. Records contract identity, W
 
 ## `soroban_events`
 
-> **Superseded (ADR 0033):** this table no longer exists. The current schema has
-> `soroban_events_appearances` — an appearance index only. Event payloads are
-> fetched at read time from the public Stellar ledger archive and re-expanded via
-> `xdr_parser::extract_events`. See
-> [`database-schema-overview.md` §4.8](architecture/database-schema/database-schema-overview.md#48-soroban-events--appearance-index)
-> for current shape. The description below is **retained for historical context**
-> and describes the pre-ADR-0033 shape.
-
 ### Description
 
 Stores Soroban smart contract events emitted during transaction execution. Each row is a single event. **Partitioned by range on `created_at`** (monthly).
@@ -301,14 +263,6 @@ Monthly: `soroban_events_y{YYYY}m{MM}`, plus default. Auto-managed by `db-partit
 ---
 
 ## `soroban_invocations`
-
-> **Superseded (ADR 0034):** this table no longer exists. The current schema has
-> `soroban_invocations_appearances` — an appearance index only. Per-node invocation
-> detail is fetched at read time from the public Stellar ledger archive via
-> `xdr_parser::extract_invocations`. See
-> [`database-schema-overview.md` §4.9](architecture/database-schema/database-schema-overview.md#49-soroban-invocations--appearance-index)
-> for current shape. The description below is **retained for historical context**
-> and describes the pre-ADR-0034 shape.
 
 ### Description
 
@@ -390,20 +344,7 @@ Stores the latest observed state of Stellar accounts. A derived-state entity wit
 
 ---
 
-## `assets` (formerly `tokens`)
-
-> **Renamed (ADR 0036 / task 0154):** the table is now `assets`. All `ck_tokens_*`
-> constraints and `uidx_tokens_*` / `idx_tokens_*` indexes are renamed to
-> `ck_assets_*` / `uidx_assets_*` / `idx_assets_*`. The current shape also differs
-> from the snapshot below in three key ways:
->
-> - ADR 0031: `asset_type` is `SMALLINT` (not `VARCHAR(20)`); values `0=native`,
->   `1=classic_credit`, `2=sac`, `3=soroban` — **4 variants including `native`**
-> - ADR 0030: `contract_id` is `BIGINT REFERENCES soroban_contracts(id)` (not `VARCHAR(56)`)
-> - ADR 0026: `issuer_id` is `BIGINT REFERENCES accounts(id)` (was `issuer_address VARCHAR(56)`)
->
-> See [`database-schema-overview.md` §4.10](architecture/database-schema/database-schema-overview.md#410-assets)
-> for current DDL. The description below is **retained for historical context**.
+## `tokens`
 
 ### Description
 
