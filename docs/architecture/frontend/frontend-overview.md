@@ -417,6 +417,14 @@ Expanded behavior:
   or inconsistent descriptive fields.
 - The recent transactions section should be useful as a discovery path into the broader explorer.
 
+Data sourcing for the Metadata section: `name` and `icon` come from the `assets`
+DB row (`name` is shown on list too; `icon` is the list-thumbnail column).
+`description` and `domain/home page` are fetched from per-entity S3 at
+`s3://<bucket>/assets/{id}.json` — detail-only content that is off-chain SEP-1
+enrichment, not derived from XDR. See ADR 0037 / task 0164 for the rationale and
+the S3 layout. Missing S3 object simply renders those two fields as blank,
+consistent with the "tolerate partial availability" expectation above.
+
 ### 6.10 Contract (`/contracts/:contractId`)
 
 Contract details and interface.

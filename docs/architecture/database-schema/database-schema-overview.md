@@ -568,9 +568,7 @@ CREATE TABLE assets (
     name         VARCHAR(256),
     total_supply NUMERIC(28,7),                                   -- populated by metadata worker (ADR 0022)
     holder_count INTEGER,                                         -- ditto
-    description  TEXT,                                            -- typed SEP-1 field (ADR 0023)
-    icon_url     VARCHAR(1024),                                   -- ditto
-    home_page    VARCHAR(256),                                    -- ditto
+    icon_url     VARCHAR(1024),                                   -- list-level thumbnail (ADR 0037 / task 0164)
     CONSTRAINT ck_assets_asset_type_range CHECK (asset_type BETWEEN 0 AND 15),
     CONSTRAINT ck_assets_identity CHECK (
         (asset_type = 0 AND asset_code IS NULL     AND issuer_id IS NULL     AND contract_id IS NULL)
@@ -606,10 +604,14 @@ Design notes:
   four identity rules in `ck_assets_identity` close the NULL-in-UNIQUE loophole
 - native XLM is uniquely identified by `asset_type = 0`; classic credit and SAC
   assets by `(asset_code, issuer_id)`; SAC and Soroban assets by `contract_id`
-- `description`, `icon_url`, `home_page` are typed SEP-1 metadata columns per
-  [ADR 0023](../../../lore/2-adrs/0023_tokens-typed-metadata-columns.md); they are
-  written by a separate enrichment worker (ADR 0022 pattern), not inline during
-  ingest
+- `icon_url` is the only SEP-1 enrichment field on the DB row — it serves the
+  list-page thumbnail (per-row). Asset-detail metadata (`description`,
+  `home_page`) lives per-entity in S3 at `s3://<bucket>/assets/{id}.json` per
+  [ADR 0037](../../../lore/2-adrs/0037_current-schema-snapshot.md) / task 0164;
+  this narrows the original typed-columns plan from
+  [ADR 0023](../../../lore/2-adrs/0023_tokens-typed-metadata-columns.md) Part 3
+- the SEP-1 / SEP-41 enrichment worker (ADR 0022 pattern) writes `icon_url`
+  to the DB and the detail JSON document to S3; not inline with ledger ingest
 - `total_supply` and `holder_count` are stock fields also populated post-ingest
 - `soroban_contracts.contract_type = 'token'` classifies a contract's SEP-41 role
   and is intentionally distinct from this table's name — the two coexist without
