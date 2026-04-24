@@ -329,6 +329,7 @@ fn extract_invoke_host_function(op: &InvokeHostFunctionOp, return_value: Option<
             json!({
                 "hostFunctionType": "createContract",
                 "executable": format_contract_executable(&args.executable),
+                "contractIdPreimage": format_contract_id_preimage(&args.contract_id_preimage),
             })
         }
         HostFunction::UploadContractWasm(wasm) => {
@@ -341,6 +342,7 @@ fn extract_invoke_host_function(op: &InvokeHostFunctionOp, return_value: Option<
             json!({
                 "hostFunctionType": "createContractV2",
                 "executable": format_contract_executable(&args.executable),
+                "contractIdPreimage": format_contract_id_preimage(&args.contract_id_preimage),
                 "constructorArgs": args.constructor_args.iter().map(scval_to_typed_json).collect::<Vec<_>>(),
             })
         }
@@ -418,6 +420,68 @@ fn format_contract_executable(exec: &ContractExecutable) -> Value {
     match exec {
         ContractExecutable::Wasm(hash) => json!({ "type": "wasm", "hash": hex::encode(hash.0) }),
         ContractExecutable::StellarAsset => json!({ "type": "stellar_asset" }),
+    }
+}
+
+/// Structured JSON rendering for an `Asset` — used by paths that need to
+/// consume `asset_code` / `issuer` as separate fields (e.g. SAC identity
+/// extraction from CreateContract preimage, task 0160).
+///
+/// Shape mirrors the trustline convention in `state.rs:225-246`:
+///   native          → `{"type":"native"}`
+///   credit_alphanum4/12 → `{"type":"credit_alphanum4","asset_code":"USDC","issuer":"G..."}`
+///
+/// The sibling helper `format_asset` returns a compact `"CODE:ISSUER"`
+/// string and is kept unchanged for the many callers that expect that
+/// shape (payment/path-payment/manage-offer/etc.).
+fn format_asset_structured(asset: &Asset) -> Value {
+    match asset {
+        Asset::Native => json!({ "type": "native" }),
+        Asset::CreditAlphanum4(a) => {
+            let code = std::str::from_utf8(a.asset_code.as_slice())
+                .unwrap_or("<invalid>")
+                .trim_end_matches('\0');
+            json!({
+                "type": "credit_alphanum4",
+                "asset_code": code,
+                "issuer": a.issuer.0.to_string(),
+            })
+        }
+        Asset::CreditAlphanum12(a) => {
+            let code = std::str::from_utf8(a.asset_code.as_slice())
+                .unwrap_or("<invalid>")
+                .trim_end_matches('\0');
+            json!({
+                "type": "credit_alphanum12",
+                "asset_code": code,
+                "issuer": a.issuer.0.to_string(),
+            })
+        }
+    }
+}
+
+/// Render the `ContractIdPreimage` XDR union as structured JSON.
+///
+/// `FromAsset` carries the underlying classic `Asset` wrapped by the
+/// new contract — this is the sole source of SAC identity
+/// (asset_code + issuer) because `ContractExecutable::StellarAsset` is
+/// a marker-only variant with no embedded data. Task 0160 consumes
+/// this downstream to populate `ExtractedContractDeployment` SAC
+/// fields.
+///
+/// `FromAddress` is the regular Soroban contract deploy path
+/// (address-derived deterministic contract id via user-provided salt).
+fn format_contract_id_preimage(preimage: &ContractIdPreimage) -> Value {
+    match preimage {
+        ContractIdPreimage::Address(from_addr) => json!({
+            "type": "from_address",
+            "address": from_addr.address.to_string(),
+            "salt": hex::encode(from_addr.salt.0),
+        }),
+        ContractIdPreimage::Asset(asset) => json!({
+            "type": "from_asset",
+            "asset": format_asset_structured(asset),
+        }),
     }
 }
 
@@ -703,6 +767,147 @@ mod tests {
 
         assert_eq!(result[0].details["hostFunctionType"], "invokeContract");
         assert!(result[0].details["returnValue"].is_null());
+    }
+
+    // --- Task 0160: CreateContract preimage extraction ---
+
+    fn build_create_contract_from_asset(asset: Asset) -> InvokeHostFunctionOp {
+        InvokeHostFunctionOp {
+            host_function: HostFunction::CreateContract(CreateContractArgs {
+                contract_id_preimage: ContractIdPreimage::Asset(asset),
+                executable: ContractExecutable::StellarAsset,
+            }),
+            auth: VecM::default(),
+        }
+    }
+
+    fn issuer_account_id() -> AccountId {
+        AccountId(PublicKey::PublicKeyTypeEd25519(Uint256([0x11; 32])))
+    }
+
+    #[test]
+    fn create_contract_from_asset_native_carries_preimage() {
+        let op = Operation {
+            source_account: None,
+            body: OperationBody::InvokeHostFunction(build_create_contract_from_asset(
+                Asset::Native,
+            )),
+        };
+        let tx = build_v1_tx(vec![op]);
+        let inner = InnerTxRef::V1(&tx);
+        let result = extract_operations(&inner, None, "abcd1234", 100, 0);
+
+        let preimage = &result[0].details["contractIdPreimage"];
+        assert_eq!(preimage["type"], "from_asset");
+        assert_eq!(preimage["asset"]["type"], "native");
+        assert!(preimage["asset"]["asset_code"].is_null());
+        assert!(preimage["asset"]["issuer"].is_null());
+    }
+
+    #[test]
+    fn create_contract_from_asset_credit4_carries_code_and_issuer() {
+        let issuer = issuer_account_id();
+        let asset_code = AssetCode4([b'U', b'S', b'D', b'C']);
+        let asset = Asset::CreditAlphanum4(AlphaNum4 {
+            asset_code,
+            issuer: issuer.clone(),
+        });
+        let op = Operation {
+            source_account: None,
+            body: OperationBody::InvokeHostFunction(build_create_contract_from_asset(asset)),
+        };
+        let tx = build_v1_tx(vec![op]);
+        let inner = InnerTxRef::V1(&tx);
+        let result = extract_operations(&inner, None, "abcd1234", 100, 0);
+
+        let preimage = &result[0].details["contractIdPreimage"];
+        assert_eq!(preimage["type"], "from_asset");
+        assert_eq!(preimage["asset"]["type"], "credit_alphanum4");
+        assert_eq!(preimage["asset"]["asset_code"], "USDC");
+        assert_eq!(preimage["asset"]["issuer"], issuer.0.to_string());
+    }
+
+    #[test]
+    fn create_contract_from_asset_credit12_strips_trailing_nuls() {
+        let issuer = issuer_account_id();
+        // 12-byte code with trailing NULs ("YXLM" + 8 zeros) — parser must strip them.
+        let mut code_bytes = [0u8; 12];
+        code_bytes[..4].copy_from_slice(b"YXLM");
+        let asset = Asset::CreditAlphanum12(AlphaNum12 {
+            asset_code: AssetCode12(code_bytes),
+            issuer: issuer.clone(),
+        });
+        let op = Operation {
+            source_account: None,
+            body: OperationBody::InvokeHostFunction(build_create_contract_from_asset(asset)),
+        };
+        let tx = build_v1_tx(vec![op]);
+        let inner = InnerTxRef::V1(&tx);
+        let result = extract_operations(&inner, None, "abcd1234", 100, 0);
+
+        let preimage = &result[0].details["contractIdPreimage"];
+        assert_eq!(preimage["asset"]["type"], "credit_alphanum12");
+        assert_eq!(preimage["asset"]["asset_code"], "YXLM");
+        assert_eq!(preimage["asset"]["issuer"], issuer.0.to_string());
+    }
+
+    #[test]
+    fn create_contract_from_address_carries_address_and_salt() {
+        let addr = ScAddress::Contract(ContractId(Hash([0xCC; 32])));
+        let op = Operation {
+            source_account: None,
+            body: OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
+                host_function: HostFunction::CreateContract(CreateContractArgs {
+                    contract_id_preimage: ContractIdPreimage::Address(
+                        ContractIdPreimageFromAddress {
+                            address: addr.clone(),
+                            salt: Uint256([0xAB; 32]),
+                        },
+                    ),
+                    executable: ContractExecutable::Wasm(Hash([0xDE; 32])),
+                }),
+                auth: VecM::default(),
+            }),
+        };
+        let tx = build_v1_tx(vec![op]);
+        let inner = InnerTxRef::V1(&tx);
+        let result = extract_operations(&inner, None, "abcd1234", 100, 0);
+
+        let preimage = &result[0].details["contractIdPreimage"];
+        assert_eq!(preimage["type"], "from_address");
+        assert_eq!(preimage["address"], addr.to_string());
+        assert_eq!(preimage["salt"], hex::encode([0xAB; 32]));
+        // No asset fields on the from_address branch.
+        assert!(preimage["asset"].is_null());
+    }
+
+    #[test]
+    fn create_contract_v2_also_carries_preimage() {
+        let issuer = issuer_account_id();
+        let asset = Asset::CreditAlphanum4(AlphaNum4 {
+            asset_code: AssetCode4([b'E', b'U', b'R', b'T']),
+            issuer: issuer.clone(),
+        });
+        let op = Operation {
+            source_account: None,
+            body: OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
+                host_function: HostFunction::CreateContractV2(CreateContractArgsV2 {
+                    contract_id_preimage: ContractIdPreimage::Asset(asset),
+                    executable: ContractExecutable::StellarAsset,
+                    constructor_args: VecM::default(),
+                }),
+                auth: VecM::default(),
+            }),
+        };
+        let tx = build_v1_tx(vec![op]);
+        let inner = InnerTxRef::V1(&tx);
+        let result = extract_operations(&inner, None, "abcd1234", 100, 0);
+
+        assert_eq!(result[0].details["hostFunctionType"], "createContractV2");
+        let preimage = &result[0].details["contractIdPreimage"];
+        assert_eq!(preimage["type"], "from_asset");
+        assert_eq!(preimage["asset"]["asset_code"], "EURT");
+        assert_eq!(preimage["asset"]["issuer"], issuer.0.to_string());
     }
 
     // --- test helpers ---
