@@ -1688,6 +1688,28 @@ const SAC160_TX_HASH: &str = "ddd01600000000000000000000000000000000000000000000
 const SAC160_XLM_CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAXLMSAC";
 const SAC160_CREDIT_CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUSDSAC";
 
+/// Task 0160 drift-guard — the migration 0002 DML seed for the XLM-SAC
+/// issuer sentinel MUST contain the exact StrKey exported by the
+/// xdr-parser `XLM_SAC_ISSUER_SENTINEL` const. If either drifts without
+/// the other, the sentinel row in `accounts` mismatches what
+/// `detect_assets` emits for XLM-SAC, and the FK from
+/// `assets.issuer_id` fails silently on the first XLM-SAC deploy.
+///
+/// Compile-time `include_str!` so the test fails at build time if the
+/// migration file moves rather than masking as a runtime lookup miss.
+#[test]
+fn migration_0002_seed_matches_xlm_sac_issuer_sentinel_const() {
+    const MIGRATION: &str = include_str!("../../db/migrations/0002_identity_and_ledgers.sql");
+    assert!(
+        MIGRATION.contains(xdr_parser::XLM_SAC_ISSUER_SENTINEL),
+        "migration 0002 must seed the XLM-SAC sentinel StrKey ({}) \
+         as declared in xdr_parser::XLM_SAC_ISSUER_SENTINEL — drift \
+         caught by this test would otherwise only surface as a silent \
+         FK failure on the first XLM-SAC deploy.",
+        xdr_parser::XLM_SAC_ISSUER_SENTINEL
+    );
+}
+
 /// XLM-SAC deployment (Asset::Native preimage) → `assets` row gets the
 /// sentinel identity: asset_code = "XLM", issuer_id resolves to the
 /// migration-seeded sentinel account. Covers option (c) end-to-end.

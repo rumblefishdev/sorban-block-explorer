@@ -4,7 +4,7 @@ title: 'BUG: SAC deployments never land in assets — missing underlying asset_c
 type: BUG
 status: completed
 related_adr: ['0023', '0027', '0036']
-related_tasks: ['0120', '0124', '0154', '0161', '0163', '0164']
+related_tasks: ['0120', '0124', '0154', '0161', '0163', '0164', '0165']
 tags:
   [
     priority-high,
@@ -369,3 +369,29 @@ future work as prose only" rule:
   `CreateContractHostFn` auth-entry path).
 - **0164** — Multi-SAC-per-tx correlation (preimage-hash ↔
   contract_id when >1 SAC deploys per tx).
+- **0165** — Filter synthetic sentinel accounts from public API
+  (spawned from post-completion audit — sentinel StrKey is an
+  indexer artifact and must not leak into `/accounts`, `/search`,
+  or as a bare issuer value in `/assets` responses).
+
+### Deliberately not spawned
+
+- **CHECK constraint / immutable flag on sentinel row.** Theoretical
+  attack vector: someone sends on-chain payment to the sentinel
+  StrKey to pollute its `last_seen_ledger` / `home_domain` / tx
+  history. Nobody has the private key for all-zero Ed25519, but
+  the account can receive txs. Pollution is benign (wrong
+  last_seen, irrelevant tx history attribution). UX harm mitigated
+  by 0165's API-level filtering. Additional constraint / trigger /
+  flag adds complexity for negligible security gain; left
+  unaddressed until an actual incident demonstrates need.
+
+## Post-completion drift guard
+
+Follow-up B from the audit — added `migration_0002_seed_matches_xlm_sac_issuer_sentinel_const`
+unit test in `persist_integration.rs`. Uses `include_str!` on
+`crates/db/migrations/0002_identity_and_ledgers.sql` and asserts
+the seeded StrKey exactly matches `xdr_parser::XLM_SAC_ISSUER_SENTINEL`.
+Closes the cross-source drift gap between the Rust const and the
+migration DML — would otherwise have surfaced only as a silent FK
+failure on the first XLM-SAC deploy.
