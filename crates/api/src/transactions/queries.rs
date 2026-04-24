@@ -1,9 +1,11 @@
 //! Database queries for the transactions endpoints.
 
 use chrono::{DateTime, Utc};
-use domain::OperationType;
 use sqlx::postgres::PgRow;
 use sqlx::{PgPool, Row};
+
+use crate::common::cursor::TsIdCursor;
+use crate::common::pagination::push_ts_id_cursor_predicate;
 
 // ---------------------------------------------------------------------------
 // Internal row structs (not exposed in API response types)
@@ -52,7 +54,7 @@ pub struct OpRow {
 
 pub struct ResolvedListParams {
     pub limit: i64,
-    pub cursor: Option<(DateTime<Utc>, i64)>,
+    pub cursor: Option<TsIdCursor>,
     /// Raw `filter[source_account]` StrKey string, if provided.
     pub source_account: Option<String>,
     /// Raw `filter[contract_id]` StrKey string, if provided.
@@ -76,12 +78,6 @@ fn map_list_row(r: &PgRow) -> TxListRow {
         created_at: r.get("created_at"),
         operation_count: r.get("operation_count"),
     }
-}
-
-/// Parse `filter[operation_type]` string into the corresponding `i16` discriminant.
-/// Returns `Err` for unknown type names.
-pub fn parse_op_type(s: &str) -> Result<i16, ()> {
-    s.parse::<OperationType>().map(|t| t as i16).map_err(|_| ())
 }
 
 // ---------------------------------------------------------------------------
@@ -139,13 +135,9 @@ pub async fn fetch_list(
     }
 
     // Cursor predicate.
-    if let Some((cursor_ts, cursor_id)) = params.cursor {
+    if let Some(cursor) = &params.cursor {
         qb.push(if has_where { " AND" } else { " WHERE" });
-        qb.push(" (t.created_at, t.id) < (");
-        qb.push_bind(cursor_ts);
-        qb.push(", ");
-        qb.push_bind(cursor_id);
-        qb.push(")");
+        push_ts_id_cursor_predicate(&mut qb, "t.created_at", "t.id", cursor);
     }
 
     qb.push(" ORDER BY t.created_at DESC, t.id DESC LIMIT ");

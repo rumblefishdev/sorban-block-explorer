@@ -2,46 +2,23 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use domain::OperationType;
 
-use crate::openapi::schemas::{ErrorEnvelope, PageInfo, Paginated};
+use crate::common::cursor::TsIdCursor;
+use crate::common::errors;
+use crate::common::extractors::Pagination;
+use crate::common::filters;
+use crate::common::pagination::{finalize_ts_id_page, into_envelope};
+use crate::openapi::schemas::{ErrorEnvelope, Paginated};
 use crate::state::AppState;
 use crate::stellar_archive::extractors::{extract_e3_heavy, extract_e3_memo};
 use crate::stellar_archive::merge::merge_e3_response;
 
-use super::cursor;
 use super::dto::{ListParams, OperationItem, TransactionDetailLight, TransactionListItem};
 use super::queries::{
     ResolvedListParams, fetch_detail, fetch_list, fetch_operations, lookup_hash_index,
-    parse_op_type,
 };
-
-// ---------------------------------------------------------------------------
-// Error helper
-// ---------------------------------------------------------------------------
-
-fn err(status: StatusCode, code: &str, msg: &str) -> Response {
-    (
-        status,
-        Json(ErrorEnvelope {
-            code: code.to_string(),
-            message: msg.to_string(),
-            details: None,
-        }),
-    )
-        .into_response()
-}
-
-/// Shape-validate a Stellar StrKey: required prefix character + 56 total chars
-/// in the RFC 4648 base32 alphabet (`A-Z` + `2-7` — no `0`, `1`, `8`, `9`,
-/// which look like `O`, `I`, `B`, `g`). CRC validation is deliberately
-/// skipped — shape check catches the common typo / wrong-prefix cases that
-/// produce empty query results, while keeping the validator dependency-free.
-fn is_valid_strkey(s: &str, prefix: char) -> bool {
-    s.len() == 56 && s.starts_with(prefix) && s.chars().all(|c| matches!(c, 'A'..='Z' | '2'..='7'))
-}
 
 // ---------------------------------------------------------------------------
 // GET /v1/transactions
@@ -52,7 +29,13 @@ fn is_valid_strkey(s: &str, prefix: char) -> bool {
     get,
     path = "/transactions",
     tag = "transactions",
-    params(ListParams),
+    params(
+        ("limit" = Option<u32>, Query,
+         description = "Items per page (1–100, default 20)."),
+        ("cursor" = Option<String>, Query,
+         description = "Opaque pagination cursor from a previous response."),
+        ListParams,
+    ),
     responses(
         (status = 200, description = "Paginated transaction list",
          body = Paginated<TransactionListItem>),
@@ -62,73 +45,35 @@ fn is_valid_strkey(s: &str, prefix: char) -> bool {
 )]
 pub async fn list_transactions(
     State(state): State<AppState>,
+    pagination: Pagination<TsIdCursor>,
     Query(params): Query<ListParams>,
 ) -> Response {
-    // Validate and clamp limit.
-    let raw_limit = params.limit.unwrap_or(20);
-    if raw_limit == 0 || raw_limit > 100 {
-        return err(
-            StatusCode::BAD_REQUEST,
-            "invalid_limit",
-            "limit must be between 1 and 100",
-        );
-    }
-
-    // Decode optional cursor.
-    let cursor = match params.cursor.as_deref() {
+    // Validate and map filter[operation_type] via the shared enum parser.
+    let op_type: Option<i16> = match params.filter_operation_type.as_deref() {
         None => None,
-        Some(s) => match cursor::decode(s) {
-            Ok(v) => Some(v),
-            Err(_) => {
-                return err(
-                    StatusCode::BAD_REQUEST,
-                    "invalid_cursor",
-                    "cursor is malformed",
-                );
-            }
+        Some(s) => match filters::parse_enum::<OperationType>(s, "operation_type") {
+            Ok(t) => Some(t as i16),
+            Err(resp) => return resp,
         },
     };
 
-    // Validate and map filter[operation_type].
-    let op_type = match params.filter_operation_type.as_deref() {
-        None => None,
-        Some(s) => match parse_op_type(s) {
-            Ok(v) => Some(v),
-            Err(_) => {
-                return err(
-                    StatusCode::BAD_REQUEST,
-                    "invalid_filter",
-                    "filter[operation_type] is not a recognized operation type",
-                );
-            }
-        },
-    };
-
-    // Validate StrKey shape for source_account (G…) and contract_id (C…) —
-    // spec promises 400 for invalid filter values; without this check an
-    // invalid StrKey would silently produce an empty result set.
+    // Shape-validate StrKeys for source_account (G…) and contract_id (C…).
+    // Without this check an invalid StrKey would silently produce an empty
+    // result set; the shared validator returns the canonical 400 envelope.
     if let Some(acct) = params.filter_source_account.as_deref()
-        && !is_valid_strkey(acct, 'G')
+        && let Err(resp) = filters::strkey(acct, 'G', "source_account")
     {
-        return err(
-            StatusCode::BAD_REQUEST,
-            "invalid_filter",
-            "filter[source_account] is not a valid Stellar account StrKey (G…, 56 chars)",
-        );
+        return resp;
     }
     if let Some(cid) = params.filter_contract_id.as_deref()
-        && !is_valid_strkey(cid, 'C')
+        && let Err(resp) = filters::strkey(cid, 'C', "contract_id")
     {
-        return err(
-            StatusCode::BAD_REQUEST,
-            "invalid_filter",
-            "filter[contract_id] is not a valid Stellar contract StrKey (C…, 56 chars)",
-        );
+        return resp;
     }
 
     let resolved = ResolvedListParams {
-        limit: i64::from(raw_limit),
-        cursor,
+        limit: i64::from(pagination.limit),
+        cursor: pagination.cursor,
         source_account: params.filter_source_account,
         contract_id: params.filter_contract_id,
         op_type,
@@ -139,25 +84,12 @@ pub async fn list_transactions(
         Ok(r) => r,
         Err(e) => {
             tracing::error!("DB error in list_transactions: {e}");
-            return err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "db_error",
-                "database error",
-            );
+            return errors::internal_error(errors::DB_ERROR, "database error");
         }
     };
 
-    let has_more = rows.len() > raw_limit as usize;
-    if has_more {
-        rows.truncate(raw_limit as usize);
-    }
-
-    // Build next cursor from the last row on this page.
-    let next_cursor = if has_more {
-        rows.last().map(|r| cursor::encode(r.created_at, r.id))
-    } else {
-        None
-    };
+    // Trim limit+1 → limit, derive page info with cursor built from last row.
+    let page = finalize_ts_id_page(&mut rows, pagination.limit, |r| r.created_at, |r| r.id);
 
     // Collect unique ledger sequences and fetch XDR heavy fields concurrently
     // for memo_type / memo (ADR 0029). Failures degrade gracefully to null memo.
@@ -217,15 +149,7 @@ pub async fn list_transactions(
         })
         .collect();
 
-    Json(Paginated {
-        data,
-        page: PageInfo {
-            cursor: next_cursor,
-            limit: raw_limit,
-            has_more,
-        },
-    })
-    .into_response()
+    Json(into_envelope(data, page)).into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -260,8 +184,7 @@ pub async fn list_transactions(
 )]
 pub async fn get_transaction(State(state): State<AppState>, Path(hash): Path<String>) -> Response {
     if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
-        return err(
-            StatusCode::BAD_REQUEST,
+        return errors::bad_request(
             "invalid_hash",
             "hash must be a 64-character hexadecimal string",
         );
@@ -274,27 +197,19 @@ pub async fn get_transaction(State(state): State<AppState>, Path(hash): Path<Str
 
     let index = match lookup_hash_index(&state.db, &hash_bytes).await {
         Ok(Some(r)) => r,
-        Ok(None) => return err(StatusCode::NOT_FOUND, "not_found", "transaction not found"),
+        Ok(None) => return errors::not_found("transaction not found"),
         Err(e) => {
             tracing::error!("DB error looking up hash index: {e}");
-            return err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "db_error",
-                "database error",
-            );
+            return errors::internal_error(errors::DB_ERROR, "database error");
         }
     };
 
     let tx = match fetch_detail(&state.db, &hash_bytes, index.created_at).await {
         Ok(Some(r)) => r,
-        Ok(None) => return err(StatusCode::NOT_FOUND, "not_found", "transaction not found"),
+        Ok(None) => return errors::not_found("transaction not found"),
         Err(e) => {
             tracing::error!("DB error fetching transaction detail: {e}");
-            return err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "db_error",
-                "database error",
-            );
+            return errors::internal_error(errors::DB_ERROR, "database error");
         }
     };
 
@@ -303,11 +218,7 @@ pub async fn get_transaction(State(state): State<AppState>, Path(hash): Path<Str
             Ok(r) => r,
             Err(e) => {
                 tracing::error!("DB error fetching operations: {e}");
-                return err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "db_error",
-                    "database error",
-                );
+                return errors::internal_error(errors::DB_ERROR, "database error");
             }
         };
 
