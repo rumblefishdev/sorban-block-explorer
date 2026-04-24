@@ -309,8 +309,8 @@ The documented assumptions are:
 - schema migrations are versioned, managed via AWS CDK, and run before deploying new Lambda
   code
 - protocol changes affecting `LedgerCloseMeta` are handled by bumping the
-  pinned Rust `stellar-xdr` crate version (per ADR 0004); the JS
-  `@stellar/stellar-sdk` is used only on the frontend
+  pinned Rust `stellar-xdr` crate version (per ADR 0004); the frontend consumes
+  typed API responses via OpenAPI-generated TS client (task 0096).
 - protocol upgrades are infrequent and announced in advance
 
 ### 8.4 Open-Source Redeployability

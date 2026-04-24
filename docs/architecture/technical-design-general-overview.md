@@ -774,8 +774,9 @@ batch cannot overwrite fresher live state.
 pipeline before deploying new Lambda code.
 
 **Protocol upgrades:** when Stellar introduces a new CAP that changes `LedgerCloseMeta`
-structure, we update the pinned `stellar-xdr` Rust crate version. Protocol upgrades
-are infrequent and well-announced in advance.
+structure, we update the pinned `stellar-xdr` Rust crate version; the frontend consumes
+typed API responses via OpenAPI-generated TS client (task 0096). Protocol
+upgrades are infrequent and well-announced in advance.
 
 **Open-source re-deployability:** the full CDK stack is public; Stellar or any third party
 can fork the repository and deploy the entire system in a fresh AWS account.
