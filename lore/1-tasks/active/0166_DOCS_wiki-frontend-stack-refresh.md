@@ -2,7 +2,7 @@
 id: '0166'
 title: 'DOCS: Fix misassigned task IDs + refresh wiki frontend-stack snapshot'
 type: DOCS
-status: backlog
+status: active
 related_adr: []
 related_tasks: ['0165', '0058', '0059', '0066', '0067', '0077', '0084']
 tags: ['phase-maintenance', 'effort-small', 'priority-low', 'wiki', 'frontend']
@@ -18,6 +18,10 @@ history:
       to the feature described — legacy numbering from before the backlog
       was restructured. Fix the mapping and reconcile descriptions with
       actual frontend state.
+  - date: '2026-04-24'
+    status: active
+    who: stkrolikiewicz
+    note: 'Promoted to active.'
 ---
 
 # DOCS: Fix misassigned task IDs + refresh wiki frontend-stack snapshot
