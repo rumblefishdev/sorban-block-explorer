@@ -185,9 +185,9 @@ committed in a single atomic DB transaction:
 13. derive and upsert `liquidity_pools`, append `liquidity_pool_snapshots`,
     upsert `lp_positions`
 14. upsert `accounts` summary and `account_balances_current`
-    (the parallel `account_balance_history` append was removed per
-    [ADR 0035](../../../lore/2-adrs/0035_drop-account-balance-history.md) —
-    the step is a no-op until a replacement chart feature is re-scoped)
+    (the parallel `account_balance_history` append was removed in task 0159
+    per [ADR 0035](../../../lore/2-adrs/0035_drop-account-balance-history.md);
+    chart feature design deferred to launch time)
 
 ### 5.3 Write Target
 

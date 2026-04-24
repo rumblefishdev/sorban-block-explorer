@@ -28,6 +28,21 @@ history:
       (e) post-0031 refinements 0033-0036 (LIVE).
       ADR 0035 pre-applied ahead of task 0159 to eliminate the
       docs↔migration race risk.
+  - date: '2026-04-24'
+    status: mature
+    who: Karol Kowalczyk
+    note: >
+      3rd pass after merging origin/develop. Findings: task 0159
+      landed on develop (2026-04-24) dropping `account_balance_history`
+      from migrations + indexer code; my pre-apply now matches code
+      reality — updated DB §4.18 to drop "migrations still carry"
+      language. ADR 0035 flipped `proposed → accepted` (status column
+      updated below). No new ADRs 0037+ on develop. New active tasks
+      noted: 0160 (SAC asset identity bug — no schema change),
+      0163 (operations → operations_appearances refactor — ADR not
+      written yet, code unchanged; future doc sweep trigger when it
+      lands). New backlog: 0161, 0162. Only bookkeeping — no doc
+      reshapes required this pass.
 ---
 
 # Matrix: ADR 0001 → 0036 impact on `docs/architecture/**`
@@ -90,22 +105,35 @@ Mostly OBSOLETE via ADR 0029 (S3 offload abandoned). LIVE survivors called out.
 
 ## Matrix — Governance + Post-0031 Refinements (0032–0036)
 
-| ADR  | Status   | Decision in one line                                                                                         | TD       | DB                            | BE                      | FE            | IX       | IN       | XD               | AU                                  |
-| ---- | -------- | ------------------------------------------------------------------------------------------------------------ | -------- | ----------------------------- | ----------------------- | ------------- | -------- | -------- | ---------------- | ----------------------------------- |
-| 0032 | accepted | `docs/architecture/**` evergreen maintenance policy                                                          | §preface | §preface                      | §preface                | §preface      | §preface | §preface | §preface         | §header                             |
-| 0033 | accepted | `soroban_events` → `soroban_events_appearances` (appearance index, read-time detail via archive)             | §6.6     | §4.8                          | §6 events endpoint      | —             | §5       | —        | §4.4, §5.1       | §soroban_events (stale-notice)      |
-| 0034 | accepted | `soroban_invocations` → `soroban_invocations_appearances` (appearance index + `caller_id`, read-time detail) | §6.5     | §4.9                          | §6 invocations endpoint | —             | §5       | —        | §4.5, §5.2, §5.3 | §soroban_invocations (stale-notice) |
-| 0035 | proposed | Drop `account_balance_history` (unused denormalization)                                                      | §6.12    | §4 (remove §4.18 + §6.2 list) | —                       | —             | §5.3     | —        | §4.6             | —                                   |
-| 0036 | accepted | Rename `tokens` → `assets`; `classic` → `classic_credit`                                                     | §6.7     | §4.10                         | §6 assets endpoint      | §6 asset page | §5       | —        | —                | §assets (stale-notice)              |
+| ADR  | Status                                 | Decision in one line                                                                                         | TD       | DB                            | BE                      | FE            | IX       | IN       | XD               | AU                                  |
+| ---- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------ | -------- | ----------------------------- | ----------------------- | ------------- | -------- | -------- | ---------------- | ----------------------------------- |
+| 0032 | accepted                               | `docs/architecture/**` evergreen maintenance policy                                                          | §preface | §preface                      | §preface                | §preface      | §preface | §preface | §preface         | §header                             |
+| 0033 | accepted                               | `soroban_events` → `soroban_events_appearances` (appearance index, read-time detail via archive)             | §6.6     | §4.8                          | §6 events endpoint      | —             | §5       | —        | §4.4, §5.1       | §soroban_events (stale-notice)      |
+| 0034 | accepted                               | `soroban_invocations` → `soroban_invocations_appearances` (appearance index + `caller_id`, read-time detail) | §6.5     | §4.9                          | §6 invocations endpoint | —             | §5       | —        | §4.5, §5.2, §5.3 | §soroban_invocations (stale-notice) |
+| 0035 | accepted (task 0159 landed 2026-04-24) | Drop `account_balance_history` (unused denormalization)                                                      | §6.12    | §4 (remove §4.18 + §6.2 list) | —                       | —             | §5.3     | —        | §4.6             | —                                   |
+| 0036 | accepted                               | Rename `tokens` → `assets`; `classic` → `classic_credit`                                                     | §6.7     | §4.10                         | §6 assets endpoint      | §6 asset page | §5       | —        | —                | §assets (stale-notice)              |
 
-Pre-application notice: ADR 0035 is `proposed` in the ADR directory and its
-implementing task 0159 is still `active`. Docs describe the post-drop shape
-**anyway** — the stakeholder decision for task 0155 was that it's cheaper
-to pre-apply here than to leave the docs to collide with 0159's PR.
-Migrations still carry `account_balance_history` until 0159's `DROP TABLE`
-migration lands; the docs therefore lead the migrations on this one item.
+~~Pre-application notice:~~ **Resolved 2026-04-24 (3rd pass).** The pre-apply
+bet paid off — task 0159 landed on develop the same day, migrations dropped
+`account_balance_history`, ADR 0035 flipped to `accepted`. Docs and code are
+now consistent without a second PR. The pre-apply language ("migrations still
+carry the table") was removed from DB §4.18 on 2026-04-24 after the merge.
 
-## Key ground-truth facts (from `crates/db/migrations/**` at 2026-04-23)
+## Post-0155 backlog watch (future doc sweep triggers)
+
+Tasks created / activated on 2026-04-24 that are **not** in 0155 scope but
+will require a doc-sync PR when they land (per ADR 0032). Logged here so
+the next ADR / task PR remembers to update the architecture docs at merge
+time:
+
+| Task | Type     | Status               | Impact when it lands                                                                                                                                                                                                                     |
+| ---- | -------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0160 | BUG      | active               | SAC asset identity extraction — fix. **No schema change**; no doc reshape required                                                                                                                                                       |
+| 0161 | BUG      | backlog              | Native XLM singleton seed in `assets` — migration seed INSERT. Minor DB §4.10 narrative note (4 variants always populated after seed)                                                                                                    |
+| 0162 | FEATURE  | backlog              | Parser stops dropping `pool_share` trustlines; producer for `lp_positions`. Minor IX §5 / XD §4.6 note (pool_share now produces `lp_positions` upserts instead of being skipped)                                                         |
+| 0163 | REFACTOR | active (no code yet) | **`operations → operations_appearances`** — pattern from ADRs 0033/0034. Deep DB §4.4 rewrite + TD §6.3 + IX §5.2 + XD §4.3. ADR number TBD. **Next big doc sweep trigger** — when 0163's PR lands, it owns its docs update per ADR 0032 |
+
+## Key ground-truth facts (from `crates/db/migrations/**` at 2026-04-24 post-merge)
 
 These are the authoritative "what the docs must now say":
 
@@ -193,10 +221,11 @@ Order chosen to let each later pass benefit from the earlier one's fixes:
   a user-visible issue.
 - **`docs/database-audit-first-implementation.md` full regeneration** — this
   is a point-in-time per-table audit with write-path file:line refs; fully
-  regenerating it is orthogonal to `docs/architecture/**` sync and is
-  spawned as a follow-up chip from the task-0155 session. Task 0155 leaves
-  a top-level stale-notice and per-section markers on the three
-  most-changed tables.
+  regenerating it is orthogonal to `docs/architecture/**` sync. Stakeholder
+  decision on 2026-04-24 was to **preserve the snapshot** as a historical
+  artifact rather than regenerate. Task 0155 leaves a top-level
+  historical-snapshot notice and per-section markers on the three
+  most-changed tables; no follow-up planned.
 - **ADRs 0003 + 0009** — pure process/CI ADRs with no `docs/architecture/**`
   surface (task milestones, staging deploy trigger). Listed in the ADR
   survey but carry `—` across every doc-file column above.

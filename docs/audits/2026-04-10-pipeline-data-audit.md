@@ -4,6 +4,35 @@
 **Author:** stkrolikiewicz  
 **Scope:** Full pipeline data correctness audit + Deliverable 1 readiness assessment
 
+> **Historical snapshot (stale-notice added task 0155, 2026-04-24).**
+> This report is an **intentional point-in-time snapshot** captured on
+> 2026-04-10. Significant schema + pipeline changes have landed since the
+> generation date; the body below is retained as a historical artifact and
+> is **not** maintained evergreen. Deliverable 1 readiness conclusions still
+> hold where they reference behaviours that survived, but column / table
+> names and some fixtures are stale.
+>
+> Key schema changes that landed after 2026-04-10 and therefore make parts
+> of this report historical rather than current:
+>
+> - ADR 0030 — `soroban_contracts.id BIGSERIAL` surrogate + `contract_id VARCHAR(56) UNIQUE`
+> - ADR 0031 — enum-like columns flipped from `VARCHAR` to `SMALLINT`
+> - ADR 0033 / 0034 — `soroban_events` / `soroban_invocations` replaced with pure
+>   appearance indexes (`soroban_events_appearances`, `soroban_invocations_appearances`);
+>   parsed event / invocation payloads now live at read time in the public Stellar
+>   ledger archive per ADR 0029
+> - ADR 0035 — `account_balance_history` dropped
+> - ADR 0036 (task 0154) — `tokens` table renamed to `assets`
+>
+> **Authoritative sources for current state:**
+>
+> - [`docs/architecture/database-schema/database-schema-overview.md`](../architecture/database-schema/database-schema-overview.md)
+>   for current column types, constraints, relationships, and indexing
+> - [`docs/architecture/indexing-pipeline/indexing-pipeline-overview.md`](../architecture/indexing-pipeline/indexing-pipeline-overview.md)
+>   for current pipeline behaviour
+> - `crates/db/migrations/` for the live DDL
+> - `crates/indexer/src/handler/persist/*.rs` for current write-path code
+
 ---
 
 ## Table of Contents

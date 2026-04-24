@@ -31,6 +31,38 @@ history:
           Historical Backfill Flow all updated: backfill is a local
           `crates/backfill-bench` CLI, not a Fargate task.
       ADRs 0033/0034/0036 formalised as in-scope (were collateral).
+  - date: '2026-04-24'
+    status: developing
+    who: Karol Kowalczyk
+    note: >
+      3rd pass after merging origin/develop. Task 0159 landed on develop
+      the same day — migrations dropped `account_balance_history`, ADR
+      0035 flipped to `accepted`. Resolved ADR 0035 pre-apply status:
+      DB §4.18 trailer rewritten (no "migrations still carry" caveat
+      anymore); IX §5.2 step 14 narrative tightened (references task
+      0159 landing). Matrix row for ADR 0035 bumped to `accepted`.
+      New backlog-watch section added at matrix end listing tasks 0160,
+      0161, 0162, 0163 as future doc-sweep triggers under ADR 0032
+      steady-state maintenance (none in 0155 scope; logged for the
+      reviewer's awareness). Merge commit introduced 5 new task files
+      and 1 archive move; no architecture docs changes from develop
+      side because 0159 only touched migrations + indexer + test code,
+      not docs/architecture/** files.
+  - date: '2026-04-24'
+    status: developing
+    who: karolkow
+    note: >
+      Post-3rd-pass review pass surfaced and fixed 3 drifts in `docs/`:
+      DB §4.13 CHECK name (`ck_nft_ownership_event_type_range` →
+      `ck_nft_own_event_type_range` per migration); DB §4.8/§4.9 stale
+      "outside this audit's 0022-0031 scope" language (scope was
+      expanded in 2nd pass, cleaned up); TD §6.5 ADR reference
+      (clarified to primary 0034 + pattern-from-0033 parenthetical).
+      Additionally updated two docs outside `docs/architecture/**` at
+      stakeholder request — on top of the main acceptance-criteria
+      scope — to close residual drift from upstream PRs that did not
+      sync their own docs: `crates/db/MIGRATIONS.md` (tables-per-migration
+      table + partitioned-tables list updated for ADRs 0033/0034/0035/0036);
 ---
 
 # Per-file reconciliation worklog (Step 2)
@@ -397,3 +429,68 @@ content unchanged; matrix + this worklog updated to reflect.
   post-0029 reality (E3 + E14 do archive fetch). No separate matrix
   embedded but the individual routes + their §6 data access section
   convey the same information.
+
+---
+
+## 3rd pass (2026-04-24) — post-develop-merge reconciliation
+
+Fetched `origin/develop` and merged in to sync the 0155 branch with
+upstream. 7 commits pulled in, dominated by task 0159 (`account_balance_history`
+drop) which landed the same day.
+
+### Task 0159 / ADR 0035 — resolved pre-apply
+
+2nd-pass pre-apply bet paid off: develop-side PR #117 landed the drop,
+so migrations + indexer code now match the docs I had already updated.
+Cleanup:
+
+- DB §4.18 trailer — removed the "migrations still carry until 0159's
+  DROP TABLE lands" sentence; replaced with "migration 0007 no longer
+  creates the table; 0159 PR trimmed indexer + domain types"
+- IX §5.2 step 14 — narrative tightened to reference task 0159 landing
+  (was "no-op until a replacement chart feature is re-scoped")
+- Matrix row for ADR 0035 status: `proposed` → `accepted (task 0159 landed 2026-04-24)`
+- Matrix pre-application notice section — struck through + resolved
+
+### ADR 0027 / ADR 0021 develop-side tweaks — no impact
+
+- ADR 0027 frontmatter normalised `superseded_by` to list form (Copilot
+  review feedback on PR #117). No body change.
+- ADR 0021 row in §"Schema tables" table: `tokens` → `assets` +
+  `classic` → `classic_credit` (late mechanical token-rename completion
+  from commit b3fa5d0 pre-dating task 0155). No impact on my docs —
+  the rename was already applied in my 0155 1st pass.
+
+### Post-0155 backlog watch — added to matrix
+
+Four tasks created or activated on 2026-04-24 that are **not** in 0155
+scope but will require architecture-doc updates per ADR 0032 when they
+land. Logged in the matrix "Post-0155 backlog watch" section:
+
+| Task | Type     | Status (at 2026-04-24 end-of-day) | Next doc-sweep trigger?                                                                               |
+| ---- | -------- | --------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| 0160 | BUG      | active                            | **No** — pure bug fix in parser + staging; schema unchanged                                           |
+| 0161 | BUG      | backlog                           | Minor — DB §4.10 narrative when seed lands (native XLM always-populated)                              |
+| 0162 | FEATURE  | backlog                           | Minor — IX §5 / XD §4.6 when parser stops dropping pool_share trustlines                              |
+| 0163 | REFACTOR | active (no code)                  | **Major** — `operations → operations_appearances` rewrite will hit DB §4.4, TD §6.3, IX §5.2, XD §4.3 |
+
+0163 was flagged but explicitly not pre-applied: no ADR written yet,
+no code yet, so pre-apply would put docs ahead of a target shape that
+could still change. When the implementing PR lands it owns its own
+doc update per ADR 0032.
+
+### Code changes from merge
+
+All in 0159's PR #117 footprint:
+
+- `crates/db/migrations/0007_account_balances.sql` — `account_balance_history` DDL deleted
+- `crates/domain/src/account.rs`, `balance.rs` — types trimmed
+- `crates/indexer/src/handler/persist/mod.rs`, `staging.rs`, `write.rs` — 14c pipeline stage removed
+- `crates/indexer/tests/persist_integration.rs` — integration tests trimmed
+- `crates/db-partition-mgmt/src/lib.rs` — partition list trimmed
+- `crates/backfill-bench/src/main.rs` — one-line trim
+
+None of these touch `docs/architecture/**`. Confirms that task 0159 relied
+on task 0155 to carry the evergreen docs side of ADR 0035 — which is the
+pattern ADR 0032 is there to formalise for future tasks, but worked here
+by explicit 2nd-pass pre-apply.

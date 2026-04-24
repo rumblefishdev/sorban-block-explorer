@@ -2,7 +2,7 @@
 id: '0155'
 title: 'DOCS: audit `docs/architecture/**` against full ADR history, bring up to date'
 type: DOCS
-status: active
+status: completed
 related_adr:
   [
     '0001',
@@ -103,6 +103,37 @@ history:
       ahead of its implementing task 0159 to prevent a docs↔migration race
       after 0159 lands. ADR 0033/0034 collateral promoted from "outside scope"
       to formally in-scope.
+  - date: '2026-04-24'
+    status: active
+    who: karolkow
+    note: >
+      3rd pass — merged `origin/develop` into the 0155 branch to bring in
+      task 0159's landing (dropped `account_balance_history` from
+      migrations + indexer code + tests). Clean merge, zero conflicts.
+      Pre-apply bet paid off: docs already matched the post-0159 reality,
+      so the 3rd pass was pure cleanup — removed "migrations still carry"
+      caveat in DB §4.18, tightened IX §5.2 step 14 narrative, flipped
+      ADR 0035 row in matrix from `proposed` to `accepted`, added
+      "Post-0155 backlog watch" section to matrix for future doc sweep
+      triggers (tasks 0160, 0161, 0162, 0163 — none in 0155 scope, logged
+      for reviewer awareness). No new ADRs 0037+ introduced on develop,
+      so matrix and per-file worklog remain complete.
+  - date: '2026-04-24'
+    status: completed
+    who: karolkow
+    note: >
+      Task complete. 3 passes + review pass + out-of-scope bonus fixes.
+      Deliverables: 7 `docs/architecture/**` files reconciled (5 rewritten,
+      1 minor sync, 1 no-change) + `docs/database-audit-first-implementation.md`
+      stale-notice + `docs/audits/2026-04-10-pipeline-data-audit.md`
+      stale-notice + `crates/db/MIGRATIONS.md` drift fix + ADR template
+      delivery checklist + task template docs-updated criterion + root
+      CLAUDE.md evergreen rule. Matrix covers ADRs 0001-0036 (26 live
+      ADRs + 10 obsolete/process skipped with rationale). Worklog has
+      per-file entries with verdict + diff summary + 2nd-pass + 3rd-pass
+      sections. AC 8/10 satisfied (1 human PR review pending, 1 markdown
+      lint N/A — project uses prettier which passes). Zero tests broken
+      (doc-only change). No new ADRs needed.
 ---
 
 # DOCS: audit `docs/architecture/**` against ADR history, bring up to date
@@ -307,3 +338,126 @@ to update docs will fail the template's own checklist.
   describes XLM handling, the audit may flag it as "current behavior
   has a known limitation, noted in note §6.6" and link the note, but
   it does not try to resolve the underlying gap.
+
+## Implementation Notes
+
+**3 passes + review + out-of-scope bonus.** Delivered in a single day
+(2026-04-24).
+
+### Artifacts produced
+
+- `notes/G-adr-doc-matrix.md` — 27-row matrix (ADRs 0001-0036) grouped by
+  category: process/infra/API (0001-0010), schema evolution chain
+  (0011-0021), core rework (0022-0031), governance + post-0031 (0032-0036).
+  Includes backlog-watch section for tasks 0160-0163 flagged on develop.
+- `notes/worklog.md` — per-file reconciliation log (rows 1-8) with
+  verdicts (rewritten / minor sync / no change / stale-notice) plus
+  2nd-pass and 3rd-pass summary sections.
+
+### Files touched in `docs/architecture/**`
+
+| File                                              | Verdict    | Scope                                                                                |
+| ------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------ |
+| `database-schema/database-schema-overview.md`     | rewritten  | §1-§8 all touched; 18 table subsections (6 new); ADR 0035 drop-notice in §4.18       |
+| `technical-design-general-overview.md`            | rewritten  | §2.2, §3, §4 pipeline + §4.3, §5 XDR parsing, §6 all 12 table blocks, ASCII diagrams |
+| `xdr-parsing/xdr-parsing-overview.md`             | rewritten  | Every section — two-path parser model, appearance-index extraction, ADR 0029 framing |
+| `indexing-pipeline/indexing-pipeline-overview.md` | rewritten  | §5.2 14-step `persist_ledger`, §5.3 inventory, §6 local backfill (ADR 0010)          |
+| `infrastructure/infrastructure-overview.md`       | minor sync | §2.2, §2.3, §5.3, §5.4, §6.4, §8 — Rust parser + public archive read path + ADR 0010 |
+| `backend/backend-overview.md`                     | minor sync | §4.1 surrogate-key + archive read bullets, §4.2, §7.1                                |
+| `frontend/frontend-overview.md`                   | no changes | No schema-shape references; API field names preserved by ADR 0026/0030 surface lock  |
+
+### Files touched outside `docs/architecture/**`
+
+- `docs/database-audit-first-implementation.md` — historical-snapshot header + per-section pointers (not regenerated, kept as point-in-time artifact)
+- `docs/audits/2026-04-10-pipeline-data-audit.md` — same treatment
+- `crates/db/MIGRATIONS.md` — drift cleanup (0004 / 0005 / 0007 table refs, partitioned list)
+- `lore/2-adrs/_template.md` — new Delivery Checklist section (7 doc boxes + link requirement)
+- `lore/1-tasks/_template.md` — new "Docs updated" acceptance criterion
+- `CLAUDE.md` (root) — new "Evergreen Architecture Docs" section linking ADR 0032
+
+### Pre-apply decision
+
+ADR 0035 (drop `account_balance_history`) was `proposed` when the 2nd pass ran.
+Docs were written assuming the post-drop shape **ahead of** the implementing
+task 0159's code landing. This was a deliberate bet to avoid a docs↔migration
+race on PR merge day. The bet paid off: 0159 landed on develop the same day
+as 0155's 2nd pass; the 3rd pass merged develop in, migrations caught up,
+and the pre-apply language was cleaned up without incident.
+
+## Design Decisions
+
+### From Plan
+
+1. **Matrix-first, sweep-second** (Step 1 → Step 2 per task body). Matrix
+   as the contract keeps the sweep mechanical and prevents scope creep.
+2. **Templates + root CLAUDE.md closing the loop** (Step 4 per task body).
+   The ADR 0032 evergreen policy is unenforceable without the template
+   hooks; adding them closes the door on future drift.
+3. **Audit doc (`database-audit-first-implementation.md`) stale-notice
+   instead of regeneration** — tracked as `minor sync` verdict with
+   follow-up chip. Audit is a different kind of doc (snapshot with
+   `file:line` refs) and mixing its regeneration into 0155 would bloat
+   the PR.
+
+### Emerged
+
+4. **Scope expansion to ADRs 0001-0036** — task body scoped only 0022-0031;
+   stakeholder widened on 2026-04-24. Rationale: partial sweep leaves the
+   other half unreflected on merge day, contradicting the spirit of the
+   ADR 0032 catch-up. Matrix was extended, worklog §"2nd pass" added,
+   4 new docs touched (IN, IX, backend) for ADR 0010 drift.
+5. **ADR 0035 pre-apply** — normally docs follow code, but task 0159 was
+   scheduled to land concurrently with 0155's PR. Pre-applying the drop
+   to docs eliminated the race; the 3rd-pass merge confirmed it worked.
+6. **ADR 0033/0034 collateral → formally in-scope** — the old tables
+   (`soroban_events`, `soroban_invocations`) don't exist in migrations,
+   so the docs had to describe the `_appearances` counterparts to be
+   internally consistent. 2nd pass scope expansion promoted this from
+   "collateral" to "in-scope".
+7. **`crates/db/MIGRATIONS.md` + `docs/audits/2026-04-10-pipeline-data-audit.md`
+   fixes outside `docs/architecture/**`\*\* — stakeholder bonus request.
+   Found same drift patterns outside the formal scope; fixed in-pass to
+   avoid leaving known drift behind.
+8. **Audit doc chip follow-up dismissed** — stakeholder chose to treat the
+   audit as a permanent historical snapshot, not a document to regenerate.
+   Worklog entry for file #2 and audit-doc header both explicitly state
+   "no regeneration planned".
+9. **`docs/audits/2026-04-10-pipeline-data-audit.md` same treatment** —
+   same kind of doc (point-in-time audit), same reasoning applied; just
+   a header stale-notice.
+10. **Research-notes stash** — user added 8 `R-*.md` research notes
+    (totalling ~4k lines) between sessions; agreed these are out of
+    scope for the 0155 PR and stashed them (`git stash@{0}`) rather
+    than committing. Recoverable via `git stash pop`.
+
+## Issues Encountered
+
+- **Git stash -u + pathspec quirk**: `git stash push -u -- <paths>` captures
+  all untracked in working tree, ignoring pathspec. Workaround: `git add`
+  the files first, then `git stash push -- <paths>` (no `-u`). Fresh stash
+  contained only the target files, not collateral.
+- **`git stash show --stat` showed more than expected**: default compares
+  stash state to HEAD, which includes every difference, even unaffected.
+  Misleading but not a bug. Working tree verification confirmed the stash
+  had removed only the target files.
+- **1st-pass spurious column in DB §4.5**: introduced `role SMALLINT` on
+  `transaction_participants`. Caught in 2nd pass by re-verifying against
+  migration 0003. Real table is 3-col per ADR 0020.
+- **1st-pass Fargate references for backfill (TD, IX, IN)**: narrative
+  inherited from pre-ADR-0010 docs. Caught in 2nd pass; ADR 0010 is LIVE,
+  backfill is local CLI. Fixed.
+- **Review-pass finding #1 (constraint name drift)**: DB §4.13 had
+  `ck_nft_ownership_event_type_range`; migration uses `ck_nft_own_event_type_range`.
+  Fixed in review pass.
+- **Review-pass findings #2/#3 (stale "outside scope" language, ADR ref
+  precision)**: DB §4.8/§4.9 and TD §6.5 still contained 1st-pass
+  "outside this audit's 0022-0031 scope" language that was stale after
+  the 2nd-pass scope expansion. Fixed in review pass.
+
+## Future Work
+
+None spawned by 0155. Tasks already on develop (0160/0161/0162/0163) are
+the natural follow-ups to the docs-reflecting-code sync, but they are
+owned by their respective authors and will update docs per the ADR 0032
+checklist at their own merge time. Logged in the matrix "Post-0155
+backlog watch" section for reviewer awareness.

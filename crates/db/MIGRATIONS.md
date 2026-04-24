@@ -47,17 +47,17 @@ Write the schema change in `.up.sql` and its reverse in `.down.sql`.
 
 The 0001-0007 migrations produce the schema defined by ADR 0027 (post-surrogate snapshot). Pre-ADR migrations (the previous 0001-0009 chain) were wiped under task 0140 and archived locally to `.trash/migrations-pre-adr-0027/`. `.trash/` is git-ignored (per project deletion policy), so the authoritative record of the old chain is git history itself — inspect any commit before `89f4335` to recover the pre-ADR migrations.
 
-| #    | File                                   | Tables                                                                                     |
-| ---- | -------------------------------------- | ------------------------------------------------------------------------------------------ |
-| 0001 | `0001_extensions.sql`                  | `pg_trgm` extension                                                                        |
-| 0002 | `0002_identity_and_ledgers.sql`        | `ledgers`, `accounts`, `wasm_interface_metadata`, `soroban_contracts`                      |
-| 0003 | `0003_transactions_and_operations.sql` | `transactions`, `transaction_hash_index`, `operations`, `transaction_participants`         |
-| 0004 | `0004_soroban_activity.sql`            | `soroban_events`, `soroban_invocations`                                                    |
-| 0005 | `0005_tokens_nfts.sql`                 | `tokens`, `nfts`, `nft_ownership`                                                          |
+| #    | File                                   | Tables                                                                                             |
+| ---- | -------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| 0001 | `0001_extensions.sql`                  | `pg_trgm` extension                                                                                |
+| 0002 | `0002_identity_and_ledgers.sql`        | `ledgers`, `accounts`, `wasm_interface_metadata`, `soroban_contracts`                              |
+| 0003 | `0003_transactions_and_operations.sql` | `transactions`, `transaction_hash_index`, `operations`, `transaction_participants`                 |
+| 0004 | `0004_soroban_activity.sql`            | `soroban_events_appearances` (ADR 0033), `soroban_invocations_appearances` (ADR 0034)              |
+| 0005 | `0005_tokens_nfts.sql`                 | `assets` (ADR 0036; renamed from `tokens`), `nfts`, `nft_ownership`                                |
 | 0006 | `0006_liquidity_pools.sql`             | `liquidity_pools`, `liquidity_pool_snapshots`, `lp_positions` (+ deferred `operations.pool_id` FK) |
-| 0007 | `0007_account_balances.sql`            | `account_balances_current`, `account_balance_history`                                      |
+| 0007 | `0007_account_balances.sql`            | `account_balances_current` (ADR 0035 dropped `account_balance_history`)                            |
 
-Partitioned tables (`transactions`, `operations`, `transaction_participants`, `soroban_events`, `soroban_invocations`, `nft_ownership`, `liquidity_pool_snapshots`, `account_balance_history`) create the parent only. Monthly partitions are provisioned by the partition-management Lambda (`crates/db-partition-mgmt`).
+Partitioned tables (`transactions`, `operations`, `transaction_participants`, `soroban_events_appearances`, `soroban_invocations_appearances`, `nft_ownership`, `liquidity_pool_snapshots`) create the parent only. Monthly partitions are provisioned by the partition-management Lambda (`crates/db-partition-mgmt`).
 
 ## Offline builds (SQLX_OFFLINE)
 

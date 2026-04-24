@@ -1021,10 +1021,10 @@ CREATE TABLE soroban_contracts (
 
 ### 6.5 Soroban Invocations — Appearance Index
 
-Per [ADR 0033](../../lore/2-adrs/0033_soroban-events-appearances-read-time-detail.md) /
-[ADR 0034](../../lore/2-adrs/0034_soroban-invocations-appearances-read-time-detail.md),
+Per [ADR 0034](../../lore/2-adrs/0034_soroban-invocations-appearances-read-time-detail.md),
 the former per-node `soroban_invocations` table was replaced with a pure appearance
-index; full per-node decode happens at read time from the public archive.
+index; full per-node decode happens at read time from the public archive
+(pattern shared with ADR 0033 for events).
 
 ```sql
 CREATE TABLE soroban_invocations_appearances (

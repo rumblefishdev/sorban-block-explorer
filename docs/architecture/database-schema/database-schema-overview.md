@@ -486,11 +486,11 @@ Design notes:
 - this is a pure **appearance index** — the parsed event payload (event type, topics,
   data, per-event index within a tx, transfer triple) is **not** stored in the DB. It
   is fetched at read time from the public Stellar ledger archive and re-expanded on
-  demand via `xdr_parser::extract_events`. This mirrors
+  demand via `xdr_parser::extract_events`. Formalised by
+  [ADR 0033](../../../lore/2-adrs/0033_soroban-events-appearances-read-time-detail.md)
+  on top of
   [ADR 0029](../../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md)'s
-  read-time XDR fetch policy and was formalised for events in ADR 0033 (outside this
-  audit's 0022–0031 scope — listed here because the physical table name is current
-  reality)
+  read-time XDR fetch policy
 - `contract_id` is the `BIGINT` surrogate FK per
   [ADR 0030](../../../lore/2-adrs/0030_contracts-surrogate-bigint-id.md)
 - partitioned on `created_at` mirroring `transactions`; cascade via composite FK
@@ -530,8 +530,9 @@ Design notes:
 - like §4.8, this is a pure **appearance index**; per-node detail (function name,
   per-node index, successful flag, function args, return value, depth) lives at read
   time in the public Stellar archive and is re-expanded by
-  `xdr_parser::extract_invocations`. Formalised by ADR 0034 (outside this audit's
-  0022–0031 scope — listed because it is the current physical shape)
+  `xdr_parser::extract_invocations`. Formalised by
+  [ADR 0034](../../../lore/2-adrs/0034_soroban-invocations-appearances-read-time-detail.md)
+  on top of ADR 0029's read-time XDR fetch policy
 - `caller_id` is the root-level caller of the trio. The staging-time
   `is_strkey_account` filter retains G-accounts verbatim and collapses C-contract
   sub-invocation callers to NULL so that "unique **account** callers" is answerable
@@ -690,7 +691,7 @@ CREATE TABLE nft_ownership (
     PRIMARY KEY (nft_id, created_at, ledger_sequence, event_order),
     FOREIGN KEY (transaction_id, created_at)
         REFERENCES transactions (id, created_at) ON DELETE CASCADE,
-    CONSTRAINT ck_nft_ownership_event_type_range CHECK (event_type BETWEEN 0 AND 15)
+    CONSTRAINT ck_nft_own_event_type_range CHECK (event_type BETWEEN 0 AND 15)
 ) PARTITION BY RANGE (created_at);
 ```
 
@@ -855,19 +856,19 @@ Design notes:
 
 ### 4.18 ~~Account Balance History~~ (dropped)
 
-Per [ADR 0035](../../../lore/2-adrs/0035_drop-account-balance-history.md) /
-task 0159, the `account_balance_history` table is dropped: its only intended
-consumer was a "balance over time" chart endpoint that is deferred
-indefinitely, and the DB was carrying ~90 GB of unread partitioned data at
-11 M-ledger projection.
+Per [ADR 0035](../../../lore/2-adrs/0035_drop-account-balance-history.md)
+(accepted) / task 0159 (completed), the `account_balance_history` table has
+been dropped: its only intended consumer was a "balance over time" chart
+endpoint that is deferred indefinitely, and the DB was carrying ~90 GB of
+unread partitioned data at 11 M-ledger projection.
 
 Current balance state lives entirely in `account_balances_current` (§4.17).
 If the chart feature is re-scoped in the future, a dedicated ADR will define
 a new materialisation shape (append-only vs daily rollup, retention window,
 etc.); the old table shape is not the assumed starting point.
 
-The migrations still carry the table until task 0159's `DROP TABLE` lands;
-this doc leads the migrations on that one item by agreement in task 0155.
+Migration `0007_account_balances.sql` no longer creates the table; the
+indexer write path and domain types were trimmed in the 0159 PR.
 
 ## 5. Relationships and Data Flow
 
