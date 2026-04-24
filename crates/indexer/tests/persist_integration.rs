@@ -1898,7 +1898,7 @@ async fn classic_to_sac_greatest_promotion_is_monotonic() {
     persist_ledger(
         &pool,
         &ledger,
-        &[tx.clone()],
+        std::slice::from_ref(&tx),
         &empty_ops,
         &empty_events,
         &empty_invocations,
