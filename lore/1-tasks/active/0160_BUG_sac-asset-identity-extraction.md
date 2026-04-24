@@ -3,7 +3,7 @@ id: '0160'
 title: 'BUG: SAC deployments never land in assets — missing underlying asset_code/issuer extraction'
 type: BUG
 status: active
-related_adr: ['0023', '0027', '0036']
+related_adr: ['0023', '0024', '0036', '0037']
 related_tasks: ['0120', '0124', '0154']
 tags: [priority-high, effort-small, layer-indexer, layer-xdr-parser, audit-gap]
 milestone: 1
@@ -28,6 +28,13 @@ history:
       Activated. Highest-impact of the three audit-gap tasks (0160/0161/0162)
       — SAC/classic is the dominant asset population on mainnet, so this
       directly unblocks `assets` table completeness.
+  - date: '2026-04-24'
+    status: active
+    who: stkrolikiewicz
+    note: >
+      Frontmatter ADR refs updated — dropped superseded `0027`, added
+      `0037` (current authoritative schema) and `0024` (BYTEA(32) hash
+      constraint for assets). No scope change.
 ---
 
 # BUG: SAC deployments never land in assets — missing underlying asset_code/issuer extraction

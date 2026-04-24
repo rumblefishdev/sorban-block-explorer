@@ -3,7 +3,7 @@ id: '0135'
 title: 'Indexer: ongoing token holder_count tracking'
 type: FEATURE
 status: blocked
-related_adr: []
+related_adr: ['0037']
 related_tasks: ['0027', '0049', '0119']
 tags: [priority-medium, effort-medium, layer-indexer, layer-db, audit-gap]
 milestone: 1

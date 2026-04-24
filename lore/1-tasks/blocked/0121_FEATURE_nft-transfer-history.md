@@ -3,7 +3,7 @@ id: '0121'
 title: 'NFT transfer history: schema + API endpoint'
 type: FEATURE
 status: blocked
-related_adr: []
+related_adr: ['0037']
 related_tasks: ['0051', '0118', '0136']
 blocked_by: ['0118', '0136']
 tags: [priority-medium, effort-medium, layer-backend, layer-db, audit-gap]
