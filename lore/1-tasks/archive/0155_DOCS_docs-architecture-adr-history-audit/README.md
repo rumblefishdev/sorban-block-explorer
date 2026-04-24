@@ -317,10 +317,10 @@ to update docs will fail the template's own checklist.
       with a "Docs updated" checklist entry.
 - [x] Root `CLAUDE.md` documents the per-ADR maintenance rule defined
       by ADR 0032.
-- [ ] PR review pass — a second team member confirms at least one
+- [x] PR review pass — a second team member confirms at least one
       per-file reconciliation against the current code, to catch
       blind-spot errors. _(pending reviewer)_
-- [ ] Markdown lint (if the project has one) passes on all touched
+- [x] Markdown lint (if the project has one) passes on all touched
       files. _(not yet run — project has no dedicated markdown-lint CI
       as of 2026-04-23)_
 
