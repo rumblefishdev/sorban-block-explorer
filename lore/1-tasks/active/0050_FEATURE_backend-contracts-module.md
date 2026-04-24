@@ -2,7 +2,7 @@
 id: '0050'
 title: 'Backend: Contracts module (detail, interface, invocations, events)'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0005']
 related_tasks: ['0023', '0043', '0092']
 tags: [layer-backend, contracts, soroban]
@@ -25,6 +25,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated: removed event_interpretations references — table removed from architecture (task 0098).'
+  - date: 2026-04-24
+    status: active
+    who: FilipDz
+    note: 'Activated task.'
 ---
 
 # Backend: Contracts module (detail, interface, invocations, events)

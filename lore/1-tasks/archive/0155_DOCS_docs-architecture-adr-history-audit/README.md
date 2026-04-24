@@ -134,6 +134,21 @@ history:
       sections. AC 8/10 satisfied (1 human PR review pending, 1 markdown
       lint N/A — project uses prettier which passes). Zero tests broken
       (doc-only change). No new ADRs needed.
+  - date: '2026-04-24'
+    status: completed
+    who: karolkow
+    note: >
+      4th pass — second develop merge brought in task 0163 (operations →
+      operations_appearances appearance-index refactor, PR #118) and task
+      0046 (transactions endpoints, PR #114). 2 merge conflicts resolved
+      (DB + TD took HEAD, 0163 refactor applied on top). Affected files:
+      DB §4.4 full rewrite (new UNIQUE NULLS NOT DISTINCT, `amount BIGINT`
+      replaces `transfer_amount`, `application_order` dropped) + scattered
+      refs across §3/§5/§6/§7; TD §6.3 DDL rewrite + §3 ASCII + §4.1
+      pipeline step + scattered; IX §5.2 step 6 rewrite; XD §4.3 rewrite;
+      MIGRATIONS.md 0003/0006/partition-list. Task 0046 — API surface
+      already documented, no doc change. Backlog-watch 0163 entry
+      resolved; 0160/0161/0162 unchanged.
 ---
 
 # DOCS: audit `docs/architecture/**` against ADR history, bring up to date

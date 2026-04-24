@@ -310,7 +310,7 @@ The backend serves data from the block explorer's own database, adding:
   response. Per
   [ADR 0029](../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md),
   the DB does not store raw XDR — typed summary columns on `transactions` /
-  `operations` are sufficient for list endpoints, and read-time archive fetch
+  `operations_appearances` are sufficient for list endpoints, and read-time archive fetch
   powers the detail endpoints
 
 The backend does **not** call Horizon or any private chain API. Its dependencies are
@@ -471,7 +471,8 @@ Caching operates at two levels:
 │                             │                                                 │
 │  ┌──────────────────────────▼───────────────────────────┐                     │
 │  │ RDS PostgreSQL (block explorer's own schema)         │                     │
-│  │ ledgers · transactions · operations · accounts       │                     │
+│  │ ledgers · transactions · operations_appearances      │                     │
+│  │ accounts · transaction_participants · tx_hash_index  │                     │
 │  │ soroban_contracts · wasm_interface_metadata · assets │                     │
 │  │ soroban_events_appearances · soroban_invocations_…   │                     │
 │  │ nfts · nft_ownership · liquidity_pools · lp_…        │                     │
@@ -666,10 +667,12 @@ Stellar Network (mainnet peers)
 │     fee, successful, application_order, operation_count,│
 │     has_soroban, inner_tx_hash → transactions           │
 │     (no raw envelope/result XDR — ADR 0029)             │
-│  5. Extract operations: type (SMALLINT), source_id,     │
+│  5. Aggregate operations by identity (type, source_id,  │
 │     destination_id, contract_id, asset_code,            │
-│     asset_issuer_id, pool_id, transfer_amount →         │
-│     operations (no details JSONB)                       │
+│     asset_issuer_id, pool_id) → `operations_appearances`│
+│     with `amount BIGINT` counting collapsed duplicates  │
+│     (ADR 0163 — no transfer_amount, no application_order,│
+│     no details JSONB)                                   │
 │  6. Resolve StrKeys → surrogate ids for accounts and    │
 │     soroban_contracts (ADRs 0026/0030)                  │
 │  7. Soroban events: one appearance row per              │
@@ -787,7 +790,7 @@ XDR parsing happens in two places, each with a different scope:
 - **Ledger Processor Lambda (ingestion time):** the primary parsing path. Every
   ledger's `LedgerCloseMeta` is fully deserialized using the Rust `stellar-xdr`
   crate (ADR 0004). The ingestion path extracts the **typed summary columns**
-  that populate `transactions`, `operations`, `soroban_contracts`, `assets`,
+  that populate `transactions`, `operations_appearances`, `soroban_contracts`, `assets`,
   `nfts`, `liquidity_pools`, and the surrogate-keyed hubs (`accounts`,
   `soroban_contracts`), plus the appearance-index rows for
   `soroban_events_appearances` and `soroban_invocations_appearances`. No raw XDR
@@ -915,7 +918,7 @@ Cross-cutting schema disciplines applied to every table:
   is `BYTEA` with `CHECK (octet_length(...) = 32)` — rendered as lowercase hex at the
   API layer.
 - **SMALLINT enums** ([ADR 0031](../../lore/2-adrs/0031_enum-columns-smallint-with-rust-enum.md)):
-  every closed-domain "type" column (`operations.type`, `assets.asset_type`,
+  every closed-domain "type" column (`operations_appearances.type`, `assets.asset_type`,
   `soroban_contracts.contract_type`, `nft_ownership.event_type`, etc.) is `SMALLINT`
   backed by a Rust `#[repr(i16)]` enum with a `CHECK` range constraint and a
   `<name>_name(ty)` SQL helper for psql/BI.
@@ -973,13 +976,17 @@ CREATE TABLE transactions (
 No raw envelope / result / result-meta XDR and no decoded `operation_tree` JSONB are
 stored on the row — those fields are fetched and parsed on demand per ADR 0029.
 
-### 6.3 Operations
+### 6.3 Operations — Appearance Index
+
+Per task 0163, `operations` was collapsed into an appearance index (pattern from
+ADRs 0033/0034) and renamed to `operations_appearances`. One row per distinct
+operation identity per transaction, `amount BIGINT` counts collapsed duplicates;
+per-op detail re-materialised from XDR at read time.
 
 ```sql
-CREATE TABLE operations (
+CREATE TABLE operations_appearances (
     id                BIGSERIAL    NOT NULL,
     transaction_id    BIGINT       NOT NULL,
-    application_order SMALLINT     NOT NULL,
     type              SMALLINT     NOT NULL,                               -- ADR 0031
     source_id         BIGINT       REFERENCES accounts(id),                -- ADR 0026
     destination_id    BIGINT       REFERENCES accounts(id),                -- ADR 0026
@@ -987,18 +994,23 @@ CREATE TABLE operations (
     asset_code        VARCHAR(12),
     asset_issuer_id   BIGINT       REFERENCES accounts(id),                -- ADR 0026
     pool_id           BYTEA,                                               -- 32-byte LP hash
-    transfer_amount   NUMERIC(28,7),
+    amount            BIGINT       NOT NULL,                               -- collapsed-duplicate count
     ledger_sequence   BIGINT       NOT NULL,
     created_at        TIMESTAMPTZ  NOT NULL,
     PRIMARY KEY (id, created_at),
     FOREIGN KEY (transaction_id, created_at)
-        REFERENCES transactions (id, created_at) ON DELETE CASCADE
+        REFERENCES transactions (id, created_at) ON DELETE CASCADE,
+    CONSTRAINT uq_ops_app_identity UNIQUE NULLS NOT DISTINCT
+        (transaction_id, type, source_id, destination_id,
+         contract_id, asset_code, asset_issuer_id, pool_id,
+         ledger_sequence, created_at)
 ) PARTITION BY RANGE (created_at);
 ```
 
-Per-operation JSONB `details` is no longer stored; the typed summary columns above
-are the DB's contribution and the full decoded payload is re-derived from the archive
-at request time.
+`transfer_amount` and `application_order` are no longer stored; per-operation
+JSONB `details` was never stored. The typed summary columns above support
+filtered list endpoints; full decoded payloads come from the archive via
+`stellar_archive` extractors at request time (ADR 0029).
 
 ### 6.4 Soroban Contracts
 
@@ -1159,7 +1171,7 @@ CREATE TABLE liquidity_pool_snapshots (
 ### 6.12 Partitioning and Retention
 
 Partitioned (`PARTITION BY RANGE (created_at)`, monthly):
-`transactions`, `operations`, `transaction_participants`,
+`transactions`, `operations_appearances`, `transaction_participants`,
 `soroban_events_appearances`, `soroban_invocations_appearances`,
 `liquidity_pool_snapshots`, `nft_ownership`.
 

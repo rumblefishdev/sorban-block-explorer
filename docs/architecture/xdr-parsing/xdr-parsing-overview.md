@@ -157,18 +157,27 @@ Raw envelope / result / result-meta XDR is **not** retained in RDS (ADR 0029).
 The advanced transaction view pulls the corresponding `.xdr.zst` from the public
 archive at request time.
 
-### 4.3 Operation-Level Data
+### 4.3 Operation-Level Data (Appearance Index)
 
-From `OperationMeta` per transaction, the ingest path extracts typed summary
-columns (no per-op JSONB `details`):
+Per task 0163, `operations` was collapsed to an appearance index and renamed
+to `operations_appearances`. Ingest aggregates operations by identity at
+staging time (`HashMap<OpIdentity, i64>`), writing one row per distinct
+identity per transaction with `amount BIGINT` counting collapsed duplicates.
+
+From `OperationMeta` per transaction, the ingest path extracts:
 
 - operation `type` as `SMALLINT` backed by the Rust `OperationType` enum
   ([ADR 0031](../../../lore/2-adrs/0031_enum-columns-smallint-with-rust-enum.md))
 - `source_id`, `destination_id` surrogate FKs (ADR 0026)
 - `contract_id` surrogate FK
   ([ADR 0030](../../../lore/2-adrs/0030_contracts-surrogate-bigint-id.md))
-- `asset_code`, `asset_issuer_id`, `pool_id` (BYTEA 32), `transfer_amount`
-- `application_order`, `ledger_sequence`, `created_at`
+- `asset_code`, `asset_issuer_id`, `pool_id` (BYTEA 32)
+- `ledger_sequence`, `created_at`
+- `amount` aggregate count of physical operations collapsed into this identity
+
+Not stored at ingest (re-derived from XDR at read time per ADR 0029):
+`transfer_amount` (dropped), `application_order` (dropped), per-op JSONB
+`details` (never existed), envelope/args/memo/predicates decode.
 
 For `INVOKE_HOST_FUNCTION`, ingest captures only the appearance-index rows
 (§4.4 / §4.5). The `functionName`, decoded `functionArgs`, `returnValue`, and
@@ -296,7 +305,7 @@ Typed summary columns / structured artifacts retained for normal explorer reads:
 - `transactions` — `hash BYTEA`, `source_id BIGINT`, `fee_charged`, `successful`,
   `application_order`, `operation_count`, `has_soroban`, `inner_tx_hash`,
   `parse_error`, `created_at`
-- `operations` — `type SMALLINT`, surrogate FKs, `BYTEA pool_id`, `transfer_amount`,
+- `operations_appearances` — `type SMALLINT`, surrogate FKs, `BYTEA pool_id`, `amount BIGINT` count,
   typed `asset_code`/`asset_issuer_id`
 - `soroban_events_appearances` / `soroban_invocations_appearances` — appearance
   indexes only (per §4.4 / §4.5)

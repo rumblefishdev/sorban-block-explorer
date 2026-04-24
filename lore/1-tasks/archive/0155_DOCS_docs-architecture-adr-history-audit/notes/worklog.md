@@ -494,3 +494,65 @@ None of these touch `docs/architecture/**`. Confirms that task 0159 relied
 on task 0155 to carry the evergreen docs side of ADR 0035 — which is the
 pattern ADR 0032 is there to formalise for future tasks, but worked here
 by explicit 2nd-pass pre-apply.
+
+---
+
+## 4th pass (2026-04-24, later same day) — post-0163 + 0046 reconciliation
+
+Second merge from `origin/develop`. Task 0163 landed (operations → appearance
+index refactor, PR #118) + task 0046 landed (transactions endpoints, PR #114).
+Merge had 2 conflicts (DB §3, TD §3/§6 sketches); resolved by taking HEAD
+(mine was more detailed, develop side had only minimal operations rename
+sync) then applying 0163 refactor on top.
+
+### Task 0163 apply — `operations → operations_appearances`
+
+The backlog-watch entry in the matrix flagged 0163 as the next major doc
+sweep trigger. It landed sooner than expected (same day). Applied the
+rename + collapse across all docs:
+
+- **DB §4.4** — full rewrite: table renamed, `amount BIGINT` replaces
+  `transfer_amount`, `application_order` dropped, `uq_ops_app_identity`
+  UNIQUE with NULLS NOT DISTINCT documented, indexes updated (no
+  `idx_ops_app_tx`, leftmost-prefix of UNIQUE serves transaction lookups).
+  Added design-notes bullet for 28% compression observation + type-14
+  collapse example (12 709 → 179 rows).
+- **DB §3 schema sketch** — `operations` → `operations_appearances`.
+- **DB §3.1, §5.2, §5.3, §6.2, §7.3** — every reference to the old
+  `operations` table name updated.
+- **DB §6.1 indexing strategy** — removed former `idx_ops_contract`,
+  `idx_ops_pool`, `idx_ops_destination` references; noted they're
+  reversible via `CREATE INDEX CONCURRENTLY` per partition if telemetry
+  demands.
+- **TD §6.3** — full DDL rewrite with `operations_appearances` shape;
+  same narrative framing as DB §4.4.
+- **TD §3 ASCII diagram** — table inventory updated.
+- **TD §4.1 pipeline step 5** — aggregation staging narrative (`HashMap<OpIdentity, i64>`)
+  - `ON CONFLICT ON CONSTRAINT uq_ops_app_identity DO NOTHING` for replay
+    idempotency.
+- **TD §2.2, §5.2, §6.12** — scattered operations references updated.
+- **IX §5.2 step 6** — pipeline step rewritten with aggregation + wide
+  UNIQUE idempotency language.
+- **IX §5.3** — write-target inventory updated.
+- **XD §4.3** — rewritten as "Operation-Level Data (Appearance Index)"
+  with ingest aggregation + post-drop column list.
+- **XD §6.1** — storage-contract entry updated.
+
+### Task 0046 apply — no doc shape change
+
+`GET /transactions` and `GET /transactions/:hash` were already in BE §6.2
+endpoint inventory and §6.3 resource details. Task 0046 shipped the Rust
+implementation + ADR 0033 wiring. API surface unchanged from what the
+docs already described. No edit needed.
+
+### MIGRATIONS.md
+
+- 0003 entry updated: `operations` → `operations_appearances (ADR 0163)`
+- 0006 deferred-FK note: `operations.pool_id` → `operations_appearances.pool_id`
+- Partitioned-tables list: `operations` → `operations_appearances`
+
+### Post-merge backlog-watch status
+
+Removed 0163 from the backlog-watch section (now applied). 0160 still
+active (pure bug fix, no schema change — stays as N/A). 0161 and 0162
+still backlog, still minor when they land.

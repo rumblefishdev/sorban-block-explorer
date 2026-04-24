@@ -51,13 +51,13 @@ The 0001-0007 migrations produce the schema defined by ADR 0027 (post-surrogate 
 | ---- | -------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | 0001 | `0001_extensions.sql`                  | `pg_trgm` extension                                                                                |
 | 0002 | `0002_identity_and_ledgers.sql`        | `ledgers`, `accounts`, `wasm_interface_metadata`, `soroban_contracts`                              |
-| 0003 | `0003_transactions_and_operations.sql` | `transactions`, `transaction_hash_index`, `operations`, `transaction_participants`                 |
+| 0003 | `0003_transactions_and_operations.sql` | `transactions`, `transaction_hash_index`, `operations_appearances` (ADR 0163), `transaction_participants` |
 | 0004 | `0004_soroban_activity.sql`            | `soroban_events_appearances` (ADR 0033), `soroban_invocations_appearances` (ADR 0034)              |
 | 0005 | `0005_tokens_nfts.sql`                 | `assets` (ADR 0036; renamed from `tokens`), `nfts`, `nft_ownership`                                |
-| 0006 | `0006_liquidity_pools.sql`             | `liquidity_pools`, `liquidity_pool_snapshots`, `lp_positions` (+ deferred `operations.pool_id` FK) |
+| 0006 | `0006_liquidity_pools.sql`             | `liquidity_pools`, `liquidity_pool_snapshots`, `lp_positions` (+ deferred `operations_appearances.pool_id` FK) |
 | 0007 | `0007_account_balances.sql`            | `account_balances_current` (ADR 0035 dropped `account_balance_history`)                            |
 
-Partitioned tables (`transactions`, `operations`, `transaction_participants`, `soroban_events_appearances`, `soroban_invocations_appearances`, `nft_ownership`, `liquidity_pool_snapshots`) create the parent only. Monthly partitions are provisioned by the partition-management Lambda (`crates/db-partition-mgmt`).
+Partitioned tables (`transactions`, `operations_appearances`, `transaction_participants`, `soroban_events_appearances`, `soroban_invocations_appearances`, `nft_ownership`, `liquidity_pool_snapshots`) create the parent only. Monthly partitions are provisioned by the partition-management Lambda (`crates/db-partition-mgmt`).
 
 ## Offline builds (SQLX_OFFLINE)
 

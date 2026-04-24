@@ -354,38 +354,4 @@ mod tests {
         }
         panic!("no contract events found in scan window");
     }
-
-    /// Merge pipeline end-to-end: use real extracted heavy fields with a fake
-    /// DB light record and verify the merged DTO has status "ok" and both
-    /// sides populated.
-    #[tokio::test]
-    #[ignore = "requires network access to aws-public-blockchain"]
-    async fn merge_e3_stellar_heavy_with_fake_db_light() {
-        use super::extractors::extract_e3_heavy;
-        use super::merge::merge_e3_response;
-
-        let fetcher = StellarArchiveFetcher::new(unsigned_client().await);
-        let (meta, tx_hash) = find_ledger_with_tx(&fetcher, 50_457_424, 20).await;
-        let heavy = extract_e3_heavy(&meta, &tx_hash).unwrap();
-
-        // Fake DB light view — in production this comes from Postgres.
-        #[derive(serde::Serialize)]
-        struct TxLightFake {
-            hash: String,
-            successful: bool,
-        }
-        let light = TxLightFake {
-            hash: tx_hash.clone(),
-            successful: true,
-        };
-
-        let merged = merge_e3_response(light, Some(heavy));
-        assert_eq!(merged.heavy_fields_status, dto::HeavyFieldsStatus::Ok);
-        assert!(merged.heavy.is_some());
-
-        // Round-trip serialization — ensures the whole DTO is serde-compatible.
-        let json = serde_json::to_string(&merged).unwrap();
-        assert!(json.contains(&tx_hash));
-        assert!(json.contains("heavy_fields_status"));
-    }
 }

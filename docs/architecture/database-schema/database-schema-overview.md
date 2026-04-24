@@ -96,7 +96,9 @@ Backbone timeline:
 - `ledgers` — ledger-close timeline (anchor)
 - `transactions` — primary explorer activity entity (partitioned by `created_at`)
 - `transaction_hash_index` — unpartitioned hash-to-ledger lookup for direct detail routes
-- `operations` — transaction children for classic and mixed transaction inspection (partitioned)
+- `operations_appearances` — transaction-scoped appearance index for classic and
+  mixed transaction inspection (partitioned; per-op detail recovered from XDR on
+  demand per task 0163)
 - `transaction_participants` — derived participant links for account-history reads (partitioned)
 
 Soroban activity model (per ADRs 0033/0034 these are pure appearance indexes — parsed
@@ -123,7 +125,7 @@ High-level relationship sketch:
 ```text
 ledgers
   └─ transactions (partitioned)
-       ├─ operations (partitioned)
+       ├─ operations_appearances (partitioned)
        ├─ transaction_participants (partitioned)
        ├─ soroban_events_appearances (partitioned)
        └─ soroban_invocations_appearances (partitioned)
@@ -163,7 +165,7 @@ Every 32-byte chain hash is stored as `BYTEA` with `CHECK (octet_length(...) = 3
 `ledgers.hash`, `transactions.hash`, `transactions.inner_tx_hash`,
 `transaction_hash_index.hash`, `soroban_contracts.wasm_hash`,
 `wasm_interface_metadata.wasm_hash`, and the 32-byte `pool_id` on
-`liquidity_pools` / `liquidity_pool_snapshots` / `lp_positions` / `operations`.
+`liquidity_pools` / `liquidity_pool_snapshots` / `lp_positions` / `operations_appearances`.
 The domain layer renders each as lowercase hex on the API; no route changes hex
 strings into binary.
 
@@ -171,7 +173,7 @@ strings into binary.
 
 All closed-domain enum columns are `SMALLINT` backed by a Rust `#[repr(i16)]` enum in
 `crates/domain/src/enums/`, with a `CHECK` range constraint and a `<name>_name(ty)` SQL
-helper function for psql/BI debugging. Columns: `operations.type`,
+helper function for psql/BI debugging. Columns: `operations_appearances.type`,
 `soroban_events_appearances.event_type` (historical — now carried by read-time XDR),
 `assets.asset_type`, `account_balances_current.asset_type`,
 `nft_ownership.event_type`,
@@ -287,13 +289,19 @@ Design notes:
 - small, unpartitioned, hot-cached — every `/transactions/:hash` lookup goes through
   it before touching the partitioned parent
 
-### 4.4 Operations
+### 4.4 Operations — Appearance Index
+
+Per task 0163, `operations` was collapsed to an appearance index and renamed
+to `operations_appearances`. Pattern matches ADRs 0033/0034 for events and
+invocations: one row per distinct operation identity per transaction,
+`amount BIGINT` counts collapsed duplicates. Per-op detail (envelope decode,
+soroban args, memos, claimants, predicates, etc.) is re-materialised from
+XDR at read time via the `stellar_archive` extractors.
 
 ```sql
-CREATE TABLE operations (
+CREATE TABLE operations_appearances (
     id                BIGSERIAL    NOT NULL,
     transaction_id    BIGINT       NOT NULL,
-    application_order SMALLINT     NOT NULL,
     type              SMALLINT     NOT NULL,                               -- ADR 0031 OperationType
     source_id         BIGINT       REFERENCES accounts(id),                -- ADR 0026
     destination_id    BIGINT       REFERENCES accounts(id),                -- ADR 0026
@@ -301,34 +309,34 @@ CREATE TABLE operations (
     asset_code        VARCHAR(12),
     asset_issuer_id   BIGINT       REFERENCES accounts(id),                -- ADR 0026
     pool_id           BYTEA,                                               -- 32-byte LP hash (ADR 0024)
-    transfer_amount   NUMERIC(28,7),
+    amount            BIGINT       NOT NULL,                               -- collapsed-duplicate count
     ledger_sequence   BIGINT       NOT NULL,
     created_at        TIMESTAMPTZ  NOT NULL,
     PRIMARY KEY (id, created_at),
     FOREIGN KEY (transaction_id, created_at)
         REFERENCES transactions (id, created_at) ON DELETE CASCADE,
-    CONSTRAINT ck_ops_pool_id_len CHECK (pool_id IS NULL OR octet_length(pool_id) = 32),
-    CONSTRAINT ck_ops_type_range  CHECK (type BETWEEN 0 AND 127)           -- ADR 0031 range
+    CONSTRAINT ck_ops_app_pool_id_len CHECK (pool_id IS NULL OR octet_length(pool_id) = 32),
+    CONSTRAINT ck_ops_app_type_range  CHECK (type BETWEEN 0 AND 127),      -- ADR 0031 range
+    CONSTRAINT ck_ops_app_amount_pos  CHECK (amount > 0),
+    CONSTRAINT uq_ops_app_identity    UNIQUE NULLS NOT DISTINCT
+        (transaction_id, type, source_id, destination_id,
+         contract_id, asset_code, asset_issuer_id, pool_id,
+         ledger_sequence, created_at)
 ) PARTITION BY RANGE (created_at);
-
-CREATE INDEX idx_ops_tx          ON operations (transaction_id);
-CREATE INDEX idx_ops_type        ON operations (type, created_at DESC);
-CREATE INDEX idx_ops_contract    ON operations (contract_id, created_at DESC)
-    WHERE contract_id IS NOT NULL;
-CREATE INDEX idx_ops_asset       ON operations (asset_code, asset_issuer_id, created_at DESC)
-    WHERE asset_code IS NOT NULL;
-CREATE INDEX idx_ops_pool        ON operations (pool_id, created_at DESC)
-    WHERE pool_id IS NOT NULL;
-CREATE INDEX idx_ops_destination ON operations (destination_id, created_at DESC)
-    WHERE destination_id IS NOT NULL;
 ```
+
+No explicit `idx_ops_app_tx` — `WHERE transaction_id = X` is served by the
+leftmost prefix of `uq_ops_app_identity` (starts with `transaction_id, type, …`).
+A dedicated narrower index is reversible via `CREATE INDEX CONCURRENTLY` per
+partition if production telemetry shows it's needed.
 
 Purpose:
 
-- store per-operation structure for transaction list/detail and filtered browsing
-- carry the typed summary fields (account/contract/asset/pool FKs + transfer amount)
-  needed for list endpoints without per-request XDR decode
+- index which operation identities appeared in which transaction, with a
+  count of how many physical operations collapsed into each identity
 - anchor cascade cleanup of transaction children
+- preserve the typed summary columns (account/contract/asset/pool surrogates)
+  needed for filtered list endpoints without per-request XDR decode
 
 Design notes:
 
@@ -341,10 +349,18 @@ Design notes:
 - composite `(id, created_at)` PK is required because the partition key must be in
   every unique index on a partitioned table; `created_at` is inherited verbatim from
   the parent transaction so per-partition cascade is well-defined
-- the full operation-specific payload (envelope decode, soroban args, etc.) lives at
-  read time in the public Stellar ledger archive per
-  [ADR 0029](../../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md);
-  the DB carries only the typed summary columns above
+- `uq_ops_app_identity` uses PG 15+ `NULLS NOT DISTINCT` so NULL-heavy shapes
+  (e.g. type-14 `CREATE_CLAIMABLE_BALANCE` with source inherited from tx)
+  collapse correctly. Observed compression: 28% overall on backfill sample,
+  type-14 collapses from 12 709 operations to 179 rows
+- `transfer_amount NUMERIC(28,7)` and `application_order SMALLINT` were
+  dropped — no API endpoint reads them, and per-op detail is already
+  re-materialised from XDR by `stellar_archive` extractors per
+  [ADR 0029](../../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md)
+- ingest staging aggregates operations at the `HashMap<OpIdentity, i64>`
+  level before the bulk INSERT; write layer uses
+  `ON CONFLICT ON CONSTRAINT uq_ops_app_identity DO NOTHING` for replay
+  idempotency
 
 ### 4.5 Transaction Participants
 
@@ -370,7 +386,7 @@ Purpose:
 Design notes:
 
 - per [ADR 0020](../../../lore/2-adrs/0020_tp-drop-role-and-soroban-contracts-index-cut.md)
-  the table carries no `role` column — role distinctions live in `operations`
+  the table carries no `role` column — role distinctions live in `operations_appearances`
   (via `source_id`, `destination_id`, `asset_issuer_id`) and `transactions.source_id`,
   which is where the UI already gets them. `transaction_participants` is a pure
   account-feed index
@@ -418,7 +434,7 @@ Design notes:
 - `id` is a `BIGSERIAL` surrogate PK
   ([ADR 0030](../../../lore/2-adrs/0030_contracts-surrogate-bigint-id.md)); `contract_id`
   is kept as the natural StrKey for E22 search, URL routing, and display. Every
-  contract FK in other tables (`operations`, `soroban_events_appearances`,
+  contract FK in other tables (`operations_appearances`, `soroban_events_appearances`,
   `soroban_invocations_appearances`, `assets`, `nfts`) targets `id`
 - `wasm_hash` is `BYTEA(32)` (ADR 0024) and FKs into `wasm_interface_metadata`
 - `deployer_id` is an `accounts.id` surrogate FK (ADR 0026)
@@ -628,8 +644,9 @@ Design notes:
   [ADR 0026](../../../lore/2-adrs/0026_accounts-surrogate-bigint-id.md); `account_id`
   is kept as the natural `G...` StrKey for display, E22 search, and route lookup
 - every `*_id` FK column in the schema that references an account targets `accounts.id`
-  (not the StrKey): `transactions.source_id`, `operations.source_id`, `operations.destination_id`,
-  `operations.asset_issuer_id`, `soroban_contracts.deployer_id`,
+  (not the StrKey): `transactions.source_id`, `operations_appearances.source_id`,
+  `operations_appearances.destination_id`, `operations_appearances.asset_issuer_id`,
+  `soroban_contracts.deployer_id`,
   `soroban_invocations_appearances.caller_id`, `assets.issuer_id`, `nfts.current_owner_id`,
   `nft_ownership.owner_id`, `transaction_participants.account_id`,
   `account_balances_current.account_id`,
@@ -748,7 +765,7 @@ Design notes:
   a `asset_*_issuer_id` `accounts.id` surrogate FK (ADR 0026)
 - current reserves and total shares are **not** persisted on the parent row; the most
   recent `liquidity_pool_snapshots` row is the authoritative current-state source
-  (pool transaction history itself is derived from `operations` + `soroban_events_appearances`)
+  (pool transaction history itself is derived from `operations_appearances` + `soroban_events_appearances`)
 
 ### 4.15 Liquidity Pool Snapshots
 
@@ -890,7 +907,7 @@ At a high level:
 
 The schema models a parent-child structure where appropriate:
 
-- deleting a transaction cascades through `operations`, `transaction_participants`,
+- deleting a transaction cascades through `operations_appearances`, `transaction_participants`,
   `soroban_events_appearances`, `soroban_invocations_appearances`, and `nft_ownership`
   via the composite `(transaction_id, created_at)` FK
 - contract-linked entities remain queryable through `soroban_contracts.id` BIGINT FK
@@ -936,8 +953,8 @@ Notable patterns in the current design:
 - **Identity indexes**: `ledgers.hash` (unique), `transaction_hash_index.hash`
   (uniqueness for partitioned `transactions` via the proxy table)
 - **Time-oriented indexes**: `idx_ledgers_closed_at`, `idx_accounts_last_seen`,
-  `idx_tx_source_created`, `idx_ops_*_created`, `idx_lps_pool`, etc. — descending on
-  the time column for recent-first browsing
+  `idx_tx_source_created`, `idx_lps_pool`, etc. — descending on the time column
+  for recent-first browsing
 - **GIN / trigram**: `idx_contracts_search` (full-text on `soroban_contracts.search_vector`),
   `idx_assets_code_trgm` (trigram on `assets.asset_code`),
   `idx_nfts_name_trgm` (trigram on `nfts.name`)
@@ -946,8 +963,11 @@ Notable patterns in the current design:
   `uidx_abc_native` / `uidx_abc_credit` on `account_balances_current`
 - **Prefix-search btree**: `idx_accounts_prefix` / `idx_contracts_prefix` using
   `text_pattern_ops` so that `LIKE 'G...%'` queries on the StrKey are index-driven
-- **Filtered partial indexes** for rarely-NULL columns: `idx_ops_contract`,
-  `idx_ops_pool`, `idx_ops_destination`, `idx_lpp_shares`, `idx_contracts_wasm`
+- **Filtered partial indexes** for rarely-NULL columns: `idx_lpp_shares`,
+  `idx_contracts_wasm`. (Former `idx_ops_contract` / `idx_ops_pool` /
+  `idx_ops_destination` dropped in task 0163 — the wide `uq_ops_app_identity`
+  UNIQUE on `operations_appearances` serves their leftmost-prefix lookups;
+  reversible if telemetry demands it.)
 
 Column-type choices also affect indexing economics: `BYTEA(32)` hashes
 ([ADR 0024](../../../lore/2-adrs/0024_hashes-bytea-binary-storage.md)) and `SMALLINT`
@@ -961,7 +981,7 @@ Per [ADR 0027](../../../lore/2-adrs/0027_post-surrogate-schema-and-endpoint-real
 all high-volume child tables are partitioned by month on `created_at`; lightweight
 anchor and registry tables stay unpartitioned:
 
-- **Partitioned (`RANGE (created_at)` monthly):** `transactions`, `operations`,
+- **Partitioned (`RANGE (created_at)` monthly):** `transactions`, `operations_appearances`,
   `transaction_participants`, `soroban_events_appearances`,
   `soroban_invocations_appearances`, `liquidity_pool_snapshots`,
   `nft_ownership`
@@ -1027,7 +1047,7 @@ for `/transactions/:hash` (E3) and `/contracts/:id/events` (E14).
 The DB therefore holds only:
 
 - **Typed summary columns** needed by list endpoints and partition-pruned reads
-  (e.g. `operations.type`, `operations.transfer_amount`, `operations.asset_code`,
+  (e.g. `operations_appearances.type`, `operations_appearances.amount`, `operations_appearances.asset_code`,
   `transactions.successful`, `transactions.has_soroban`)
 - **Appearance indexes** that point to `(transaction, ledger)` tuples for
   contract-centric reads (`soroban_events_appearances`, `soroban_invocations_appearances`)

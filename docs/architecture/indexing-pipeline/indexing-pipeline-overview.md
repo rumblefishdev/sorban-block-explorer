@@ -165,10 +165,14 @@ committed in a single atomic DB transaction:
    result / result-meta XDR per
    [ADR 0029](../../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md);
    hash uniqueness flows through the companion `transaction_hash_index` row
-6. write `operations` rows with `type SMALLINT`
+6. aggregate operations by identity (staging-time `HashMap<OpIdentity, i64>`)
+   and write `operations_appearances` rows with `type SMALLINT`
    ([ADR 0031](../../../lore/2-adrs/0031_enum-columns-smallint-with-rust-enum.md)),
-   surrogate FKs, `BYTEA pool_id`, typed transfer-amount columns (no JSONB
-   details)
+   surrogate FKs, `BYTEA pool_id`, and `amount BIGINT` counting collapsed
+   duplicates (per task 0163 — no `transfer_amount`, no `application_order`,
+   no JSONB details; pattern from ADRs 0033/0034). Bulk INSERT with
+   `ON CONFLICT ON CONSTRAINT uq_ops_app_identity DO NOTHING` for replay
+   idempotency
 7. write `transaction_participants` appearance rows
 8. write `soroban_events_appearances` — one row per `(contract, tx, ledger)`
    with a non-diagnostic-event count (ADR 0033; full detail re-expanded at read
@@ -195,7 +199,7 @@ The live ingestion path writes directly to the explorer's owned PostgreSQL schem
 
 That write includes both:
 
-- low-level structured explorer records (`ledgers`, `transactions`, `operations`,
+- low-level structured explorer records (`ledgers`, `transactions`, `operations_appearances`,
   `transaction_participants`, and the appearance indexes
   `soroban_events_appearances` / `soroban_invocations_appearances`)
 - derived explorer-facing state (`accounts`, `soroban_contracts`,
