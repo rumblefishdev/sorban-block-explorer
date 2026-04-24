@@ -174,7 +174,6 @@ strings into binary.
 All closed-domain enum columns are `SMALLINT` backed by a Rust `#[repr(i16)]` enum in
 `crates/domain/src/enums/`, with a `CHECK` range constraint and a `<name>_name(ty)` SQL
 helper function for psql/BI debugging. Columns: `operations_appearances.type`,
-`soroban_events_appearances.event_type` (historical — now carried by read-time XDR),
 `assets.asset_type`, `account_balances_current.asset_type`,
 `nft_ownership.event_type`,
 `liquidity_pools.asset_a_type`, `liquidity_pools.asset_b_type`,
