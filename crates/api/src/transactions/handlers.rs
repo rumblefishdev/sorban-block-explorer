@@ -35,14 +35,12 @@ fn err(status: StatusCode, code: &str, msg: &str) -> Response {
 }
 
 /// Shape-validate a Stellar StrKey: required prefix character + 56 total chars
-/// (case-sensitive uppercase base32). CRC validation is deliberately skipped —
-/// shape check catches the common typo / wrong-prefix cases that produce empty
-/// query results, while keeping the validator dependency-free.
+/// in the RFC 4648 base32 alphabet (`A-Z` + `2-7` — no `0`, `1`, `8`, `9`,
+/// which look like `O`, `I`, `B`, `g`). CRC validation is deliberately
+/// skipped — shape check catches the common typo / wrong-prefix cases that
+/// produce empty query results, while keeping the validator dependency-free.
 fn is_valid_strkey(s: &str, prefix: char) -> bool {
-    s.len() == 56
-        && s.starts_with(prefix)
-        && s.chars()
-            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    s.len() == 56 && s.starts_with(prefix) && s.chars().all(|c| matches!(c, 'A'..='Z' | '2'..='7'))
 }
 
 // ---------------------------------------------------------------------------
@@ -250,7 +248,7 @@ pub async fn list_transactions(
     path = "/transactions/{hash}",
     tag = "transactions",
     params(
-        ("hash" = String, Path, description = "Transaction hash (64-char lowercase hex)"),
+        ("hash" = String, Path, description = "Transaction hash (64-char hex; uppercase or lowercase accepted, normalised server-side)"),
     ),
     responses(
         (status = 200, description = "Transaction detail (light + heavy block)",
