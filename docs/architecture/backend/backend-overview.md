@@ -140,20 +140,34 @@ The backend serves data from the block explorer's own database, adding:
 - **Search** - unified search across transaction hashes, account IDs, contract IDs, token
   identifiers, NFT identifiers, pool IDs, and indexed metadata using PostgreSQL full-text
   indexes
-- **Raw XDR passthrough** — the `envelope_xdr`, `result_xdr`, and `result_meta_xdr` fields
-  are stored verbatim; the backend returns `envelope_xdr` and `result_xdr` as opaque base64
-  strings in the advanced transaction view. No server-side decode — the API serves
-  pre-materialized data from the Rust ingestion pipeline (per ADR 0004)
+- **Read-time XDR fetch for heavy-field endpoints** — per
+  [ADR 0029](../../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md),
+  the backend does **not** store raw envelope / result / result-meta XDR on
+  `transactions`. For E3 `/transactions/:hash` (full envelope + parsed invocation
+  tree) and E14 `/contracts/:id/events` (full event detail) the API fetches the
+  corresponding `.xdr.zst` from the public Stellar ledger archive, decompresses
+  it, parses it with the shared `crates/xdr-parser` crate, and merges the
+  decoded payload into the response. List endpoints never call the archive and
+  answer from typed summary columns + appearance indexes only
+- **Surrogate-key resolution** — every StrKey that enters a route parameter
+  (`G...`, `C...`) is resolved to the `BIGINT` surrogate via the relevant
+  `UNIQUE` index at the request boundary
+  ([ADR 0026](../../../lore/2-adrs/0026_accounts-surrogate-bigint-id.md),
+  [ADR 0030](../../../lore/2-adrs/0030_contracts-surrogate-bigint-id.md));
+  every StrKey in a response comes from a join back to `accounts.account_id`
+  or `soroban_contracts.contract_id`. The public API shape is unchanged
 
 ### 4.2 What the Backend Must Not Do
 
 The backend does **not**:
 
 - perform live chain indexing
-- call Horizon or any external chain API
+- call Horizon or any private chain API
 - rely on a third-party explorer database
 
-All chain data lives in the block explorer's RDS.
+Backend dependencies at runtime: (1) the explorer's own RDS for every
+partition-pruned read, (2) the public Stellar ledger archive for read-time
+XDR expansion on E3 / E14.
 
 ### 4.3 Boundary with Other Applications
 
@@ -360,9 +374,13 @@ Search is not just a DB query wrapper. It is an API behavior surface that must:
 
 ### 7.1 Source of Data
 
-All backend reads come from the block explorer's own PostgreSQL database. The API should
-never depend on live calls to Horizon, Soroban RPC, or third-party indexers for core
-resource responses.
+List endpoints and all partition-pruned reads come from the block explorer's own
+PostgreSQL database. Heavy-field detail endpoints (E3 `/transactions/:hash`,
+E14 `/contracts/:id/events`) additionally fetch raw `.xdr.zst` from the **public
+Stellar ledger archive** and re-parse it at request time per
+[ADR 0029](../../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md).
+The API does not depend on Horizon, Soroban RPC, or third-party indexers for any
+response.
 
 ### 7.2 Response Shaping
 

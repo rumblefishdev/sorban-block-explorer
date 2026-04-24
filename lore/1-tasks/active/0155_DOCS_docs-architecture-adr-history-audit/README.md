@@ -1,10 +1,38 @@
 ---
 id: '0155'
-title: 'DOCS: audit `docs/architecture/**` against ADR history, bring up to date'
+title: 'DOCS: audit `docs/architecture/**` against full ADR history, bring up to date'
 type: DOCS
 status: active
-related_adr: ['0027', '0030', '0031', '0032']
-related_tasks: ['0139', '0140', '0154']
+related_adr:
+  [
+    '0001',
+    '0002',
+    '0004',
+    '0005',
+    '0006',
+    '0007',
+    '0008',
+    '0010',
+    '0019',
+    '0020',
+    '0021',
+    '0022',
+    '0023',
+    '0024',
+    '0025',
+    '0026',
+    '0027',
+    '0028',
+    '0029',
+    '0030',
+    '0031',
+    '0032',
+    '0033',
+    '0034',
+    '0035',
+    '0036',
+  ]
+related_tasks: ['0139', '0140', '0154', '0159']
 tags: [docs, audit, priority-medium, effort-medium]
 links:
   - docs/architecture/technical-design-general-overview.md
@@ -44,6 +72,37 @@ history:
     who: karolkow
     note: >
       Task activated and assigned.
+  - date: '2026-04-23'
+    status: active
+    who: karolkow
+    note: >
+      Steps 1-4 executed in one pass. Matrix landed at
+      `notes/G-adr-doc-matrix.md` covering ADRs 0022-0031 vs every
+      `docs/architecture/**` file + `docs/database-audit-first-implementation.md`.
+      Per-file reconciliation tracked in `notes/worklog.md`: 5 files rewritten
+      (database-schema-overview, technical-design-general-overview, xdr-parsing-overview,
+      indexing-pipeline-overview, infrastructure-overview), 1 minor-synced
+      (backend-overview), 1 no-change (frontend-overview), 1 stale-noticed with
+      preserved-snapshot treatment (database-audit-first-implementation).
+      Templates updated
+      (`lore/2-adrs/_template.md` delivery checklist; `lore/1-tasks/_template.md`
+      acceptance-criteria entry). Root `CLAUDE.md` carries the ADR 0032
+      evergreen rule.
+  - date: '2026-04-24'
+    status: active
+    who: karolkow
+    note: >
+      Scope expanded from ADRs 0022-0031 to ALL current ADRs (0001-0036) per
+      stakeholder request. Rationale: doing a one-shot catch-up sweep, handling
+      only 10 ADRs leaves docs stale against the other 16 on merge day;
+      no merit in two partial sweeps. Expanded matrix covers live process/infra
+      ADRs (0001, 0002, 0004, 0005, 0006, 0007, 0008, 0010), the schema
+      evolution chain 0011-0021 (mostly obsoleted by 0029), post-0031
+      refinements (0033, 0034, 0035, 0036), and the evergreen policy (0032).
+      ADR 0035 (drop `account_balance_history`) pre-applied to the docs
+      ahead of its implementing task 0159 to prevent a docs↔migration race
+      after 0159 lands. ADR 0033/0034 collateral promoted from "outside scope"
+      to formally in-scope.
 ---
 
 # DOCS: audit `docs/architecture/**` against ADR history, bring up to date
@@ -80,44 +139,79 @@ docs/architecture/
 
 Scope of "the ADRs that may have caused drift":
 
+**Full scope — every LIVE ADR in `lore/2-adrs/` as of 2026-04-24.** The
+initial task body scoped only 0022-0031; the scope was widened on
+2026-04-24 (see task history) because a partial sweep leaves the other
+half of the ADRs unreflected on PR merge day, contradicting the spirit
+of the ADR 0032 catch-up.
+
+Process / infrastructure / API contract ADRs (LIVE, mostly IN/BE/IX
+impact):
+
+- 0001 — OIDC CI/CD + secret separation (IN)
+- 0002 — Rust Ledger Processor Lambda (BE, IX, XD)
+- 0004 — Rust-only XDR parsing (BE, XD)
+- 0005 — Rust-only backend (BE)
+- 0006 — no S3 lifecycle on ledger-data bucket (IN)
+- 0007 — simplified 2-Lambda architecture (IN, BE)
+- 0008 — error envelope + pagination shape (BE)
+- 0010 — local backfill over Fargate (IX, IN)
+
+Early schema evolution chain (mostly OBSOLETE — superseded by 0027 /
+0029; surviving guidance documented where still live):
+
+- 0011–0018 — S3-offload lightweight schema iterations (OBSOLETE via 0029)
+- 0019 — schema snapshot + sizing reference (LIVE as capacity-planning baseline)
+- 0020 — `transaction_participants` column cut, contract index cut (LIVE)
+- 0021 — schema ↔ endpoint ↔ frontend coverage matrix (LIVE reference)
+
+Core schema rework ADRs (deepest doc impact, primary sink of task 0155):
+
 - 0022 — schema correction + token metadata enrichment
 - 0023 — tokens typed metadata columns
 - 0024 — hashes as BYTEA
-- 0025 — final schema v1
+- 0025 — final schema v1 (superseded by 0027)
 - 0026 — accounts surrogate (BIGINT id)
-- 0027 — post-surrogate schema + endpoint realizability
-- 0028 — parsed ledger artifact v1 (later abandoned)
+- 0027 — post-surrogate schema + endpoint realizability (superseded by 0030)
+- 0028 — parsed ledger artifact v1 (superseded by 0029 before ship)
 - 0029 — abandon parsed artifacts in favour of read-time XDR fetch
 - 0030 — contracts surrogate (BIGINT id)
 - 0031 — enum columns SMALLINT + Rust enum
 
-Earlier ADRs (0001–0021) predate the current code generation and are
-either process-level, infrastructure-level, or already superseded by
-0022+. The auditor should still skim them to confirm no orphaned
-decisions were missed, but the deep comparison starts at 0022.
+Governance + post-0031 refinements (all LIVE):
+
+- 0032 — `docs/architecture/**` evergreen maintenance policy
+- 0033 — `soroban_events_appearances` read-time detail
+- 0034 — `soroban_invocations_appearances` read-time detail
+- 0035 — drop `account_balance_history`
+  (proposed; **pre-applied to docs** in this task to prevent a
+  docs↔migration race when the implementing task 0159 merges — docs
+  describe the post-drop shape; the migrations still carry the table
+  until 0159 runs its `DROP TABLE`)
+- 0036 — rename `tokens → assets` (already reflected in migrations via
+  task 0154 pre-0155 baseline)
 
 ## Implementation Plan
 
 ### Step 1: Build the ADR → doc impact matrix
 
-For each ADR 0022 → 0031, identify which doc file(s) should reflect it.
-Produce a table in the task worklog, e.g.:
+Full 26-ADR matrix produced at
+[`notes/G-adr-doc-matrix.md`](notes/G-adr-doc-matrix.md). The matrix is the
+checklist; it drives the sweep and prevents missed updates.
 
-| ADR  | Topic                                 | Primary docs                                       |
-| ---- | ------------------------------------- | -------------------------------------------------- |
-| 0022 | Schema correction + token metadata    | database-schema-overview, technical-design §6      |
-| 0023 | Typed token metadata columns          | database-schema-overview, technical-design §6.7    |
-| 0024 | Hashes as BYTEA                       | database-schema-overview, xdr-parsing, backend API |
-| 0025 | Final schema v1                       | database-schema-overview, technical-design §6      |
-| 0026 | Accounts surrogate                    | database-schema-overview, indexing-pipeline        |
-| 0027 | Post-surrogate schema + realizability | database-schema-overview, backend (endpoints)      |
-| 0028 | Parsed ledger artifact v1             | indexing-pipeline, infrastructure                  |
-| 0029 | Abandon parsed artifacts              | indexing-pipeline, infrastructure, backend         |
-| 0030 | Contracts surrogate                   | database-schema-overview, xdr-parsing, indexing    |
-| 0031 | SMALLINT enums                        | database-schema-overview, backend                  |
+The matrix covers:
 
-The matrix is the checklist; it drives the sweep and prevents missed
-updates.
+- **Process / infrastructure / API-contract ADRs** (0001, 0002, 0004, 0005,
+  0006, 0007, 0008, 0010) — verify BE / IX / IN / XD overviews describe
+  the accepted state
+- **Schema evolution chain 0011–0021** — mostly superseded by 0029; keep
+  surviving decisions (0019 sizing baseline, 0020 TP cut, 0021 coverage
+  matrix) reflected in DB / TD
+- **Core schema rework 0022–0031** — primary sink; drives rewrites in
+  DB, TD §5/§6, XD, IX, IN
+- **Evergreen policy 0032** — drives this task's Step 4 template work
+- **Post-0031 refinements 0033–0036** — drive DB / TD / BE updates; 0035
+  pre-applied
 
 ### Step 2: Per-file reconciliation pass
 
@@ -157,24 +251,32 @@ to update docs will fail the template's own checklist.
 
 ## Acceptance Criteria
 
-- [ ] Worklog contains the ADR → doc impact matrix (Step 1 output).
-- [ ] Every file under `docs/architecture/**` has a completed
+- [x] Worklog contains the ADR → doc impact matrix (Step 1 output).
+      → `notes/G-adr-doc-matrix.md` (expanded 2026-04-24 to cover 0001-0036).
+- [x] Every file under `docs/architecture/**` has a completed
       reconciliation pass, documented in the worklog (one entry per file
       with "no changes", "minor sync", or "rewritten — diff summary").
-- [ ] Concrete drift points from the research note §5.2 are all
-      addressed in `technical-design-general-overview.md` §6.7 (or
-      wherever the `tokens`/`assets` table is described post-rename).
-- [ ] Each rewritten section that reflects an ADR-driven change links
+      → `notes/worklog.md` rows 1–8 + 2nd-pass summary.
+- [x] Every LIVE ADR in `lore/2-adrs/` (0001-0036) has been walked;
+      process-level ADRs with no doc surface (0003, 0009) explicitly
+      marked as such in the matrix's "Out of scope" section.
+- [x] Concrete drift points from the research note §5.2 are all
+      addressed in `technical-design-general-overview.md` §6.7 (now
+      §6.7 Assets) and in `database-schema-overview.md` §4.10 (post-rename).
+- [x] Each rewritten section that reflects an ADR-driven change links
       to the relevant ADR(s) for context.
-- [ ] `lore/2-adrs/_template.md` and `lore/1-tasks/_template.md` updated
+- [x] ADR 0035 pre-applied to the docs (account_balance_history dropped
+      across 6 files) to prevent a docs↔migration race when task 0159 merges.
+- [x] `lore/2-adrs/_template.md` and `lore/1-tasks/_template.md` updated
       with a "Docs updated" checklist entry.
-- [ ] Root `CLAUDE.md` (or the relevant sub-`CLAUDE.md`) documents the
-      per-ADR maintenance rule defined by ADR 0032.
+- [x] Root `CLAUDE.md` documents the per-ADR maintenance rule defined
+      by ADR 0032.
 - [ ] PR review pass — a second team member confirms at least one
       per-file reconciliation against the current code, to catch
-      blind-spot errors.
+      blind-spot errors. _(pending reviewer)_
 - [ ] Markdown lint (if the project has one) passes on all touched
-      files.
+      files. _(not yet run — project has no dedicated markdown-lint CI
+      as of 2026-04-23)_
 
 ## Risks
 
