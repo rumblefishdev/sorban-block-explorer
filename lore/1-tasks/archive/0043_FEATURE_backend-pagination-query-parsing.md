@@ -54,19 +54,23 @@ history:
     status: completed
     who: karolkow
     note: >
-      Implemented all 8 steps. 53 api-crate tests passing (+17 new across
-      common/ modules +5 integration in tests_integration.rs). 7 new files
-      under crates/api/src/common/ (cursor, errors, extractors, filters,
-      pagination, crud, mod). 0046 retro-refactored onto shared helpers:
-      transactions/cursor.rs deleted, queries.rs cursor predicate replaced
-      by push_ts_id_cursor_predicate, handlers.rs switched to Pagination
-      extractor + filters::strkey + filters::parse_enum + errors::* +
-      finalize_ts_id_page + into_envelope. Wire contract of
-      /v1/transactions unchanged. Emerged decision: CrudResource trait
-      lands with zero current consumers (rule of three not met) per user
-      override of my "skip the trait" recommendation — infrastructure for
-      future simple resources (ledgers, accounts). No docs/architecture
-      changes needed (internal-helpers refactor, no wire or schema shift).
+      Implemented all 8 steps. 6 new files under crates/api/src/common/
+      (cursor, errors, extractors, filters, pagination, mod). 0046
+      retro-refactored onto shared helpers: transactions/cursor.rs deleted,
+      queries.rs cursor predicate replaced by push_ts_id_cursor_predicate,
+      handlers.rs switched to Pagination extractor + filters::strkey +
+      filters::parse_enum + errors::* + finalize_ts_id_page + into_envelope.
+      Wire contract of /v1/transactions unchanged. Post-implementation
+      audit against 0045-0053 roadmap showed 0/13 planned list endpoints
+      fit the CrudResource trait shape (hardcoded TsIdCursor, no filter
+      slot, no enrichment hook). stkrolikiewicz agreed to remove the trait
+      + macro before merge. common/crud.rs relocated to
+      .trash/api_common_crud.rs; re-extraction tracked under backlog
+      task 0166. AC 11/12/14/17 deferred. Retained common/* helpers
+      (cursor, errors, extractors, filters, pagination) adopt cleanly
+      across all planned endpoints. Final test tally: 48 api-crate tests
+      passing (+14 new helper coverage + 5 integration). No
+      docs/architecture changes needed (internal-helpers refactor).
 ---
 
 # Backend: cursor-based pagination, query parsing, and base CRUD service
@@ -260,13 +264,13 @@ Task 0046 (Transactions module) shipped its own inline cursor/pagination/filter 
 - [x] `page.has_more` correctly determined by fetching limit+1 — `finalize_page`
 - [x] `page.cursor` is `None` on the last page — `finalize_page` branch
 - [x] Filter parser handles all documented `filter[key]` patterns, configurable per endpoint — `filters::strkey`, `filters::parse_enum` (live consumers: `filter[source_account]`, `filter[contract_id]`, `filter[operation_type]`; remaining keys are forward-looking for 0048/0049/0051)
-- [x] `CrudResource` trait provides `get_one`, `get_list` with compile-time checked sqlx queries — `common::crud::CrudResource` (native async fn trait; no async_trait crate needed on axum 0.8 / Rust 2024)
-- [x] `crud_routes!` macro generates axum Router with `#[utoipa::path]` annotations — `crud_routes!` exports `pub async fn list`, `pub async fn detail`, `pub fn router()`
-- [x] Type safety via `sqlx::FromRow` + `utoipa::ToSchema` derives — `CrudResource::Item: ToSchema`, `Row: FromRow`-compatible (trait leaves row mapping to implementor)
-- [x] Reusable across collection endpoints (CrudResource trait for 0046-0052, pagination utilities for 0045-0053) — low-level helpers in use by 0046 post-retro; trait is infrastructure for future simple resources (see Design Decisions → Emerged)
+- [ ] `CrudResource` trait provides `get_one`, `get_list` with compile-time checked sqlx queries — **deferred to [0166](../backlog/0166_FEATURE_crud-resource-scaffolding.md)** per post-audit (2026-04-24). See Post-audit Note below.
+- [ ] `crud_routes!` macro generates axum Router with `#[utoipa::path]` annotations — **deferred to [0166](../backlog/0166_FEATURE_crud-resource-scaffolding.md)** per post-audit (2026-04-24).
+- [x] Type safety via `sqlx::FromRow` + `utoipa::ToSchema` derives — present on `openapi::schemas::{Paginated, ErrorEnvelope, PageInfo}` and consumed through the retained `common/*` helpers.
+- [ ] Reusable across collection endpoints (CrudResource trait for 0046-0052, pagination utilities for 0045-0053) — **trait deferred to [0166](../backlog/0166_FEATURE_crud-resource-scaffolding.md)**; pagination utilities retained and in use by 0046 (retro-refactored in this task), adoption planned across 0047-0053.
 - [x] Task 0046 (Transactions) refactored onto shared helpers without wire-contract change — `/v1/transactions` response body identical; existing api-crate unit tests unchanged (3 obsolete `transactions::cursor` tests dropped — covered by `common::cursor` tests)
-- [x] Unit tests for cursor, filter parser, and extractors (including ADR 0008 error shape assertions) — see `common::{cursor,filters,extractors,pagination,crud}::tests`
-- [x] Integration test for `CrudResource` + `crud_routes!` against local PostgreSQL — `tests_integration.rs`: 4 validation tests (no DB) + 1 DB-gated end-to-end envelope test. See Design Decisions → Emerged for why the CrudResource trait itself is not exercised by the integration test.
+- [x] Unit tests for cursor, filter parser, and extractors (including ADR 0008 error shape assertions) — see `common::{cursor,filters,extractors,pagination}::tests`
+- [ ] Integration test for `CrudResource` + `crud_routes!` against local PostgreSQL — **deferred to [0166](../backlog/0166_FEATURE_crud-resource-scaffolding.md)** (trait itself deferred). End-to-end coverage against local PostgreSQL is retained via `tests_integration.rs`: 4 validation tests (no DB) + 1 DB-gated end-to-end envelope test through `/v1/transactions` exercise every retained helper (`Pagination<TsIdCursor>`, `filters::strkey`, `filters::parse_enum`, `errors::*`, `finalize_ts_id_page`, `into_envelope`).
 
 ## Docs updated (per ADR 0032)
 
@@ -281,7 +285,7 @@ Task 0046 (Transactions module) shipped its own inline cursor/pagination/filter 
 - `extractors.rs` — `Pagination<P>` axum extractor (native `FromRequestParts`) plus `resolve`/`resolve_with` for handlers carrying their own `Query<ListParams>` DTO. `LimitConfig { default, max }` with a const `DEFAULT` (20/100) per ADR 0008.
 - `filters.rs` — `strkey(value, prefix, filter_key)` (shape-only RFC 4648 base32 check) and `parse_enum::<T: FromStr>` both returning `Result<T, Response>` so handlers can `?`-propagate into 400 envelopes.
 - `pagination.rs` — `finalize_page<Row>`, `finalize_ts_id_page<Row>`, `into_envelope<T>`, `push_ts_id_cursor_predicate`. The `push_ts_id_cursor_predicate` helper is consumed by `transactions/queries.rs` for the `(created_at, id)` ordering used across the DB schema.
-- `crud.rs` — `CrudResource` trait (`State`, `Id`, `Row`, `Item` associated types; `get_one`, `get_list`, `into_item`, `cursor_of` methods) + `crud_routes!` macro (generates `#[utoipa::path]`-annotated `list`/`detail` handlers and a `router()` function). Tests use an in-memory `WidgetResource` to prove trait/macro compose without touching sqlx.
+- ~~`crud.rs` — `CrudResource` trait + `crud_routes!` macro.~~ **Removed before merge** per post-audit (see Design Decisions → Emerged #6 and the Post-audit Note). Moved to `.trash/api_common_crud.rs`. Re-extraction tracked under backlog [0166](../backlog/0166_FEATURE_crud-resource-scaffolding.md).
 
 **Retro-refactor of 0046 (`crates/api/src/transactions/`):**
 
@@ -292,7 +296,7 @@ Task 0046 (Transactions module) shipped its own inline cursor/pagination/filter 
 
 **Integration test (`crates/api/src/tests_integration.rs`, `#[cfg(test)]`):** 4 unconditional validation tests prove the `Pagination` extractor + `filters::*` + `errors::*` wire through the real axum request stack to the canonical 400 envelope (checking the `code` and `details.filter` / `details.received` keys specifically). 1 DATABASE_URL-gated test calls `GET /v1/transactions?limit=3` against the real pool and asserts the envelope shape (`data` array, `page.limit`, `page.has_more`, `page.cursor` optional). Follows the same skip-on-unset pattern as `crates/indexer/tests/persist_integration.rs`.
 
-**Test tally:** 53 passing in `cargo test -p api --bin api` (48 unit + 5 integration). 5 ignored (existing AWS-live network tests). No previously-passing test was modified to match new behaviour.
+**Test tally (post-audit, crud.rs removed):** 48 passing in `cargo test -p api --bin api` (43 unit + 5 integration). 5 ignored (existing AWS-live network tests). No previously-passing test was modified to match new behaviour. The 5 `common::crud::tests::*` tests that used to bring the total to 53 were removed alongside `crud.rs`.
 
 ## Design Decisions
 
@@ -306,7 +310,46 @@ Task 0046 (Transactions module) shipped its own inline cursor/pagination/filter 
 
 ### Emerged
 
-6. **CrudResource trait landed with zero current consumers.** My pre-implementation recommendation was to skip the trait + macro (rule of three not met — only transactions would implement it at this moment, and transactions has a custom-enough post-fetch enrichment path that forcing it through the trait would lose expressivity). User chose to build per AC literal wording, so the trait ships as _infrastructure for the first simple-enough resource that lands_. Candidate first consumers: ledgers (sequence-number ordering, straightforward columns) and accounts (account_id + latest state). Smoke test with an in-memory `WidgetResource` proves the trait + macro compile and produce a valid `OpenApiRouter` without sqlx. **If the next two pagination-using resources also do not adopt the trait, delete it — retention only makes sense if it's consumed.**
+6. **CrudResource trait + crud_routes! macro — built, audited, removed before merge.** My pre-implementation recommendation was to skip the trait + macro (rule of three not met — only transactions would implement it at this moment, and transactions has a custom-enough post-fetch enrichment path that forcing it through the trait would lose expressivity). User chose to build per AC literal wording. Post-implementation audit against the 0045-0053 roadmap (see **Post-audit Note** below) showed **0/13 planned list endpoints** fit the trait's hardcoded shape (`TsIdCursor`-only ordering, no filter params, no enrichment hook). stkrolikiewicz confirmed on 2026-04-24 to remove ("wywal"). Trait + macro moved to `.trash/api_common_crud.rs`; AC 11/12/14/17 marked **deferred to [0166](../backlog/0166_FEATURE_crud-resource-scaffolding.md)**. 0166 carries the trigger condition (two real simple-shape consumers must land first) and the rewrite note (trait must be generic over cursor payload type, not hardcoded to `TsIdCursor`).
+
+#### Post-audit Note (2026-04-24)
+
+After the trait + macro landed in the first implementation round, a roadmap audit was run against the tech-design specs of every planned list endpoint (0045-0053). The mapping:
+
+| Task | Endpoint                             | Cursor payload      | Filters                                     | Enrichment                       | Fits trait?                                         |
+| ---- | ------------------------------------ | ------------------- | ------------------------------------------- | -------------------------------- | --------------------------------------------------- |
+| 0045 | `/network-stats`                     | —                   | —                                           | aggregates                       | N/A — single stats endpoint, not a list             |
+| 0046 | `/transactions`                      | `(ts, id)`          | source_account, contract_id, operation_type | S3 memo fetch                    | ❌ enrichment does not fit `into_item`              |
+| 0047 | `/ledgers`                           | **`sequence`**      | —                                           | cache-control headers            | ❌ wrong cursor type (trait hardcodes `TsIdCursor`) |
+| 0047 | `/ledgers/{seq}/transactions`        | `(ts, id)`          | —                                           | nested                           | ❌ nested route                                     |
+| 0048 | `/accounts/{id}/transactions`        | `id`                | —                                           | nested                           | ❌ nested route                                     |
+| 0049 | `/assets`                            | `id`                | `filter[type]`, `filter[code]`              | type unification                 | ❌ trait has no filter slot                         |
+| 0049 | `/assets/{id}/transactions`          | `id`                | —                                           | join through ops/events          | ❌ custom join                                      |
+| 0050 | `/contracts/*`                       | varied              | complex                                     | interfaces/invocations/events    | ❌ multi-endpoint                                   |
+| 0051 | `/nfts`                              | `id`                | `filter[collection]`, `filter[contract_id]` | —                                | ❌ trait has no filter slot                         |
+| 0051 | `/nfts/{id}/transfers`               | `id`                | —                                           | derived from events, not a table | ❌ custom                                           |
+| 0052 | `/liquidity-pools`                   | `id`                | `filter[assets]`, `filter[min_tvl]`         | —                                | ❌ trait has no filter slot                         |
+| 0052 | `/liquidity-pools/{id}/transactions` | `id`                | —                                           | nested                           | ❌ nested                                           |
+| 0053 | `/search`                            | cross-entity custom | custom                                      | custom                           | ❌                                                  |
+
+**0/13 fit.** Two structural problems:
+
+1. **Cursor payload is not `(ts, id)` for most resources** — specs use `{"seq":N}`, `{"id":N}`. Trait hardcodes `TsIdCursor`. Any real consumer would need to bypass the trait or force trait evolution (`type Cursor` associated type + macro adaptation).
+2. **Filters are the rule, not the exception** — 4 of 5 non-transactions list endpoints accept `filter[...]` params. Trait's `get_list(state, cursor, limit)` has no filter slot. Adding one requires `type Filters` + macro changes + utoipa gymnastics.
+
+In contrast, the retained `common/*` helpers are **orthogonal** to cursor payload:
+
+- `cursor::encode<P: Serialize> / decode<P: DeserializeOwned>` — generic over any payload.
+- `finalize_page<Row>` — generic, caller supplies the cursor-mapping closure.
+- `finalize_ts_id_page<Row>` — convenience for the `(ts, id)` case (used by 0046).
+- `Pagination<P>` extractor — generic over payload. Ledgers compose `Pagination<SequenceCursor>`, assets/NFTs/pools compose `Pagination<IdCursor>`, transactions composes `Pagination<TsIdCursor>`.
+- `filters::strkey`, `filters::parse_enum` — reusable by every filtered endpoint.
+- `errors::*` — envelope builders reusable across all failure paths.
+- `push_ts_id_cursor_predicate` — specific to `(ts, id)`; sibling helpers for `sequence` / `id`-only ordering will be added as those resources land, mirroring this one.
+
+Every planned endpoint (12/13) composes the helpers directly. The trait adds complexity without catching any endpoint's shape.
+
+stkrolikiewicz agreed to remove. Trait + macro relocated to `.trash/api_common_crud.rs`; re-extraction tracked under backlog task [0166](../backlog/0166_FEATURE_crud-resource-scaffolding.md) with a trigger condition of two real simple-shape consumers and a requirement that the rewrite generalise over cursor payload type.
 
 7. **Transactions does not implement CrudResource.** The list handler's post-fetch memo enrichment (concurrent S3 ledger fetch → `extract_e3_memo` merge) doesn't fit `CrudResource::into_item(row) -> item` — it requires cross-row state (the ledger map). Forcing it through the trait would either bloat the trait with an "enrichment phase" hook that no other resource needs, or require the trait to expose the raw `Vec<Row>` before mapping, which defeats the point. Transactions consumes the low-level helpers (`Pagination`, `finalize_ts_id_page`, `into_envelope`, `push_ts_id_cursor_predicate`, `filters::*`, `errors::*`) directly.
 
@@ -318,15 +361,15 @@ Task 0046 (Transactions module) shipped its own inline cursor/pagination/filter 
 
 ## Issues Encountered
 
-- **Rust 2024 native async trait vs `async_trait` crate**: first draft of `CrudResource` used `#[async_trait]`; unnecessary on axum 0.8 + edition 2024. Rewrote with `impl Future<Output = ...> + Send` return types so no extra dependency is needed.
 - **StrKey test fixtures**: initial `VALID_G` / `VALID_C` constants in `filters::tests` were 52 chars, not 56 — miscounted the body padding. Caught by the very first `strkey()` call returning an error in tests; fixed by extending the constants and adding an explicit `test_constants_are_56_chars` sanity test.
-- **utoipa `body = ...` path resolution** (see Decision #9) — surfaced as `cannot find type 'Paginated' in this scope` with a `similarly named struct 'Pagination' defined here` rustc suggestion. Resolved by the `use` injection trick.
-- **Visibility warning on test macro expansion**: `crud_routes!` emits `pub fn router()`, but `WidgetState` inside the `tests` module is private — rustc warns `function 'router' is reachable at visibility 'pub(in crate::common::crud)' … but type 'WidgetState' is only usable at visibility 'pub(self)'`. Warning only, no test failure; accepted as-is since tightening `router`'s visibility would complicate macro use in production consumers.
 - **`has_where` tracking preserved manually in `queries::fetch_list`**: the shared `push_ts_id_cursor_predicate` helper does not manage the `WHERE`/`AND` glue — the caller is responsible, consistent with how dynamic filters already build their own glue. This was an intentional scope choice (the glue logic is specific to the set of filters each query allows) and is documented in `pagination.rs` doccomment.
+- **`clippy::result_large_err` on the pre-push hook**: axum's `Response` type is ~128 bytes, so `Result<T, Response>` trips the lint. Boxing would cascade through every call site and kill the ergonomics of `?`-propagation into envelope responses. Resolved with `#![allow(clippy::result_large_err)]` at the top of `common/extractors.rs` and `common/filters.rs` — scoped to the two modules that own the `Result<_, Response>` boundary. Documented in the commit message and in the module docs.
+- **Historical (since removed): CrudResource trait surfaced a set of sharp edges** — `async_trait` crate misuse (resolved by native 2024 async-in-trait), `utoipa::path(body = ...)` treating the last path segment as the type identifier (resolved by injecting a `use` in the macro expansion), and `private_interfaces` warnings on the test smoke `WidgetResource`/`WidgetState`. These are no longer part of the shipped code but are relevant historical context if task 0166 re-extracts the trait — see the Post-audit Note under Design Decisions → Emerged.
 
 ## Future Work
 
-- **Verify CrudResource has a real consumer within 2 resources** — if ledgers (0047-ish) and accounts (0049-ish, TBD task IDs) land without using it, delete it. Spawned task to track: see backlog follow-up (to be created if the trait is not adopted by the next two pagination-using resources).
+- **Re-extract CrudResource trait + crud_routes! macro when first simple consumer lands** — tracked under backlog task [0166](../backlog/0166_FEATURE_crud-resource-scaffolding.md). Trigger: two resources with simple-shape lists (e.g. `/ledgers` with `SequenceCursor` + zero filters + zero enrichment) must exist before re-extracting. The rewrite must generalise the cursor payload (associated type, not hardcoded `TsIdCursor`) — the main reason the original drop didn't fit the roadmap.
+- **Add `push_sequence_cursor_predicate` / `push_id_cursor_predicate` siblings to `common/pagination.rs`** when 0047 (ledgers, `sequence`-ordered) and 0049/0051/0052 (assets/NFTs/pools, `id`-ordered) land. These are trivial copies of `push_ts_id_cursor_predicate` tuned to their respective cursor payloads. Tracked implicitly by the owning resource tasks — no separate backlog item needed.
 - **Coordinate with FilipDz on 0050 (Contracts)**: 0050 should consume `Pagination<TsIdCursor>` + `finalize_ts_id_page` + `filters::*` from the start rather than re-derive them. Call-out on 2026-04-24 sync covered this; no backlog task needed — the 0050 PR review is the enforcement point.
 
 ## Notes
