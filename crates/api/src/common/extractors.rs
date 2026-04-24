@@ -40,6 +40,7 @@ impl LimitConfig {
         max: 100,
     };
 
+    #[allow(dead_code)]
     pub const fn new(default: u32, max: u32) -> Self {
         assert!(default >= 1, "default limit must be at least 1");
         assert!(default <= max, "default limit must not exceed max");
@@ -101,6 +102,7 @@ impl<P: DeserializeOwned> Pagination<P> {
 /// Convenience wrapper for handlers that already hold a `ListParams`-style
 /// DTO. Calls [`Pagination::resolve_with`] with the pair of raw query
 /// values pulled from the DTO.
+#[allow(dead_code)]
 pub fn resolve<P: DeserializeOwned>(
     limit: Option<&str>,
     cursor: Option<&str>,

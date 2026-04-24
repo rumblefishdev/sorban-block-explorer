@@ -48,6 +48,11 @@ use super::pagination::{finalize_ts_id_page, into_envelope};
 /// Both list and detail queries are async methods returning
 /// `impl Future + Send` so the generated handlers compose freely inside
 /// axum's `tower::Service` machinery.
+// Trait ships with zero current consumers (see task 0043 → Emerged decisions).
+// `#[allow(dead_code)]` covers the trait itself and its generated handler
+// bodies below until the first simple resource (candidates: ledgers,
+// accounts) implements it.
+#[allow(dead_code)]
 pub trait CrudResource: Send + Sync + 'static {
     /// Shared application state handed to every query method.
     type State: Clone + Send + Sync + 'static;
@@ -98,6 +103,7 @@ pub trait CrudResource: Send + Sync + 'static {
 // ---------------------------------------------------------------------------
 
 /// Body of the generated `GET /` list handler.
+#[allow(dead_code)]
 pub async fn list_handler<R: CrudResource>(
     State(state): State<R::State>,
     pagination: Pagination<TsIdCursor>,
@@ -122,6 +128,7 @@ pub async fn list_handler<R: CrudResource>(
 }
 
 /// Body of the generated `GET /{id}` detail handler.
+#[allow(dead_code)]
 pub async fn detail_handler<R: CrudResource>(
     State(state): State<R::State>,
     Path(id): Path<R::Id>,
@@ -234,6 +241,14 @@ mod tests {
     //! and the generated router responds correctly without touching
     //! Postgres. Does **not** exercise sqlx — that belongs to the
     //! integration tests added under `tests/` in Step 7.
+
+    // `crud_routes!` emits `pub fn router()` (and `pub async fn list`/
+    // `detail`) that reference the `WidgetResource` / `WidgetState` types
+    // defined in this private test module, which rustc flags as
+    // `private_interfaces`. Silence here — the items are never callable
+    // outside the test module; the macro shape is correct for real
+    // production use sites where the state type is public.
+    #![allow(private_interfaces)]
 
     use super::*;
     use crate::common::cursor::TsIdCursor;
