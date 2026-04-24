@@ -2,7 +2,7 @@
 id: '0123'
 title: 'API: XDR decoding service for advanced transaction view'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0004']
 related_tasks: ['0046', '0071']
 tags: [priority-medium, effort-medium, layer-backend, audit-gap]
@@ -14,6 +14,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Spawned from pipeline audit — tech design allocates 4 days for XDR decode service but no task existed.'
+  - date: '2026-04-24'
+    status: active
+    who: kkowalczyk
+    note: 'Promoted to active to start work.'
 ---
 
 # API: XDR decoding service for advanced transaction view
