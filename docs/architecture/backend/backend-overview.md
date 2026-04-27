@@ -221,17 +221,17 @@ These are backend concerns even when their outputs are consumed by frontend page
 
 ### 6.2 Endpoint Inventory
 
-| Resource        | Endpoint(s)                                                                                                                                             |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Network         | `GET /network/stats`                                                                                                                                    |
-| Transactions    | `GET /transactions`, `GET /transactions/:hash`                                                                                                          |
-| Ledgers         | `GET /ledgers`, `GET /ledgers/:sequence`                                                                                                                |
-| Accounts        | `GET /accounts/:account_id`, `GET /accounts/:account_id/transactions`                                                                                   |
-| Assets          | `GET /assets`, `GET /assets/:id`, `GET /assets/:id/transactions`                                                                                        |
-| Contracts       | `GET /contracts/:contract_id`, `GET /contracts/:contract_id/interface`, `GET /contracts/:contract_id/invocations`, `GET /contracts/:contract_id/events` |
-| NFTs            | `GET /nfts`, `GET /nfts/:id`, `GET /nfts/:id/transfers`                                                                                                 |
-| Liquidity Pools | `GET /liquidity-pools`, `GET /liquidity-pools/:id`, `GET /liquidity-pools/:id/transactions`, `GET /liquidity-pools/:id/chart`                           |
-| Search          | `GET /search?q=&type=transaction,contract,asset,account,nft,pool`                                                                                       |
+| Resource        | Endpoint(s)                                                                                                                                                            |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Network         | `GET /network/stats`                                                                                                                                                   |
+| Transactions    | `GET /transactions`, `GET /transactions/:hash`                                                                                                                         |
+| Ledgers         | `GET /ledgers`, `GET /ledgers/:sequence`                                                                                                                               |
+| Accounts        | `GET /accounts/:account_id`, `GET /accounts/:account_id/transactions`                                                                                                  |
+| Assets          | `GET /assets`, `GET /assets/:id`, `GET /assets/:id/transactions`                                                                                                       |
+| Contracts       | `GET /contracts/:contract_id`, `GET /contracts/:contract_id/interface`, `GET /contracts/:contract_id/invocations`, `GET /contracts/:contract_id/events`                |
+| NFTs            | `GET /nfts`, `GET /nfts/:id`, `GET /nfts/:id/transfers`                                                                                                                |
+| Liquidity Pools | `GET /liquidity-pools`, `GET /liquidity-pools/:id`, `GET /liquidity-pools/:id/transactions`, `GET /liquidity-pools/:id/chart`, `GET /liquidity-pools/:id/participants` |
+| Search          | `GET /search?q=&type=transaction,contract,asset,account,nft,pool`                                                                                                      |
 
 ### 6.3 Resource Details
 
@@ -358,6 +358,13 @@ pool.
 
 **`GET /liquidity-pools/:id/chart`** - Time-series data for TVL, volume, and fee revenue.
 Query params: `interval` (1h/1d/1w), `from`, `to`.
+
+**`GET /liquidity-pools/:id/participants`** - Paginated list of liquidity providers
+with their share size, share percentage of the pool, first deposit ledger, and last
+update ledger. Powers the "Pool participants" table on the LP detail page
+(frontend §6.14). Backed by `lp_positions` (ADR 0037 §16). Added during task 0167
+to close a doc-drift gap between the frontend page and the original endpoint
+inventory.
 
 These endpoints combine factual current-state reads with historical aggregate reads, so the
 backend should keep raw pool state and chart-series generation concerns clearly separated.
