@@ -15,9 +15,12 @@ use super::queries;
 
 /// API-Gateway-facing cache hint. Matches the `apiGatewayCacheTtlMutable`
 /// value (10s) in `infra/envs/{staging,production}.json` so that when
-/// the gateway cache cluster is enabled the route honours the same
-/// freshness budget as the in-memory cache. Browsers / CDNs may also
-/// observe this header — `public` makes that explicit.
+/// the gateway cache cluster is enabled it uses its configured TTL
+/// rather than treating the response as cacheable indefinitely.
+/// Worst-case user-perceived staleness is additive (~inner TTL + this
+/// header), not bounded by the inner TTL — see `cache.rs` module docs.
+/// Browsers / CDNs may also observe this header; `public` makes that
+/// explicit.
 const CACHE_CONTROL_VALUE: HeaderValue = HeaderValue::from_static("public, max-age=10");
 
 /// Get top-level chain overview stats.
@@ -84,9 +87,12 @@ mod tests {
     use tower::ServiceExt;
     use utoipa_axum::router::OpenApiRouter;
 
+    use crate::contracts::cache::ContractMetadataCache;
     use crate::network;
     use crate::state::AppState;
     use crate::stellar_archive::StellarArchiveFetcher;
+
+    use super::cache;
 
     fn app(db: PgPool) -> Router {
         let aws_cfg = aws_sdk_s3::config::Builder::new()
@@ -95,7 +101,11 @@ mod tests {
             .build();
         let s3 = aws_sdk_s3::Client::from_conf(aws_cfg);
         let fetcher = StellarArchiveFetcher::new(s3);
-        let state = AppState { db, fetcher };
+        let state = AppState {
+            db,
+            fetcher,
+            contract_cache: ContractMetadataCache::new(),
+        };
 
         let (router, _spec) = OpenApiRouter::new()
             .nest("/v1", network::router())
@@ -104,8 +114,18 @@ mod tests {
         router
     }
 
+    // The std `MutexGuard` is held across `.await` deliberately — its
+    // sole purpose is to serialise this test against the unit tests in
+    // `network/cache.rs` that touch the same global static. There is
+    // no real cross-task contention to deadlock on.
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn stats_endpoint_returns_documented_shape_against_real_db() {
+        let _guard = cache::TEST_CACHE_MUTEX
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cache::clear();
+
         let Ok(database_url) = std::env::var("DATABASE_URL") else {
             eprintln!("DATABASE_URL unset — skipping network stats integration test");
             return;

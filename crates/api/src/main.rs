@@ -3,6 +3,7 @@
 mod common;
 mod config;
 mod contracts;
+mod network;
 mod openapi;
 mod state;
 #[cfg(test)]

@@ -5,8 +5,15 @@
 //! in-memory caching has a 30-60s TTL — we settle on 30s. Two cache
 //! layers stack: the API Gateway sits in front (5-15s mutable TTL,
 //! disabled today per `infra/envs/*.json`) and this Lambda layer
-//! behind it. Total user-perceived staleness is bounded by the inner
-//! TTL once AGW caching is enabled.
+//! behind it.
+//!
+//! Worst-case user-perceived staleness is **additive** across the two
+//! layers, not bounded by the inner TTL: AGW can latch a response
+//! that was already near-expired in the Lambda cache, so the ceiling
+//! is roughly `inner_ttl + agw_ttl` (~30s + ~10s = ~40s today). If a
+//! tighter ceiling is ever required, lower one or both TTLs. The
+//! Home dashboard does not have a hard freshness requirement, so the
+//! current pair is intentional.
 //!
 //! Implementation choice: `OnceLock<Mutex<...>>` from std. Lock
 //! contention is irrelevant here — the critical section is a single
@@ -62,14 +69,30 @@ pub fn put(stats: NetworkStats) {
     *lock = Some((Instant::now(), stats));
 }
 
+/// Test-only: drop any cached value so the next `get()` returns
+/// `None`. Used by tests in this crate that exercise the global
+/// `CACHE` static and need to start from a known-empty slot.
+#[cfg(test)]
+pub fn clear() {
+    let mut lock = cell().lock().unwrap_or_else(|p| p.into_inner());
+    *lock = None;
+}
+
+/// Test-only mutex serialising every test in this crate that touches
+/// the global `CACHE` static (the unit tests below and the handler
+/// integration test in `network/handlers.rs`). Without this, parallel
+/// test execution can interleave `put()` / `get()` calls and make
+/// assertions flaky. Each consumer must:
+///
+///   let _g = TEST_CACHE_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
+///   cache::clear();
+///   // ... exercise cache or handler ...
+#[cfg(test)]
+pub static TEST_CACHE_MUTEX: Mutex<()> = Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Serialise tests in this module — they share the global `CACHE`
-    /// static, so a parallel run could read another test's `put()`
-    /// between this test's `put()` and `get()`.
-    static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     fn sample(seq: i64) -> NetworkStats {
         NetworkStats {
@@ -83,7 +106,8 @@ mod tests {
 
     #[test]
     fn put_then_get_round_trips_within_ttl() {
-        let _guard = TEST_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
+        let _guard = TEST_CACHE_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
+        clear();
         let s = sample(42);
         put(s.clone());
         let read = get().expect("cache populated within TTL");

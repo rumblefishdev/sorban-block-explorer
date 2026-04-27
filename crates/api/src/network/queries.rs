@@ -1,9 +1,11 @@
 //! Database queries backing `GET /v1/network/stats`.
 //!
-//! All four queries are individually cheap and run sequentially on the
-//! same pool connection — total miss latency dominated by the largest
-//! `count(*)` (accounts table). Repeat-call traffic is absorbed by the
-//! 30s in-memory cache (see `cache.rs`); the DB sees one round of these
+//! All four queries are individually cheap and run sequentially on a
+//! single connection acquired up-front via `pool.acquire()` — total
+//! miss latency dominated by the largest `count(*)` (accounts table).
+//! Pinning to one connection avoids four pool acquire/release round
+//! trips per cache miss. Repeat-call traffic is absorbed by the 30s
+//! in-memory cache (see `cache.rs`); the DB sees one round of these
 //! queries every ~30s per warm Lambda instance.
 
 use sqlx::{PgPool, Row};
@@ -19,6 +21,11 @@ use super::dto::NetworkStats;
 /// build time — consistent with how `crates/api/src/transactions/queries.rs`
 /// handles the same trade-off.
 pub async fn fetch_stats(pool: &PgPool) -> Result<NetworkStats, sqlx::Error> {
+    // Acquire one connection and run all four queries on it, so the
+    // cache-miss path makes a single trip through the pool rather than
+    // four. Connection is released when `conn` drops at end of fn.
+    let mut conn = pool.acquire().await?;
+
     // One row from `ledgers` carries both the highest indexed sequence
     // and the lag derived from the latest `closed_at`. Combining them
     // into a single SELECT saves one round-trip on the cache-miss path.
@@ -35,7 +42,7 @@ pub async fn fetch_stats(pool: &PgPool) -> Result<NetworkStats, sqlx::Error> {
             END AS ingestion_lag_seconds \
          FROM ledgers",
     )
-    .fetch_one(pool)
+    .fetch_one(&mut *conn)
     .await?;
 
     let highest_indexed_ledger: i64 = ledger_row.get("highest_indexed_ledger");
@@ -52,15 +59,15 @@ pub async fn fetch_stats(pool: &PgPool) -> Result<NetworkStats, sqlx::Error> {
          FROM transactions \
          WHERE created_at > now() - interval '1 minute'",
     )
-    .fetch_one(pool)
+    .fetch_one(&mut *conn)
     .await?;
 
     let total_accounts: i64 = sqlx::query_scalar("SELECT count(*) FROM accounts")
-        .fetch_one(pool)
+        .fetch_one(&mut *conn)
         .await?;
 
     let total_contracts: i64 = sqlx::query_scalar("SELECT count(*) FROM soroban_contracts")
-        .fetch_one(pool)
+        .fetch_one(&mut *conn)
         .await?;
 
     Ok(NetworkStats {
