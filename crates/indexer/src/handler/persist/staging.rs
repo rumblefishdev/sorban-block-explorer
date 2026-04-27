@@ -765,17 +765,59 @@ impl Staged {
             });
         }
 
-        let mut lp_position_rows: Vec<LpPositionRow> = Vec::with_capacity(lp_positions.len());
+        // Dedup by `(pool_id, account_id)` — the persist UPSERT in
+        // `write::upsert_lp_positions` is a single
+        // `INSERT … FROM UNNEST … ON CONFLICT (pool_id, account_id)`,
+        // and Postgres rejects multiple proposed rows hitting the same
+        // conflict target in one command:
+        //   "ON CONFLICT DO UPDATE command cannot affect row a second time"
+        // The parser legitimately emits more than one position per
+        // `(pool, account)` per ledger when several txs touch the same
+        // pool_share trustline — collapse to the latest by
+        // `last_updated_ledger`. Equal-ledger ties keep the last-seen
+        // entry (Stellar replays in operation order, so last-seen
+        // matches the post-ledger state). `first_deposit_ledger` is
+        // taken from whichever entry carried it (parser only sets it on
+        // `created`); falling back to the latest's value keeps the
+        // pre-existing `unwrap_or(last_updated_ledger)` shim in
+        // `write.rs` valid for the ON CONFLICT side, while a true
+        // earliest-Created in the same batch wins by appearing first
+        // and being preserved by the `>=` comparison below.
+        use std::collections::hash_map::Entry;
+        let mut lp_position_dedup: HashMap<([u8; 32], String), LpPositionRow> = HashMap::new();
         for pos in lp_positions {
             let pool_id = decode_hash(&pos.pool_id, "lp_position.pool_id")?;
-            lp_position_rows.push(LpPositionRow {
+            let key = (pool_id, pos.account_id.clone());
+            let new_row = LpPositionRow {
                 pool_id,
                 account_str_key: pos.account_id.clone(),
                 shares: pos.shares.clone(),
                 first_deposit_ledger: pos.first_deposit_ledger.map(i64::from),
                 last_updated_ledger: i64::from(pos.last_updated_ledger),
-            });
+            };
+            match lp_position_dedup.entry(key) {
+                Entry::Occupied(mut occ) => {
+                    let existing = occ.get_mut();
+                    if new_row.last_updated_ledger >= existing.last_updated_ledger {
+                        // Preserve the first-seen `first_deposit_ledger`
+                        // if the newcomer drops it (parser emits None on
+                        // updated/restored/removed) — matches the intent
+                        // of the LEAST() merge in write.rs.
+                        let preserved_first = new_row
+                            .first_deposit_ledger
+                            .or(existing.first_deposit_ledger);
+                        *existing = new_row;
+                        existing.first_deposit_ledger = preserved_first;
+                    } else if existing.first_deposit_ledger.is_none() {
+                        existing.first_deposit_ledger = new_row.first_deposit_ledger;
+                    }
+                }
+                Entry::Vacant(vac) => {
+                    vac.insert(new_row);
+                }
+            }
         }
+        let lp_position_rows: Vec<LpPositionRow> = lp_position_dedup.into_values().collect();
 
         // --- assets (dedup by identity — native singleton, classic_credit/sac by
         // (code,issuer), soroban by contract_id; SAC satisfies both uniques so
