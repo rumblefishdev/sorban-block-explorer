@@ -2149,3 +2149,46 @@ async fn clean_sac160_test(pool: &PgPool) {
         .execute(pool)
         .await;
 }
+
+// ---------------------------------------------------------------------------
+// Task 0161 — native asset singleton seeded by migration
+// ---------------------------------------------------------------------------
+
+/// Migration `20260428000000_seed_native_asset_singleton.up.sql` seeds the
+/// native XLM row that the schema requires (`uidx_assets_native` is a partial
+/// UNIQUE on `asset_type = 0`). Living spec: confirms the seed lands as
+/// expected after migrations apply.
+///
+/// **Persistent fixture, do not mutate from other tests.** Other test cleanups
+/// must scope their DELETEs by contract / hash / issuer — never by
+/// `asset_type = 0` — or this assertion will flake.
+#[tokio::test]
+async fn native_asset_singleton_seeded_after_migrations() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping 0161 native singleton test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping 0161 native singleton test");
+            return;
+        }
+    };
+
+    let row: (Option<String>, Option<i64>, Option<i64>, Option<String>) = sqlx::query_as(
+        r#"
+        SELECT asset_code, issuer_id, contract_id, name
+          FROM assets
+         WHERE asset_type = 0
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("native singleton must exist exactly once after migrations");
+
+    assert!(row.0.is_none(), "asset_code must be NULL for asset_type=0");
+    assert!(row.1.is_none(), "issuer_id must be NULL for asset_type=0");
+    assert!(row.2.is_none(), "contract_id must be NULL for asset_type=0");
+    assert_eq!(row.3.as_deref(), Some("Stellar Lumen"));
+}
