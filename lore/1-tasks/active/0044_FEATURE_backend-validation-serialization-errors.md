@@ -2,7 +2,7 @@
 id: '0044'
 title: 'Backend: request validation, response serialization, error mapping'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0005']
 related_tasks: ['0023', '0014', '0092']
 tags: [layer-backend, validation, serialization, error-handling]
@@ -17,6 +17,17 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
+  - date: '2026-04-27'
+    status: active
+    who: karolkow
+    note: >
+      Promoted. Spec realign required pre-implementation: original draft
+      (March 2026) predates ADR 0008 (envelope shape) and the 0043+0046
+      delivery of common/* validation/error helpers. Per audit, ~80% of
+      the originally-scoped surface is already shipped via task 0043
+      (extractors, filters, errors envelope builders) and task 0046
+      (parse_error field, unknown operation_type fallback). Realigned
+      scope reduces to two concrete deliverables — see body for details.
 ---
 
 # Backend: request validation, response serialization, error mapping
