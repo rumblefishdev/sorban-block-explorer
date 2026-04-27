@@ -2,7 +2,7 @@
 id: '0045'
 title: 'Backend: Network module (GET /network/stats)'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0005']
 related_tasks: ['0023', '0092']
 tags: [layer-backend, network, stats]
@@ -17,6 +17,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
+  - date: '2026-04-27'
+    status: active
+    who: karolkow
+    note: 'Promoted — next backend module after 0043. Spec realign + implementation in branch.'
 ---
 
 # Backend: Network module (GET /network/stats)
