@@ -40,18 +40,49 @@ pub fn extract_envelopes(
         .map(|env| (tx_envelope_hash(&env, network_id), env))
         .collect();
 
-    tx_processing_hashes(meta)
-        .into_iter()
-        .map(|h| {
-            by_hash.get(&h).cloned().or_else(|| {
-                warn!(
-                    tx_hash = %hex::encode(h),
-                    "tx_processing hash absent from tx_set — corrupt LedgerCloseMeta"
-                );
-                None
-            })
-        })
-        .collect()
+    align_envelopes(by_hash, tx_processing_hashes(meta))
+}
+
+/// Pure helper: pull envelopes out of `by_hash` in the order given by
+/// `target_hashes`. `remove` (rather than `get` + `clone`) avoids holding
+/// duplicate copies of every envelope while we walk the apply order, and
+/// drops each envelope from the map exactly when it lands in the output.
+///
+/// Misses are aggregated into a single warning per ledger with a sample
+/// of up to 5 hex hashes so that a corrupt LedgerCloseMeta carrying many
+/// missing envelopes does not flood the logs with one entry per tx.
+fn align_envelopes(
+    mut by_hash: HashMap<[u8; 32], TransactionEnvelope>,
+    target_hashes: Vec<[u8; 32]>,
+) -> Vec<Option<TransactionEnvelope>> {
+    let mut envelopes = Vec::with_capacity(target_hashes.len());
+    let mut missing_sample: Vec<[u8; 32]> = Vec::new();
+    let mut missing_count: usize = 0;
+
+    for h in &target_hashes {
+        match by_hash.remove(h) {
+            Some(env) => envelopes.push(Some(env)),
+            None => {
+                missing_count += 1;
+                if missing_sample.len() < 5 {
+                    missing_sample.push(*h);
+                }
+                envelopes.push(None);
+            }
+        }
+    }
+
+    if missing_count > 0 {
+        let sample: Vec<String> = missing_sample.iter().map(hex::encode).collect();
+        warn!(
+            tx_processing_count = target_hashes.len(),
+            missing_count,
+            missing_sample = ?sample,
+            "tx_processing hashes absent from tx_set — corrupt LedgerCloseMeta"
+        );
+    }
+
+    envelopes
 }
 
 /// Compute the canonical Stellar transaction hash:
@@ -293,5 +324,79 @@ mod tests {
         let got = envelope_source(&env);
         assert_eq!(got, ed25519_strkey(&inner_source));
         assert_ne!(got, ed25519_strkey(&fee_source));
+    }
+
+    // --- alignment: synthetic in-memory coverage of `align_envelopes` ---
+    //
+    // The `tests/envelope_apply_order.rs` integration test exercises the
+    // same logic against a real LedgerCloseMeta when one is available
+    // (`.temp/` fixture or `XDR_FIXTURE` env). These unit tests run
+    // unconditionally in `cargo test` so the alignment behavior is
+    // validated even without a fixture.
+
+    const NET_ID: [u8; 32] = [0u8; 32];
+
+    fn three_distinct_v1_envs() -> [TransactionEnvelope; 3] {
+        [
+            v1_envelope([0x11; 32]),
+            v1_envelope([0x22; 32]),
+            v1_envelope([0x33; 32]),
+        ]
+    }
+
+    fn build_by_hash(envs: &[TransactionEnvelope]) -> HashMap<[u8; 32], TransactionEnvelope> {
+        envs.iter()
+            .cloned()
+            .map(|e| (tx_envelope_hash(&e, &NET_ID), e))
+            .collect()
+    }
+
+    #[test]
+    fn align_envelopes_reorders_by_target_hashes() {
+        let envs = three_distinct_v1_envs();
+        let hashes: Vec<[u8; 32]> = envs.iter().map(|e| tx_envelope_hash(e, &NET_ID)).collect();
+        // Apply order = reverse of tx_set order — a guaranteed mismatch
+        // for index-based pairing.
+        let target = vec![hashes[2], hashes[0], hashes[1]];
+
+        let aligned = align_envelopes(build_by_hash(&envs), target);
+
+        let aligned_hashes: Vec<[u8; 32]> = aligned
+            .iter()
+            .map(|o| tx_envelope_hash(o.as_ref().unwrap(), &NET_ID))
+            .collect();
+        assert_eq!(aligned_hashes, vec![hashes[2], hashes[0], hashes[1]]);
+    }
+
+    #[test]
+    fn align_envelopes_returns_none_for_unmatched_hash_and_preserves_indices() {
+        let envs = three_distinct_v1_envs();
+        let hashes: Vec<[u8; 32]> = envs.iter().map(|e| tx_envelope_hash(e, &NET_ID)).collect();
+        // Middle slot points at a hash that doesn't exist in tx_set (corrupt
+        // ledger). Index alignment with tx_processing must be preserved —
+        // slot 1 = None, slots 0 and 2 still resolve.
+        let bogus = [0x99; 32];
+        let target = vec![hashes[0], bogus, hashes[2]];
+
+        let aligned = align_envelopes(build_by_hash(&envs), target);
+
+        assert!(aligned[0].is_some());
+        assert!(aligned[1].is_none());
+        assert!(aligned[2].is_some());
+        assert_eq!(
+            tx_envelope_hash(aligned[0].as_ref().unwrap(), &NET_ID),
+            hashes[0]
+        );
+        assert_eq!(
+            tx_envelope_hash(aligned[2].as_ref().unwrap(), &NET_ID),
+            hashes[2]
+        );
+    }
+
+    #[test]
+    fn align_envelopes_empty_target_returns_empty_vec() {
+        let envs = three_distinct_v1_envs();
+        let aligned = align_envelopes(build_by_hash(&envs), Vec::new());
+        assert!(aligned.is_empty());
     }
 }
