@@ -79,7 +79,17 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
     let assets = vec![make_sac_asset()];
     let nfts = vec![make_nft()];
     let nft_events: Vec<ExtractedNftEvent> = Vec::new();
-    let lp_positions: Vec<ExtractedLpPosition> = Vec::new();
+    // Task 0162: synthetic LP participant on the same pool fixture, exercising
+    // the new parser-side `extract_lp_positions` path end to end through
+    // persist into the `lp_positions` table. SRC_STRKEY is already in the
+    // accounts staging path via the tx source account, so the FK resolves.
+    let lp_positions: Vec<ExtractedLpPosition> = vec![ExtractedLpPosition {
+        pool_id: POOL_ID.to_string(),
+        account_id: SRC_STRKEY.to_string(),
+        shares: "12.0000000".to_string(),
+        first_deposit_ledger: Some(TEST_LEDGER_SEQ),
+        last_updated_ledger: TEST_LEDGER_SEQ,
+    }];
     let inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
     let classification_cache = ClassificationCache::new();
 
@@ -180,12 +190,16 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
         "account_balances_current row count"
     );
 
-    // Parser does not yet produce these today.
+    // Parser does not yet produce nft_ownership today (deferred from 0118).
     assert_eq!(
         counts_first.nft_ownership, 0,
         "nft_ownership expected empty"
     );
-    assert_eq!(counts_first.lp_positions, 0, "lp_positions expected empty");
+    // Task 0162: parser-emitted LP position must land in the table.
+    assert_eq!(
+        counts_first.lp_positions, 1,
+        "lp_positions row from extract_lp_positions must persist"
+    );
 
     // ADR 0031 round-trip — operations_appearances.type SMALLINT decodes back
     // to the typed enum, and the SQL helper renders the same canonical label
