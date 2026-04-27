@@ -36,6 +36,14 @@ fn build_app(db: PgPool) -> Router {
     let aws_cfg = aws_sdk_s3::config::Builder::new()
         .region(aws_sdk_s3::config::Region::new("us-east-2"))
         .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+        .credentials_provider(aws_sdk_s3::config::Credentials::new(
+            "test-access-key",
+            "test-secret-key",
+            None,
+            None,
+            "tests_integration",
+        ))
+        .timeout_config(crate::stellar_archive::default_timeout_config())
         .build();
     let s3 = aws_sdk_s3::Client::from_conf(aws_cfg);
     let fetcher = StellarArchiveFetcher::new(s3);
