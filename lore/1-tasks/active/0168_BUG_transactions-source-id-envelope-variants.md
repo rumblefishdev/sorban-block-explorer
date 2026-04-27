@@ -2,7 +2,7 @@
 id: '0168'
 title: 'BUG: transactions.source_id mis-extracted from envelope variants (FeeBump unwrap + likely V0/V1 mismatch)'
 type: BUG
-status: backlog
+status: active
 related_adr: ['0037', '0026']
 related_tasks: ['0167']
 tags: [bug, indexer, xdr-parser, envelope-parsing, priority-critical]
@@ -12,6 +12,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Spawned from 0167 audit findings (Hypothesis B verification). Subagent compared 6 random tx vs Horizon mainnet — 6/6 source mismatch.'
+  - date: 2026-04-27
+    status: active
+    who: fmazur
+    note: 'Promoted to active via /promote-task.'
 ---
 
 # BUG: transactions.source_id mis-extracted from envelope variants
