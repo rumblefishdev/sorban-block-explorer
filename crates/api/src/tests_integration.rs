@@ -47,7 +47,12 @@ fn build_app(db: PgPool) -> Router {
         .build();
     let s3 = aws_sdk_s3::Client::from_conf(aws_cfg);
     let fetcher = StellarArchiveFetcher::new(s3);
-    let state = AppState { db, fetcher };
+    let contract_cache = crate::contracts::cache::ContractMetadataCache::new();
+    let state = AppState {
+        db,
+        fetcher,
+        contract_cache,
+    };
 
     let (router, _spec) = OpenApiRouter::new()
         .nest("/v1", transactions::router())
