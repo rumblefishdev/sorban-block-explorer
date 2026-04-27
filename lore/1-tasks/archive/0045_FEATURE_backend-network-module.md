@@ -157,6 +157,25 @@ Map query results to the documented response shape. Ensure `ingestion_lag_second
 - [x] Standard error envelope on failure — `errors::internal_error(errors::DB_ERROR, ...)` (cherry-picked from task 0043)
 - [x] `Cache-Control: public, max-age=10` header set on every 200 response — matches `apiGatewayCacheTtlMutable` in `infra/envs/{staging,production}.json` so the gateway cache cluster (when enabled) honours the same freshness budget as the in-memory cache
 
+## Docs updated (per ADR 0032)
+
+- `docs/architecture/backend/backend-overview.md` — **N/A**: endpoint
+  already documented at lines 235-239 as the canonical Network module
+  contract, and at lines 425-428 in the §8.1 caching topology. The
+  implementation matches the documented shape with no schema, endpoint
+  signature, or data-contract divergence. The only docs-visible surface
+  is the OpenAPI spec at `/api-docs-json`, which is auto-generated from
+  utoipa annotations on `network::handlers::get_network_stats` and
+  `NetworkStats` ToSchema — the spec entry appears for free as part of
+  this PR.
+- `docs/architecture/infrastructure/infrastructure-overview.md` — **N/A**:
+  Cache-Control header value (`public, max-age=10`) aligns with the
+  existing `apiGatewayCacheTtlMutable: 10` in `infra/envs/*.json`; no
+  infra topology change.
+- `docs/architecture/frontend/frontend-overview.md` — **N/A**: endpoint
+  is the same one already routed in §6.2 Home page → `GET /network/stats`;
+  no frontend data-contract change.
+
 ## Design Decisions
 
 ### From Plan
