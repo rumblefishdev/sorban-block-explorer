@@ -116,28 +116,46 @@ struct ParsedLedger<'a> {
     closed_at: i64,
     extracted_txs: Vec<xdr_parser::ExtractedTransaction>,
     tx_metas: Vec<&'a TransactionMeta>,
+    /// `tx_hash` → index in `extracted_txs` / `tx_metas` / `envelopes`.
+    /// Built once so each appearance row is O(1) instead of an O(N) scan
+    /// across the ledger's transactions.
+    tx_index: HashMap<String, usize>,
     /// Only populated when invocation expansion is needed.
     envelopes: Option<Vec<TransactionEnvelope>>,
 }
 
 impl<'a> ParsedLedger<'a> {
     fn new(meta: &'a LedgerCloseMeta, want_envelopes: bool) -> Option<Self> {
-        let ledger = xdr_parser::extract_ledger(meta).ok()?;
+        let ledger = match xdr_parser::extract_ledger(meta) {
+            Ok(l) => l,
+            Err(e) => {
+                // Distinct from "S3 fetch failed" so operators can tell the
+                // two failure modes apart in logs.
+                tracing::warn!("failed to extract ledger header from fetched LedgerCloseMeta: {e}");
+                return None;
+            }
+        };
         let extracted_txs =
             xdr_parser::extract_transactions(meta, ledger.sequence, ledger.closed_at);
         let tx_metas = collect_tx_metas(meta);
+        let tx_index: HashMap<String, usize> = extracted_txs
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.hash.clone(), i))
+            .collect();
         let envelopes = want_envelopes.then(|| xdr_parser::envelope::extract_envelopes(meta));
         Some(Self {
             ledger_sequence: ledger.sequence,
             closed_at: ledger.closed_at,
             extracted_txs,
             tx_metas,
+            tx_index,
             envelopes,
         })
     }
 
     fn tx_index_by_hash(&self, tx_hash: &str) -> Option<usize> {
-        self.extracted_txs.iter().position(|t| t.hash == tx_hash)
+        self.tx_index.get(tx_hash).copied()
     }
 }
 

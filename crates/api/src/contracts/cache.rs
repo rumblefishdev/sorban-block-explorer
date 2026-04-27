@@ -6,6 +6,17 @@
 //!
 //! TTL is fixed at 45 seconds (midpoint of the 30–60 s window in task 0050).
 //! Eviction is lazy — entries are dropped on a read miss after expiry.
+//!
+//! ## Synchronisation primitive
+//!
+//! Uses `std::sync::Mutex` deliberately. The critical section is a
+//! `HashMap::get`, an `Instant` comparison, and an optional `HashMap::remove`
+//! — microseconds, with no `.await`s held across the lock. Per the Tokio
+//! guidance ("It's OK to use a `std::sync::Mutex` from async code as long
+//! as the critical section is short and never `.await`s") this is the
+//! correct primitive: switching to `tokio::sync::Mutex` or `parking_lot`
+//! would only add async overhead or a dependency for no measurable win at
+//! Lambda's per-instance concurrency.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

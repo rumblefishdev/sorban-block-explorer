@@ -90,11 +90,17 @@ pub async fn fetch_contract_stats(
 ///
 /// Returns `Ok(None)` when:
 /// - the contract row is missing,
-/// - the contract has no `wasm_hash` (SAC / pre-upload), or
-/// - no matching `wasm_interface_metadata` row exists yet.
+/// - the contract has no `wasm_hash` (SAC / pre-upload),
+/// - no matching `wasm_interface_metadata` row exists yet, or
+/// - the matching row is a **stub** (`metadata = '{}'::jsonb`, no
+///   `functions` key) — these are inserted by `stub_unknown_wasm_interfaces`
+///   in the indexer to satisfy the `soroban_contracts.wasm_hash` FK during
+///   mid-stream backfill (task 0153) and carry no real interface payload.
 ///
-/// The handler maps all three to a 404 — there is no public interface to
-/// surface in any of these cases.
+/// The handler maps all four cases to a 404 — there is no public interface
+/// to surface in any of them. The `metadata ? 'functions'` JSONB key-exists
+/// predicate is what distinguishes stubs from real interfaces (real ones
+/// always carry a `functions` array, even if empty).
 pub async fn fetch_wasm_interface(
     pool: &PgPool,
     contract_id: &str,
@@ -103,7 +109,7 @@ pub async fn fetch_wasm_interface(
         "SELECT wim.metadata \
          FROM soroban_contracts sc \
          JOIN wasm_interface_metadata wim ON wim.wasm_hash = sc.wasm_hash \
-         WHERE sc.contract_id = $1",
+         WHERE sc.contract_id = $1 AND wim.metadata ? 'functions'",
     )
     .bind(contract_id)
     .fetch_optional(pool)
