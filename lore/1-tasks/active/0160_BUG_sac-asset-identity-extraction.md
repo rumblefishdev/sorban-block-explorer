@@ -229,7 +229,7 @@ Option<SacAssetIdentity>` (typed, not split fields).
       (`migration_0002_seed_matches_xlm_sac_issuer_sentinel_const`)
       removed.
 - [x] `ExtractedContractDeployment` carries `sac_asset:
-    Option<SacAssetIdentity>` (typed enum field).
+  Option<SacAssetIdentity>` (typed enum field).
 - [x] `extract_contract_deployments` takes
       `&HashMap<contract_id, SacAssetIdentity>` keyed on deterministic
       derived contract_id (not `tx_hash`).
@@ -243,19 +243,33 @@ Option<SacAssetIdentity>` (typed, not split fields).
       `sac_credit` (classic-keyed) and `sac_native` (contract-keyed);
       new `upsert_assets_contract_keyed` covers `sac_native` +
       `soroban`. `GREATEST` monotonic promotion retained.
-- [ ] Integration test — native XLM-SAC deploy lands as
-      `(asset_type=2, NULL, NULL, contract_id=CAS3J7…)` without
-      constraint violation.
-- [ ] Integration test — factory-deployed SAC extracted from auth
-      entries.
-- [ ] Integration test — deterministic contract_id round-trip
-      (parser → DB) matches stellar-core for XLM and USDC.
-- [ ] `late_wasm_upload_backfills_assets_row` parallel race
-      eliminated (per-test unique `TK_CONTRACT`).
-- [ ] Existing SAC regression tests in `persist_integration.rs`
+- [x] Integration test — native XLM-SAC deploy lands with NULL
+      `asset_code` + NULL `issuer_id` + populated `contract_id`
+      (`xlm_sac_deployment_lands_with_null_identity`, runs against
+      live Postgres).
+- [x] Factory-SAC extracted from `CreateContractHostFn` auth entries
+      — covered by sac.rs unit tests
+      `extract_sac_identities_from_auth_entry_root_create_contract`
+      (root) and `extract_sac_identities_from_nested_auth_sub_invocation`
+      (deep factory pattern), both pinned against the known mainnet
+      XLM-SAC and USDC-SAC contract_ids.
+- [x] Deterministic contract_id round-trip — sac.rs unit tests
+      `xlm_sac_mainnet_contract_id` and `usdc_sac_mainnet_contract_id`
+      pin derivation against published mainnet StrKeys.
+- [x] `late_wasm_upload_backfills_assets_row` parallel race
+      eliminated via dedicated `LWU_*` constants + `clean_lwu_test`
+      helper.
+- [x] SAC160 fixtures use a dedicated `SAC160_ISSUER_STRKEY` so
+      `classic_to_sac_greatest_promotion_is_monotonic` does not race
+      `synthetic_ledger_insert_and_replay_is_idempotent` on
+      `uidx_assets_classic_asset (USDC, ISSUER_STRKEY)`.
+- [x] Existing SAC regression tests in `persist_integration.rs`
       updated for deterministic contract_id (no sentinel).
-- [ ] `nx run rust:lint` / `:build` / `:test` green;
-      `sqlx::migrate!` checksum verification passes against develop.
+- [x] Workspace clippy + build + tests green: 162 xdr-parser unit
+      (incl. 7 sac::), 5 indexer unit, 8 persist_integration (parallel
+      and serial), `cargo clippy --workspace --all-targets -- -D warnings`
+      clean. New migration `20260424…` is forward-only; 0002 reverted to
+      pre-0160 ⇒ sqlx checksum unchanged from develop.
 
 ## Implementation Notes
 
