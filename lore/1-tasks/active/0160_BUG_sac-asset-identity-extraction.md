@@ -62,6 +62,25 @@ history:
       `fix/0160_sac-asset-identity-extraction`). Approach: tx_hash
       correlation + synthesised XLM-SAC issuer sentinel
       (`GAAA…WHF`). Superseded by re-open below.
+  - date: '2026-04-27'
+    status: active
+    who: stkrolikiewicz
+    note: >
+      Post-implementation audit hardening (commits 59bcdec..f9f9be3):
+      (1) `STELLAR_NETWORK` env replaced with direct read of
+      `STELLAR_NETWORK_PASSPHRASE` and propagated through CDK
+      `sharedEnv` — eliminates duplicate of existing
+      `stellarNetworkPassphrase` config field; (2) dropped dead
+      `format_contract_id_preimage` + `format_asset_structured`
+      enrichment from `operation.rs` (no downstream consumer post-pivot,
+      verified by grep across crates/ and apps/); (3) closed end-to-end
+      round-trip — `xlm_sac_deployment_lands_with_null_identity` now
+      derives `SAC160_XLM_CONTRACT` at runtime from
+      `derive_sac_contract_id(Native, mainnet)` and asserts the SQL
+      query returns the same StrKey from `soroban_contracts.contract_id`;
+      (4) split shared `SAC160_LEDGER_SEQ` / `SAC160_TX_HASH` into
+      `SAC160_XLM_*` and `SAC160_CREDIT_*` so the two SAC160 tests can
+      not race on `ledgers.sequence` cleanup.
   - date: '2026-04-24'
     status: active
     who: stkrolikiewicz
@@ -229,7 +248,7 @@ Option<SacAssetIdentity>` (typed, not split fields).
       (`migration_0002_seed_matches_xlm_sac_issuer_sentinel_const`)
       removed.
 - [x] `ExtractedContractDeployment` carries `sac_asset:
-  Option<SacAssetIdentity>` (typed enum field).
+Option<SacAssetIdentity>` (typed enum field).
 - [x] `extract_contract_deployments` takes
       `&HashMap<contract_id, SacAssetIdentity>` keyed on deterministic
       derived contract_id (not `tx_hash`).
@@ -237,8 +256,11 @@ Option<SacAssetIdentity>` (typed, not split fields).
       real values for `Credit`.
 - [x] `process.rs` builds correlation map via
       `xdr_parser::extract_sac_identities` over envelopes.
-- [x] `STELLAR_NETWORK` env unknown-value handling: fail-fast (panic
-      at startup), no silent mainnet fallback.
+- [x] `STELLAR_NETWORK_PASSPHRASE` env: fail-fast panic on missing
+      value (no silent mainnet fallback). CDK `sharedEnv` propagates
+      the existing `config.stellarNetworkPassphrase` field — single
+      source of truth shared with Galexie partition mapping in
+      `ingestion-stack.ts`.
 - [x] `write.rs` splits SAC by code/issuer presence into
       `sac_credit` (classic-keyed) and `sac_native` (contract-keyed);
       new `upsert_assets_contract_keyed` covers `sac_native` +
@@ -253,9 +275,14 @@ Option<SacAssetIdentity>` (typed, not split fields).
       (root) and `extract_sac_identities_from_nested_auth_sub_invocation`
       (deep factory pattern), both pinned against the known mainnet
       XLM-SAC and USDC-SAC contract_ids.
-- [x] Deterministic contract_id round-trip — sac.rs unit tests
-      `xlm_sac_mainnet_contract_id` and `usdc_sac_mainnet_contract_id`
-      pin derivation against published mainnet StrKeys.
+- [x] Deterministic contract_id round-trip end-to-end — sac.rs unit
+      tests `xlm_sac_mainnet_contract_id` / `usdc_sac_mainnet_contract_id`
+      pin the derivation, AND
+      `xlm_sac_deployment_lands_with_null_identity` derives
+      `SAC160_XLM_CONTRACT` at runtime via
+      `derive_sac_contract_id(Native, mainnet)` + asserts the persisted
+      `soroban_contracts.contract_id` equals the derived StrKey
+      (closes parser → DB chain).
 - [x] `late_wasm_upload_backfills_assets_row` parallel race
       eliminated via dedicated `LWU_*` constants + `clean_lwu_test`
       helper.
@@ -317,6 +344,25 @@ to pre-0160 state). One new forward-only migration with proper down.
   DB state keyed on `TK_CONTRACT`. Folded into 0160 scope: per-test
   unique `TK_CONTRACT` constants in step 5, restoring parallel
   execution.
+
+- **`STELLAR_NETWORK` env duplicated existing CDK config.** Initial
+  draft introduced a brand-new `STELLAR_NETWORK` env (logical name)
+  that ran through `passphrase_for(name)` translation. Audit caught
+  that `infra/src/lib/types.ts` already had `stellarNetworkPassphrase`
+  (full passphrase string) consumed by `ingestion-stack` for Galexie
+  partition mapping. Refactored to read `STELLAR_NETWORK_PASSPHRASE`
+  directly + propagated through `compute-stack.ts` `sharedEnv`. Single
+  source of truth.
+
+- **Dead JSON enrichment in `op.details`.** Initial sentinel attempt
+  added `format_contract_id_preimage` + `format_asset_structured`
+  helpers to populate `op.details["contractIdPreimage"]` for
+  `extract_sac_asset_from_create_contract` consumption. Post-pivot,
+  `extract_sac_identities` reads XDR directly — the JSON enrichment
+  has no consumer (verified across crates/ + apps/). Removed: -163
+  lines, including 5 unit tests + 2 helpers. Operations table JSONB
+  shrinks for new CreateContract\* rows (branch never shipped, so no
+  external API impact).
 
 ## Broken/modified tests
 
