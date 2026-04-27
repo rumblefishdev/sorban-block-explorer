@@ -79,7 +79,7 @@ history:
 
 ## Summary
 
-Implement reusable cursor-based pagination helpers, query/filter parsing utilities, and a generic `CrudResource` trait + `crud_routes!` macro used by all collection endpoints across the API. This includes opaque cursor encode/decode, deterministic ordering, the standard response envelope defined in ADR 0008, filter parsing for typed query parameters, and read-only CRUD primitives (`get_one`, `get_list`) for any sqlx table. The explorer API is read-only (data written by Ledger Processor), so no create/update/delete primitives are in scope. Backend entity modules (0045-0053) implement the trait and invoke the macro instead of reimplementing from scratch.
+Implement reusable cursor-based pagination helpers, query/filter parsing utilities, and shared error/extractor foundations for collection endpoints across the API. This includes opaque cursor encode/decode, deterministic ordering, the standard response envelope defined in ADR 0008, and filter parsing for typed query parameters, with reusable read-only listing/detail patterns for sqlx-backed resources where needed. The explorer API is read-only (data written by Ledger Processor), so no create/update/delete primitives are in scope. A generic `CrudResource` trait + `crud_routes!` macro was explored during implementation, but it was audited out before merge and is not part of the final shipped scope; backend entity modules use the shared pagination/filter/error/extractor helpers directly instead.
 
 > **Stack:** axum 0.8 + utoipa 5.4 + sqlx 0.8 (per ADR 0005). Envelope shapes per ADR 0008. Code in crates/api/common/.
 
