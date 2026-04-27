@@ -61,10 +61,13 @@ pub async fn process_ledger(
 
     info!(ledger_sequence, "parsing ledger");
 
-    let extracted_transactions = xdr_parser::extract_transactions(meta, ledger_sequence, closed_at);
+    let net_id = network_id();
+    let extracted_transactions =
+        xdr_parser::extract_transactions(meta, ledger_sequence, closed_at, net_id);
 
-    // Get envelopes and per-tx metas for downstream stages
-    let envelopes = xdr_parser::envelope::extract_envelopes(meta);
+    // Get envelopes and per-tx metas for downstream stages. Both are
+    // aligned 1:1 with `tx_processing` (apply order).
+    let envelopes = xdr_parser::envelope::extract_envelopes(meta, net_id);
     let tx_metas = collect_tx_metas(meta);
 
     // Per-transaction parsing (stages 0025, 0026, 0027)
@@ -89,7 +92,7 @@ pub async fn process_ledger(
             continue;
         }
 
-        let envelope = envelopes.get(tx_index);
+        let envelope = envelopes.get(tx_index).and_then(Option::as_ref);
         let tx_meta = tx_metas.get(tx_index).copied();
 
         // --- Stage 0025: Operation extraction ---
@@ -161,13 +164,12 @@ pub async fn process_ledger(
     // multi-SAC/tx ambiguity and batch-boundary fragility in one stroke:
     // preimages come from both top-level `CreateContract` operations AND
     // `CreateContractHostFn` auth entries (factory pattern).
-    let net_id = network_id();
     let sac_identity_by_contract: HashMap<String, xdr_parser::SacAssetIdentity> =
         extracted_transactions
             .iter()
             .enumerate()
             .filter(|(_, ext_tx)| !ext_tx.parse_error)
-            .filter_map(|(tx_index, _)| envelopes.get(tx_index))
+            .filter_map(|(tx_index, _)| envelopes.get(tx_index).and_then(Option::as_ref))
             .flat_map(|env| {
                 let inner = xdr_parser::envelope::inner_transaction(env);
                 xdr_parser::extract_sac_identities(&inner, net_id)

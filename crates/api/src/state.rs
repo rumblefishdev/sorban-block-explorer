@@ -12,4 +12,8 @@ pub struct AppState {
     pub fetcher: StellarArchiveFetcher,
     /// Per-Lambda warm cache for contract detail responses (45 s TTL).
     pub contract_cache: ContractMetadataCache,
+    /// `SHA256(STELLAR_NETWORK_PASSPHRASE)`. Required to align tx_set
+    /// envelopes (hash-sorted) with `tx_processing` (apply order) when
+    /// re-extracting heavy fields from archive XDR.
+    pub network_id: [u8; 32],
 }

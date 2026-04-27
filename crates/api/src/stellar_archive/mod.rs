@@ -235,7 +235,9 @@ mod tests {
                 continue;
             };
             let ledger = xdr_parser::extract_ledger(&meta).unwrap();
-            let txs = xdr_parser::extract_transactions(&meta, ledger.sequence, ledger.closed_at);
+            let net_id = xdr_parser::network_id(xdr_parser::MAINNET_PASSPHRASE);
+            let txs =
+                xdr_parser::extract_transactions(&meta, ledger.sequence, ledger.closed_at, &net_id);
             if let Some(first_tx) = txs.iter().find(|t| !t.parse_error) {
                 return (meta, first_tx.hash.clone());
             }
@@ -258,7 +260,8 @@ mod tests {
         // Start at first Soroban ledger; scan up to 20 ledgers for one with txs.
         let (meta, tx_hash) = find_ledger_with_tx(&fetcher, 50_457_424, 20).await;
 
-        let heavy = extract_e3_heavy(&meta, &tx_hash).expect("tx hash found in ledger");
+        let net_id = xdr_parser::network_id(xdr_parser::MAINNET_PASSPHRASE);
+        let heavy = extract_e3_heavy(&meta, &tx_hash, &net_id).expect("tx hash found in ledger");
 
         // XDR blobs must be populated for a non-parse-error tx.
         assert!(
@@ -289,7 +292,8 @@ mod tests {
 
         // Not a real tx hash in this ledger.
         let fake_hash = "deadbeef".repeat(8);
-        assert!(extract_e3_heavy(&meta, &fake_hash).is_none());
+        let net_id = xdr_parser::network_id(xdr_parser::MAINNET_PASSPHRASE);
+        assert!(extract_e3_heavy(&meta, &fake_hash, &net_id).is_none());
     }
 
     /// End-to-end E14 pipeline test:
@@ -311,7 +315,9 @@ mod tests {
                 continue;
             };
             let ledger = xdr_parser::extract_ledger(&meta).unwrap();
-            let txs = xdr_parser::extract_transactions(&meta, ledger.sequence, ledger.closed_at);
+            let net_id = xdr_parser::network_id(xdr_parser::MAINNET_PASSPHRASE);
+            let txs =
+                xdr_parser::extract_transactions(&meta, ledger.sequence, ledger.closed_at, &net_id);
             let tx_metas = super::extractors::collect_tx_metas(&meta);
 
             // Find any contract emitting events in this ledger.
@@ -333,7 +339,7 @@ mod tests {
 
             let Some(cid) = contract_id else { continue };
 
-            let heavy = extract_e14_heavy(&meta, &cid);
+            let heavy = extract_e14_heavy(&meta, &cid, &net_id);
             assert!(
                 !heavy.is_empty(),
                 "E14 heavy extraction returned no events for contract {cid} in ledger {seq}"

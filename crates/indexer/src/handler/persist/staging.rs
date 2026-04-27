@@ -8,7 +8,8 @@
 //!   (ADR 0033 — one row per `(contract, tx, ledger)` trio)
 //! * Split `account_balances_current` rows into native (NULL code/issuer) and
 //!   credit (both NOT NULL) per the `ck_abc_native` CHECK
-//! * Derive `transactions.has_soroban` from presence of events/invocations
+//! * Derive `transactions.has_soroban` strictly from envelope op type
+//!   (`InvokeHostFunction | ExtendFootprintTtl | RestoreFootprint`)
 //! * Build tx_participants union (source + op destinations + invokers + …)
 
 use std::collections::{HashMap, HashSet};
@@ -284,7 +285,7 @@ impl Staged {
         // --- Accounts universe + per-tx participant set -----------------------
         let mut account_keys_set: HashSet<String> = HashSet::new();
         let mut participants_per_tx: HashMap<String, HashSet<String>> = HashMap::new();
-        let has_soroban: HashMap<String, bool> = tx_has_soroban_map(events, invocations);
+        let has_soroban: HashMap<String, bool> = tx_has_soroban_map(operations);
 
         for tx in transactions {
             account_keys_set.insert(tx.source_account.clone());
@@ -1054,24 +1055,30 @@ fn staging_err(msg: &str) -> HandlerError {
     HandlerError::Staging(msg.to_string())
 }
 
-/// Derive `transactions.has_soroban` from the presence of any event or
-/// invocation for a given tx. Cheap and exact.
-fn tx_has_soroban_map(
-    events: &[(String, Vec<ExtractedEvent>)],
-    invocations: &[(String, Vec<ExtractedInvocation>)],
-) -> HashMap<String, bool> {
-    let mut out: HashMap<String, bool> = HashMap::new();
-    for (tx_hash, evs) in events {
-        if !evs.is_empty() {
-            out.insert(tx_hash.clone(), true);
-        }
-    }
-    for (tx_hash, invs) in invocations {
-        if !invs.is_empty() {
-            out.insert(tx_hash.clone(), true);
-        }
-    }
-    out
+/// Derive `transactions.has_soroban` strictly from the operation list of
+/// the (correctly-unwrapped) envelope: `true` iff the tx carries at least
+/// one `INVOKE_HOST_FUNCTION` / `EXTEND_FOOTPRINT_TTL` / `RESTORE_FOOTPRINT`.
+///
+/// Events and invocations are NOT used as the signal: a classic payment on
+/// a SAC-backed asset (HELIX, USDC, EURC, …) emits SAC transfer events as a
+/// side-effect, which would make every such tx look "soroban" to a loose
+/// derivation. The field name + the `idx_tx_has_soroban` partial index both
+/// imply the strict reading — only txs whose **author** wrote a Soroban op.
+fn tx_has_soroban_map(operations: &[(String, Vec<ExtractedOperation>)]) -> HashMap<String, bool> {
+    operations
+        .iter()
+        .map(|(tx_hash, ops)| {
+            let has = ops.iter().any(|op| {
+                matches!(
+                    op.op_type,
+                    OperationType::InvokeHostFunction
+                        | OperationType::ExtendFootprintTtl
+                        | OperationType::RestoreFootprint
+                )
+            });
+            (tx_hash.clone(), has)
+        })
+        .collect()
 }
 
 /// Identity columns for the `operations_appearances` natural key (task 0163).

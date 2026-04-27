@@ -115,10 +115,20 @@ async fn main() {
     let fetcher = StellarArchiveFetcher::new(s3_client);
 
     let config = AppConfig::from_env();
+    let passphrase = std::env::var("STELLAR_NETWORK_PASSPHRASE").unwrap_or_else(|_| {
+        panic!(
+            "STELLAR_NETWORK_PASSPHRASE env not set; required to align tx_set \
+             envelopes with apply-order tx_processing when re-extracting \
+             heavy fields. Expected the full Stellar passphrase string \
+             (e.g. \"Public Global Stellar Network ; September 2015\")."
+        )
+    });
+    let network_id = xdr_parser::network_id(&passphrase);
     let state = AppState {
         db,
         fetcher,
         contract_cache: contracts::cache::ContractMetadataCache::new(),
+        network_id,
     };
     let app = app(&config, state);
 
@@ -156,6 +166,7 @@ mod tests {
                 db,
                 fetcher,
                 contract_cache: contracts::cache::ContractMetadataCache::new(),
+                network_id: xdr_parser::network_id(xdr_parser::MAINNET_PASSPHRASE),
             },
         )
     }
