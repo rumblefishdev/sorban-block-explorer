@@ -192,8 +192,8 @@ fn to_i16_index(value: u32, kind: &'static str) -> Option<i16> {
     }
 }
 
-/// Collect borrowed `&TransactionMeta` slices for every transaction in the
-/// ledger, in the same order as `tx_processing` (i.e. index `i` in the
+/// Collect borrowed `&TransactionMeta` references for every transaction in
+/// the ledger, in the same order as `tx_processing` (i.e. index `i` in the
 /// returned `Vec` corresponds to the `i`-th entry of `tx_processing`, which
 /// also matches `xdr_parser::extract_transactions` and
 /// `xdr_parser::envelope::extract_envelopes` output ordering — callers rely

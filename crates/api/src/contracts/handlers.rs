@@ -11,8 +11,14 @@
 //!
 //! ADR 0029 graceful-degradation rule: if an S3 fetch fails for any ledger
 //! in a page we drop the affected appearance rows from the response (a `warn`
-//! log is emitted) but still return the rest. Cursor advancement is
-//! independent of fetch outcomes so retries pick up where the page left off.
+//! log is emitted) but still return the rest. Cursor advancement is **not**
+//! independent of fetch outcomes — it stops at the last appearance row that
+//! expanded successfully *consecutively from the start of the page*, so a
+//! transient public-archive failure does not create a permanent hole when
+//! the client follows the returned cursor (the next request restarts past
+//! the last good row and replays the failed-region rows). `has_more` is
+//! `true` whenever the page was truncated for this reason, signalling the
+//! client to keep paging.
 
 use std::collections::{HashMap, HashSet};
 
@@ -478,25 +484,28 @@ pub async fn list_invocations(
         }
     };
 
-    let has_more = rows.len() > raw_limit as usize;
-    if has_more {
+    let db_had_more = rows.len() > raw_limit as usize;
+    if db_had_more {
         rows.truncate(raw_limit as usize);
     }
-    let next_cursor = if has_more {
-        rows.last()
-            .map(|r| cursor::encode(r.created_at, r.transaction_id))
-    } else {
-        None
-    };
 
     let sequences: Vec<i64> = rows.iter().map(|r| r.ledger_sequence).collect();
     let ledger_map = fetch_unique_ledgers(&state, &sequences).await;
     let parsed = build_parsed_ledgers(&ledger_map, /* want_envelopes */ true);
 
-    let data = expand_invocations(&rows, &parsed, &contract_id);
+    let expanded = expand_invocations(&rows, &parsed, &contract_id);
+    let next_cursor = expansion_cursor(&rows, &expanded, params.cursor.as_deref());
+    // `has_more` is true if either the DB had more rows past this page OR
+    // we stopped expanding mid-page (the unexpanded tail must be retried).
+    let stopped_short = expanded.last_consecutive_idx.map_or(
+        // No row expanded — only "more" if the page actually had any rows.
+        !rows.is_empty(),
+        |idx| idx + 1 < rows.len(),
+    );
+    let has_more = db_had_more || stopped_short;
 
     Json(Paginated {
-        data,
+        data: expanded.items,
         page: PageInfo {
             cursor: next_cursor,
             limit: raw_limit,
@@ -506,36 +515,55 @@ pub async fn list_invocations(
     .into_response()
 }
 
+/// Result of expanding a page of appearance rows into per-node items.
+///
+/// `last_consecutive_idx` is the highest `i` such that every row in
+/// `rows[0..=i]` was expanded successfully. This is what the cursor
+/// advances past — failures stop the walk so the client can retry the
+/// unexpanded tail without losing items from a transient archive outage.
+struct ExpandedPage<T> {
+    items: Vec<T>,
+    last_consecutive_idx: Option<usize>,
+}
+
 fn expand_invocations(
     rows: &[InvocationAppearanceRow],
     parsed: &HashMap<u32, ParsedLedger<'_>>,
     contract_id: &str,
-) -> Vec<InvocationItem> {
-    let mut out = Vec::with_capacity(rows.len());
-    for row in rows {
+) -> ExpandedPage<InvocationItem> {
+    let mut items = Vec::with_capacity(rows.len());
+    let mut last_consecutive_idx: Option<usize> = None;
+    for (i, row) in rows.iter().enumerate() {
         let Ok(seq) = u32::try_from(row.ledger_sequence) else {
-            continue;
+            tracing::warn!(
+                "out-of-u32-range ledger_sequence {} on invocation row — \
+                 stopping page expansion to avoid skipping items",
+                row.ledger_sequence
+            );
+            break;
         };
         let Some(ledger) = parsed.get(&seq) else {
-            continue;
+            // Either the S3 fetch failed (already warned) or the parse
+            // failed (warned in ParsedLedger::new). Stop here so the cursor
+            // does not advance past unexpanded rows.
+            break;
         };
         let Some(idx) = ledger.tx_index_by_hash(&row.transaction_hash) else {
             tracing::warn!(
-                "tx {} missing from fetched ledger {} — skipping invocation appearance",
+                "tx {} missing from fetched ledger {} — stopping invocation page expansion",
                 row.transaction_hash,
                 ledger.ledger_sequence
             );
-            continue;
+            break;
         };
-        let envelopes = match ledger.envelopes.as_ref() {
-            Some(e) => e,
-            None => continue,
+        let Some(envelopes) = ledger.envelopes.as_ref() else {
+            break;
         };
         let Some(envelope) = envelopes.get(idx) else {
-            continue;
+            break;
         };
         let Some(ext_tx) = ledger.extracted_txs.get(idx) else {
-            continue;
+            break;
         };
         let tx_meta = ledger.tx_metas.get(idx).copied();
 
@@ -554,7 +582,7 @@ fn expand_invocations(
             if inv.contract_id.as_deref() != Some(contract_id) {
                 continue;
             }
-            out.push(InvocationItem {
+            items.push(InvocationItem {
                 transaction_hash: row.transaction_hash.clone(),
                 caller_account: inv.caller_account,
                 function_name: inv.function_name,
@@ -565,8 +593,56 @@ fn expand_invocations(
                 created_at: row.created_at,
             });
         }
+        last_consecutive_idx = Some(i);
     }
-    out
+    ExpandedPage {
+        items,
+        last_consecutive_idx,
+    }
+}
+
+/// Compute `next_cursor` for an expanded page. Generic over the row type
+/// so both invocation and event handlers reuse the same logic.
+///
+/// The cursor advances to the **last consecutively-expanded row's**
+/// `(created_at, transaction_id)`. When zero rows expanded, the original
+/// input `cursor` (or `None` for first-page requests) is echoed back so
+/// the client retries the same page on transient archive failure.
+fn expansion_cursor<T, R: AppearanceRow>(
+    rows: &[R],
+    expanded: &ExpandedPage<T>,
+    input_cursor: Option<&str>,
+) -> Option<String> {
+    match expanded.last_consecutive_idx {
+        Some(idx) => Some(cursor::encode(
+            rows[idx].created_at(),
+            rows[idx].transaction_id(),
+        )),
+        None => input_cursor.map(str::to_string),
+    }
+}
+
+trait AppearanceRow {
+    fn created_at(&self) -> DateTime<Utc>;
+    fn transaction_id(&self) -> i64;
+}
+
+impl AppearanceRow for InvocationAppearanceRow {
+    fn created_at(&self) -> DateTime<Utc> {
+        self.created_at
+    }
+    fn transaction_id(&self) -> i64 {
+        self.transaction_id
+    }
+}
+
+impl AppearanceRow for EventAppearanceRow {
+    fn created_at(&self) -> DateTime<Utc> {
+        self.created_at
+    }
+    fn transaction_id(&self) -> i64 {
+        self.transaction_id
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -638,25 +714,24 @@ pub async fn list_events(
             }
         };
 
-    let has_more = rows.len() > raw_limit as usize;
-    if has_more {
+    let db_had_more = rows.len() > raw_limit as usize;
+    if db_had_more {
         rows.truncate(raw_limit as usize);
     }
-    let next_cursor = if has_more {
-        rows.last()
-            .map(|r| cursor::encode(r.created_at, r.transaction_id))
-    } else {
-        None
-    };
 
     let sequences: Vec<i64> = rows.iter().map(|r| r.ledger_sequence).collect();
     let ledger_map = fetch_unique_ledgers(&state, &sequences).await;
     let parsed = build_parsed_ledgers(&ledger_map, /* want_envelopes */ false);
 
-    let data = expand_events(&rows, &parsed, &contract_id);
+    let expanded = expand_events(&rows, &parsed, &contract_id);
+    let next_cursor = expansion_cursor(&rows, &expanded, params.cursor.as_deref());
+    let stopped_short = expanded
+        .last_consecutive_idx
+        .map_or(!rows.is_empty(), |idx| idx + 1 < rows.len());
+    let has_more = db_had_more || stopped_short;
 
     Json(Paginated {
-        data,
+        data: expanded.items,
         page: PageInfo {
             cursor: next_cursor,
             limit: raw_limit,
@@ -670,25 +745,31 @@ fn expand_events(
     rows: &[EventAppearanceRow],
     parsed: &HashMap<u32, ParsedLedger<'_>>,
     contract_id: &str,
-) -> Vec<EventItem> {
-    let mut out = Vec::with_capacity(rows.len());
-    for row in rows {
+) -> ExpandedPage<EventItem> {
+    let mut items = Vec::with_capacity(rows.len());
+    let mut last_consecutive_idx: Option<usize> = None;
+    for (i, row) in rows.iter().enumerate() {
         let Ok(seq) = u32::try_from(row.ledger_sequence) else {
-            continue;
+            tracing::warn!(
+                "out-of-u32-range ledger_sequence {} on event row — \
+                 stopping page expansion to avoid skipping items",
+                row.ledger_sequence
+            );
+            break;
         };
         let Some(ledger) = parsed.get(&seq) else {
-            continue;
+            break;
         };
         let Some(idx) = ledger.tx_index_by_hash(&row.transaction_hash) else {
             tracing::warn!(
-                "tx {} missing from fetched ledger {} — skipping event appearance",
+                "tx {} missing from fetched ledger {} — stopping event page expansion",
                 row.transaction_hash,
                 ledger.ledger_sequence
             );
-            continue;
+            break;
         };
         let Some(tm) = ledger.tx_metas.get(idx).copied() else {
-            continue;
+            break;
         };
         let events = xdr_parser::extract_events(
             tm,
@@ -707,7 +788,7 @@ fn expand_events(
                 serde_json::Value::Array(a) => a,
                 other => vec![other],
             };
-            out.push(EventItem {
+            items.push(EventItem {
                 transaction_hash: row.transaction_hash.clone(),
                 event_type: event.event_type.to_string(),
                 topics,
@@ -716,6 +797,10 @@ fn expand_events(
                 created_at: row.created_at,
             });
         }
+        last_consecutive_idx = Some(i);
     }
-    out
+    ExpandedPage {
+        items,
+        last_consecutive_idx,
+    }
 }

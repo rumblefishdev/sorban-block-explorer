@@ -134,6 +134,15 @@ pub struct InvocationAppearanceRow {
 /// Per-node detail (function name, args, return value, caller_account) is
 /// re-extracted from XDR by the handler — `soroban_invocations_appearances.caller_id`
 /// only carries the root-level caller and is intentionally not surfaced here.
+///
+/// Pagination key is `(created_at DESC, transaction_id DESC)` — same as the
+/// transactions module — to enable partition pruning on `created_at` (the
+/// table's range partition key) and to share cursor encoding semantics
+/// across modules. The current `idx_sia_contract_ledger
+/// (contract_id, ledger_sequence DESC)` does not perfectly match this
+/// ordering, so the planner currently sorts after the index seek; the
+/// matching index is tracked under task 0132 (DB: add missing indexes for
+/// planned API query patterns) so this module does not own the migration.
 pub async fn fetch_invocation_appearances(
     pool: &PgPool,
     contract_surrogate_id: i64,
@@ -183,6 +192,16 @@ pub struct EventAppearanceRow {
     pub created_at: DateTime<Utc>,
 }
 
+/// Fetch a page of contract event appearances.
+///
+/// Pagination key is `(created_at DESC, transaction_id DESC)` for the same
+/// reasons as `fetch_invocation_appearances` (partition pruning + shared
+/// cursor semantics). `idx_sea_contract_ledger
+/// (contract_id, ledger_sequence DESC, created_at DESC)` already includes
+/// `created_at` so the planner can use it for ordering after the
+/// `contract_id` seek; the missing trailing `transaction_id` is a small
+/// secondary sort and is tracked alongside the invocations index under
+/// task 0132.
 pub async fn fetch_event_appearances(
     pool: &PgPool,
     contract_surrogate_id: i64,
