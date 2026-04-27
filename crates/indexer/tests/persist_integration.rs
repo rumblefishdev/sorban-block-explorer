@@ -412,8 +412,10 @@ fn make_contract_deployment() -> ExtractedContractDeployment {
         metadata: json!({"name": "TEST"}),
         // Task 0160: match the SAC asset row fixture (make_sac_asset) so
         // integration tests exercise a complete SAC identity end-to-end.
-        sac_asset_code: Some("USDC".to_string()),
-        sac_asset_issuer: Some(ISSUER_STRKEY.to_string()),
+        sac_asset: Some(xdr_parser::types::SacAssetIdentity::Credit {
+            code: "USDC".to_string(),
+            issuer: ISSUER_STRKEY.to_string(),
+        }),
     }
 }
 
@@ -794,8 +796,7 @@ async fn stub_wasm_unblocks_unknown_hash_and_real_upload_upgrades_it() {
         contract_type: ContractType::Other,
         is_sac: false,
         metadata: json!({}),
-        sac_asset_code: None,
-        sac_asset_issuer: None,
+        sac_asset: None,
     };
 
     let empty_operations: Vec<(String, Vec<ExtractedOperation>)> = Vec::new();
@@ -1132,8 +1133,7 @@ fn deploy_with(contract_id: &str, wasm_hash: &str) -> ExtractedContractDeploymen
         contract_type: ContractType::Other, // parser default; staging overrides
         is_sac: false,
         metadata: json!({}),
-        sac_asset_code: None,
-        sac_asset_issuer: None,
+        sac_asset: None,
     }
 }
 
@@ -1266,8 +1266,7 @@ async fn soroban_fungible_contract_produces_assets_row() {
         contract_type: ContractType::Other, // staging overrides via classifier
         is_sac: false,
         metadata: json!({}),
-        sac_asset_code: None,
-        sac_asset_issuer: None,
+        sac_asset: None,
     }];
     // Drive the real parser → persist wiring end-to-end so a regression in
     // detect_assets signature/behaviour fails this test, not just an
@@ -1409,8 +1408,7 @@ async fn late_wasm_upload_backfills_assets_row() {
         contract_type: ContractType::Other,
         is_sac: false,
         metadata: json!({}),
-        sac_asset_code: None,
-        sac_asset_issuer: None,
+        sac_asset: None,
     }];
 
     let empty_operations: Vec<(String, Vec<ExtractedOperation>)> = Vec::new();
@@ -1688,33 +1686,12 @@ const SAC160_TX_HASH: &str = "ddd01600000000000000000000000000000000000000000000
 const SAC160_XLM_CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAXLMSAC";
 const SAC160_CREDIT_CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUSDSAC";
 
-/// Task 0160 drift-guard — the migration 0002 DML seed for the XLM-SAC
-/// issuer sentinel MUST contain the exact StrKey exported by the
-/// xdr-parser `XLM_SAC_ISSUER_SENTINEL` const. If either drifts without
-/// the other, the sentinel row in `accounts` mismatches what
-/// `detect_assets` emits for XLM-SAC, and the FK from
-/// `assets.issuer_id` fails silently on the first XLM-SAC deploy.
-///
-/// Compile-time `include_str!` so the test fails at build time if the
-/// migration file moves rather than masking as a runtime lookup miss.
-#[test]
-fn migration_0002_seed_matches_xlm_sac_issuer_sentinel_const() {
-    const MIGRATION: &str = include_str!("../../db/migrations/0002_identity_and_ledgers.sql");
-    assert!(
-        MIGRATION.contains(xdr_parser::XLM_SAC_ISSUER_SENTINEL),
-        "migration 0002 must seed the XLM-SAC sentinel StrKey ({}) \
-         as declared in xdr_parser::XLM_SAC_ISSUER_SENTINEL — drift \
-         caught by this test would otherwise only surface as a silent \
-         FK failure on the first XLM-SAC deploy.",
-        xdr_parser::XLM_SAC_ISSUER_SENTINEL
-    );
-}
-
-/// XLM-SAC deployment (Asset::Native preimage) → `assets` row gets the
-/// sentinel identity: asset_code = "XLM", issuer_id resolves to the
-/// migration-seeded sentinel account. Covers option (c) end-to-end.
+/// Native XLM-SAC deployment (Asset::Native preimage) → `assets` row lands
+/// with NULL `asset_code` + NULL `issuer_id` + populated `contract_id`.
+/// Verifies the 0160 schema loosening (ck_assets_identity allows this
+/// shape for asset_type=Sac) end-to-end against a real Postgres.
 #[tokio::test]
-async fn xlm_sac_deployment_lands_with_sentinel_identity() {
+async fn xlm_sac_deployment_lands_with_null_identity() {
     let Ok(database_url) = std::env::var("DATABASE_URL") else {
         eprintln!("DATABASE_URL unset — skipping 0160 XLM-SAC test");
         return;
@@ -1754,10 +1731,6 @@ async fn xlm_sac_deployment_lands_with_sentinel_identity() {
         created_at: SAC160_CLOSED_AT,
         parse_error: false,
     };
-    // XLM-SAC deployment: sac_asset_code / sac_asset_issuer None ⇒
-    // detect_assets would apply the sentinel. We bypass detect_assets
-    // here and feed the sentinel-populated ExtractedAsset directly so
-    // the test focuses on the persist path.
     let deployments = vec![ExtractedContractDeployment {
         contract_id: SAC160_XLM_CONTRACT.to_string(),
         wasm_hash: None,
@@ -1766,13 +1739,12 @@ async fn xlm_sac_deployment_lands_with_sentinel_identity() {
         contract_type: ContractType::Token,
         is_sac: true,
         metadata: json!({}),
-        sac_asset_code: None,
-        sac_asset_issuer: None,
+        sac_asset: Some(xdr_parser::types::SacAssetIdentity::Native),
     }];
     let assets = vec![ExtractedAsset {
         asset_type: TokenAssetType::Sac,
-        asset_code: Some(xdr_parser::XLM_SAC_ASSET_CODE.to_string()),
-        issuer_address: Some(xdr_parser::XLM_SAC_ISSUER_SENTINEL.to_string()),
+        asset_code: None,
+        issuer_address: None,
         contract_id: Some(SAC160_XLM_CONTRACT.to_string()),
         name: None,
         total_supply: None,
@@ -1816,12 +1788,11 @@ async fn xlm_sac_deployment_lands_with_sentinel_identity() {
     .await
     .expect("XLM-SAC persist_ledger must succeed");
 
-    let row: (String, String) = sqlx::query_as(
+    let row: (Option<String>, Option<i64>) = sqlx::query_as(
         r#"
-        SELECT a.asset_code, acc.account_id
+        SELECT a.asset_code, a.issuer_id
           FROM assets a
           JOIN soroban_contracts sc ON sc.id = a.contract_id
-          JOIN accounts acc ON acc.id = a.issuer_id
          WHERE sc.contract_id = $1
            AND a.asset_type = $2
         "#,
@@ -1830,9 +1801,15 @@ async fn xlm_sac_deployment_lands_with_sentinel_identity() {
     .bind(TokenAssetType::Sac)
     .fetch_one(&pool)
     .await
-    .expect("XLM-SAC row lands with sentinel identity");
-    assert_eq!(row.0, xdr_parser::XLM_SAC_ASSET_CODE);
-    assert_eq!(row.1, xdr_parser::XLM_SAC_ISSUER_SENTINEL);
+    .expect("XLM-SAC row must land with NULL identity + contract_id FK");
+    assert!(
+        row.0.is_none(),
+        "native XLM-SAC must persist with NULL asset_code"
+    );
+    assert!(
+        row.1.is_none(),
+        "native XLM-SAC must persist with NULL issuer_id"
+    );
 
     clean_sac160_test(&pool).await;
 }
@@ -1904,8 +1881,10 @@ async fn classic_to_sac_greatest_promotion_is_monotonic() {
         contract_type: ContractType::Token,
         is_sac: true,
         metadata: json!({}),
-        sac_asset_code: Some("USDC".to_string()),
-        sac_asset_issuer: Some(ISSUER_STRKEY.to_string()),
+        sac_asset: Some(xdr_parser::types::SacAssetIdentity::Credit {
+            code: "USDC".to_string(),
+            issuer: ISSUER_STRKEY.to_string(),
+        }),
     }];
     let sac_assets = vec![ExtractedAsset {
         asset_type: TokenAssetType::Sac,
