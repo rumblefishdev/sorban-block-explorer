@@ -253,7 +253,10 @@ pub fn extract_account_states(
                             .get("type")
                             .and_then(|v| v.as_str())
                             .unwrap_or("unknown");
-                        // Skip pool_share trustlines — LP positions, not asset balances
+                        // pool_share trustlines are LP positions, not asset
+                        // balances — handled by the sibling producer
+                        // `extract_lp_positions` (task 0162). Skipping here
+                        // is intentional, not a data drop.
                         if asset_type == "pool_share" {
                             continue;
                         }
@@ -319,6 +322,9 @@ pub fn extract_account_states(
                             .get("type")
                             .and_then(|v| v.as_str())
                             .unwrap_or("unknown");
+                        // pool_share removal is handled by `extract_lp_positions`
+                        // (task 0162) which emits a zero-shares row from the
+                        // change.key; skipping here keeps account-state focus.
                         if asset_type == "pool_share" {
                             continue;
                         }
