@@ -37,16 +37,6 @@ CREATE TABLE accounts (
 CREATE INDEX idx_accounts_last_seen ON accounts (last_seen_ledger DESC);
 CREATE INDEX idx_accounts_prefix    ON accounts (account_id text_pattern_ops);
 
--- Task 0160: XLM-SAC issuer sentinel — all-zero Ed25519 StrKey. Not a real
--- Stellar account; seeded so `assets.issuer_id` FK resolves for the
--- synthetic XLM-SAC row (`detect_assets` applies this StrKey when a SAC
--- wraps Asset::Native and no classic issuer exists). Matches the
--- `XLM_SAC_ISSUER_SENTINEL` const in crates/xdr-parser/src/state.rs —
--- drift is caught by an xdr-parser unit test comparing to the runtime
--- `AccountId(Uint256([0; 32])).to_string()` value.
-INSERT INTO accounts (account_id, first_seen_ledger, last_seen_ledger, sequence_number)
-VALUES ('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF', 0, 0, 0);
-
 -- 3. wasm_interface_metadata (ABI, referenced by soroban_contracts.wasm_hash)
 CREATE TABLE wasm_interface_metadata (
     wasm_hash BYTEA PRIMARY KEY,
