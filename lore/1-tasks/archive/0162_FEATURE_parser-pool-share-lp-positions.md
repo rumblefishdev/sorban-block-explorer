@@ -208,4 +208,4 @@ direct downstream consumer — it owns:
 Audit gap. Closes the third (and last) of the three 2026-04-10
 pipeline-data-audit gaps: 0160 (SAC identity), 0161 (native
 singleton), 0162 (LP positions parser). After 0126 lands the
-downstream consumer, the audit is fully zaorane.
+downstream consumer, the audit is fully closed.
