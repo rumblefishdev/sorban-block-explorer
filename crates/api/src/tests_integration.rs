@@ -27,11 +27,12 @@ use crate::state::AppState;
 use crate::stellar_archive::StellarArchiveFetcher;
 use crate::transactions;
 
-/// Build a minimal test app with the transactions router mounted at /v1.
-/// Uses `connect_lazy` so tests that never hit the DB pay no connection cost.
-fn lazy_app() -> Router {
-    let db = sqlx::PgPool::connect_lazy("postgres://localhost/test_unused")
-        .expect("connect_lazy never fails");
+/// Build a test app with the transactions router mounted at /v1.
+///
+/// Caller supplies the `PgPool`. Validation tests that never touch the DB
+/// pass `connect_lazy("...")` (free until first query), DB-gated tests
+/// pass a real `PgPool::connect(...)` result.
+fn build_app(db: PgPool) -> Router {
     let aws_cfg = aws_sdk_s3::config::Builder::new()
         .region(aws_sdk_s3::config::Region::new("us-east-2"))
         .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
@@ -47,20 +48,11 @@ fn lazy_app() -> Router {
     router
 }
 
-fn real_app(db: PgPool) -> Router {
-    let aws_cfg = aws_sdk_s3::config::Builder::new()
-        .region(aws_sdk_s3::config::Region::new("us-east-2"))
-        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
-        .build();
-    let s3 = aws_sdk_s3::Client::from_conf(aws_cfg);
-    let fetcher = StellarArchiveFetcher::new(s3);
-    let state = AppState { db, fetcher };
-
-    let (router, _spec) = OpenApiRouter::new()
-        .nest("/v1", transactions::router())
-        .with_state(state)
-        .split_for_parts();
-    router
+/// Convenience wrapper for validation tests that never hit the DB.
+fn lazy_app() -> Router {
+    let db = sqlx::PgPool::connect_lazy("postgres://localhost/test_unused")
+        .expect("connect_lazy never fails");
+    build_app(db)
 }
 
 async fn body_json(resp: axum::response::Response) -> (StatusCode, Value) {
@@ -172,8 +164,8 @@ async fn list_endpoint_returns_paginated_envelope_against_real_db() {
         }
     };
 
-    let app = real_app(pool);
-    let resp = app
+    let router = build_app(pool);
+    let resp = router
         .oneshot(
             Request::builder()
                 .uri("/v1/transactions?limit=3")
@@ -230,8 +222,8 @@ async fn cursor_round_trip_no_overlap_against_real_db() {
     };
 
     // Page 1: limit=1 to maximise the chance of has_more=true on small DBs.
-    let app = real_app(pool.clone());
-    let resp = app
+    let router = build_app(pool.clone());
+    let resp = router
         .oneshot(
             Request::builder()
                 .uri("/v1/transactions?limit=1")
@@ -259,8 +251,8 @@ async fn cursor_round_trip_no_overlap_against_real_db() {
     let hash1 = data1[0]["hash"].as_str().unwrap().to_string();
 
     // Page 2: feed cursor back. URL-encode the `=` padding-free base64url.
-    let app = real_app(pool);
-    let resp = app
+    let router = build_app(pool);
+    let resp = router
         .oneshot(
             Request::builder()
                 .uri(format!("/v1/transactions?limit=1&cursor={cursor}"))

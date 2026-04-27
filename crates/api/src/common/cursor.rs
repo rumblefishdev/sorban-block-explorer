@@ -39,8 +39,11 @@ pub enum CursorError {
 /// here would indicate a broken manual `Serialize` impl, not user input,
 /// so we surface it as a panic rather than an error.
 pub fn encode<P: Serialize>(payload: &P) -> String {
-    let json = serde_json::to_string(payload).expect("cursor payload serialization is infallible");
-    URL_SAFE_NO_PAD.encode(json.as_bytes())
+    // to_vec, not to_string — JSON output is already valid UTF-8, so
+    // round-tripping through String just adds a redundant validation +
+    // allocation. Encoder takes &[u8] anyway.
+    let json = serde_json::to_vec(payload).expect("cursor payload serialization is infallible");
+    URL_SAFE_NO_PAD.encode(&json)
 }
 
 /// Decode a base64url-JSON cursor string into a typed payload.

@@ -67,6 +67,16 @@ pub struct ResolvedListParams {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Push the appropriate ` WHERE` or ` AND` glue and flip `has_where` true.
+///
+/// Centralises the per-clause prefix so call sites only deal with their own
+/// SQL fragment. `has_where` starts false; first call emits ` WHERE` and
+/// flips it; subsequent calls emit ` AND`.
+fn push_glue(qb: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>, has_where: &mut bool) {
+    qb.push(if *has_where { " AND" } else { " WHERE" });
+    *has_where = true;
+}
+
 fn map_list_row(r: &PgRow) -> TxListRow {
     TxListRow {
         id: r.get("id"),
@@ -108,35 +118,33 @@ pub async fn fetch_list(
     };
 
     let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(select);
+    let mut has_where = false;
 
     // contract_id filter: join soroban_contracts and filter by StrKey.
     if let Some(cid) = &params.contract_id {
         qb.push(" LEFT JOIN soroban_contracts sc ON sc.id = o.contract_id");
-        qb.push(" WHERE sc.contract_id = ");
+        push_glue(&mut qb, &mut has_where);
+        qb.push(" sc.contract_id = ");
         qb.push_bind(cid.as_str());
     }
 
-    let mut has_where = params.contract_id.is_some();
-
     // source_account filter on the already-joined accounts alias.
     if let Some(acct) = &params.source_account {
-        qb.push(if has_where { " AND" } else { " WHERE" });
+        push_glue(&mut qb, &mut has_where);
         qb.push(" a.account_id = ");
         qb.push_bind(acct.as_str());
-        has_where = true;
     }
 
     // op_type filter.
     if let Some(op_type) = params.op_type {
-        qb.push(if has_where { " AND" } else { " WHERE" });
+        push_glue(&mut qb, &mut has_where);
         qb.push(" o.type = ");
         qb.push_bind(op_type);
-        has_where = true;
     }
 
     // Cursor predicate.
     if let Some(cursor) = &params.cursor {
-        qb.push(if has_where { " AND" } else { " WHERE" });
+        push_glue(&mut qb, &mut has_where);
         push_ts_id_cursor_predicate(&mut qb, "t.created_at", "t.id", cursor);
     }
 

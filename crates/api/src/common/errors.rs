@@ -78,9 +78,9 @@ pub fn internal_error(code: &str, message: impl Into<String>) -> Response {
     envelope(StatusCode::INTERNAL_SERVER_ERROR, code, message, None)
 }
 
-/// Low-level envelope builder. Most handlers prefer the status-specific
-/// helpers above.
-pub fn envelope(
+/// Low-level envelope builder. Internal — every external call goes
+/// through one of the status-specific helpers above.
+fn envelope(
     status: StatusCode,
     code: &str,
     message: impl Into<String>,

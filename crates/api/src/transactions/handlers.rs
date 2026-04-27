@@ -48,25 +48,25 @@ pub async fn list_transactions(
     pagination: Pagination<TsIdCursor>,
     Query(params): Query<ListParams>,
 ) -> Response {
-    // Validate and map filter[operation_type] via the shared enum parser.
-    let op_type: Option<i16> = match params.filter_operation_type.as_deref() {
-        None => None,
-        Some(s) => match filters::parse_enum::<OperationType>(s, "operation_type") {
-            Ok(t) => Some(t as i16),
-            Err(resp) => return resp,
-        },
+    // Shape-validate filters before touching DB. Without these checks an
+    // invalid StrKey would silently produce an empty result set, and an
+    // unknown operation_type would 404 the SQL bind — both bad UX. Helpers
+    // return the canonical 400 envelope on failure.
+    let op_type: Option<i16> = match filters::parse_enum_opt::<OperationType>(
+        params.filter_operation_type.as_deref(),
+        "operation_type",
+    ) {
+        Ok(maybe) => maybe.map(|t| t as i16),
+        Err(resp) => return resp,
     };
-
-    // Shape-validate StrKeys for source_account (G…) and contract_id (C…).
-    // Without this check an invalid StrKey would silently produce an empty
-    // result set; the shared validator returns the canonical 400 envelope.
-    if let Some(acct) = params.filter_source_account.as_deref()
-        && let Err(resp) = filters::strkey(acct, 'G', "source_account")
-    {
+    if let Err(resp) = filters::strkey_opt(
+        params.filter_source_account.as_deref(),
+        'G',
+        "source_account",
+    ) {
         return resp;
     }
-    if let Some(cid) = params.filter_contract_id.as_deref()
-        && let Err(resp) = filters::strkey(cid, 'C', "contract_id")
+    if let Err(resp) = filters::strkey_opt(params.filter_contract_id.as_deref(), 'C', "contract_id")
     {
         return resp;
     }

@@ -29,9 +29,13 @@ use super::errors;
 /// check is duplicated inside the DB anyway when the StrKey is resolved
 /// against `accounts.account_id` / `soroban_contracts.contract_id`.
 pub fn strkey(value: &str, prefix: char, filter_key: &str) -> Result<(), Response> {
+    // bytes() instead of chars() — StrKey alphabet is RFC 4648 base32 (ASCII
+    // only), so byte iteration is safe and skips the UTF-8 decode.
     if value.len() == 56
         && value.starts_with(prefix)
-        && value.chars().all(|c| matches!(c, 'A'..='Z' | '2'..='7'))
+        && value
+            .bytes()
+            .all(|b| matches!(b, b'A'..=b'Z' | b'2'..=b'7'))
     {
         Ok(())
     } else {
@@ -42,6 +46,18 @@ pub fn strkey(value: &str, prefix: char, filter_key: &str) -> Result<(), Respons
             ),
             serde_json::json!({ "filter": filter_key, "received": value, "expected_prefix": prefix.to_string() }),
         ))
+    }
+}
+
+/// Validate a StrKey only when present.
+///
+/// Common handler pattern — `Option<String>` filter param, validate only
+/// when client supplied a value. Saves the `if let Some(v) = ... && let
+/// Err(resp) = ...` let-chain at every call site.
+pub fn strkey_opt(value: Option<&str>, prefix: char, filter_key: &str) -> Result<(), Response> {
+    match value {
+        Some(v) => strkey(v, prefix, filter_key),
+        None => Ok(()),
     }
 }
 
@@ -62,6 +78,15 @@ where
             serde_json::json!({ "filter": filter_key, "received": value }),
         )
     })
+}
+
+/// Parse a `filter[key]` enum only when present. See [`strkey_opt`] for the
+/// rationale — symmetric helper for the enum case.
+pub fn parse_enum_opt<T>(value: Option<&str>, filter_key: &str) -> Result<Option<T>, Response>
+where
+    T: FromStr,
+{
+    value.map(|s| parse_enum::<T>(s, filter_key)).transpose()
 }
 
 #[cfg(test)]
