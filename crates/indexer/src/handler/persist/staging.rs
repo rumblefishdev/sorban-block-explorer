@@ -765,11 +765,12 @@ impl Staged {
             });
         }
 
-        // Dedup by `(pool_id, account_id)` — the persist UPSERT in
-        // `write::upsert_lp_positions` is a single
-        // `INSERT … FROM UNNEST … ON CONFLICT (pool_id, account_id)`,
-        // and Postgres rejects multiple proposed rows hitting the same
-        // conflict target in one command:
+        // Dedup by `(pool_id, account_id)` — the `lp_positions` UPSERT
+        // lives inside `write::upsert_pools_and_snapshots` (`write.rs`)
+        // as a single `INSERT … FROM UNNEST … ON CONFLICT
+        // (pool_id, account_id) DO UPDATE`, and Postgres rejects
+        // multiple proposed rows hitting the same conflict target in
+        // one command:
         //   "ON CONFLICT DO UPDATE command cannot affect row a second time"
         // The parser legitimately emits more than one position per
         // `(pool, account)` per ledger when several txs touch the same

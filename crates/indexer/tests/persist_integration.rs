@@ -237,7 +237,7 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
     .bind(SRC_STRKEY)
     .fetch_one(&pool)
     .await
-    .expect("dedupd LP position row exists");
+    .expect("deduped LP position row exists");
     assert_eq!(lp_row.0, "12.0000000", "last-seen shares win on tie");
     assert_eq!(
         lp_row.1,
