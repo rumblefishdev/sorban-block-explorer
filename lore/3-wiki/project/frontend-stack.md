@@ -28,10 +28,11 @@ React 19 SPA served by Vite. Entry point: `index.html` → `src/main.tsx` → `s
 
 ### What does not exist yet
 
-- Routing (task 0047)
-- TanStack Query provider and API client (task 0046)
-- MUI theme (task 0077)
-- Layout shell, header, navigation (task 0039)
+- Routing (task 0067)
+- TanStack Query provider and API client (task 0066)
+- MUI theme (task 0058)
+- Layout shell, header, navigation (task 0059)
+- API type generation from OpenAPI (task 0096)
 
 ## libs/ui
 
@@ -39,7 +40,7 @@ Shared React component library in Vite lib mode.
 
 - `vite.config.ts` — `build.lib`, ES format, externalizes react/mui/emotion
 - Currently exports only the `NavigationItem` interface
-- UI components will be added in follow-up tasks (0039, 0040–0045)
+- UI components will be added by the ui/frontend backlog (tasks 0058–0077, 0086, 0087)
 
 ## Key workspace patterns
 

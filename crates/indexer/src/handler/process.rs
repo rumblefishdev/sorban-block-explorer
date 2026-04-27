@@ -6,6 +6,7 @@ use aws_sdk_cloudwatch::{
 };
 use sqlx::PgPool;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use std::time::Instant;
 use stellar_xdr::curr::{LedgerCloseMeta, TransactionMeta};
 use tracing::{info, warn};
@@ -13,6 +14,33 @@ use tracing::{info, warn};
 use super::HandlerError;
 use super::persist;
 use super::persist::ClassificationCache;
+
+/// Network identifier hash, derived lazily from the
+/// `STELLAR_NETWORK_PASSPHRASE` env var. Required for SAC contract_id
+/// derivation (`SHA256(network_id || XDR(ContractIdPreimage))`).
+///
+/// The same passphrase is already a CDK config field
+/// (`stellarNetworkPassphrase` in `infra/src/lib/types.ts`) used by the
+/// ingestion stack to map Galexie's S3 prefix; we read it directly so
+/// there is one source of truth for the network the indexer is targeting.
+///
+/// **Fail-fast on missing env**: silently defaulting to mainnet on a
+/// testnet stack would derive wrong contract_ids and corrupt the assets
+/// table (no SAC row would ever match a deployed contract). Panic at
+/// first use is the loud, recoverable failure mode.
+fn network_id() -> &'static [u8; 32] {
+    static NETWORK_ID: OnceLock<[u8; 32]> = OnceLock::new();
+    NETWORK_ID.get_or_init(|| {
+        let passphrase = std::env::var("STELLAR_NETWORK_PASSPHRASE").unwrap_or_else(|_| {
+            panic!(
+                "STELLAR_NETWORK_PASSPHRASE env not set; SAC contract_id derivation \
+                 cannot proceed. Expected the full Stellar passphrase string \
+                 (e.g. \"Public Global Stellar Network ; September 2015\")."
+            )
+        });
+        xdr_parser::network_id(&passphrase)
+    })
+}
 
 /// Process a single ledger: run all parsing stages and persist in one DB transaction.
 /// If `cw_client` is provided, publishes `LastProcessedLedgerSequence` to CloudWatch.
@@ -126,8 +154,29 @@ pub async fn process_ledger(
     let mut all_pool_snapshots = Vec::new();
     let mut all_assets = Vec::new();
 
+    // Task 0160 — correlate SAC deployments with their underlying classic
+    // asset. Each SAC's `contract_id` is deterministically derived from the
+    // `ContractIdPreimage` per stellar-core (`SHA256(network_id || XDR)`),
+    // so we key on the derived contract_id rather than `tx_hash`. That kills
+    // multi-SAC/tx ambiguity and batch-boundary fragility in one stroke:
+    // preimages come from both top-level `CreateContract` operations AND
+    // `CreateContractHostFn` auth entries (factory pattern).
+    let net_id = network_id();
+    let sac_identity_by_contract: HashMap<String, xdr_parser::SacAssetIdentity> =
+        extracted_transactions
+            .iter()
+            .enumerate()
+            .filter(|(_, ext_tx)| !ext_tx.parse_error)
+            .filter_map(|(tx_index, _)| envelopes.get(tx_index))
+            .flat_map(|env| {
+                let inner = xdr_parser::envelope::inner_transaction(env);
+                xdr_parser::extract_sac_identities(&inner, net_id)
+            })
+            .collect();
+
     for (_tx_hash, tx_source, changes) in &all_ledger_entry_changes {
-        let deployments = xdr_parser::extract_contract_deployments(changes, tx_source);
+        let deployments =
+            xdr_parser::extract_contract_deployments(changes, tx_source, &sac_identity_by_contract);
         // detect_assets uses WASM interfaces to classify non-SAC deployments
         // as Soroban-native assets (task 0120). Contracts deployed in this
         // ledger without a matching interface are skipped here and picked up

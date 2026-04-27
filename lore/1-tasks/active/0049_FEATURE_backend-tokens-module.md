@@ -2,9 +2,9 @@
 id: '0049'
 title: 'Backend: Assets module (list + detail + transactions)'
 type: FEATURE
-status: backlog
-related_adr: ['0005', '0036']
-related_tasks: ['0023', '0043', '0092']
+status: active
+related_adr: ['0005', '0036', '0037']
+related_tasks: ['0023', '0043', '0050', '0092']
 tags: [layer-backend, assets]
 milestone: 2
 links: []
@@ -21,6 +21,14 @@ history:
     status: backlog
     who: karolkow
     note: 'Updated per task 0154: tokens→assets rename, filter values updated (classic→classic_credit, added native)'
+  - date: 2026-04-27
+    status: active
+    who: FilipDz
+    note: >
+      Activated task. Picking up after task 0050 (Contracts module) shipped —
+      same M2 list/detail/sub-resource shape, mirrors the contracts module
+      layout in crates/api/src/. Will adapt to task 0043 pagination helpers
+      once Karol's PR #124 lands.
 ---
 
 # Backend: Assets module (list + detail + transactions)

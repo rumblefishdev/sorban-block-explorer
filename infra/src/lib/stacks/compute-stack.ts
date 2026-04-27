@@ -89,6 +89,11 @@ export class ComputeStack extends cdk.Stack {
       RDS_PROXY_ENDPOINT: dbProxyEndpoint,
       SECRET_ARN: dbSecret.secretArn,
       ENV_NAME: config.envName,
+      // Task 0160 — indexer derives SAC `contract_id` deterministically
+      // (`SHA256(network_id || XDR(ContractIdPreimage))`) and panics if
+      // this passphrase is missing. Same value used by Galexie partition
+      // mapping in ingestion-stack — single source of truth.
+      STELLAR_NETWORK_PASSPHRASE: config.stellarNetworkPassphrase,
     };
 
     // ---------------------

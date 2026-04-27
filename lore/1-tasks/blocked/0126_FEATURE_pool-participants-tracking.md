@@ -3,7 +3,7 @@ id: '0126'
 title: 'LP: pool participants and share tracking'
 type: FEATURE
 status: blocked
-related_adr: []
+related_adr: ['0037']
 related_tasks: ['0052', '0077', '0136', '0162']
 blocked_by: ['0162']
 tags: [priority-low, effort-medium, layer-indexer, layer-db, audit-gap]

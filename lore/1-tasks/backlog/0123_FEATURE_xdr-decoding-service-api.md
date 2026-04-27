@@ -2,10 +2,11 @@
 id: '0123'
 title: 'API: XDR decoding service for advanced transaction view'
 type: FEATURE
-status: active
-related_adr: ['0004']
-related_tasks: ['0046', '0071']
-tags: [priority-medium, effort-medium, layer-backend, audit-gap]
+status: backlog
+related_adr: ['0004', '0029', '0033']
+related_tasks: ['0046', '0071', '0150']
+tags:
+  [priority-medium, effort-medium, layer-backend, audit-gap, needs-pm-review]
 milestone: 1
 links:
   - docs/audits/2026-04-10-pipeline-data-audit.md
@@ -18,6 +19,18 @@ history:
     status: active
     who: karolkow
     note: 'Promoted to active to start work.'
+  - date: '2026-04-24'
+    status: backlog
+    who: karolkow
+    note: >
+      Demoted after investigation — backend XDR decode already delivered
+      by task 0150 (stellar_archive library) + task 0046 (E3 wiring).
+      Real remaining work = ADR 0004 amendment/supersession (AC#4).
+      Likely duplicate of 0150. Paused pending PM (stkrolikiewicz) sync
+      on scope: cancel as duplicate, reduce scope to ADR 0004 update only,
+      or close as completed with delegated credit. See related_tasks 0150
+      (completed 2026-04-22) and 0046 (completed 2026-04-23). Meanwhile
+      switched to 0043 per team sync.
 ---
 
 # API: XDR decoding service for advanced transaction view
