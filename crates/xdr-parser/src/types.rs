@@ -14,6 +14,29 @@
 
 use domain::{ContractEventType, ContractType, NftEventType, OperationType, TokenAssetType};
 
+/// Underlying classic asset identity carried by a SAC deployment.
+///
+/// Sourced from `CreateContractArgs.contract_id_preimage` with variant
+/// `FromAsset(Asset)`. The ContractInstance XDR entry for a SAC is a
+/// marker-only `{"type": "stellar_asset"}` and carries no asset data,
+/// so this is the sole path for populating `assets.asset_code` /
+/// `.issuer_id` for SAC rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SacAssetIdentity {
+    /// XLM-SAC — wraps the native Stellar asset. No code / issuer.
+    /// Persisted with NULL `asset_code` + NULL `issuer_id` (allowed by
+    /// `ck_assets_identity` when `contract_id IS NOT NULL`).
+    Native,
+    /// Classic-credit SAC — wraps a `credit_alphanum4` or
+    /// `credit_alphanum12` asset with a real issuer.
+    Credit {
+        /// Asset code (trailing NULs already stripped by the parser).
+        code: String,
+        /// Issuer `G...` StrKey.
+        issuer: String,
+    },
+}
+
 /// Extracted ledger data, maps to the `ledgers` table.
 #[derive(Debug, Clone)]
 pub struct ExtractedLedger {
@@ -229,17 +252,19 @@ pub struct ExtractedContractDeployment {
     pub contract_type: ContractType,
     pub is_sac: bool,
     pub metadata: serde_json::Value,
-    /// Task 0160 — SAC underlying asset identity (from the creating
-    /// tx's `CreateContract` preimage `FromAsset` variant).
+    /// Task 0160 — SAC underlying asset identity resolved from
+    /// `ContractIdPreimage::FromAsset` (top-level op OR auth-entry
+    /// `CreateContractHostFn`), correlated by the preimage-derived
+    /// contract_id.
     ///
-    /// * `Some(code)` for `credit_alphanum4` / `credit_alphanum12`
-    ///   SAC deployments.
-    /// * `None` for native XLM-SAC (`detect_assets` applies the
-    ///   XLM-SAC sentinel) and for non-SAC deployments.
-    pub sac_asset_code: Option<String>,
-    /// Issuer `G...` StrKey for classic-credit SAC deployments.
-    /// `None` for native XLM-SAC and for non-SAC deployments.
-    pub sac_asset_issuer: Option<String>,
+    /// * `Some(Native)` — XLM-SAC, persisted with NULL code/issuer.
+    /// * `Some(Credit { .. })` — classic credit SAC, persisted with real
+    ///   code + issuer.
+    /// * `None` — non-SAC deployment, OR a SAC whose creating preimage
+    ///   is not present in the current batch (e.g. replay starting from
+    ///   mid-ledger without the original deploy tx). `detect_assets`
+    ///   skips such SACs with a `tracing::warn`.
+    pub sac_asset: Option<SacAssetIdentity>,
 }
 
 /// Extracted account state from LedgerEntryChanges.

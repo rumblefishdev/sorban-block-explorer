@@ -21,7 +21,7 @@ use stellar_xdr::curr::{
 
 use crate::envelope::InnerTxRef;
 use crate::error::{ParseError, ParseErrorKind};
-use crate::state::SacAssetIdentity;
+use crate::types::SacAssetIdentity;
 
 pub const MAINNET_PASSPHRASE: &str = "Public Global Stellar Network ; September 2015";
 pub const TESTNET_PASSPHRASE: &str = "Test SDF Network ; September 2015";
