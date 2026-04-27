@@ -2,7 +2,7 @@
 id: '0160'
 title: 'BUG: SAC deployments never land in assets — missing underlying asset_code/issuer extraction'
 type: BUG
-status: active
+status: completed
 related_adr: ['0023', '0027', '0036', '0037', '0038']
 related_tasks: ['0120', '0124', '0154', '0161']
 tags:
@@ -113,6 +113,22 @@ history:
       NOT NULL contract_id), sentinel eliminated, factory SAC covered
       via auth-entry walk. Effort medium → large. One-shot rewrite — no
       incremental follow-ups.
+  - date: '2026-04-27'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Re-open scope shipped on `fix/0160_sac-asset-identity-extraction`
+      (PR #120, commits e7f0b6c..611d07b — 17 incremental commits + 1
+      merge commit). Final tally: 162 xdr-parser unit tests
+      (incl. 7 sac::), 5 indexer lib tests, 8/8 persist_integration
+      tests passing parallel against live Postgres (0.25s).
+      `cargo clippy --workspace --all-targets -- -D warnings` clean.
+      ADR 0038 spawned to record the `ck_assets_identity` loosening.
+      Copilot review feedback (5 items) addressed in commit 611d07b
+      including a real correctness fix on `GREATEST`-based asset_type
+      conflict resolution (CASE-based to prefer SAC over Soroban).
+      Coordination ping to @Efem67 on PR comment for ADR 0037 inline-
+      refresh decision.
 ---
 
 # BUG: SAC deployments never land in assets — missing underlying asset_code/issuer extraction
