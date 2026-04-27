@@ -570,10 +570,16 @@ CREATE TABLE assets (
     holder_count INTEGER,                                         -- ditto
     icon_url     VARCHAR(1024),                                   -- list-level thumbnail (ADR 0037 / task 0164)
     CONSTRAINT ck_assets_asset_type_range CHECK (asset_type BETWEEN 0 AND 15),
+    -- asset_type = 2 (SAC) admits two shapes — classic-credit wrap carries
+    -- (code + issuer + contract); native XLM wrap carries (NULL + NULL +
+    -- contract). See ADR 0038.
     CONSTRAINT ck_assets_identity CHECK (
         (asset_type = 0 AND asset_code IS NULL     AND issuer_id IS NULL     AND contract_id IS NULL)
      OR (asset_type = 1 AND asset_code IS NOT NULL AND issuer_id IS NOT NULL AND contract_id IS NULL)
-     OR (asset_type = 2 AND asset_code IS NOT NULL AND issuer_id IS NOT NULL AND contract_id IS NOT NULL)
+     OR (asset_type = 2 AND contract_id IS NOT NULL AND (
+            (asset_code IS NOT NULL AND issuer_id IS NOT NULL)   -- classic-credit SAC
+         OR (asset_code IS NULL     AND issuer_id IS NULL)        -- native XLM-SAC (ADR 0038)
+        ))
      OR (asset_type = 3 AND issuer_id IS NULL      AND contract_id IS NOT NULL)
     )
 );
@@ -601,9 +607,13 @@ Design notes:
   [ADR 0031](../../../lore/2-adrs/0031_enum-columns-smallint-with-rust-enum.md); label
   helper `token_asset_type_name(ty)` renders strings for psql/BI
 - `issuer_id` / `contract_id` are `BIGINT` surrogate FKs (ADRs 0026 / 0030); the
-  four identity rules in `ck_assets_identity` close the NULL-in-UNIQUE loophole
-- native XLM is uniquely identified by `asset_type = 0`; classic credit and SAC
-  assets by `(asset_code, issuer_id)`; SAC and Soroban assets by `contract_id`
+  identity rules in `ck_assets_identity` close the NULL-in-UNIQUE loophole and
+  enforce that classic identity fields move together for SAC rows (both set or
+  both NULL — see [ADR 0038](../../../lore/2-adrs/0038_loosen-ck-assets-identity-for-native-xlm-sac.md))
+- native XLM is uniquely identified by `asset_type = 0`; classic credit and
+  classic-credit-wrap SACs by `(asset_code, issuer_id)`; classic-credit-wrap
+  SAC, native XLM-SAC, and Soroban-native assets all dedupe by `contract_id`
+  via `uidx_assets_soroban`
 - `icon_url` is the only SEP-1 enrichment field on the DB row — it serves the
   list-page thumbnail (per-row). Asset-detail metadata (`description`,
   `home_page`) lives per-entity in S3 at `s3://<bucket>/assets/{id}.json` per

@@ -3,7 +3,7 @@ id: '0160'
 title: 'BUG: SAC deployments never land in assets — missing underlying asset_code/issuer extraction'
 type: BUG
 status: active
-related_adr: ['0023', '0027', '0036']
+related_adr: ['0023', '0027', '0036', '0037', '0038']
 related_tasks: ['0120', '0124', '0154', '0161']
 tags:
   [
@@ -62,6 +62,20 @@ history:
       `fix/0160_sac-asset-identity-extraction`). Approach: tx_hash
       correlation + synthesised XLM-SAC issuer sentinel
       (`GAAA…WHF`). Superseded by re-open below.
+  - date: '2026-04-27'
+    status: active
+    who: stkrolikiewicz
+    note: >
+      ADR 0038 spawned — thin follow-up to ADR 0037 documenting the
+      `ck_assets_identity` loosening for native XLM-SAC. Per ADR 0037
+      §533 ("a thin follow-up ADR referencing this one is an
+      acceptable substitute for small deltas"). ADR 0037 frontmatter
+      `related_adrs` updated to include 0038; body left untouched
+      pending @fmazur's review (he authored the snapshot). ADR 0038
+      Delivery Checklist: `docs/architecture/database-schema-overview.md`
+      refreshed to the new constraint shape; pre-existing 0164 drift in
+      `technical-design-general-overview.md §6.7` flagged as N/A
+      with a separate-cleanup recommendation.
   - date: '2026-04-27'
     status: active
     who: stkrolikiewicz
@@ -429,6 +443,15 @@ to pre-0160 state). One new forward-only migration with proper down.
    `sac_asset: Option<SacAssetIdentity>` (Native | Credit{code,issuer})
    replaces two parallel `Option<String>` fields. Makes the
    "either both or neither" invariant unrepresentable as invalid state.
+
+8. **Spawn ADR 0038 instead of inline-editing ADR 0037.** ADR 0037 is
+   an `fmazur`-authored snapshot anchored on migration `20260424000000`;
+   §533 explicitly invites a "thin follow-up ADR" as the substitute for
+   small schema deltas. Spawned ADR 0038 with full context (alternatives
+   considered, rationale, delivery checklist) and updated 0037's
+   `related_adrs` only — no body edit. Coordination call (refresh 0037
+   inline vs leave snapshot frozen) deferred to @fmazur as ADR owner.
+   Documented as Open Question in ADR 0038.
 
 ### Superseded (initial attempt)
 

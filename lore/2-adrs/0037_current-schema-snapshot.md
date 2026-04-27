@@ -18,6 +18,7 @@ related_adrs:
     '0034',
     '0035',
     '0036',
+    '0038',
   ]
 tags: [database, schema, snapshot, documentation]
 links: []
@@ -26,6 +27,17 @@ history:
     status: proposed
     who: fmazur
     note: 'ADR created — snapshot of live Dockerized Postgres schema after the operations_appearances refactor'
+  - date: 2026-04-27
+    status: proposed
+    who: stkrolikiewicz
+    note: >
+      Added ADR 0038 to `related_adrs` — thin follow-up loosening
+      `ck_assets_identity` for native XLM-SAC under task 0160.
+      ADR 0037 §326-332 schema dump is now stale wrt the live DB
+      (anchor migration shifts from `20260424000000` to
+      `20260427000000`). Body left untouched pending @fmazur's call
+      whether to refresh inline or keep the original snapshot frozen
+      with ADR 0038 serving as the official delta.
 ---
 
 # ADR 0037: Current schema snapshot — live DB after `operations_appearances` collapse
