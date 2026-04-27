@@ -5,7 +5,6 @@ use sqlx::postgres::PgRow;
 use sqlx::{PgPool, Row};
 
 use crate::common::cursor::TsIdCursor;
-use crate::common::pagination::push_ts_id_cursor_predicate;
 
 // ---------------------------------------------------------------------------
 // Internal row structs (not exposed in API response types)
@@ -77,6 +76,21 @@ fn push_glue(qb: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>, has_where: &mut bo
     *has_where = true;
 }
 
+/// Append `(t.created_at, t.id) < ($ts, $id)` cursor predicate.
+///
+/// Inlined per-resource — column names are hardcoded literals, never
+/// reach the SQL builder via parameters. The shared cursor *codec*
+/// (`TsIdCursor`, `cursor::encode/decode`) lives in `common/`; the
+/// predicate SQL stays here so each resource owns its own column names
+/// and aliases without a generic-string indirection.
+fn push_cursor_predicate(qb: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>, cursor: &TsIdCursor) {
+    qb.push(" (t.created_at, t.id) < (");
+    qb.push_bind(cursor.ts);
+    qb.push(", ");
+    qb.push_bind(cursor.id);
+    qb.push(")");
+}
+
 fn map_list_row(r: &PgRow) -> TxListRow {
     TxListRow {
         id: r.get("id"),
@@ -145,7 +159,7 @@ pub async fn fetch_list(
     // Cursor predicate.
     if let Some(cursor) = &params.cursor {
         push_glue(&mut qb, &mut has_where);
-        push_ts_id_cursor_predicate(&mut qb, "t.created_at", "t.id", cursor);
+        push_cursor_predicate(&mut qb, cursor);
     }
 
     qb.push(" ORDER BY t.created_at DESC, t.id DESC LIMIT ");

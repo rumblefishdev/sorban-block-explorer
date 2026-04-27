@@ -23,11 +23,15 @@ use super::errors;
 /// Shape-validate a Stellar StrKey: required prefix character + 56 total
 /// chars in the RFC 4648 base32 alphabet (`A-Z` + `2-7`).
 ///
-/// CRC validation is deliberately skipped — the shape check catches the
-/// common typo / wrong-prefix cases that would otherwise produce silent
-/// empty result sets, without pulling in a CRC dependency. A full CRC
-/// check is duplicated inside the DB anyway when the StrKey is resolved
-/// against `accounts.account_id` / `soroban_contracts.contract_id`.
+/// CRC validation is deliberately skipped — the shape check this function
+/// performs IS the validation, not a fast path before a stricter DB check.
+/// Per ADR 0037, `accounts.account_id` and `soroban_contracts.contract_id`
+/// are `VARCHAR(56) NOT NULL UNIQUE` columns matched by plain string
+/// equality; a wrong-CRC StrKey that passes the shape check will simply
+/// not match any row, producing an empty result set with the same UX as
+/// a non-existent address — acceptable for a read-only API. The benefit
+/// of the shape check is catching the common typo / wrong-prefix cases
+/// loudly with a 400 envelope instead of silently returning `[]`.
 pub fn strkey(value: &str, prefix: char, filter_key: &str) -> Result<(), Response> {
     // bytes() instead of chars() — StrKey alphabet is RFC 4648 base32 (ASCII
     // only), so byte iteration is safe and skips the UTF-8 decode.
@@ -67,14 +71,20 @@ pub fn strkey_opt(value: Option<&str>, prefix: char, filter_key: &str) -> Result
 /// envelope so handlers do not hand-craft the response. Suitable for any
 /// type whose `FromStr` implementation returns an error for unknown
 /// variant names — e.g. `domain::OperationType`, `domain::TokenType`.
-pub fn parse_enum<T>(value: &str, filter_key: &str) -> Result<T, Response>
+///
+/// `kind_hint` lets the call site tighten the error message with a
+/// type-specific noun (e.g. `Some("operation type")` →
+/// *"filter[operation_type] is not a recognized operation type"*).
+/// Pass `None` for the generic *"is not a recognized value"* phrasing.
+pub fn parse_enum<T>(value: &str, filter_key: &str, kind_hint: Option<&str>) -> Result<T, Response>
 where
     T: FromStr,
 {
     T::from_str(value).map_err(|_| {
+        let what = kind_hint.unwrap_or("value");
         errors::bad_request_with_details(
             errors::INVALID_FILTER,
-            format!("filter[{filter_key}] is not a recognised value"),
+            format!("filter[{filter_key}] is not a recognized {what}"),
             serde_json::json!({ "filter": filter_key, "received": value }),
         )
     })
@@ -82,11 +92,17 @@ where
 
 /// Parse a `filter[key]` enum only when present. See [`strkey_opt`] for the
 /// rationale — symmetric helper for the enum case.
-pub fn parse_enum_opt<T>(value: Option<&str>, filter_key: &str) -> Result<Option<T>, Response>
+pub fn parse_enum_opt<T>(
+    value: Option<&str>,
+    filter_key: &str,
+    kind_hint: Option<&str>,
+) -> Result<Option<T>, Response>
 where
     T: FromStr,
 {
-    value.map(|s| parse_enum::<T>(s, filter_key)).transpose()
+    value
+        .map(|s| parse_enum::<T>(s, filter_key, kind_hint))
+        .transpose()
 }
 
 #[cfg(test)]
@@ -173,14 +189,28 @@ mod tests {
 
     #[test]
     fn parse_enum_accepts_known_variant() {
-        assert_eq!(parse_enum::<Kind>("ALPHA", "kind").unwrap(), Kind::Alpha);
+        assert_eq!(
+            parse_enum::<Kind>("ALPHA", "kind", None).unwrap(),
+            Kind::Alpha
+        );
     }
 
     #[tokio::test]
-    async fn parse_enum_rejects_unknown_variant() {
-        let err = parse_enum::<Kind>("GAMMA", "kind").unwrap_err();
+    async fn parse_enum_rejects_unknown_variant_with_generic_hint() {
+        let err = parse_enum::<Kind>("GAMMA", "kind", None).unwrap_err();
         let (_, json) = body_json(err).await;
         assert_eq!(json["code"], "invalid_filter");
         assert_eq!(json["details"]["received"], "GAMMA");
+        assert_eq!(json["message"], "filter[kind] is not a recognized value");
+    }
+
+    #[tokio::test]
+    async fn parse_enum_rejects_unknown_variant_with_kind_hint() {
+        let err = parse_enum::<Kind>("GAMMA", "kind", Some("kind name")).unwrap_err();
+        let (_, json) = body_json(err).await;
+        assert_eq!(
+            json["message"],
+            "filter[kind] is not a recognized kind name"
+        );
     }
 }

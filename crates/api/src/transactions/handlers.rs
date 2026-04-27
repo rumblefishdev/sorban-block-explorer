@@ -55,6 +55,7 @@ pub async fn list_transactions(
     let op_type: Option<i16> = match filters::parse_enum_opt::<OperationType>(
         params.filter_operation_type.as_deref(),
         "operation_type",
+        Some("operation type"),
     ) {
         Ok(maybe) => maybe.map(|t| t as i16),
         Err(resp) => return resp,

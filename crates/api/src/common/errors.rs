@@ -29,6 +29,12 @@ pub const INVALID_CURSOR: &str = "invalid_cursor";
 /// per-endpoint maximum.
 pub const INVALID_LIMIT: &str = "invalid_limit";
 
+/// Query string itself was malformed (bad percent-encoding, duplicate
+/// keys, structurally invalid). Distinct from `INVALID_LIMIT` /
+/// `INVALID_FILTER` — those imply the value of a known parameter was bad,
+/// whereas this one fires before per-parameter validators see anything.
+pub const INVALID_QUERY: &str = "invalid_query";
+
 /// A `filter[key]` query parameter carried a value the endpoint could
 /// not interpret (unknown enum name, malformed StrKey, etc.).
 pub const INVALID_FILTER: &str = "invalid_filter";

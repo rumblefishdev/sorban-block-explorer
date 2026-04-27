@@ -19,28 +19,12 @@ use serde::de::DeserializeOwned;
 use super::cursor::{self, CursorError};
 use super::errors;
 
-/// Per-endpoint limit policy. Both `default` and `max` are `u32` to match
-/// the wire type; `default` must satisfy `1 <= default <= max`.
-#[derive(Debug, Clone, Copy)]
-pub struct LimitConfig {
-    pub default: u32,
-    pub max: u32,
-}
+/// Default page size when the client omits `?limit=` (matches ADR 0008
+/// guidance and current spec for every list endpoint).
+const DEFAULT_LIMIT: u32 = 20;
 
-impl LimitConfig {
-    /// Project default — 20 items per page, 100 item ceiling (matches ADR
-    /// 0008 guidance and current spec for every list endpoint).
-    pub const DEFAULT: LimitConfig = LimitConfig {
-        default: 20,
-        max: 100,
-    };
-}
-
-impl Default for LimitConfig {
-    fn default() -> Self {
-        Self::DEFAULT
-    }
-}
+/// Hard ceiling on `?limit=` values across every list endpoint.
+const MAX_LIMIT: u32 = 100;
 
 /// Raw deserialisation target for the two standard query parameters.
 ///
@@ -68,9 +52,9 @@ pub struct Pagination<P> {
 
 impl<P: DeserializeOwned> Pagination<P> {
     /// Validate a raw `?limit=&cursor=` pair using the project-default
-    /// [`LimitConfig::DEFAULT`].
+    /// limit policy ([`DEFAULT_LIMIT`] / [`MAX_LIMIT`]).
     fn resolve_default(limit: Option<&str>, cursor: Option<&str>) -> Result<Self, Response> {
-        let limit = validate_limit(limit, LimitConfig::DEFAULT)?;
+        let limit = validate_limit(limit)?;
         let cursor = decode_cursor::<P>(cursor)?;
         Ok(Pagination { limit, cursor })
     }
@@ -80,24 +64,24 @@ impl<P: DeserializeOwned> Pagination<P> {
 // Validation primitives (also used by the FromRequestParts impl)
 // ---------------------------------------------------------------------------
 
-fn validate_limit(raw: Option<&str>, cfg: LimitConfig) -> Result<u32, Response> {
+fn validate_limit(raw: Option<&str>) -> Result<u32, Response> {
     let Some(s) = raw else {
-        return Ok(cfg.default);
+        return Ok(DEFAULT_LIMIT);
     };
 
     let parsed: u32 = s.parse().map_err(|_| {
         errors::bad_request_with_details(
             errors::INVALID_LIMIT,
-            format!("limit must be an integer between 1 and {}", cfg.max),
-            serde_json::json!({ "min": 1, "max": cfg.max, "received": s }),
+            format!("limit must be an integer between 1 and {MAX_LIMIT}"),
+            serde_json::json!({ "min": 1, "max": MAX_LIMIT, "received": s }),
         )
     })?;
 
-    if parsed == 0 || parsed > cfg.max {
+    if parsed == 0 || parsed > MAX_LIMIT {
         return Err(errors::bad_request_with_details(
             errors::INVALID_LIMIT,
-            format!("limit must be between 1 and {}", cfg.max),
-            serde_json::json!({ "min": 1, "max": cfg.max, "received": parsed }),
+            format!("limit must be between 1 and {MAX_LIMIT}"),
+            serde_json::json!({ "min": 1, "max": MAX_LIMIT, "received": parsed }),
         ));
     }
 
@@ -121,7 +105,8 @@ fn decode_cursor<P: DeserializeOwned>(raw: Option<&str>) -> Result<Option<P>, Re
 // FromRequestParts impl
 // ---------------------------------------------------------------------------
 
-/// Extractor impl uses [`LimitConfig::DEFAULT`].
+/// Extractor impl uses the project-default limit policy
+/// ([`DEFAULT_LIMIT`] / [`MAX_LIMIT`]).
 ///
 /// Internally delegates to `axum::extract::Query<PaginationRaw>`, which
 /// tolerates unknown fields in the query string — so a handler can pair
@@ -135,12 +120,16 @@ where
     type Rejection = Response;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        // Failure here means the query string itself is malformed (bad
+        // percent-encoding, duplicate keys, …) — surface as INVALID_QUERY,
+        // not INVALID_LIMIT, since the failure may have nothing to do with
+        // the `limit` parameter.
         let Query(raw) = Query::<PaginationRaw>::from_request_parts(parts, state)
             .await
             .map_err(|e| {
                 errors::bad_request(
-                    errors::INVALID_LIMIT,
-                    format!("could not parse pagination parameters: {e}"),
+                    errors::INVALID_QUERY,
+                    format!("could not parse query parameters: {e}"),
                 )
             })?;
         Pagination::<P>::resolve_default(raw.limit.as_deref(), raw.cursor.as_deref())
@@ -164,25 +153,19 @@ mod tests {
 
     #[test]
     fn limit_default_when_missing() {
-        assert_eq!(validate_limit(None, LimitConfig::DEFAULT).unwrap(), 20);
+        assert_eq!(validate_limit(None).unwrap(), 20);
     }
 
     #[test]
     fn limit_within_bounds_accepted() {
-        assert_eq!(
-            validate_limit(Some("42"), LimitConfig::DEFAULT).unwrap(),
-            42
-        );
-        assert_eq!(
-            validate_limit(Some("100"), LimitConfig::DEFAULT).unwrap(),
-            100
-        );
-        assert_eq!(validate_limit(Some("1"), LimitConfig::DEFAULT).unwrap(), 1);
+        assert_eq!(validate_limit(Some("42")).unwrap(), 42);
+        assert_eq!(validate_limit(Some("100")).unwrap(), 100);
+        assert_eq!(validate_limit(Some("1")).unwrap(), 1);
     }
 
     #[tokio::test]
     async fn limit_zero_rejected_with_invalid_limit() {
-        let err = validate_limit(Some("0"), LimitConfig::DEFAULT).unwrap_err();
+        let err = validate_limit(Some("0")).unwrap_err();
         let (status, json) = body_json(err).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(json["code"], "invalid_limit");
@@ -191,7 +174,7 @@ mod tests {
 
     #[tokio::test]
     async fn limit_above_max_rejected() {
-        let err = validate_limit(Some("101"), LimitConfig::DEFAULT).unwrap_err();
+        let err = validate_limit(Some("101")).unwrap_err();
         let (status, json) = body_json(err).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(json["code"], "invalid_limit");
@@ -200,7 +183,7 @@ mod tests {
 
     #[tokio::test]
     async fn limit_non_numeric_rejected() {
-        let err = validate_limit(Some("many"), LimitConfig::DEFAULT).unwrap_err();
+        let err = validate_limit(Some("many")).unwrap_err();
         let (status, json) = body_json(err).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(json["code"], "invalid_limit");
@@ -213,7 +196,7 @@ mod tests {
         // an explicit guard the parse path catches this as a numeric error,
         // but lock the behaviour here so a future refactor cannot silently
         // change `?limit=` from 400 to "use default".
-        let err = validate_limit(Some(""), LimitConfig::DEFAULT).unwrap_err();
+        let err = validate_limit(Some("")).unwrap_err();
         let (status, json) = body_json(err).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(json["code"], "invalid_limit");
@@ -225,7 +208,7 @@ mod tests {
         // ?limit=-1 fails u32 parse before the bounds check; assert this
         // path so a future signed-int refactor does not start accepting
         // negatives and clamping silently.
-        let err = validate_limit(Some("-1"), LimitConfig::DEFAULT).unwrap_err();
+        let err = validate_limit(Some("-1")).unwrap_err();
         let (status, json) = body_json(err).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(json["code"], "invalid_limit");

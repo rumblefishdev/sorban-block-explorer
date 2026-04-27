@@ -81,35 +81,6 @@ where
     Paginated { data, page }
 }
 
-// ---------------------------------------------------------------------------
-// SQL helper: cursor predicate for `(ts, id)` pagination
-// ---------------------------------------------------------------------------
-
-/// Append a cursor predicate to a `sqlx::QueryBuilder` for the common
-/// `(created_at DESC, id DESC)` ordering.
-///
-/// Generates `(<ts_col>, <id_col>) < ($ts, $id)` with the cursor values
-/// properly bound. The caller is responsible for preceding the predicate
-/// with the correct `WHERE` / `AND` glue — consistent with how the
-/// existing `fetch_list` query in the transactions module tracks whether
-/// a `WHERE` clause has already been emitted.
-pub fn push_ts_id_cursor_predicate(
-    qb: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>,
-    ts_col: &str,
-    id_col: &str,
-    payload: &cursor::TsIdCursor,
-) {
-    qb.push(" (");
-    qb.push(ts_col);
-    qb.push(", ");
-    qb.push(id_col);
-    qb.push(") < (");
-    qb.push_bind(payload.ts);
-    qb.push(", ");
-    qb.push_bind(payload.id);
-    qb.push(")");
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
