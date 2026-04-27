@@ -2,7 +2,7 @@
 id: '0169'
 title: 'BUG: transactions.operation_count is wrong (sometimes hardcoded to 1 for multi-op tx, sometimes overcounted)'
 type: BUG
-status: backlog
+status: active
 related_adr: ['0037']
 related_tasks: ['0167', '0168']
 tags: [bug, indexer, xdr-parser, envelope-parsing, priority-high]
@@ -12,6 +12,10 @@ history:
     status: backlog
     who: fmazur
     note: 'Spawned from 0167 audit findings (Hypothesis B verification).'
+  - date: 2026-04-27
+    status: active
+    who: fmazur
+    note: 'Promoted to active via /promote-task.'
 ---
 
 # BUG: transactions.operation_count is wrong
