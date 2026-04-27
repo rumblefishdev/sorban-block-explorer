@@ -1735,6 +1735,11 @@ const SAC160_LEDGER_HASH: &str = "ddd0000000000000000000000000000000000000000000
 const SAC160_TX_HASH: &str = "ddd0160000000000000000000000000000000000000000000000000000000001";
 const SAC160_XLM_CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAXLMSAC";
 const SAC160_CREDIT_CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUSDSAC";
+/// Dedicated SAC160 issuer — disjoint from `ISSUER_STRKEY` so the
+/// classic-credit / SAC unique key `(asset_code, issuer_id)` does not
+/// race the `synthetic_ledger_insert_and_replay_is_idempotent` fixture
+/// under default parallel `cargo test` execution.
+const SAC160_ISSUER_STRKEY: &str = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASAC160ISS";
 
 /// Native XLM-SAC deployment (Asset::Native preimage) → `assets` row lands
 /// with NULL `asset_code` + NULL `issuer_id` + populated `contract_id`.
@@ -1933,13 +1938,13 @@ async fn classic_to_sac_greatest_promotion_is_monotonic() {
         metadata: json!({}),
         sac_asset: Some(xdr_parser::types::SacAssetIdentity::Credit {
             code: "USDC".to_string(),
-            issuer: ISSUER_STRKEY.to_string(),
+            issuer: SAC160_ISSUER_STRKEY.to_string(),
         }),
     }];
     let sac_assets = vec![ExtractedAsset {
         asset_type: TokenAssetType::Sac,
         asset_code: Some("USDC".to_string()),
-        issuer_address: Some(ISSUER_STRKEY.to_string()),
+        issuer_address: Some(SAC160_ISSUER_STRKEY.to_string()),
         contract_id: Some(SAC160_CREDIT_CONTRACT.to_string()),
         name: None,
         total_supply: None,
@@ -1975,7 +1980,7 @@ async fn classic_to_sac_greatest_promotion_is_monotonic() {
     let classic_assets = vec![ExtractedAsset {
         asset_type: TokenAssetType::ClassicCredit,
         asset_code: Some("USDC".to_string()),
-        issuer_address: Some(ISSUER_STRKEY.to_string()),
+        issuer_address: Some(SAC160_ISSUER_STRKEY.to_string()),
         contract_id: None,
         name: None,
         total_supply: None,
@@ -2016,7 +2021,7 @@ async fn classic_to_sac_greatest_promotion_is_monotonic() {
         "#,
     )
     .bind("USDC")
-    .bind(ISSUER_STRKEY)
+    .bind(SAC160_ISSUER_STRKEY)
     .fetch_one(&pool)
     .await
     .expect("classic/SAC row exists post order-swap");
@@ -2035,7 +2040,7 @@ async fn classic_to_sac_greatest_promotion_is_monotonic() {
         "#,
     )
     .bind("USDC")
-    .bind(ISSUER_STRKEY)
+    .bind(SAC160_ISSUER_STRKEY)
     .fetch_one(&pool)
     .await
     .expect("fetch contract_id");
@@ -2059,14 +2064,19 @@ async fn clean_sac160_test(pool: &PgPool) {
     ])
     .execute(pool)
     .await;
-    // Classic/SAC share (code, issuer) unique — also clean by issuer.
+    // Classic/SAC share (code, issuer) unique — also clean by SAC160's
+    // dedicated issuer so a previous run leaving a stale (USDC,
+    // SAC160_ISSUER_STRKEY) row doesn't break the order-swap fixture.
+    // Scoped to SAC160_ISSUER_STRKEY so it can NOT touch
+    // synthetic_ledger's (USDC, ISSUER_STRKEY) row under parallel
+    // execution.
     let _ = sqlx::query(
         "DELETE FROM assets
           WHERE asset_type IN (1, 2)
             AND issuer_id IN (SELECT id FROM accounts WHERE account_id = $1)
             AND asset_code = 'USDC'",
     )
-    .bind(ISSUER_STRKEY)
+    .bind(SAC160_ISSUER_STRKEY)
     .execute(pool)
     .await;
     let tx_hash = hex::decode(SAC160_TX_HASH).unwrap();
