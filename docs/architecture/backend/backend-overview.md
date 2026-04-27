@@ -143,8 +143,13 @@ The backend serves data from the block explorer's own database, adding:
 - **Read-time XDR fetch for heavy-field endpoints** — per
   [ADR 0029](../../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md),
   the backend does **not** store raw envelope / result / result-meta XDR on
-  `transactions`. For E3 `/transactions/:hash` (full envelope + parsed invocation
-  tree) and E14 `/contracts/:id/events` (full event detail) the API fetches the
+  `transactions`, and per
+  [ADR 0033](../../../lore/2-adrs/0033_soroban-events-appearances-read-time-detail.md) /
+  [ADR 0034](../../../lore/2-adrs/0034_soroban-invocations-appearances-read-time-detail.md)
+  it does not store decoded events / invocation-tree nodes either. For E3
+  `/transactions/:hash` (full envelope + parsed invocation tree),
+  E13 `/contracts/:id/invocations` (per-node function name / args / return value),
+  and E14 `/contracts/:id/events` (full event detail) the API fetches the
   corresponding `.xdr.zst` from the public Stellar ledger archive, decompresses
   it, parses it with the shared `crates/xdr-parser` crate, and merges the
   decoded payload into the response. List endpoints never call the archive and
@@ -425,7 +430,10 @@ Caching operates at two levels:
   reserved for static frontend/document delivery in the initial topology.
 - **Backend in-memory caching** - frequently accessed reference data (contract metadata,
   network stats) is cached in the Lambda execution environment with TTLs of 30-60 seconds
-  to reduce database round-trips.
+  to reduce database round-trips. The contract-detail cache is implemented in
+  `crates/api/src/contracts/cache.rs` (`ContractMetadataCache`, 45 s TTL,
+  lazy eviction); it is keyed by contract StrKey and shared across
+  handler invocations on the same warm Lambda container.
 
 ### 8.2 Performance Expectations
 

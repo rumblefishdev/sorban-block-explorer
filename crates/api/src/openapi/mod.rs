@@ -11,6 +11,10 @@ pub mod schemas;
 
 use utoipa::OpenApi;
 
+use crate::contracts::dto::{
+    ContractDetailResponse, ContractStats, EventItem, InterfaceFunction, InterfaceParam,
+    InterfaceResponse, InvocationItem,
+};
 use crate::stellar_archive::dto::{
     E3HeavyFields, E3Response, HeavyFieldsStatus, SignatureDto, XdrEventDto, XdrOperationDto,
 };
@@ -47,6 +51,15 @@ use schemas::{ErrorEnvelope, PageInfo, Paginated};
         XdrEventDto,
         XdrOperationDto,
         HeavyFieldsStatus,
+        ContractDetailResponse,
+        ContractStats,
+        InterfaceResponse,
+        InterfaceFunction,
+        InterfaceParam,
+        Paginated<InvocationItem>,
+        InvocationItem,
+        Paginated<EventItem>,
+        EventItem,
     )),
 )]
 pub struct ApiDoc;
