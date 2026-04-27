@@ -1,10 +1,15 @@
 //! SAC contract_id derivation from `ContractIdPreimage`.
 //!
-//! Per stellar-core:
+//! Per stellar-core, the hash input is the XDR encoding of the full
+//! `HashIdPreimage::ContractId` envelope (tag + network_id + preimage),
+//! not the bare preimage:
 //!
 //! ```text
 //! network_id  = SHA256(network_passphrase)
-//! contract_id = SHA256(network_id || XDR.serialize(ContractIdPreimage))
+//! contract_id = SHA256(XDR.serialize(HashIdPreimage::ContractId {
+//!                  network_id,
+//!                  contract_id_preimage,
+//!              }))
 //! ```
 //!
 //! The 32-byte hash is rendered as a `C...` StrKey via `ScAddress`.
@@ -62,7 +67,7 @@ pub fn derive_sac_contract_id(
         contract_id_preimage: preimage.clone(),
     });
     let xdr_bytes = envelope.to_xdr(Limits::none()).map_err(|e| ParseError {
-        kind: ParseErrorKind::XdrDeserializationFailed,
+        kind: ParseErrorKind::XdrSerializationFailed,
         message: format!("serialize HashIdPreimage::ContractId: {e}"),
         context: None,
     })?;

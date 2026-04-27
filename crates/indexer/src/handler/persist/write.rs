@@ -1208,9 +1208,13 @@ async fn upsert_assets_contract_keyed(
             continue;
         }
         // ADR 0031: partial UNIQUE on `assets (contract_id) WHERE asset_type IN (2, 3)` (sac, soroban).
-        // Task 0160: `asset_type = GREATEST(...)` preserves SAC(2) if a
-        // Soroban(3) row tries to overwrite via the shared contract_id
-        // index (theoretical, defends parallel-backfill order swaps).
+        // Task 0160: prefer Sac(2) over Soroban(3) on conflict — SAC carries
+        // richer identity (classic asset wrap) and should not be overwritten
+        // by a Soroban classification of the same contract_id. Plain GREATEST
+        // would do the opposite (3 > 2). In practice the two paths should
+        // never produce the same contract_id (`is_sac` is exclusive at the
+        // source), so this is purely a defensive guard against parser
+        // misclassification or backfill order swaps.
         sqlx::query(
             r#"
             INSERT INTO assets (asset_type, contract_id, name, total_supply, holder_count)
@@ -1221,7 +1225,10 @@ async fn upsert_assets_contract_keyed(
             ON CONFLICT (contract_id)
               WHERE asset_type IN (2, 3)  -- sac, soroban
               DO UPDATE SET
-                asset_type = GREATEST(EXCLUDED.asset_type, assets.asset_type),
+                asset_type = CASE
+                    WHEN assets.asset_type = 2 OR EXCLUDED.asset_type = 2 THEN 2
+                    ELSE EXCLUDED.asset_type
+                END,
                 name = COALESCE(EXCLUDED.name, assets.name),
                 total_supply = COALESCE(EXCLUDED.total_supply, assets.total_supply),
                 holder_count = COALESCE(EXCLUDED.holder_count, assets.holder_count)

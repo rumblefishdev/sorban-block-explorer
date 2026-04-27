@@ -68,7 +68,7 @@ ALTER TABLE assets ADD CONSTRAINT ck_assets_identity CHECK (
 );
 ```
 
-For `asset_type = 2` the row now must carry `contract_id` plus **either** both `(asset_code, issuer_id)` (classic-credit SAC) **or** neither (native XLM-SAC). The mixed cases — one of `(asset_code, issuer_id)` set, the other NULL — remain blocked by SQL operator precedence (`AND` binds tighter than `OR`), so the "both or neither" invariant for SAC identity holds.
+For `asset_type = 2` the row now must carry `contract_id` plus **either** both `(asset_code, issuer_id)` (classic-credit SAC) **or** neither (native XLM-SAC). Mixed cases — one of `(asset_code, issuer_id)` set, the other NULL — remain blocked by the explicit parentheses around the inner `(code+issuer) OR (NULL+NULL)` block, so the "both or neither" invariant for SAC identity holds regardless of how the surrounding expression is rewritten.
 
 Shipped as forward-only migration `20260427000000_sac_identity_native_allowance.up.sql` with a matching `.down.sql` that restores the strict pre-loosening form (operator must purge any native XLM-SAC rows before downgrade).
 
