@@ -207,6 +207,31 @@ mod tests {
         assert_eq!(json["details"]["received"], "many");
     }
 
+    #[tokio::test]
+    async fn limit_empty_string_rejected_with_invalid_limit() {
+        // ?limit= → axum/serde_urlencoded yields Some("") (not None). Without
+        // an explicit guard the parse path catches this as a numeric error,
+        // but lock the behaviour here so a future refactor cannot silently
+        // change `?limit=` from 400 to "use default".
+        let err = validate_limit(Some(""), LimitConfig::DEFAULT).unwrap_err();
+        let (status, json) = body_json(err).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(json["code"], "invalid_limit");
+        assert_eq!(json["details"]["received"], "");
+    }
+
+    #[tokio::test]
+    async fn limit_negative_rejected_with_invalid_limit() {
+        // ?limit=-1 fails u32 parse before the bounds check; assert this
+        // path so a future signed-int refactor does not start accepting
+        // negatives and clamping silently.
+        let err = validate_limit(Some("-1"), LimitConfig::DEFAULT).unwrap_err();
+        let (status, json) = body_json(err).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(json["code"], "invalid_limit");
+        assert_eq!(json["details"]["received"], "-1");
+    }
+
     #[test]
     fn cursor_none_when_missing() {
         let result: Option<TsIdCursor> = decode_cursor(None).unwrap();
@@ -239,5 +264,43 @@ mod tests {
         let (status, json) = body_json(err).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(json["code"], "invalid_cursor");
+    }
+
+    #[tokio::test]
+    async fn cursor_empty_string_rejected_with_invalid_cursor() {
+        // ?cursor= yields Some("") at this layer. base64 decode of "" is
+        // technically Ok([]), so the failure surfaces at JSON decode of the
+        // empty byte slice (`InvalidPayload`). Either branch maps to the
+        // same envelope — locked here so future input sanitisation can't
+        // accidentally accept it as "no cursor".
+        let err = decode_cursor::<TsIdCursor>(Some("")).unwrap_err();
+        let (status, json) = body_json(err).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(json["code"], "invalid_cursor");
+    }
+
+    #[tokio::test]
+    async fn extractor_parses_full_query_with_unknown_field() {
+        // Real-router happy path: limit + valid cursor + an unrelated
+        // `filter[...]` query key. Pagination must accept the unknown
+        // field (FromRequestParts uses `Query<PaginationRaw>` which
+        // tolerates unknowns) so it can coexist with a sibling
+        // `Query<ListParams>` extractor on the same handler.
+        use axum::extract::FromRequestParts;
+        use axum::http::Request;
+
+        let encoded = cursor::encode(&TsIdCursor::new(
+            Utc.with_ymd_and_hms(2026, 4, 24, 12, 0, 0).unwrap(),
+            42,
+        ));
+        let uri = format!("/?limit=10&cursor={encoded}&filter%5Bsource_account%5D=GAA");
+        let req = Request::builder().uri(&uri).body(()).unwrap();
+        let (mut parts, _) = req.into_parts();
+
+        let p: Pagination<TsIdCursor> = Pagination::from_request_parts(&mut parts, &())
+            .await
+            .unwrap();
+        assert_eq!(p.limit, 10);
+        assert_eq!(p.cursor.unwrap().id, 42);
     }
 }

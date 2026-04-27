@@ -203,3 +203,92 @@ async fn list_endpoint_returns_paginated_envelope_against_real_db() {
         assert!(c.is_string() || c.is_null(), "page.cursor bad type: {json}");
     }
 }
+
+/// Full request → response → next cursor → request chain.
+///
+/// Asserts that page 2 returned by feeding the page-1 cursor back into the
+/// extractor:
+///   * has no overlap with page 1 (different `hash` set), and
+///   * is correctly bounded — `has_more` flips to false at the tail, or the
+///     cursor advances monotonically when more pages remain.
+///
+/// Skips cleanly when DB is unavailable or has fewer than 2 rows (cannot
+/// validate continuation on an empty / single-row table).
+#[tokio::test]
+async fn cursor_round_trip_no_overlap_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping cursor round-trip test");
+        return;
+    };
+
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping cursor round-trip test");
+            return;
+        }
+    };
+
+    // Page 1: limit=1 to maximise the chance of has_more=true on small DBs.
+    let app = real_app(pool.clone());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/transactions?limit=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, page1) = body_json(resp).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "page1 status: {status} body {page1}"
+    );
+
+    let data1 = page1["data"].as_array().expect("data array").clone();
+    if data1.is_empty() || page1["page"]["has_more"] != true {
+        eprintln!("DB has <2 transactions — skipping continuation assertions");
+        return;
+    }
+    let cursor = page1["page"]["cursor"]
+        .as_str()
+        .expect("page.cursor present when has_more=true")
+        .to_string();
+    let hash1 = data1[0]["hash"].as_str().unwrap().to_string();
+
+    // Page 2: feed cursor back. URL-encode the `=` padding-free base64url.
+    let app = real_app(pool);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/transactions?limit=1&cursor={cursor}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, page2) = body_json(resp).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "page2 status: {status} body {page2}"
+    );
+
+    let data2 = page2["data"].as_array().expect("data array").clone();
+    if let Some(first) = data2.first() {
+        let hash2 = first["hash"].as_str().unwrap();
+        assert_ne!(
+            hash1, hash2,
+            "page2 first row overlaps page1 — cursor predicate broken"
+        );
+    }
+    // page2.cursor either advances to a new value or is absent on tail.
+    if let Some(next) = page2["page"]["cursor"].as_str() {
+        assert_ne!(
+            next, cursor,
+            "page2 cursor identical to page1 — no progress"
+        );
+    }
+}

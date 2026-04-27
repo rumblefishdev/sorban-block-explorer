@@ -149,4 +149,21 @@ mod tests {
         let json = body_json(resp).await;
         assert_eq!(json["code"], "not_found");
     }
+
+    #[tokio::test]
+    async fn internal_error_uses_500_and_flat_envelope() {
+        // Handlers route DB failures through `internal_error(DB_ERROR, ...)`.
+        // Lock the contract — 500 status + flat `{ code, message }` shape —
+        // so a future "wrap errors under `error` key" change cannot slip
+        // through without breaking this test.
+        let resp = internal_error(DB_ERROR, "database error");
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let json = body_json(resp).await;
+        assert_eq!(json["code"], "db_error");
+        assert_eq!(json["message"], "database error");
+        assert!(
+            json.get("error").is_none(),
+            "envelope must be flat, not nested under `error`"
+        );
+    }
 }
