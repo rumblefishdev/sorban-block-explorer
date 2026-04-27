@@ -156,6 +156,7 @@ pub async fn process_ledger(
     let mut all_liquidity_pools = Vec::new();
     let mut all_pool_snapshots = Vec::new();
     let mut all_assets = Vec::new();
+    let mut all_lp_positions = Vec::new();
 
     // Task 0160 — correlate SAC deployments with their underlying classic
     // asset. Each SAC's `contract_id` is deterministically derived from the
@@ -194,6 +195,11 @@ pub async fn process_ledger(
         let (pools, snapshots) = xdr_parser::extract_liquidity_pools(changes);
         all_liquidity_pools.extend(pools);
         all_pool_snapshots.extend(snapshots);
+
+        // Task 0162 — pool_share trustlines as LP participant positions.
+        // Parser-side producer; persist + API layer is task 0126.
+        let lp_pos = xdr_parser::extract_lp_positions(changes);
+        all_lp_positions.extend(lp_pos);
     }
 
     let all_nfts = xdr_parser::detect_nfts(&all_nft_events);
@@ -208,10 +214,9 @@ pub async fn process_ledger(
     // Signature extension params (task 0149) — the parser does not yet produce
     // these; pass empty slices so wiring is in place end-to-end:
     //   * nft_events        → `nft_ownership` rows (follow-up from 0118)
-    //   * lp_positions      → `lp_positions` rows  (task 0126)
     //   * inner_tx_hashes   → `transactions.inner_tx_hash` (follow-up parser work)
+    // `lp_positions` is now produced by `extract_lp_positions` above (task 0162).
     let nft_events: Vec<xdr_parser::types::ExtractedNftEvent> = Vec::new();
-    let lp_positions: Vec<xdr_parser::types::ExtractedLpPosition> = Vec::new();
     let inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
 
     let persist_timer = Instant::now();
@@ -231,7 +236,7 @@ pub async fn process_ledger(
         &all_assets,
         &all_nfts,
         &nft_events,
-        &lp_positions,
+        &all_lp_positions,
         &inner_tx_hashes,
         classification_cache,
     )

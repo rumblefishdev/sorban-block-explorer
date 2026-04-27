@@ -1,9 +1,12 @@
 //! REST API Lambda handler for the Soroban block explorer.
 
+mod common;
 mod config;
 mod contracts;
 mod openapi;
 mod state;
+#[cfg(test)]
+mod tests_integration;
 mod transactions;
 // Public-archive XDR fetch helper. Used by E3, E13 and E14 endpoint handlers.
 // Exposed as module so future handlers can call the extractors without

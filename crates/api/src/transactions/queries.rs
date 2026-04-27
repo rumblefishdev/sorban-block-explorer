@@ -1,9 +1,10 @@
 //! Database queries for the transactions endpoints.
 
 use chrono::{DateTime, Utc};
-use domain::OperationType;
 use sqlx::postgres::PgRow;
 use sqlx::{PgPool, Row};
+
+use crate::common::cursor::TsIdCursor;
 
 // ---------------------------------------------------------------------------
 // Internal row structs (not exposed in API response types)
@@ -52,7 +53,7 @@ pub struct OpRow {
 
 pub struct ResolvedListParams {
     pub limit: i64,
-    pub cursor: Option<(DateTime<Utc>, i64)>,
+    pub cursor: Option<TsIdCursor>,
     /// Raw `filter[source_account]` StrKey string, if provided.
     pub source_account: Option<String>,
     /// Raw `filter[contract_id]` StrKey string, if provided.
@@ -65,6 +66,31 @@ pub struct ResolvedListParams {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Push the appropriate ` WHERE` or ` AND` glue and flip `has_where` true.
+///
+/// Centralises the per-clause prefix so call sites only deal with their own
+/// SQL fragment. `has_where` starts false; first call emits ` WHERE` and
+/// flips it; subsequent calls emit ` AND`.
+fn push_glue(qb: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>, has_where: &mut bool) {
+    qb.push(if *has_where { " AND" } else { " WHERE" });
+    *has_where = true;
+}
+
+/// Append `(t.created_at, t.id) < ($ts, $id)` cursor predicate.
+///
+/// Inlined per-resource — column names are hardcoded literals, never
+/// reach the SQL builder via parameters. The shared cursor *codec*
+/// (`TsIdCursor`, `cursor::encode/decode`) lives in `common/`; the
+/// predicate SQL stays here so each resource owns its own column names
+/// and aliases without a generic-string indirection.
+fn push_cursor_predicate(qb: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>, cursor: &TsIdCursor) {
+    qb.push(" (t.created_at, t.id) < (");
+    qb.push_bind(cursor.ts);
+    qb.push(", ");
+    qb.push_bind(cursor.id);
+    qb.push(")");
+}
+
 fn map_list_row(r: &PgRow) -> TxListRow {
     TxListRow {
         id: r.get("id"),
@@ -76,12 +102,6 @@ fn map_list_row(r: &PgRow) -> TxListRow {
         created_at: r.get("created_at"),
         operation_count: r.get("operation_count"),
     }
-}
-
-/// Parse `filter[operation_type]` string into the corresponding `i16` discriminant.
-/// Returns `Err` for unknown type names.
-pub fn parse_op_type(s: &str) -> Result<i16, ()> {
-    s.parse::<OperationType>().map(|t| t as i16).map_err(|_| ())
 }
 
 // ---------------------------------------------------------------------------
@@ -112,40 +132,34 @@ pub async fn fetch_list(
     };
 
     let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(select);
+    let mut has_where = false;
 
     // contract_id filter: join soroban_contracts and filter by StrKey.
     if let Some(cid) = &params.contract_id {
         qb.push(" LEFT JOIN soroban_contracts sc ON sc.id = o.contract_id");
-        qb.push(" WHERE sc.contract_id = ");
+        push_glue(&mut qb, &mut has_where);
+        qb.push(" sc.contract_id = ");
         qb.push_bind(cid.as_str());
     }
 
-    let mut has_where = params.contract_id.is_some();
-
     // source_account filter on the already-joined accounts alias.
     if let Some(acct) = &params.source_account {
-        qb.push(if has_where { " AND" } else { " WHERE" });
+        push_glue(&mut qb, &mut has_where);
         qb.push(" a.account_id = ");
         qb.push_bind(acct.as_str());
-        has_where = true;
     }
 
     // op_type filter.
     if let Some(op_type) = params.op_type {
-        qb.push(if has_where { " AND" } else { " WHERE" });
+        push_glue(&mut qb, &mut has_where);
         qb.push(" o.type = ");
         qb.push_bind(op_type);
-        has_where = true;
     }
 
     // Cursor predicate.
-    if let Some((cursor_ts, cursor_id)) = params.cursor {
-        qb.push(if has_where { " AND" } else { " WHERE" });
-        qb.push(" (t.created_at, t.id) < (");
-        qb.push_bind(cursor_ts);
-        qb.push(", ");
-        qb.push_bind(cursor_id);
-        qb.push(")");
+    if let Some(cursor) = &params.cursor {
+        push_glue(&mut qb, &mut has_where);
+        push_cursor_predicate(&mut qb, cursor);
     }
 
     qb.push(" ORDER BY t.created_at DESC, t.id DESC LIMIT ");

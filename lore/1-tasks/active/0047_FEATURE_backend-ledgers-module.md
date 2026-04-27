@@ -2,7 +2,7 @@
 id: '0047'
 title: 'Backend: Ledgers module (list + detail + linked transactions)'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0005']
 related_tasks: ['0023', '0043', '0092']
 tags: [layer-backend, ledgers]
@@ -17,6 +17,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
+  - date: 2026-04-27
+    status: active
+    who: karolkow
+    note: 'Activated task'
 ---
 
 # Backend: Ledgers module (list + detail + linked transactions)
