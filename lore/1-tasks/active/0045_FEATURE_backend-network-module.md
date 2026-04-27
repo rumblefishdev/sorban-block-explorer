@@ -3,8 +3,8 @@ id: '0045'
 title: 'Backend: Network module (GET /network/stats)'
 type: FEATURE
 status: active
-related_adr: ['0005']
-related_tasks: ['0023', '0092']
+related_adr: ['0005', '0008', '0021', '0027']
+related_tasks: ['0042', '0043', '0046', '0092']
 tags: [layer-backend, network, stats]
 milestone: 2
 links: []
@@ -29,11 +29,11 @@ history:
 
 Implement the Network module providing the `GET /network/stats` endpoint. This is a small, fast, cacheable endpoint that serves top-level explorer summary data including ledger sequence, TPS, total accounts, total contracts, and ingestion freshness indicators.
 
-> **Stack:** axum 0.8 + utoipa 5.4 + sqlx 0.8 (per ADR 0005). Code in crates/api/.
+> **Stack:** axum 0.8 + utoipa 5.4 + sqlx 0.8 (per [ADR 0005](../../2-adrs/0005_rust-only-backend-api.md)). Envelope shape per [ADR 0008](../../2-adrs/0008_error-envelope-and-pagination-shape.md). Frontend display contract + TPS formula per [ADR 0021](../../2-adrs/0021_schema-endpoint-frontend-coverage-matrix.md) §E1. Endpoint realizability confirmed in [ADR 0027](../../2-adrs/0027_post-surrogate-schema-and-endpoint-realizability.md) §E1. Code in `crates/api/src/network/`. Reuses `crate::common::errors::*` from task 0043.
 
-## Status: Backlog
+## Status: Active
 
-**Current state:** Not started. Depends on task 0023 (API bootstrap).
+**Current state:** Active — promoted 2026-04-27. Prereqs satisfied: api skeleton + `common/*` helpers landed via tasks 0042/0046/0043.
 
 ## Context
 
@@ -53,7 +53,6 @@ The network stats endpoint is the primary source of top-level explorer summary i
 
 ```json
 {
-  "ledger_sequence": 12345678,
   "tps": 42.5,
   "total_accounts": 1500000,
   "total_contracts": 25000,
@@ -64,14 +63,13 @@ The network stats endpoint is the primary source of top-level explorer summary i
 
 **Response Fields:**
 
-| Field                    | Type           | Description                                                    |
-| ------------------------ | -------------- | -------------------------------------------------------------- |
-| `ledger_sequence`        | number         | Latest known ledger sequence from the database                 |
-| `tps`                    | number         | Current transactions per second (computed from recent ledgers) |
-| `total_accounts`         | number         | Total indexed account count                                    |
-| `total_contracts`        | number         | Total indexed Soroban contract count                           |
-| `highest_indexed_ledger` | number         | Highest ledger sequence present in the database                |
-| `ingestion_lag_seconds`  | number or null | Estimated seconds behind the network tip; null if unknown      |
+| Field                    | Type           | Description                                                       |
+| ------------------------ | -------------- | ----------------------------------------------------------------- |
+| `tps`                    | number         | Current transactions per second (60s rolling window per ADR 0021) |
+| `total_accounts`         | number         | Total indexed account count                                       |
+| `total_contracts`        | number         | Total indexed Soroban contract count                              |
+| `highest_indexed_ledger` | number         | Highest ledger sequence present in the database                   |
+| `ingestion_lag_seconds`  | number or null | Estimated seconds behind the network tip; null if unknown         |
 
 ### Freshness Indicator
 
@@ -91,22 +89,25 @@ The network stats endpoint is the primary source of top-level explorer summary i
 - 500 if database is unreachable (standard error envelope)
 - No 400/404 scenarios for this endpoint (no params, resource always exists)
 
+Per ADR 0008 — flat envelope, no outer `error` wrapper:
+
 ```json
 {
-  "error": {
-    "code": "INTERNAL_ERROR",
-    "message": "Unable to retrieve network statistics."
-  }
+  "code": "db_error",
+  "message": "Unable to retrieve network statistics.",
+  "details": null
 }
 ```
 
+Use `crate::common::errors::internal_error(errors::DB_ERROR, "Unable to retrieve network statistics.")` from task 0043.
+
 ### Data Sources
 
-- `ledger_sequence` / `highest_indexed_ledger`: MAX(sequence) from `ledgers` table
-- `tps`: computed from transaction_count of recent ledgers divided by time window
-- `total_accounts`: COUNT from `accounts` table
-- `total_contracts`: COUNT from `soroban_contracts` table
-- `ingestion_lag_seconds`: difference between now and `closed_at` of the most recent ledger
+- `highest_indexed_ledger`: `SELECT max(sequence) FROM ledgers` (also used as `closed_at` source via `SELECT sequence, closed_at FROM ledgers ORDER BY sequence DESC LIMIT 1`)
+- `tps`: per ADR 0021 — `SELECT count(*)::float / 60 FROM transactions WHERE created_at > now() - interval '1 minute'` (60s rolling window, source = `transactions`, NOT `ledgers.transaction_count`)
+- `total_accounts`: `SELECT count(*) FROM accounts`
+- `total_contracts`: `SELECT count(*) FROM soroban_contracts`
+- `ingestion_lag_seconds`: `EXTRACT(EPOCH FROM now() - max(closed_at))::int FROM ledgers`; `null` when no ledgers indexed
 
 ## Implementation Plan
 
@@ -135,11 +136,10 @@ Map query results to the documented response shape. Ensure `ingestion_lag_second
 ## Acceptance Criteria
 
 - [ ] `GET /v1/network/stats` returns documented response shape
-- [ ] `ledger_sequence` reflects latest indexed ledger
-- [ ] `tps` computed from recent ledger data
+- [ ] `tps` computed per ADR 0021 60s-rolling formula on `transactions` table
 - [ ] `total_accounts` and `total_contracts` are accurate counts
-- [ ] `highest_indexed_ledger` matches `ledger_sequence`
-- [ ] `ingestion_lag_seconds` computed from latest ledger close time; null if unavailable
+- [ ] `highest_indexed_ledger` reflects `max(sequence)` from `ledgers`
+- [ ] `ingestion_lag_seconds` computed from latest ledger `closed_at`; null when no ledgers indexed
 - [ ] In-memory cache with 30-60s TTL reduces DB round-trips
 - [ ] Graceful degradation when ingestion is behind (no errors, accurate freshness)
 - [ ] Response is small and fast (suitable for 5-15s API Gateway cache)
