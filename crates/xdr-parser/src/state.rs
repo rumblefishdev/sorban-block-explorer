@@ -505,9 +505,9 @@ pub fn extract_liquidity_pools(
 ///      `ck_assets_identity` permits this for `asset_type=2` after the
 ///      0160 schema loosening migration. Aligns with Horizon/SDK
 ///      rendering of native asset.
-///    `None` (SAC deployment whose creating preimage is not in this
-///    batch) is logged as a warn and skipped — better to lose one row
-///    than fabricate identity.
+///    - `None` (SAC deployment whose creating preimage is not in this
+///      batch) is logged as a warn and skipped — better to lose one row
+///      than fabricate identity.
 /// 2. **WASM-based deployments classifying as
 ///    [`ContractClassification::Fungible`]** — [`TokenAssetType::Soroban`]
 ///    row; identity is `contract_id` only. Classification uses
