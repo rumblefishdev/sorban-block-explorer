@@ -20,7 +20,7 @@ history:
   - date: '2026-04-27'
     status: active
     who: karolkow
-    note: 'Promoted — next backend module after 0043. Spec realign + implementation in branch.'
+    note: 'Promoted — next backend module after 0043.'
 ---
 
 # Backend: Network module (GET /network/stats)
