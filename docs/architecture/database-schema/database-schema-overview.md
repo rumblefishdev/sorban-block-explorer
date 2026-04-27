@@ -614,6 +614,11 @@ Design notes:
   classic-credit-wrap SACs by `(asset_code, issuer_id)`; classic-credit-wrap
   SAC, native XLM-SAC, and Soroban-native assets all dedupe by `contract_id`
   via `uidx_assets_soroban`
+- the native XLM singleton (`asset_type = 0`, name `"Stellar Lumen"`, all
+  identity columns NULL) is bootstrapped by the
+  `20260428000000_seed_native_asset_singleton` migration, not by the parser —
+  there is no native branch in `detect_assets`. Operator deletion of this row
+  breaks the `/assets` listing and any future FK that targets it.
 - `icon_url` is the only SEP-1 enrichment field on the DB row — it serves the
   list-page thumbnail (per-row). Asset-detail metadata (`description`,
   `home_page`) lives per-entity in S3 at `s3://<bucket>/assets/{id}.json` per
