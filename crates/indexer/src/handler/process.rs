@@ -15,25 +15,30 @@ use super::HandlerError;
 use super::persist;
 use super::persist::ClassificationCache;
 
-/// Network identifier hash, derived lazily from the `STELLAR_NETWORK` env var
-/// (`mainnet` / `testnet` / `futurenet`; default: `mainnet`). Required for SAC
-/// contract_id derivation (`SHA256(network_id || XDR(ContractIdPreimage))`).
+/// Network identifier hash, derived lazily from the
+/// `STELLAR_NETWORK_PASSPHRASE` env var. Required for SAC contract_id
+/// derivation (`SHA256(network_id || XDR(ContractIdPreimage))`).
 ///
-/// **Fail-fast on unknown values**: silently falling back to mainnet on
-/// testnet would derive wrong contract_ids and corrupt the assets table
-/// (no SAC row would ever match a deployed contract). Panic at first use
-/// is the loud, recoverable failure mode; restart with the right env wins.
+/// The same passphrase is already a CDK config field
+/// (`stellarNetworkPassphrase` in `infra/src/lib/types.ts`) used by the
+/// ingestion stack to map Galexie's S3 prefix; we read it directly so
+/// there is one source of truth for the network the indexer is targeting.
+///
+/// **Fail-fast on missing env**: silently defaulting to mainnet on a
+/// testnet stack would derive wrong contract_ids and corrupt the assets
+/// table (no SAC row would ever match a deployed contract). Panic at
+/// first use is the loud, recoverable failure mode.
 fn network_id() -> &'static [u8; 32] {
     static NETWORK_ID: OnceLock<[u8; 32]> = OnceLock::new();
     NETWORK_ID.get_or_init(|| {
-        let network = std::env::var("STELLAR_NETWORK").unwrap_or_else(|_| "mainnet".to_string());
-        let passphrase = xdr_parser::passphrase_for(&network).unwrap_or_else(|| {
+        let passphrase = std::env::var("STELLAR_NETWORK_PASSPHRASE").unwrap_or_else(|_| {
             panic!(
-                "unknown STELLAR_NETWORK={network:?}; expected one of \
-                 mainnet/public/pubnet, testnet, futurenet"
+                "STELLAR_NETWORK_PASSPHRASE env not set; SAC contract_id derivation \
+                 cannot proceed. Expected the full Stellar passphrase string \
+                 (e.g. \"Public Global Stellar Network ; September 2015\")."
             )
         });
-        xdr_parser::network_id(passphrase)
+        xdr_parser::network_id(&passphrase)
     })
 }
 
