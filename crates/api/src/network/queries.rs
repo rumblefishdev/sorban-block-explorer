@@ -42,8 +42,9 @@ pub async fn fetch_stats(pool: &PgPool) -> Result<NetworkStats, sqlx::Error> {
     let ingestion_lag_seconds: Option<i64> = ledger_row.get("ingestion_lag_seconds");
 
     // TPS — 60s rolling window per ADR 0021 §E1. Source is the
-    // `transactions` partitioned fact table; the predicate hits the
-    // current partition only (idx_tx_created or partition pruning).
+    // `transactions` partitioned fact table; the recent `created_at`
+    // predicate is expected to stay within the newest partition(s) via
+    // partition pruning.
     // `::float8` cast yields f64 server-side so we don't materialise a
     // PostgreSQL `NUMERIC` (which would need rust_decimal to decode).
     let tps: f64 = sqlx::query_scalar(
