@@ -2,7 +2,7 @@
 id: '0161'
 title: 'BUG: native asset singleton never seeded in assets table'
 type: BUG
-status: backlog
+status: active
 related_adr: ['0027', '0036']
 related_tasks: ['0120', '0154', '0160']
 tags: [priority-medium, effort-small, layer-db, layer-indexer, audit-gap]
@@ -20,6 +20,16 @@ history:
       misses the native singleton — no code path emits it, no
       migration seeds it. Singleton is required by schema
       (uidx_assets_native as singleton UNIQUE).
+  - date: '2026-04-27'
+    status: active
+    who: stkrolikiewicz
+    note: >
+      Promoted. Natural follow-up after 0160 (PR #120 closes "SAC
+      identity" gap; this closes the sister "native singleton" gap from
+      the same 2026-04-10 audit). Per 0160 lessons learned, will likely
+      land as a forward-only migration (`20260428…_seed_native_asset_singleton`)
+      with `INSERT … ON CONFLICT DO NOTHING` rather than editing 0005
+      (sqlx checksum break).
 ---
 
 # BUG: native asset singleton never seeded in assets table
