@@ -16,6 +16,7 @@ pub mod ledger_entry_changes;
 pub mod memo;
 pub mod nft;
 pub mod operation;
+pub mod sac;
 pub mod scval;
 pub mod state;
 pub mod transaction;
@@ -35,6 +36,10 @@ pub use ledger::extract_ledger;
 pub use ledger_entry_changes::extract_ledger_entry_changes;
 pub use nft::detect_nft_events;
 pub use operation::extract_operations;
+pub use sac::{
+    MAINNET_PASSPHRASE, TESTNET_PASSPHRASE, derive_sac_contract_id, extract_sac_identities,
+    network_id, passphrase_for,
+};
 pub use scval::scval_to_typed_json;
 pub use state::{
     detect_assets, detect_nfts, extract_account_states, extract_contract_deployments,
@@ -46,7 +51,7 @@ pub use types::{
     ExtractedContractInterface, ExtractedEvent, ExtractedInvocation, ExtractedLedger,
     ExtractedLedgerEntryChange, ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot,
     ExtractedLpPosition, ExtractedNft, ExtractedNftEvent, ExtractedOperation, ExtractedTransaction,
-    NftEvent,
+    NftEvent, SacAssetIdentity,
 };
 
 use stellar_xdr::curr::{LedgerCloseMetaBatch, ReadXdr};
