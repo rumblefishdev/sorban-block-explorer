@@ -6,6 +6,7 @@ use aws_sdk_cloudwatch::{
 };
 use sqlx::PgPool;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use std::time::Instant;
 use stellar_xdr::curr::{LedgerCloseMeta, TransactionMeta};
 use tracing::{info, warn};
@@ -13,6 +14,28 @@ use tracing::{info, warn};
 use super::HandlerError;
 use super::persist;
 use super::persist::ClassificationCache;
+
+/// Network identifier hash, derived lazily from the `STELLAR_NETWORK` env var
+/// (`mainnet` / `testnet` / `futurenet`; default: `mainnet`). Required for SAC
+/// contract_id derivation (`SHA256(network_id || XDR(ContractIdPreimage))`).
+///
+/// **Fail-fast on unknown values**: silently falling back to mainnet on
+/// testnet would derive wrong contract_ids and corrupt the assets table
+/// (no SAC row would ever match a deployed contract). Panic at first use
+/// is the loud, recoverable failure mode; restart with the right env wins.
+fn network_id() -> &'static [u8; 32] {
+    static NETWORK_ID: OnceLock<[u8; 32]> = OnceLock::new();
+    NETWORK_ID.get_or_init(|| {
+        let network = std::env::var("STELLAR_NETWORK").unwrap_or_else(|_| "mainnet".to_string());
+        let passphrase = xdr_parser::passphrase_for(&network).unwrap_or_else(|| {
+            panic!(
+                "unknown STELLAR_NETWORK={network:?}; expected one of \
+                 mainnet/public/pubnet, testnet, futurenet"
+            )
+        });
+        xdr_parser::network_id(passphrase)
+    })
+}
 
 /// Process a single ledger: run all parsing stages and persist in one DB transaction.
 /// If `cw_client` is provided, publishes `LastProcessedLedgerSequence` to CloudWatch.
@@ -126,26 +149,29 @@ pub async fn process_ledger(
     let mut all_pool_snapshots = Vec::new();
     let mut all_assets = Vec::new();
 
-    // Task 0160 — correlate SAC deployments with the classic asset wrapped
-    // by the creating tx's CreateContract op. The ContractInstance ledger
-    // entry carries no asset data (marker-only `StellarAsset` variant);
-    // the identity lives in the operation's `contract_id_preimage.FromAsset`.
-    // MVP assumption: at most one SAC CreateContract per tx. Multi-SAC-per-tx
-    // is a known edge case flagged as future work in the 0160 README.
-    let sac_identity_by_tx: HashMap<String, xdr_parser::SacAssetIdentity> = all_operations
-        .iter()
-        .flat_map(|(tx_hash, ops)| {
-            ops.iter().find_map(|op| {
-                xdr_parser::extract_sac_asset_from_create_contract(op)
-                    .map(|id| (tx_hash.clone(), id))
+    // Task 0160 — correlate SAC deployments with their underlying classic
+    // asset. Each SAC's `contract_id` is deterministically derived from the
+    // `ContractIdPreimage` per stellar-core (`SHA256(network_id || XDR)`),
+    // so we key on the derived contract_id rather than `tx_hash`. That kills
+    // multi-SAC/tx ambiguity and batch-boundary fragility in one stroke:
+    // preimages come from both top-level `CreateContract` operations AND
+    // `CreateContractHostFn` auth entries (factory pattern).
+    let net_id = network_id();
+    let sac_identity_by_contract: HashMap<String, xdr_parser::SacAssetIdentity> =
+        extracted_transactions
+            .iter()
+            .enumerate()
+            .filter(|(_, ext_tx)| !ext_tx.parse_error)
+            .filter_map(|(tx_index, _)| envelopes.get(tx_index))
+            .flat_map(|env| {
+                let inner = xdr_parser::envelope::inner_transaction(env);
+                xdr_parser::extract_sac_identities(&inner, net_id)
             })
-        })
-        .collect();
+            .collect();
 
-    for (tx_hash, tx_source, changes) in &all_ledger_entry_changes {
-        let sac_identity = sac_identity_by_tx.get(tx_hash);
+    for (_tx_hash, tx_source, changes) in &all_ledger_entry_changes {
         let deployments =
-            xdr_parser::extract_contract_deployments(changes, tx_source, sac_identity);
+            xdr_parser::extract_contract_deployments(changes, tx_source, &sac_identity_by_contract);
         // detect_assets uses WASM interfaces to classify non-SAC deployments
         // as Soroban-native assets (task 0120). Contracts deployed in this
         // ledger without a matching interface are skipped here and picked up
