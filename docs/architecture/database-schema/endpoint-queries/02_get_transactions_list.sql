@@ -163,7 +163,15 @@ LIMIT $1;
 -- Statement B — contract_id and/or op_type filter (drives from ops index)
 -- ============================================================================
 WITH matched_ops AS (
-    SELECT DISTINCT ON (oa.transaction_id, oa.created_at)
+    -- Pick newest matches first so the LIMIT $1 * 4 truncates the *tail*,
+    -- not an arbitrary middle slice. DISTINCT ON's leading expressions
+    -- must match the leading ORDER BY columns, so we put `(created_at,
+    -- transaction_id)` in BOTH and rely on DESC-ordered partial indexes
+    -- `(contract_id, created_at DESC)` / `(type, created_at DESC)` for
+    -- the descending walk. `oa.id` is just a deterministic tie-breaker
+    -- inside one (created_at, transaction_id) pair (multi-op tx where
+    -- multiple ops share the filter).
+    SELECT DISTINCT ON (oa.created_at, oa.transaction_id)
         oa.transaction_id,
         oa.created_at
     FROM operations_appearances oa
@@ -171,11 +179,10 @@ WITH matched_ops AS (
         ($2::timestamptz IS NULL OR (oa.created_at, oa.transaction_id) < ($2, $3))
         AND ($5::bigint   IS NULL OR oa.contract_id = $5)
         AND ($6::smallint IS NULL OR oa.type        = $6)
-    ORDER BY oa.transaction_id, oa.created_at, oa.id
-    -- Order above is for DISTINCT ON dedup; we re-sort the final result below.
-    -- LIMIT here is intentionally generous (limit * fan-out factor) — the
-    -- planner will still short-circuit because the sort uses the existing
-    -- partial indexes on (contract_id, created_at DESC) / (type, created_at DESC).
+    ORDER BY oa.created_at DESC, oa.transaction_id DESC, oa.id
+    -- LIMIT is generous (limit * fan-out factor) so the final
+    -- `JOIN transactions` + outer LIMIT $1 still has enough candidates
+    -- after fan-out across multi-op tx.
     LIMIT $1 * 4
 )
 SELECT

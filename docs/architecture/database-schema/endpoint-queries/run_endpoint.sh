@@ -21,10 +21,18 @@ set -uo pipefail
 # =============================================================================
 # Config (override via env)
 # =============================================================================
-CONTAINER="${SBE_PG_CONTAINER:-sorban-block-explorer-postgres-1}"
 DB_USER="${SBE_PG_USER:-postgres}"
 DB_NAME="${SBE_PG_DB:-soroban_block_explorer}"
 QUERY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Use `docker compose exec` against the repo's compose file rather than a
+# hard-coded container name. The container name varies with the directory
+# the repo is cloned into ("sorban-…" vs "soroban-…" depending on history),
+# so addressing the service by its compose name (`postgres`) is portable.
+# `SBE_COMPOSE_FILE` lets a CI / unusual layout override the path.
+COMPOSE_FILE="${SBE_COMPOSE_FILE:-$(git -C "$QUERY_DIR" rev-parse --show-toplevel 2>/dev/null)/docker-compose.yml}"
+COMPOSE_SERVICE="${SBE_PG_SERVICE:-postgres}"
+
 EXPLAIN_PREFIX=""
 EXPANDED=0
 
@@ -49,7 +57,8 @@ Flags:
   -h, --help
 
 Env:
-  SBE_PG_CONTAINER  default: sorban-block-explorer-postgres-1
+  SBE_COMPOSE_FILE  default: <repo-root>/docker-compose.yml
+  SBE_PG_SERVICE    default: postgres
   SBE_PG_USER       default: postgres
   SBE_PG_DB         default: soroban_block_explorer
 
@@ -88,14 +97,14 @@ psql_pipe() {
     # Multi-line script via stdin; output to caller's stdout.
     local extra=()
     [[ "$EXPANDED" == "1" ]] && extra+=("-x")
-    docker exec -i "$CONTAINER" psql \
+    docker compose -f "$COMPOSE_FILE" exec -T "$COMPOSE_SERVICE" psql \
         -U "$DB_USER" -d "$DB_NAME" \
         -v ON_ERROR_STOP=1 "${extra[@]}"
 }
 
 psql_oneshot() {
     # One-shot SELECT, value-only output for capture in shell.
-    docker exec -i "$CONTAINER" psql \
+    docker compose -f "$COMPOSE_FILE" exec -T "$COMPOSE_SERVICE" psql \
         -U "$DB_USER" -d "$DB_NAME" \
         -v ON_ERROR_STOP=1 -t -A -c "$1"
 }

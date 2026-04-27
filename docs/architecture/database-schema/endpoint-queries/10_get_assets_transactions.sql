@@ -47,7 +47,9 @@ WITH ast AS (
       AND issuer_id  IS NOT NULL
 ),
 matched_ops AS (
-    SELECT DISTINCT ON (oa.transaction_id, oa.created_at)
+    -- DISTINCT ON / ORDER BY aligned with newest-first so LIMIT truncates
+    -- the tail (oldest matches), not an arbitrary middle.
+    SELECT DISTINCT ON (oa.created_at, oa.transaction_id)
         oa.transaction_id,
         oa.created_at,
         oa.id AS op_appearance_id
@@ -57,7 +59,7 @@ matched_ops AS (
           AND oa.asset_issuer_id = ast.issuer_id
     WHERE oa.asset_code IS NOT NULL
       AND ($3::timestamptz IS NULL OR (oa.created_at, oa.transaction_id) < ($3, $4))
-    ORDER BY oa.transaction_id, oa.created_at, oa.id
+    ORDER BY oa.created_at DESC, oa.transaction_id DESC, oa.id
     LIMIT $2 * 4
 )
 SELECT
@@ -98,7 +100,9 @@ WITH ast AS (
       AND contract_id IS NOT NULL
 ),
 matched_ops AS (
-    SELECT DISTINCT ON (oa.transaction_id, oa.created_at)
+    -- DISTINCT ON / ORDER BY aligned with newest-first so LIMIT truncates
+    -- the tail (oldest matches), not an arbitrary middle.
+    SELECT DISTINCT ON (oa.created_at, oa.transaction_id)
         oa.transaction_id,
         oa.created_at,
         oa.id AS op_appearance_id
@@ -107,7 +111,7 @@ matched_ops AS (
            ON oa.contract_id = ast.contract_id
     WHERE oa.contract_id IS NOT NULL
       AND ($3::timestamptz IS NULL OR (oa.created_at, oa.transaction_id) < ($3, $4))
-    ORDER BY oa.transaction_id, oa.created_at, oa.id
+    ORDER BY oa.created_at DESC, oa.transaction_id DESC, oa.id
     LIMIT $2 * 4
 )
 SELECT

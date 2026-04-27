@@ -28,14 +28,18 @@
 --     the frontend owns the "is this a trade" rule.
 
 WITH matched_ops AS (
-    SELECT DISTINCT ON (oa.transaction_id, oa.created_at)
+    -- DISTINCT ON / ORDER BY aligned with newest-first so LIMIT truncates
+    -- the tail (oldest matches), not an arbitrary middle. The partial
+    -- index `idx_ops_app_pool ON (pool_id, created_at DESC)` is exactly
+    -- the descending walk shape we need.
+    SELECT DISTINCT ON (oa.created_at, oa.transaction_id)
         oa.transaction_id,
         oa.created_at,
         oa.id AS op_appearance_id
     FROM operations_appearances oa
     WHERE oa.pool_id = $1
       AND ($3::timestamptz IS NULL OR (oa.created_at, oa.transaction_id) < ($3, $4))
-    ORDER BY oa.transaction_id, oa.created_at, oa.id
+    ORDER BY oa.created_at DESC, oa.transaction_id DESC, oa.id
     LIMIT $2 * 4
 )
 SELECT

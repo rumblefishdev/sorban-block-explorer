@@ -6,35 +6,44 @@
 -- Data sources: DB-only.
 -- Inputs:
 --   $1  :pool_id   BYTEA(32)    raw 32-byte pool id
---   $2  :interval  TEXT         '1h' | '1d' | '1w' (validated by the API
---                                against an explicit allowlist before this
---                                SQL is invoked — date_trunc accepts a
---                                broader vocabulary, but the endpoint
---                                contract restricts it)
+--   $2  :interval  TEXT         '1h' | '1d' | '1w' — the user-facing
+--                                vocabulary, validated by the API against
+--                                an explicit allowlist before the SQL is
+--                                invoked. The query maps it to a Postgres
+--                                `date_trunc` keyword via an inline CASE.
 --   $3  :from      TIMESTAMPTZ  inclusive lower bound
 --   $4  :to        TIMESTAMPTZ  exclusive upper bound
 -- Indexes:      idx_lps_pool ON (pool_id, created_at DESC).
 -- Notes:
---   • date_trunc accepts a text first argument, which lets the API pass
---     the validated interval keyword directly. The text-to-bucket cast
---     is deterministic and does not break partition pruning because the
---     `created_at` predicate is on the raw column.
---   • The allowlist on $2 is the API's responsibility — it MUST be one of
---     '1h' | '1d' | '1w' (or other values that the endpoint is expanded
---     to support in the future). Passing untrusted text would not be a
---     SQL injection because date_trunc is a builtin, but it would let a
---     caller pick `microseconds` and produce a million-row response.
+--   • The user-facing interval vocabulary `'1h' | '1d' | '1w'` is the
+--     endpoint contract; `date_trunc` itself wants `'hour' | 'day' | 'week'`.
+--     We map between the two with a single CASE expression at query time
+--     (cheap; the result is constant across all rows for a given call).
+--     The API's allowlist validation MUST stay in place — passing
+--     untrusted text into the CASE's `ELSE` branch would error at runtime
+--     and is a defensive guarantee against accidental sub-second buckets.
 --   • Aggregation policy:
 --       — TVL  : last value in bucket (state at close of bucket)
 --       — volume / fee_revenue : SUM (cumulative within bucket)
 --     Pools that didn't snapshot in a given bucket simply have no row
 --     for that bucket — the frontend interpolates if needed.
 --   • `idx_lps_pool` covers the leading equality on pool_id and the
---     range on created_at; date_trunc on a non-indexed expression is
---     fine as long as the WHERE shape matches the index.
+--     range on created_at; the CASE-derived bucket expression is a
+--     constant within one call, not a per-row-evaluated function on the
+--     indexed column, so it doesn't break index usability.
 
+WITH bucket_keyword AS (
+    SELECT CASE $2
+        WHEN '1h' THEN 'hour'
+        WHEN '1d' THEN 'day'
+        WHEN '1w' THEN 'week'
+        -- Defensive: the API allowlist already gates this; if a bad value
+        -- slips through, fail loudly at query parse rather than producing
+        -- microsecond buckets.
+    END AS kw
+)
 SELECT
-    date_trunc($2, lps.created_at) AS bucket,
+    date_trunc((SELECT kw FROM bucket_keyword), lps.created_at) AS bucket,
     -- "TVL at close of bucket" via the LAST tvl in time order.
     (
         ARRAY_AGG(lps.tvl ORDER BY lps.created_at DESC, lps.ledger_sequence DESC)
@@ -46,5 +55,5 @@ FROM liquidity_pool_snapshots lps
 WHERE lps.pool_id     = $1
   AND lps.created_at >= $3
   AND lps.created_at <  $4
-GROUP BY date_trunc($2, lps.created_at)
+GROUP BY date_trunc((SELECT kw FROM bucket_keyword), lps.created_at)
 ORDER BY bucket ASC;

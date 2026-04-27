@@ -3,7 +3,7 @@
 Hand-tuned read queries — **one script per public REST endpoint** defined in
 [`backend-overview.md §6.2`](../../backend/backend-overview.md#62-endpoint-inventory).
 Schema reference: [ADR 0037](../../../../lore/2-adrs/0037_current-schema-snapshot.md).
-Driving task: [0167](../../../../lore/1-tasks/active/0167_FEATURE_endpoint-sql-query-reference-set.md).
+Driving task: [0167](../../../../lore/1-tasks/archive/0167_FEATURE_endpoint-sql-query-reference-set.md).
 
 These files are the canonical Postgres-side read plan that `crates/api` modules
 implement against (via `sqlx::query!`/`query_as!`). They are **reference SQL**,
