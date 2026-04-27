@@ -2,7 +2,7 @@
 id: '0167'
 title: 'API: hand-tuned SQL query reference set, one script per endpoint'
 type: FEATURE
-status: active
+status: completed
 related_adr:
   ['0037', '0025', '0026', '0029', '0030', '0031', '0033', '0034', '0036']
 related_tasks: ['0043', '0050', '0123']
@@ -20,6 +20,31 @@ history:
     status: active
     who: fmazur
     note: 'Promoted to active via /promote-task'
+  - date: 2026-04-27
+    status: active
+    who: fmazur
+    note: >
+      Audit found 3 systematic indexer bugs while comparing live DB rows
+      vs Horizon mainnet (6 random tx, 6/6 mismatched). Spawned to backlog:
+      0168 (source_id mis-extracted from envelope variants), 0169
+      (operation_count wrong), 0170 (has_soroban over-set). All three live
+      in xdr-parser envelope-variant matching. A 4th hypothesis
+      (operations_appearances under-populated for classic ops) was
+      investigated and rejected — that table is a deduplicated appearance
+      index by design (ADR 0037 §7 / task 0163), `amount` is a count of
+      folded duplicates not stroops, and per-op transfer detail is
+      re-extracted from archive XDR at API read time.
+  - date: 2026-04-27
+    status: completed
+    who: fmazur
+    note: >
+      Delivered: 23 SQL files (originally specced 22 + 1 emerged for the
+      participants endpoint), README with per-endpoint response-shape map,
+      run_endpoint.sh bash runner. backend-overview.md §6.2 / §6.3 updated.
+      Two rounds of subagent-driven coverage audit against frontend-overview.
+      3 follow-up indexer bug tasks spawned (0168 / 0169 / 0170). Reindex
+      required after those fixes — current data is parsed wrongly upstream
+      of the SQL.
 ---
 
 # API: hand-tuned SQL query reference set, one script per endpoint
@@ -35,9 +60,11 @@ partition-pruned, index-aware, surrogate-key joined, no client-side post-process
 These scripts become the canonical reference the `crates/api` modules implement against
 (via `sqlx::query!`/`query_as!`). This task ships **only the SQL** — no Rust wiring.
 
-## Status: Active
+## Status: Completed
 
-**Current state:** Specification ready. SQL scripts not yet authored.
+**Current state:** 23 SQL files + README + run_endpoint.sh delivered.
+backend-overview.md §6.2 / §6.3 updated. 3 follow-up indexer bug tasks
+spawned (0168/0169/0170) from manual accuracy verification against Horizon.
 
 ## Context
 
@@ -257,38 +284,145 @@ the predicate is wrong or there's a missing index (feed the latter into task **0
 
 ## Acceptance Criteria
 
-- [ ] Directory `docs/architecture/database-schema/endpoint-queries/` exists with
-      22 `.sql` files matching the filename convention above.
-- [ ] Every file has a header comment block listing endpoint, purpose, source,
-      schema reference (ADR 0037), **`Data sources:` line (DB-only / DB+S3 /
-      DB+Archive) naming exactly which response fields come from each**,
-      inputs, expected indexes, and notes.
-- [ ] Every list endpoint (E2, E4, E7, E8, E10, E13, E14-as-list, E15, E17,
-      E18, E20, E22) reads `Data sources: DB-only` and answers entirely from
-      Postgres — no S3, no archive (E14 is the documented exception: the
-      list rows themselves are DB, the per-row enrichment is archive XDR).
-- [ ] Every detail endpoint with off-DB overlay (E3, E5, E9, E14) carries the
+- [x] Directory `docs/architecture/database-schema/endpoint-queries/` exists with
+      **23** `.sql` files (22 originally specified + new file 23 for the
+      participants endpoint discovered during the audit; see Emerged
+      decisions below).
+- [x] Every file has a header comment block listing endpoint, purpose, source,
+      schema reference (ADR 0037), `Data sources:` line, inputs, expected
+      indexes, and notes. Verified by `bash` audit at completion: 23/23 OK.
+- [x] Every list endpoint reads `Data sources: DB-only` and answers entirely
+      from Postgres. E14 documented as the appearance-index exception (list
+      rows DB, per-row enrichment archive XDR).
+- [x] Every detail endpoint with off-DB overlay (E3, E5, E9, E13, E14) carries
       matching `-- not in DB: <field> — <S3 path / Archive — ADR ref>`
-      comment directly in the projection so the API author can't miss the
-      overlay step. E5 in particular **must not** query the `transactions`
-      partition for the embedded list — only the `ledgers` row plus
-      `ledger_sequence` as the S3 bridge key.
-- [ ] Every query against a partitioned table carries a `created_at` predicate
-      capable of partition pruning.
-- [ ] Every StrKey input parameter is resolved to its surrogate id via a leading
-      CTE; every StrKey in the result set comes from a final join to
-      `accounts.account_id` / `soroban_contracts.contract_id`.
-- [ ] No `SELECT *`, no `OFFSET` for pagination, no `COUNT(*)` on full history.
-- [ ] Filters on enum columns compare to SMALLINT literals (not `*_name(...)`).
-- [ ] Endpoints E3 and E14 carry an explicit `-- not in DB: ... — ADR 0029`
-      comment for the XDR-derived fields.
-- [ ] `README.md` index exists and links each script to its endpoint plus
-      back-links to `backend-overview.md §6.2`, `frontend-overview.md §6`, and
-      ADR 0037.
-- [ ] **Docs updated** — N/A — this task **adds** a docs subtree (`docs/architecture/database-schema/endpoint-queries/`).
-      No existing doc shape changes; per [ADR 0032](../../2-adrs/0032_docs-architecture-evergreen-maintenance.md)
-      the task itself is the doc delta. If endpoint contracts in `backend-overview.md §6` shift while
-      writing the SQL, update those docs in the same PR.
+      comments in the projection. E5 specifically does NOT query the
+      `transactions` partition — surfaces `ledger_sequence_s3_bridge` only.
+- [x] Every query against a partitioned table carries a `created_at` predicate
+      (cursor or explicit window). Verified by audit.
+- [x] Every StrKey input is resolved to its surrogate via a leading CTE;
+      every StrKey in the response comes from a final join.
+- [x] No `SELECT *`, no `OFFSET`, no full-history `COUNT(*)`. Verified.
+      (E1 uses `pg_class.reltuples`; E11 / E21 use bounded-window aggregates.)
+- [x] Filters on enum columns compare to SMALLINT literals; helpers
+      `*_name(...)` only in projections.
+- [x] E3 / E5 / E9 / E13 / E14 carry explicit `-- not in DB:` markers with
+      bridge tuples and ADR refs.
+- [x] `README.md` index exists with one row per endpoint + per-endpoint
+      response-shape sections (DB → / S3 → / Archive →) added at user's
+      request.
+- [x] **Docs updated** — backend-overview.md §6.2 endpoint inventory and §6.3
+      description block updated to add the new
+      `GET /liquidity-pools/:id/participants` endpoint (per ADR 0032 — the
+      participants table was an undocumented requirement in
+      frontend-overview.md §6.14 that this task surfaced).
+
+## Implementation Notes
+
+- **23 SQL files** delivered (originally specced as 22; +1 added during
+  audit for the participants endpoint).
+- **17 single-statement** files, **6 multi-statement** (E2 has 2 statements
+  for filter routing; E3 has 6 for the chained tx-detail fetch; E6, E10,
+  E11 have 2 each).
+- Companion docs: `README.md` (525 lines, includes per-endpoint response
+  shape table), `run_endpoint.sh` (executable bash with case dispatch +
+  automatic discovery + `--explain` and `-x` flags).
+- `backend-overview.md` updated in the same PR to add the participants
+  endpoint to §6.2 inventory and §6.3 description.
+- 3 follow-up indexer bug tasks spawned: **0168** (`source_id` parsing),
+  **0169** (`operation_count` parsing), **0170** (`has_soroban` parsing).
+
+## Issues Encountered
+
+- **Indexer envelope-parsing bugs surfaced during accuracy verification.**
+  Manually compared 6 random tx in DB vs Horizon mainnet — 6/6 had wrong
+  `source_id`, multiple had wrong `operation_count`, all had `has_soroban`
+  over-set on classic ops. Root cause: faulty envelope-variant matching
+  in `crates/xdr-parser/src/transaction.rs` (per subagent investigation).
+  Spawned 0168/0169/0170. **The SQL set is correct over the data it gets;
+  the underlying data isn't until the indexer is fixed.** Reindex required
+  after fix.
+- **`operations_appearances.amount` semantic confusion.** Initially looked
+  like sentinel/parsing bug (always 1 for many op types). Deep
+  investigation confirmed it's a deliberate count of folded duplicates per
+  ADR 0037 §7 / task 0163; per-op transfer detail is re-extracted from
+  archive XDR at API read time. Not a bug — a doc-comprehension issue.
+  Subagent recommended a small follow-up to rename `amount` →
+  `appearance_count` in a future schema ADR; not spawned per
+  user-rule "don't auto-spawn unless asked."
+
+## Design Decisions
+
+### From Plan
+
+1. **One file per public REST endpoint** — 22 endpoints from
+   `backend-overview.md §6.2`, file naming `NN_<method>_<slug>.sql`.
+2. **Header-block convention** (8 fields: Endpoint / Purpose / Source /
+   Schema / Data sources / Inputs / Indexes / Notes) — locked in task
+   spec, enforced by completion audit.
+3. **Partition prune via `created_at`** on every read of a partitioned
+   table; cursor pagination (no OFFSET, no full-history COUNT).
+4. **StrKey↔BIGINT surrogate boundary** at the request edge (CTE) and
+   response edge (final join) — ADR 0026 / ADR 0030.
+5. **SMALLINT enums in `WHERE`, helpers in projection only** — keeps
+   indexes usable.
+6. **List endpoints DB-only, detail endpoints may overlay** S3 (per-entity
+   blob, per-ledger blob) or archive XDR (ADR 0029). E5 documented as the
+   exception — list-like content embedded in a detail endpoint, fully
+   S3-served.
+7. **SQL reference only** — no Rust wiring (`crates/api`'s job, in
+   tasks 0050 / 0123 etc.).
+
+### Emerged
+
+8. **Added file 23 (`/liquidity-pools/:id/participants`)** during round-1
+   audit. Frontend §6.14 requires "table of liquidity providers and their
+   share" but backend §6.2 inventory had no matching endpoint. Created
+   `lp_positions`-backed query + updated `backend-overview.md` in the same
+   PR per ADR 0032. User confirmed this scope expansion before ship.
+9. **Added `run_endpoint.sh`** at user's explicit request — case-dispatched
+   bash runner with automatic sample-input discovery from DB,
+   `PREPARE`/`EXECUTE` with shell-side `$N`-substitution, multi-statement
+   thread-of-state via psql `\gset` for E3 / E6 / E11.
+10. **Added per-endpoint response-shape section to README** at user's
+    request — field-by-field "DB → / S3 → / Archive →" mapping for all
+    23 endpoints, including overlay key construction (`assets/{id}.json`,
+    `parsed_ledger_{N}.json`).
+11. **Extended E2 with primary-op preview** at user's request after
+    StellarChain-style comparison — added second LATERAL into
+    `operations_appearances` to surface `primary_op_method` /
+    `primary_op_from` / `primary_op_interacted_with` /
+    `primary_op_interacted_with_kind` / `primary_op_amount` etc.
+    Frontend gets per-row "FROM / TO / AMOUNT" without an extra query.
+12. **Two-round audit by 6 parallel subagents** verifying SQL coverage
+    against `frontend-overview.md` (§6.2 through §6.15 + §7). Round 1
+    surfaced ~10 gaps; round 2 verified all fixes and caught 4 more
+    (operation_types missing in E10, holder_count staleness in E8/E9,
+    `per_group_limit` default in E22, JSONB shape docs in E12/E16).
+13. **Switched E18 ordering** from `tvl DESC NULLS LAST` (clumsy
+    NULLS-LAST cursor) to `(created_at_ledger DESC, pool_id DESC)` —
+    cleaner keyset, deterministic. Documented in file header.
+14. **INDEX-GAP comments** added in E2 (no global `(created_at, id)`
+    index on `transactions` — feeds task 0132) and E18 (no btree on
+    `liquidity_pools.created_at_ledger`).
+15. **SCHEMA-DOC GAP comments** added in E12 (`wasm_interface_metadata`
+    JSONB shape) and E16 (`nfts.metadata` JSONB shape) — flagged for
+    future doc work, not spawned.
+16. **Surface DB↔Horizon discrepancy bugs** as separate tasks rather
+    than absorbing into 0167. The SQL set ships independently of the
+    indexer fix; reindex post-fix.
+
+## Future Work
+
+- Fix the 3 indexer bugs (**0168**, **0169**, **0170**) — required before
+  the API responses are actually correct on production data.
+- Document JSONB shapes for `wasm_interface_metadata.metadata` (E12) and
+  `nfts.metadata` (E16). Defer until indexer-side population is locked.
+- Optional schema rename `operations_appearances.amount` →
+  `appearance_count` (subagent's recommendation; doc-only, not spawned).
+- Optional schema extension to populate `asset_b_code/asset_b_issuer_id`
+  on offer ops in `operations_appearances` for full StellarChain-style
+  "SHX → XLM" rendering on E2 list (option C from primary-op discussion).
 
 ## Notes
 
