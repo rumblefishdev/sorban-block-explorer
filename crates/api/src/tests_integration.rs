@@ -258,7 +258,8 @@ async fn cursor_round_trip_no_overlap_against_real_db() {
         .to_string();
     let hash1 = data1[0]["hash"].as_str().unwrap().to_string();
 
-    // Page 2: feed cursor back. URL-encode the `=` padding-free base64url.
+    // Page 2: feed cursor back. Cursor is base64url *unpadded* (URL-safe alphabet, no `=`),
+    // so raw interpolation into the query string is safe — no percent-encoding needed.
     let router = build_app(pool);
     let resp = router
         .oneshot(
