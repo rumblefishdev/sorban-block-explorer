@@ -2,13 +2,15 @@
 
 mod common;
 mod config;
-mod network;
+mod contracts;
 mod openapi;
 mod state;
+#[cfg(test)]
+mod tests_integration;
 mod transactions;
-// Public-archive XDR fetch helper. Used by E3 and E14 endpoint handlers
-// (added in a follow-up task). Exposed as module so future handlers
-// can call the extractors without further wiring.
+// Public-archive XDR fetch helper. Used by E3, E13 and E14 endpoint handlers.
+// Exposed as module so future handlers can call the extractors without
+// further wiring.
 mod stellar_archive;
 
 use axum::{Json, Router, routing::get};
@@ -49,6 +51,7 @@ fn app(config: &AppConfig, state: AppState) -> Router {
         .routes(routes!(health))
         .nest("/v1", network::router())
         .nest("/v1", transactions::router())
+        .nest("/v1", contracts::router())
         .with_state(state)
         .split_for_parts();
     spec.servers = Some(vec![utoipa::openapi::server::Server::new(&config.base_url)]);
@@ -116,7 +119,11 @@ async fn main() {
     let fetcher = StellarArchiveFetcher::new(s3_client);
 
     let config = AppConfig::from_env();
-    let state = AppState { db, fetcher };
+    let state = AppState {
+        db,
+        fetcher,
+        contract_cache: contracts::cache::ContractMetadataCache::new(),
+    };
     let app = app(&config, state);
 
     lambda_http::run(app).await.expect("failed to run Lambda");
@@ -147,7 +154,14 @@ mod tests {
             .build();
         let s3 = aws_sdk_s3::Client::from_conf(aws_cfg);
         let fetcher = StellarArchiveFetcher::new(s3);
-        app(&test_config(), AppState { db, fetcher })
+        app(
+            &test_config(),
+            AppState {
+                db,
+                fetcher,
+                contract_cache: contracts::cache::ContractMetadataCache::new(),
+            },
+        )
     }
 
     #[tokio::test]
@@ -220,7 +234,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn api_docs_json_contains_network_stats_path() {
+    async fn api_docs_json_contains_contracts_paths() {
         let app = test_app();
         let response = app
             .oneshot(
@@ -235,14 +249,17 @@ mod tests {
             .await
             .unwrap();
         let spec: Value = serde_json::from_slice(&bytes).unwrap();
-        assert!(
-            spec["paths"]["/v1/network/stats"].is_object(),
-            "spec missing /v1/network/stats path: {spec}"
-        );
-        assert!(
-            spec["components"]["schemas"]["NetworkStats"].is_object(),
-            "spec missing NetworkStats component: {spec}"
-        );
+        for path in [
+            "/v1/contracts/{contract_id}",
+            "/v1/contracts/{contract_id}/interface",
+            "/v1/contracts/{contract_id}/invocations",
+            "/v1/contracts/{contract_id}/events",
+        ] {
+            assert!(
+                spec["paths"][path].is_object(),
+                "spec missing {path} path: {spec}"
+            );
+        }
     }
 
     #[tokio::test]

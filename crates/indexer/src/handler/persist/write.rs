@@ -1004,16 +1004,27 @@ pub(super) async fn upsert_assets(
         return Ok(());
     }
     // Separate paths per identity class — each has its own partial UNIQUE.
+    // Task 0160: SAC rows split by underlying asset — classic-wrap SACs carry
+    // code+issuer and key off `(asset_code, issuer_id)`; native XLM-SAC has
+    // NULL code/issuer (permitted by `ck_assets_identity` after 0160 schema
+    // loosening) and keys off `contract_id` alongside Soroban-native rows.
     let mut native: Vec<&AssetRow> = Vec::new();
     let mut classic_credit: Vec<&AssetRow> = Vec::new();
-    let mut sac: Vec<&AssetRow> = Vec::new();
+    let mut sac_credit: Vec<&AssetRow> = Vec::new();
+    let mut sac_native: Vec<&AssetRow> = Vec::new();
     let mut soroban: Vec<&AssetRow> = Vec::new();
 
     for t in &staged.asset_rows {
         match t.asset_type {
             TokenAssetType::Native => native.push(t),
             TokenAssetType::ClassicCredit => classic_credit.push(t),
-            TokenAssetType::Sac => sac.push(t),
+            TokenAssetType::Sac => {
+                if t.asset_code.is_some() && t.issuer_str_key.is_some() {
+                    sac_credit.push(t);
+                } else {
+                    sac_native.push(t);
+                }
+            }
             TokenAssetType::Soroban => soroban.push(t),
         }
     }
@@ -1027,8 +1038,16 @@ pub(super) async fn upsert_assets(
         contract_ids,
     )
     .await?;
-    upsert_assets_classic_like(db_tx, &sac, TokenAssetType::Sac, account_ids, contract_ids).await?;
-    upsert_assets_soroban(db_tx, &soroban, contract_ids).await?;
+    upsert_assets_classic_like(
+        db_tx,
+        &sac_credit,
+        TokenAssetType::Sac,
+        account_ids,
+        contract_ids,
+    )
+    .await?;
+    upsert_assets_contract_keyed(db_tx, &sac_native, TokenAssetType::Sac, contract_ids).await?;
+    upsert_assets_contract_keyed(db_tx, &soroban, TokenAssetType::Soroban, contract_ids).await?;
 
     Ok(())
 }
@@ -1114,6 +1133,14 @@ async fn upsert_assets_classic_like(
         // ADR 0031: bind asset_type as SMALLINT enum; partial UNIQUE index on
         // `assets (asset_code, issuer_id) WHERE asset_type IN (1, 2)` (classic_credit, sac)
         // matches numeric ordinals — see migration 0005.
+        //
+        // Task 0160: `asset_type = GREATEST(...)` ensures monotonic
+        // ClassicCredit(1) → Sac(2) promotion. Under parallel backfill,
+        // a future classic-path writer may commit a type=1 row after a
+        // SAC writer has already committed type=2 with contract_id; a
+        // naive DO UPDATE of asset_type would downgrade to 1 and
+        // violate `ck_assets_identity` (type=1 requires contract_id
+        // IS NULL). GREATEST is order-independent and parallel-safe.
         sqlx::query(
             r#"
             INSERT INTO assets (asset_type, asset_code, issuer_id, contract_id, name, total_supply, holder_count)
@@ -1124,6 +1151,7 @@ async fn upsert_assets_classic_like(
             ON CONFLICT (asset_code, issuer_id)
               WHERE asset_type IN (1, 2)  -- classic_credit, sac
               DO UPDATE SET
+                asset_type = GREATEST(EXCLUDED.asset_type, assets.asset_type),
                 contract_id = COALESCE(EXCLUDED.contract_id, assets.contract_id),
                 name = COALESCE(EXCLUDED.name, assets.name),
                 total_supply = COALESCE(EXCLUDED.total_supply, assets.total_supply),
@@ -1143,11 +1171,21 @@ async fn upsert_assets_classic_like(
     Ok(())
 }
 
-async fn upsert_assets_soroban(
+/// Upsert asset rows keyed by `contract_id` (Soroban-native assets and
+/// native XLM-SAC rows). `uidx_assets_soroban` enforces one row per
+/// contract across both `asset_type = Sac` and `asset_type = Soroban`.
+/// Task 0160: native XLM-SAC has NULL code+issuer + non-NULL contract_id
+/// — permitted by the relaxed `ck_assets_identity`.
+async fn upsert_assets_contract_keyed(
     db_tx: &mut Transaction<'_, Postgres>,
     rows: &[&AssetRow],
+    asset_type: TokenAssetType,
     contract_ids: &HashMap<String, i64>,
 ) -> Result<(), HandlerError> {
+    debug_assert!(
+        matches!(asset_type, TokenAssetType::Sac | TokenAssetType::Soroban),
+        "upsert_assets_contract_keyed handles sac/soroban only; got {asset_type:?}"
+    );
     if rows.is_empty() {
         return Ok(());
     }
@@ -1161,11 +1199,7 @@ async fn upsert_assets_soroban(
             let Some(cid) = r.contract_id.as_ref() else {
                 continue;
             };
-            contracts.push(resolve_contract_id(
-                contract_ids,
-                cid,
-                "asset.soroban.contract",
-            )?);
+            contracts.push(resolve_contract_id(contract_ids, cid, "asset.contract")?);
             names.push(r.name.clone());
             supplies.push(r.total_supply.clone());
             holders.push(r.holder_count);
@@ -1174,6 +1208,13 @@ async fn upsert_assets_soroban(
             continue;
         }
         // ADR 0031: partial UNIQUE on `assets (contract_id) WHERE asset_type IN (2, 3)` (sac, soroban).
+        // Task 0160: prefer Sac(2) over Soroban(3) on conflict — SAC carries
+        // richer identity (classic asset wrap) and should not be overwritten
+        // by a Soroban classification of the same contract_id. Plain GREATEST
+        // would do the opposite (3 > 2). In practice the two paths should
+        // never produce the same contract_id (`is_sac` is exclusive at the
+        // source), so this is purely a defensive guard against parser
+        // misclassification or backfill order swaps.
         sqlx::query(
             r#"
             INSERT INTO assets (asset_type, contract_id, name, total_supply, holder_count)
@@ -1184,12 +1225,16 @@ async fn upsert_assets_soroban(
             ON CONFLICT (contract_id)
               WHERE asset_type IN (2, 3)  -- sac, soroban
               DO UPDATE SET
+                asset_type = CASE
+                    WHEN assets.asset_type = 2 OR EXCLUDED.asset_type = 2 THEN 2
+                    ELSE EXCLUDED.asset_type
+                END,
                 name = COALESCE(EXCLUDED.name, assets.name),
                 total_supply = COALESCE(EXCLUDED.total_supply, assets.total_supply),
                 holder_count = COALESCE(EXCLUDED.holder_count, assets.holder_count)
             "#,
         )
-        .bind(TokenAssetType::Soroban)
+        .bind(asset_type)
         .bind(&contracts)
         .bind(&names)
         .bind(&supplies)

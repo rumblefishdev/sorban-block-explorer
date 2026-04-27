@@ -2,9 +2,9 @@
 id: '0050'
 title: 'Backend: Contracts module (detail, interface, invocations, events)'
 type: FEATURE
-status: active
-related_adr: ['0005']
-related_tasks: ['0023', '0043', '0092']
+status: completed
+related_adr: ['0005', '0029', '0030', '0033', '0034']
+related_tasks: ['0023', '0043', '0046', '0092', '0150']
 tags: [layer-backend, contracts, soroban]
 milestone: 2
 links: []
@@ -29,6 +29,39 @@ history:
     status: active
     who: FilipDz
     note: 'Activated task.'
+  - date: 2026-04-27
+    status: active
+    who: FilipDz
+    note: >
+      Implementation shipped under crates/api/src/contracts/ on branch
+      feature/0050_backend-contracts-module — mirrors the transactions
+      module layout (mod, dto, cursor, queries, handlers, plus a
+      contract-only cache module). E10 (detail) + E11 (interface)
+      hit Postgres only; E13 (invocations) + E14 (events) page over
+      the appearance indexes (ADRs 0033 / 0034) and reconstruct
+      per-node detail from public-archive XDR via
+      stellar_archive::fetch_ledgers + xdr_parser::extract_invocations
+      / extract_events (ADR 0029). Interface payload is read from
+      wasm_interface_metadata.metadata (joined via wasm_hash) — not
+      soroban_contracts.metadata as the original spec assumed
+      (ADR 0023 split). 45 s ContractMetadataCache in AppState.
+      collect_tx_metas promoted to pub in stellar_archive::extractors.
+      OpenAPI registers all 4 routes + new schemas; api crate clippy
+      clean (-D warnings) and 21/21 unit tests pass. Evergreen docs
+      updated (backend-overview.md §4.1 / §8.1, wiki snapshot
+      bootstrap status).
+  - date: 2026-04-27
+    status: completed
+    who: FilipDz
+    note: >
+      PR #126 merged to develop (commit 8594e48). Two Copilot review
+      passes addressed in commits bd88bcf + fcc46eb (9 comments total
+      — 8 fixed, 1 deferred to task 0132 with cited justification).
+      Live E2E validated against local 120-ledger Soroban-pubnet
+      backfill (62079800–62079919): all 4 endpoints returned correct
+      shapes, cursor pagination round-tripped, 45 s cache TTL evicted,
+      400/404 paths covered. Final: api crate 23/23 unit tests pass,
+      workspace clippy clean (-D warnings).
 ---
 
 # Backend: Contracts module (detail, interface, invocations, events)
@@ -309,16 +342,25 @@ Implement Lambda in-memory cache for contract metadata with 30-60s TTL.
 
 ## Acceptance Criteria
 
-- [ ] `GET /v1/contracts/:contract_id` returns contract detail with stats
-- [ ] `GET /v1/contracts/:contract_id/interface` returns function signatures
-- [ ] `GET /v1/contracts/:contract_id/invocations` returns paginated invocation history
-- [ ] `GET /v1/contracts/:contract_id/events` returns paginated events
-- [ ] Stats include invocation_count and event_count
-- [ ] Interface data sourced from soroban_contracts.metadata
-- [ ] Events queried from soroban_events table
-- [ ] Contract metadata cached in Lambda in-memory cache (30-60s)
-- [ ] Standard pagination and error envelopes on all paginated endpoints
-- [ ] 404 for non-existent contracts
+- [x] `GET /v1/contracts/:contract_id` returns contract detail with stats
+- [x] `GET /v1/contracts/:contract_id/interface` returns function signatures
+- [x] `GET /v1/contracts/:contract_id/invocations` returns paginated invocation history
+- [x] `GET /v1/contracts/:contract_id/events` returns paginated events
+- [x] Stats include invocation_count and event_count (aggregated from the
+      `*_appearances.amount` columns, since per-node rows no longer exist
+      after ADRs 0033 / 0034)
+- [x] Interface data sourced from indexed contract metadata — actual
+      JSONB lives in `wasm_interface_metadata.metadata` (joined via
+      `soroban_contracts.wasm_hash` per ADR 0023), not in
+      `soroban_contracts.metadata` as the original spec assumed
+- [x] Events queried from the indexer's contract-events table —
+      `soroban_events_appearances` per ADR 0033 (table renamed and
+      reduced to an appearance index since the spec was written;
+      full topics/data fetched read-time from the public archive)
+- [x] Contract metadata cached in Lambda in-memory cache (45 s,
+      midpoint of the 30–60 s window) — `ContractMetadataCache`
+- [x] Standard pagination and error envelopes on all paginated endpoints
+- [x] 404 for non-existent contracts
 
 ## Notes
 

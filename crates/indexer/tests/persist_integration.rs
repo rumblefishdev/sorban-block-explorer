@@ -140,6 +140,36 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
     assert_eq!(counts_first.wasm, 1, "wasm_interface_metadata row count");
     assert_eq!(counts_first.assets, 1, "assets row count");
     assert_eq!(counts_first.nfts, 1, "nfts row count");
+
+    // Task 0160 regression: SAC row must now carry the wrapped classic
+    // asset's code + issuer_id + contract_id — previously all three
+    // landed NULL / missing because `upsert_assets_classic_like`
+    // silently dropped SAC rows lacking code/issuer.
+    let sac_identity: (String, Option<i64>, Option<i64>) = sqlx::query_as(
+        r#"
+        SELECT a.asset_code,
+               a.issuer_id,
+               a.contract_id
+          FROM assets a
+          JOIN soroban_contracts sc ON sc.id = a.contract_id
+         WHERE sc.contract_id = $1
+           AND a.asset_type = $2
+        "#,
+    )
+    .bind(TOKEN_CONTRACT)
+    .bind(TokenAssetType::Sac)
+    .fetch_one(&pool)
+    .await
+    .expect("SAC row exists with asset_type = Sac");
+    assert_eq!(sac_identity.0, "USDC", "SAC asset_code populated");
+    assert!(
+        sac_identity.1.is_some(),
+        "SAC issuer_id resolved to accounts.id"
+    );
+    assert!(
+        sac_identity.2.is_some(),
+        "SAC contract_id resolved to soroban_contracts.id"
+    );
     assert_eq!(counts_first.pools, 1, "liquidity_pools row count");
     assert_eq!(
         counts_first.pool_snapshots, 1,
@@ -387,6 +417,12 @@ fn make_contract_deployment() -> ExtractedContractDeployment {
         contract_type: ContractType::Token,
         is_sac: true,
         metadata: json!({"name": "TEST"}),
+        // Task 0160: match the SAC asset row fixture (make_sac_asset) so
+        // integration tests exercise a complete SAC identity end-to-end.
+        sac_asset: Some(xdr_parser::types::SacAssetIdentity::Credit {
+            code: "USDC".to_string(),
+            issuer: ISSUER_STRKEY.to_string(),
+        }),
     }
 }
 
@@ -767,6 +803,7 @@ async fn stub_wasm_unblocks_unknown_hash_and_real_upload_upgrades_it() {
         contract_type: ContractType::Other,
         is_sac: false,
         metadata: json!({}),
+        sac_asset: None,
     };
 
     let empty_operations: Vec<(String, Vec<ExtractedOperation>)> = Vec::new();
@@ -1103,6 +1140,7 @@ fn deploy_with(contract_id: &str, wasm_hash: &str) -> ExtractedContractDeploymen
         contract_type: ContractType::Other, // parser default; staging overrides
         is_sac: false,
         metadata: json!({}),
+        sac_asset: None,
     }
 }
 
@@ -1167,13 +1205,26 @@ const TK_LEDGER_SEQ_1: u32 = 90_000_301;
 const TK_LEDGER_SEQ_2: u32 = 90_000_302;
 /// 2026-04-22 12:20:00 UTC
 const TK_CLOSED_AT_1: i64 = 1_777_205_400;
-const TK_CLOSED_AT_2: i64 = TK_CLOSED_AT_1 + 6;
 const TK_LEDGER_HASH_1: &str = "eeee111111111111111111111111111111111111111111111111111111111111";
-const TK_LEDGER_HASH_2: &str = "eeee222222222222222222222222222222222222222222222222222222222222";
 const TK_TX_HASH_1: &str = "eeee333333333333333333333333333333333333333333333333333333333333";
 const TK_TX_HASH_2: &str = "eeee444444444444444444444444444444444444444444444444444444444444";
 const TK_CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAATKNSOR";
 const TK_WASM_HASH: &str = "eeee555555555555555555555555555555555555555555555555555555555555";
+
+// Task 0160 — late-WASM test gets its own constant set so it can run in
+// parallel with `soroban_fungible_contract_produces_assets_row` without
+// racing on TK_CONTRACT / TK_TX_HASH_* / TK_LEDGER_* DB rows.
+const LWU_LEDGER_SEQ_1: u32 = 90_001_301;
+const LWU_LEDGER_SEQ_2: u32 = 90_001_302;
+/// 2026-04-22 14:00:00 UTC
+const LWU_CLOSED_AT_1: i64 = 1_777_211_400;
+const LWU_CLOSED_AT_2: i64 = LWU_CLOSED_AT_1 + 6;
+const LWU_LEDGER_HASH_1: &str = "eeee661111111111111111111111111111111111111111111111111111111111";
+const LWU_LEDGER_HASH_2: &str = "eeee662222222222222222222222222222222222222222222222222222222222";
+const LWU_TX_HASH_1: &str = "eeee663333333333333333333333333333333333333333333333333333333333";
+const LWU_TX_HASH_2: &str = "eeee664444444444444444444444444444444444444444444444444444444444";
+const LWU_CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALWUWASMSC";
+const LWU_WASM_HASH: &str = "eeee665555555555555555555555555555555555555555555555555555555555";
 
 /// End-to-end check of task 0120's same-ledger detection path.
 ///
@@ -1235,6 +1286,7 @@ async fn soroban_fungible_contract_produces_assets_row() {
         contract_type: ContractType::Other, // staging overrides via classifier
         is_sac: false,
         metadata: json!({}),
+        sac_asset: None,
     }];
     // Drive the real parser → persist wiring end-to-end so a regression in
     // detect_assets signature/behaviour fails this test, not just an
@@ -1341,20 +1393,20 @@ async fn late_wasm_upload_backfills_assets_row() {
     };
 
     ensure_default_partitions(&pool).await;
-    clean_tk_test(&pool).await;
+    clean_lwu_test(&pool).await;
 
     // ── L1: deploy without the WASM upload. Parser emits no asset row. ──
     let ledger1 = ExtractedLedger {
-        sequence: TK_LEDGER_SEQ_1,
-        hash: TK_LEDGER_HASH_1.to_string(),
-        closed_at: TK_CLOSED_AT_1,
+        sequence: LWU_LEDGER_SEQ_1,
+        hash: LWU_LEDGER_HASH_1.to_string(),
+        closed_at: LWU_CLOSED_AT_1,
         protocol_version: 22,
         transaction_count: 1,
         base_fee: 100,
     };
     let tx1 = ExtractedTransaction {
-        hash: TK_TX_HASH_1.to_string(),
-        ledger_sequence: TK_LEDGER_SEQ_1,
+        hash: LWU_TX_HASH_1.to_string(),
+        ledger_sequence: LWU_LEDGER_SEQ_1,
         source_account: SRC_STRKEY.to_string(),
         fee_charged: 100,
         successful: true,
@@ -1365,17 +1417,18 @@ async fn late_wasm_upload_backfills_assets_row() {
         operation_tree: None,
         memo_type: None,
         memo: None,
-        created_at: TK_CLOSED_AT_1,
+        created_at: LWU_CLOSED_AT_1,
         parse_error: false,
     };
     let deployments = vec![ExtractedContractDeployment {
-        contract_id: TK_CONTRACT.to_string(),
-        wasm_hash: Some(TK_WASM_HASH.to_string()),
+        contract_id: LWU_CONTRACT.to_string(),
+        wasm_hash: Some(LWU_WASM_HASH.to_string()),
         deployer_account: Some(SRC_STRKEY.to_string()),
-        deployed_at_ledger: TK_LEDGER_SEQ_1,
+        deployed_at_ledger: LWU_LEDGER_SEQ_1,
         contract_type: ContractType::Other,
         is_sac: false,
         metadata: json!({}),
+        sac_asset: None,
     }];
 
     let empty_operations: Vec<(String, Vec<ExtractedOperation>)> = Vec::new();
@@ -1424,7 +1477,7 @@ async fn late_wasm_upload_backfills_assets_row() {
             WHERE sc.contract_id = $1
               AND t.asset_type = $2"#,
     )
-    .bind(TK_CONTRACT)
+    .bind(LWU_CONTRACT)
     .bind(TokenAssetType::Soroban)
     .fetch_one(&pool)
     .await
@@ -1434,16 +1487,16 @@ async fn late_wasm_upload_backfills_assets_row() {
     // ── L2: WASM upload arrives. Interface has SEP-0041 surface.
     //   Reclassify promotes Other → Fungible; bridge inserts assets row.
     let ledger2 = ExtractedLedger {
-        sequence: TK_LEDGER_SEQ_2,
-        hash: TK_LEDGER_HASH_2.to_string(),
-        closed_at: TK_CLOSED_AT_2,
+        sequence: LWU_LEDGER_SEQ_2,
+        hash: LWU_LEDGER_HASH_2.to_string(),
+        closed_at: LWU_CLOSED_AT_2,
         protocol_version: 22,
         transaction_count: 1,
         base_fee: 100,
     };
     let tx2 = ExtractedTransaction {
-        hash: TK_TX_HASH_2.to_string(),
-        ledger_sequence: TK_LEDGER_SEQ_2,
+        hash: LWU_TX_HASH_2.to_string(),
+        ledger_sequence: LWU_LEDGER_SEQ_2,
         source_account: SRC_STRKEY.to_string(),
         fee_charged: 100,
         successful: true,
@@ -1454,11 +1507,11 @@ async fn late_wasm_upload_backfills_assets_row() {
         operation_tree: None,
         memo_type: None,
         memo: None,
-        created_at: TK_CLOSED_AT_2,
+        created_at: LWU_CLOSED_AT_2,
         parse_error: false,
     };
     let interfaces = vec![iface_with(
-        TK_WASM_HASH,
+        LWU_WASM_HASH,
         &["transfer", "balance", "decimals", "name", "symbol"],
     )];
     let no_deployments: Vec<ExtractedContractDeployment> = Vec::new();
@@ -1489,7 +1542,7 @@ async fn late_wasm_upload_backfills_assets_row() {
     // After L2: contract promoted to Fungible, assets row inserted.
     let fun_ty: Option<i16> =
         sqlx::query_scalar("SELECT contract_type FROM soroban_contracts WHERE contract_id = $1")
-            .bind(TK_CONTRACT)
+            .bind(LWU_CONTRACT)
             .fetch_one(&pool)
             .await
             .expect("soroban_contracts row exists");
@@ -1506,7 +1559,7 @@ async fn late_wasm_upload_backfills_assets_row() {
             WHERE sc.contract_id = $1
               AND t.asset_type = $2"#,
     )
-    .bind(TK_CONTRACT)
+    .bind(LWU_CONTRACT)
     .bind(TokenAssetType::Soroban)
     .fetch_one(&pool)
     .await
@@ -1519,8 +1572,8 @@ async fn late_wasm_upload_backfills_assets_row() {
         &pool,
         &ledger2,
         &[ExtractedTransaction {
-            hash: TK_TX_HASH_2.to_string(),
-            ledger_sequence: TK_LEDGER_SEQ_2,
+            hash: LWU_TX_HASH_2.to_string(),
+            ledger_sequence: LWU_LEDGER_SEQ_2,
             source_account: SRC_STRKEY.to_string(),
             fee_charged: 100,
             successful: true,
@@ -1531,7 +1584,7 @@ async fn late_wasm_upload_backfills_assets_row() {
             operation_tree: None,
             memo_type: None,
             memo: None,
-            created_at: TK_CLOSED_AT_2,
+            created_at: LWU_CLOSED_AT_2,
             parse_error: false,
         }],
         &empty_operations,
@@ -1560,14 +1613,14 @@ async fn late_wasm_upload_backfills_assets_row() {
             WHERE sc.contract_id = $1
               AND t.asset_type = $2"#,
     )
-    .bind(TK_CONTRACT)
+    .bind(LWU_CONTRACT)
     .bind(TokenAssetType::Soroban)
     .fetch_one(&pool)
     .await
     .expect("assets count succeeds");
     assert_eq!(count_replay, 1, "replay does not duplicate assets row");
 
-    clean_tk_test(&pool).await;
+    clean_lwu_test(&pool).await;
 }
 
 async fn clean_tk_test(pool: &PgPool) {
@@ -1600,6 +1653,43 @@ async fn clean_tk_test(pool: &PgPool) {
         .await;
     let _ = sqlx::query("DELETE FROM wasm_interface_metadata WHERE wasm_hash = decode($1, 'hex')")
         .bind(TK_WASM_HASH)
+        .execute(pool)
+        .await;
+}
+
+async fn clean_lwu_test(pool: &PgPool) {
+    let tx_hashes = vec![
+        hex::decode(LWU_TX_HASH_1).unwrap(),
+        hex::decode(LWU_TX_HASH_2).unwrap(),
+    ];
+    let _ = sqlx::query(
+        "DELETE FROM assets
+          WHERE contract_id IN (SELECT id FROM soroban_contracts WHERE contract_id = $1)",
+    )
+    .bind(LWU_CONTRACT)
+    .execute(pool)
+    .await;
+    let _ = sqlx::query("DELETE FROM transactions WHERE hash = ANY($1)")
+        .bind(&tx_hashes)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM transaction_hash_index WHERE hash = ANY($1)")
+        .bind(&tx_hashes)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM ledgers WHERE sequence = ANY($1)")
+        .bind(vec![
+            i64::from(LWU_LEDGER_SEQ_1),
+            i64::from(LWU_LEDGER_SEQ_2),
+        ])
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM soroban_contracts WHERE contract_id = $1")
+        .bind(LWU_CONTRACT)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM wasm_interface_metadata WHERE wasm_hash = decode($1, 'hex')")
+        .bind(LWU_WASM_HASH)
         .execute(pool)
         .await;
 }
@@ -1640,4 +1730,465 @@ async fn clean_stub_test(pool: &PgPool) {
         .bind(STUB_WASM_HASH)
         .execute(pool)
         .await;
+}
+
+// ---------------------------------------------------------------------------
+// Task 0160 — SAC underlying asset identity extraction
+// ---------------------------------------------------------------------------
+
+// Each SAC160 test gets a distinct ledger/tx pair so they don't share a
+// `ledgers.sequence` row or a `transactions.hash` under parallel
+// execution — cleanup of one would otherwise cascade into the other's
+// state mid-test.
+const SAC160_XLM_LEDGER_SEQ: u32 = 90_000_401;
+const SAC160_XLM_CLOSED_AT: i64 = 1_777_212_000;
+const SAC160_XLM_LEDGER_HASH: &str =
+    "ddd0000000000000000000000000000000000000000000000000000000000160";
+const SAC160_XLM_TX_HASH: &str = "ddd0160000000000000000000000000000000000000000000000000000000001";
+
+const SAC160_CREDIT_LEDGER_SEQ: u32 = 90_000_402;
+const SAC160_CREDIT_CLOSED_AT: i64 = 1_777_212_006;
+const SAC160_CREDIT_LEDGER_HASH: &str =
+    "ddd0000000000000000000000000000000000000000000000000000000000161";
+const SAC160_CREDIT_TX_HASH: &str =
+    "ddd0160000000000000000000000000000000000000000000000000000000002";
+/// Real mainnet XLM-SAC contract_id, published across Stellar SDKs and
+/// Stellar Expert. Pinned here as a `const` so the integration test
+/// asserts that `derive_sac_contract_id(Native, mainnet)` round-trips
+/// through the indexer into this exact StrKey in `soroban_contracts.contract_id`.
+const SAC160_XLM_CONTRACT: &str = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
+const SAC160_CREDIT_CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUSDSAC";
+/// Dedicated SAC160 issuer — disjoint from `ISSUER_STRKEY` so the
+/// classic-credit / SAC unique key `(asset_code, issuer_id)` does not
+/// race the `synthetic_ledger_insert_and_replay_is_idempotent` fixture
+/// under default parallel `cargo test` execution.
+const SAC160_ISSUER_STRKEY: &str = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASAC160ISS";
+
+/// Native XLM-SAC deployment (Asset::Native preimage) → `assets` row lands
+/// with NULL `asset_code` + NULL `issuer_id` + populated `contract_id`.
+/// Verifies the 0160 schema loosening (ck_assets_identity allows this
+/// shape for asset_type=Sac) end-to-end against a real Postgres.
+#[tokio::test]
+async fn xlm_sac_deployment_lands_with_null_identity() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping 0160 XLM-SAC test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping 0160 XLM-SAC test");
+            return;
+        }
+    };
+
+    ensure_default_partitions(&pool).await;
+    clean_sac160_test(&pool).await;
+
+    // Round-trip closure: prove the contract_id we feed downstream comes
+    // from `derive_sac_contract_id` (matches stellar-core derivation) and
+    // not a hand-picked StrKey. Combined with the persist+query below,
+    // this closes the chain `derive_sac_contract_id(Native, mainnet) →
+    // ExtractedAsset.contract_id → soroban_contracts.contract_id` end to end.
+    use stellar_xdr::curr::{Asset, ContractIdPreimage};
+    let mainnet_id = xdr_parser::network_id(xdr_parser::MAINNET_PASSPHRASE);
+    let derived_xlm_sac =
+        xdr_parser::derive_sac_contract_id(&ContractIdPreimage::Asset(Asset::Native), &mainnet_id)
+            .expect("derive_sac_contract_id(Native, mainnet) must succeed");
+    assert_eq!(
+        derived_xlm_sac, SAC160_XLM_CONTRACT,
+        "SAC160_XLM_CONTRACT must equal the runtime-derived XLM-SAC StrKey"
+    );
+
+    let ledger = ExtractedLedger {
+        sequence: SAC160_XLM_LEDGER_SEQ,
+        hash: SAC160_XLM_LEDGER_HASH.to_string(),
+        closed_at: SAC160_XLM_CLOSED_AT,
+        protocol_version: 22,
+        transaction_count: 1,
+        base_fee: 100,
+    };
+    let tx = ExtractedTransaction {
+        hash: SAC160_XLM_TX_HASH.to_string(),
+        ledger_sequence: SAC160_XLM_LEDGER_SEQ,
+        source_account: SRC_STRKEY.to_string(),
+        fee_charged: 100,
+        successful: true,
+        result_code: "txSuccess".to_string(),
+        envelope_xdr: "AAAAAA...".to_string(),
+        result_xdr: "AAAAAA...".to_string(),
+        result_meta_xdr: None,
+        operation_tree: None,
+        memo_type: None,
+        memo: None,
+        created_at: SAC160_XLM_CLOSED_AT,
+        parse_error: false,
+    };
+    let deployments = vec![ExtractedContractDeployment {
+        contract_id: derived_xlm_sac.clone(),
+        wasm_hash: None,
+        deployer_account: Some(SRC_STRKEY.to_string()),
+        deployed_at_ledger: SAC160_XLM_LEDGER_SEQ,
+        contract_type: ContractType::Token,
+        is_sac: true,
+        metadata: json!({}),
+        sac_asset: Some(xdr_parser::types::SacAssetIdentity::Native),
+    }];
+    let assets = vec![ExtractedAsset {
+        asset_type: TokenAssetType::Sac,
+        asset_code: None,
+        issuer_address: None,
+        contract_id: Some(derived_xlm_sac.clone()),
+        name: None,
+        total_supply: None,
+        holder_count: None,
+    }];
+
+    let empty_ops: Vec<(String, Vec<ExtractedOperation>)> = Vec::new();
+    let empty_events: Vec<(String, Vec<ExtractedEvent>)> = Vec::new();
+    let empty_invocations: Vec<(String, Vec<ExtractedInvocation>)> = Vec::new();
+    let empty_trees: Vec<(String, serde_json::Value)> = Vec::new();
+    let no_interfaces: Vec<ExtractedContractInterface> = Vec::new();
+    let no_account_states: Vec<ExtractedAccountState> = Vec::new();
+    let no_pools: Vec<ExtractedLiquidityPool> = Vec::new();
+    let no_snapshots: Vec<ExtractedLiquidityPoolSnapshot> = Vec::new();
+    let no_nfts: Vec<ExtractedNft> = Vec::new();
+    let no_nft_events: Vec<ExtractedNftEvent> = Vec::new();
+    let no_lp_positions: Vec<ExtractedLpPosition> = Vec::new();
+    let no_inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
+    let cache = ClassificationCache::new();
+
+    persist_ledger(
+        &pool,
+        &ledger,
+        &[tx],
+        &empty_ops,
+        &empty_events,
+        &empty_invocations,
+        &empty_trees,
+        &no_interfaces,
+        &deployments,
+        &no_account_states,
+        &no_pools,
+        &no_snapshots,
+        &assets,
+        &no_nfts,
+        &no_nft_events,
+        &no_lp_positions,
+        &no_inner_tx_hashes,
+        &cache,
+    )
+    .await
+    .expect("XLM-SAC persist_ledger must succeed");
+
+    let row: (Option<String>, Option<i64>, String) = sqlx::query_as(
+        r#"
+        SELECT a.asset_code, a.issuer_id, sc.contract_id
+          FROM assets a
+          JOIN soroban_contracts sc ON sc.id = a.contract_id
+         WHERE sc.contract_id = $1
+           AND a.asset_type = $2
+        "#,
+    )
+    .bind(&derived_xlm_sac)
+    .bind(TokenAssetType::Sac)
+    .fetch_one(&pool)
+    .await
+    .expect("XLM-SAC row must land with NULL identity + contract_id FK");
+    assert!(
+        row.0.is_none(),
+        "native XLM-SAC must persist with NULL asset_code"
+    );
+    assert!(
+        row.1.is_none(),
+        "native XLM-SAC must persist with NULL issuer_id"
+    );
+    assert_eq!(
+        row.2, derived_xlm_sac,
+        "soroban_contracts.contract_id round-trips the derived StrKey end-to-end \
+         (derive_sac_contract_id → ExtractedAsset.contract_id → DB column)"
+    );
+
+    clean_sac160_test(&pool).await;
+}
+
+/// GREATEST promotion — a ClassicCredit(1) write arriving after a SAC(2)
+/// write for the same (asset_code, issuer) MUST NOT downgrade asset_type
+/// back to 1. Parallel-backfill safety: order-independent final state.
+#[tokio::test]
+async fn classic_to_sac_greatest_promotion_is_monotonic() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping 0160 GREATEST test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping 0160 GREATEST test");
+            return;
+        }
+    };
+
+    ensure_default_partitions(&pool).await;
+    clean_sac160_test(&pool).await;
+
+    let ledger = ExtractedLedger {
+        sequence: SAC160_CREDIT_LEDGER_SEQ,
+        hash: SAC160_CREDIT_LEDGER_HASH.to_string(),
+        closed_at: SAC160_CREDIT_CLOSED_AT,
+        protocol_version: 22,
+        transaction_count: 1,
+        base_fee: 100,
+    };
+    let tx = ExtractedTransaction {
+        hash: SAC160_CREDIT_TX_HASH.to_string(),
+        ledger_sequence: SAC160_CREDIT_LEDGER_SEQ,
+        source_account: SRC_STRKEY.to_string(),
+        fee_charged: 100,
+        successful: true,
+        result_code: "txSuccess".to_string(),
+        envelope_xdr: "AAAAAA...".to_string(),
+        result_xdr: "AAAAAA...".to_string(),
+        result_meta_xdr: None,
+        operation_tree: None,
+        memo_type: None,
+        memo: None,
+        created_at: SAC160_CREDIT_CLOSED_AT,
+        parse_error: false,
+    };
+
+    let empty_ops: Vec<(String, Vec<ExtractedOperation>)> = Vec::new();
+    let empty_events: Vec<(String, Vec<ExtractedEvent>)> = Vec::new();
+    let empty_invocations: Vec<(String, Vec<ExtractedInvocation>)> = Vec::new();
+    let empty_trees: Vec<(String, serde_json::Value)> = Vec::new();
+    let no_interfaces: Vec<ExtractedContractInterface> = Vec::new();
+    let no_account_states: Vec<ExtractedAccountState> = Vec::new();
+    let no_pools: Vec<ExtractedLiquidityPool> = Vec::new();
+    let no_snapshots: Vec<ExtractedLiquidityPoolSnapshot> = Vec::new();
+    let no_nfts: Vec<ExtractedNft> = Vec::new();
+    let no_nft_events: Vec<ExtractedNftEvent> = Vec::new();
+    let no_lp_positions: Vec<ExtractedLpPosition> = Vec::new();
+    let no_inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
+
+    // ---- Phase 1: SAC(type=2) lands first with a populated contract_id.
+    let sac_deployments = vec![ExtractedContractDeployment {
+        contract_id: SAC160_CREDIT_CONTRACT.to_string(),
+        wasm_hash: None,
+        deployer_account: Some(SRC_STRKEY.to_string()),
+        deployed_at_ledger: SAC160_CREDIT_LEDGER_SEQ,
+        contract_type: ContractType::Token,
+        is_sac: true,
+        metadata: json!({}),
+        sac_asset: Some(xdr_parser::types::SacAssetIdentity::Credit {
+            code: "USDC".to_string(),
+            issuer: SAC160_ISSUER_STRKEY.to_string(),
+        }),
+    }];
+    let sac_assets = vec![ExtractedAsset {
+        asset_type: TokenAssetType::Sac,
+        asset_code: Some("USDC".to_string()),
+        issuer_address: Some(SAC160_ISSUER_STRKEY.to_string()),
+        contract_id: Some(SAC160_CREDIT_CONTRACT.to_string()),
+        name: None,
+        total_supply: None,
+        holder_count: None,
+    }];
+    let cache = ClassificationCache::new();
+    persist_ledger(
+        &pool,
+        &ledger,
+        std::slice::from_ref(&tx),
+        &empty_ops,
+        &empty_events,
+        &empty_invocations,
+        &empty_trees,
+        &no_interfaces,
+        &sac_deployments,
+        &no_account_states,
+        &no_pools,
+        &no_snapshots,
+        &sac_assets,
+        &no_nfts,
+        &no_nft_events,
+        &no_lp_positions,
+        &no_inner_tx_hashes,
+        &cache,
+    )
+    .await
+    .expect("Phase 1 (SAC first) must succeed");
+
+    // ---- Phase 2: ClassicCredit(type=1) arrives second for the same
+    //      (code, issuer). Would-be downgrade blocked by GREATEST.
+    //      Replay the same ledger — idempotent write shape.
+    let classic_assets = vec![ExtractedAsset {
+        asset_type: TokenAssetType::ClassicCredit,
+        asset_code: Some("USDC".to_string()),
+        issuer_address: Some(SAC160_ISSUER_STRKEY.to_string()),
+        contract_id: None,
+        name: None,
+        total_supply: None,
+        holder_count: None,
+    }];
+    let no_deployments: Vec<ExtractedContractDeployment> = Vec::new();
+    let cache2 = ClassificationCache::new();
+    persist_ledger(
+        &pool,
+        &ledger,
+        &[tx],
+        &empty_ops,
+        &empty_events,
+        &empty_invocations,
+        &empty_trees,
+        &no_interfaces,
+        &no_deployments,
+        &no_account_states,
+        &no_pools,
+        &no_snapshots,
+        &classic_assets,
+        &no_nfts,
+        &no_nft_events,
+        &no_lp_positions,
+        &no_inner_tx_hashes,
+        &cache2,
+    )
+    .await
+    .expect("Phase 2 (classic second) must succeed — ck_assets_identity holds");
+
+    // Final row — asset_type stayed Sac(2), contract_id preserved.
+    let final_type: i16 = sqlx::query_scalar(
+        r#"
+        SELECT a.asset_type
+          FROM assets a
+          JOIN accounts acc ON acc.id = a.issuer_id
+         WHERE a.asset_code = $1 AND acc.account_id = $2
+        "#,
+    )
+    .bind("USDC")
+    .bind(SAC160_ISSUER_STRKEY)
+    .fetch_one(&pool)
+    .await
+    .expect("classic/SAC row exists post order-swap");
+    assert_eq!(
+        final_type,
+        TokenAssetType::Sac as i16,
+        "GREATEST pinned asset_type at Sac(2) — no downgrade"
+    );
+
+    let contract_id_after: Option<i64> = sqlx::query_scalar(
+        r#"
+        SELECT a.contract_id
+          FROM assets a
+          JOIN accounts acc ON acc.id = a.issuer_id
+         WHERE a.asset_code = $1 AND acc.account_id = $2
+        "#,
+    )
+    .bind("USDC")
+    .bind(SAC160_ISSUER_STRKEY)
+    .fetch_one(&pool)
+    .await
+    .expect("fetch contract_id");
+    assert!(
+        contract_id_after.is_some(),
+        "contract_id preserved (COALESCE kept SAC's value through the classic write)"
+    );
+
+    clean_sac160_test(&pool).await;
+}
+
+async fn clean_sac160_test(pool: &PgPool) {
+    let _ = sqlx::query(
+        "DELETE FROM assets
+          WHERE contract_id IN (
+                 SELECT id FROM soroban_contracts WHERE contract_id = ANY($1))",
+    )
+    .bind(vec![
+        SAC160_XLM_CONTRACT.to_string(),
+        SAC160_CREDIT_CONTRACT.to_string(),
+    ])
+    .execute(pool)
+    .await;
+    // Classic/SAC share (code, issuer) unique — also clean by SAC160's
+    // dedicated issuer so a previous run leaving a stale (USDC,
+    // SAC160_ISSUER_STRKEY) row doesn't break the order-swap fixture.
+    // Scoped to SAC160_ISSUER_STRKEY so it can NOT touch
+    // synthetic_ledger's (USDC, ISSUER_STRKEY) row under parallel
+    // execution.
+    let _ = sqlx::query(
+        "DELETE FROM assets
+          WHERE asset_type IN (1, 2)
+            AND issuer_id IN (SELECT id FROM accounts WHERE account_id = $1)
+            AND asset_code = 'USDC'",
+    )
+    .bind(SAC160_ISSUER_STRKEY)
+    .execute(pool)
+    .await;
+    let tx_hashes = vec![
+        hex::decode(SAC160_XLM_TX_HASH).unwrap(),
+        hex::decode(SAC160_CREDIT_TX_HASH).unwrap(),
+    ];
+    let _ = sqlx::query("DELETE FROM transactions WHERE hash = ANY($1)")
+        .bind(&tx_hashes)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM transaction_hash_index WHERE hash = ANY($1)")
+        .bind(&tx_hashes)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM ledgers WHERE sequence = ANY($1)")
+        .bind(vec![
+            i64::from(SAC160_XLM_LEDGER_SEQ),
+            i64::from(SAC160_CREDIT_LEDGER_SEQ),
+        ])
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM soroban_contracts WHERE contract_id = ANY($1)")
+        .bind(vec![
+            SAC160_XLM_CONTRACT.to_string(),
+            SAC160_CREDIT_CONTRACT.to_string(),
+        ])
+        .execute(pool)
+        .await;
+}
+
+// ---------------------------------------------------------------------------
+// Task 0161 — native asset singleton seeded by migration
+// ---------------------------------------------------------------------------
+
+/// Migration `20260428000000_seed_native_asset_singleton.up.sql` seeds the
+/// native XLM row that the schema requires (`uidx_assets_native` is a partial
+/// UNIQUE on `asset_type = 0`). Living spec: confirms the seed lands as
+/// expected after migrations apply.
+///
+/// **Persistent fixture, do not mutate from other tests.** Other test cleanups
+/// must scope their DELETEs by contract / hash / issuer — never by
+/// `asset_type = 0` — or this assertion will flake.
+#[tokio::test]
+async fn native_asset_singleton_seeded_after_migrations() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping 0161 native singleton test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping 0161 native singleton test");
+            return;
+        }
+    };
+
+    let row: (Option<String>, Option<i64>, Option<i64>, Option<String>) = sqlx::query_as(
+        r#"
+        SELECT asset_code, issuer_id, contract_id, name
+          FROM assets
+         WHERE asset_type = 0
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("native singleton must exist exactly once after migrations");
+
+    assert!(row.0.is_none(), "asset_code must be NULL for asset_type=0");
+    assert!(row.1.is_none(), "issuer_id must be NULL for asset_type=0");
+    assert!(row.2.is_none(), "contract_id must be NULL for asset_type=0");
+    assert_eq!(row.3.as_deref(), Some("Stellar Lumen"));
 }

@@ -1,8 +1,10 @@
-//! Opaque cursor encoding for the transactions list endpoint.
+//! Opaque cursor encoding for the contracts list endpoints.
 //!
 //! Cursor = base64url(JSON { "ts": "<ISO 8601>", "id": <i64> }).
-//! The `ts` field is needed so the DB query can prune partitions via the
-//! `created_at` column (without it, the planner would scan all partitions).
+//! `ts` is the appearance row's `created_at`; `id` is the appearance row's
+//! `transaction_id`. Together they form a stable key for the
+//! `(created_at DESC, transaction_id DESC)` listing order and let the DB
+//! query prune partitions via the `created_at` predicate.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -45,8 +47,8 @@ mod tests {
 
     #[test]
     fn round_trip() {
-        let ts = Utc.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap();
-        let id = 42_000_i64;
+        let ts = Utc.with_ymd_and_hms(2026, 4, 27, 12, 0, 0).unwrap();
+        let id = 9_001_i64;
         let encoded = encode(ts, id);
         let (decoded_ts, decoded_id) = decode(&encoded).unwrap();
         assert_eq!(decoded_ts, ts);

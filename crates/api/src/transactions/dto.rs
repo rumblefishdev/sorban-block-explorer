@@ -8,13 +8,15 @@ use utoipa::{IntoParams, ToSchema};
 // Request types
 // ---------------------------------------------------------------------------
 
-/// Query parameters for `GET /v1/transactions`.
+/// `filter[...]` query parameters for `GET /v1/transactions`.
+///
+/// `limit` and `cursor` are read by a sibling `Pagination<TsIdCursor>`
+/// extractor (see [`crate::common::extractors`]) and documented via the
+/// handler's `#[utoipa::path(params(...))]` attribute — they deliberately
+/// do not appear here so the two extractors can coexist without fighting
+/// over the same fields.
 #[derive(Debug, Deserialize, IntoParams)]
 pub struct ListParams {
-    /// Items per page (1–100, default 20).
-    pub limit: Option<u32>,
-    /// Opaque pagination cursor from a previous response.
-    pub cursor: Option<String>,
     /// Filter by source account StrKey (G…).
     #[serde(rename = "filter[source_account]")]
     pub filter_source_account: Option<String>,

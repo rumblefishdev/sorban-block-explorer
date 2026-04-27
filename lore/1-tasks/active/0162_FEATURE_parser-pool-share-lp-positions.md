@@ -2,7 +2,7 @@
 id: '0162'
 title: 'Parser: emit pool_share trustlines as ExtractedLpPosition rows'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0024', '0037']
 related_tasks: ['0126', '0136']
 tags: [priority-low, effort-small, layer-xdr-parser, audit-gap]
@@ -23,6 +23,15 @@ history:
       crates/xdr-parser/src/state.rs:231-234. 0136 (superseded) was
       the formal blocker but it's void; this task captures the actual
       parser gap.
+  - date: '2026-04-27'
+    status: active
+    who: stkrolikiewicz
+    note: >
+      Promoted. Closes the third (and last) audit-gap from the
+      2026-04-10 pipeline data audit (0160 SAC identity + 0161 native
+      singleton + 0162 LP positions parser). Narrow parser-only scope:
+      emit pool_share trustlines as ExtractedLpPosition rows; persist /
+      API layer is 0126's job.
 ---
 
 # Parser: emit pool_share trustlines as ExtractedLpPosition rows

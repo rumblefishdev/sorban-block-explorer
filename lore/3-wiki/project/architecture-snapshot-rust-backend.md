@@ -171,16 +171,19 @@ Currently present:
 
 - `config`, `state` (`AppState`), `openapi` (doc + schemas)
 - `/health` liveness probe
-- `transactions/` (handlers, cursor, dto, queries)
+- `transactions/` (handlers, cursor, dto, queries) — E2 / E3
+- `contracts/` (handlers, cursor, dto, queries, cache) — E10 / E11 / E13 / E14
+  (task 0050). Detail + interface go to Postgres; invocations + events fan out
+  to `stellar_archive::fetch_ledgers` and re-extract per-node detail through
+  `xdr_parser::extract_invocations` / `extract_events`. Detail responses are
+  cached for 45 s in `ContractMetadataCache` (per-Lambda warm container).
 - `stellar_archive/` fetch helpers (ready for consumers)
 
-Handlers for E3 / E10 / E11 / E12 / E13 / E14 (events + invocations
-read-path assembling DB appearances + XDR fetch) are deferred pending the
-router/error layer — called out explicitly in ADRs 0033 / 0034.
+Handlers still pending: E12 (operations summary read-path) and the rest of
+the M2 endpoint surface (ledgers, accounts, assets, NFTs, pools, search).
 
 Active tasks extending this crate:
 
-- **0050** — Contracts module handlers (detail, interface, invocations, events)
 - **0123** — XDR decoding service (advanced transaction view)
 - **0160** — SAC asset identity extraction (indexer/xdr-parser bug; `assets`
   table currently empty after reindex)

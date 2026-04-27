@@ -192,10 +192,19 @@ fn to_i16_index(value: u32, kind: &'static str) -> Option<i16> {
     }
 }
 
-/// Collect `&TransactionMeta` pointers paired with their tx index, across
-/// LedgerCloseMeta variants. Mirrors the unified collection used in
+/// Collect borrowed `&TransactionMeta` references for every transaction in
+/// the ledger, in the same order as `tx_processing` (i.e. index `i` in the
+/// returned `Vec` corresponds to the `i`-th entry of `tx_processing`, which
+/// also matches `xdr_parser::extract_transactions` and
+/// `xdr_parser::envelope::extract_envelopes` output ordering — callers rely
+/// on this alignment when joining metas back to extracted txs by index).
+/// Mirrors the unified collection used in
 /// `crates/indexer/src/handler/process.rs::collect_tx_metas`.
-pub(super) fn collect_tx_metas(meta: &LedgerCloseMeta) -> Vec<&TransactionMeta> {
+///
+/// `pub` (rather than `pub(super)`) so per-endpoint modules outside
+/// `stellar_archive` (E13/E14 in `contracts/`) can re-extract per-tx
+/// metadata without a parallel implementation.
+pub fn collect_tx_metas(meta: &LedgerCloseMeta) -> Vec<&TransactionMeta> {
     match meta {
         LedgerCloseMeta::V0(v) => v
             .tx_processing
