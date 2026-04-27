@@ -83,11 +83,11 @@ Implement reusable cursor-based pagination helpers, query/filter parsing utiliti
 
 > **Stack:** axum 0.8 + utoipa 5.4 + sqlx 0.8 (per ADR 0005). Envelope shapes per ADR 0008. Code in crates/api/common/.
 
-## Status: Active
+## Status: Completed
 
-**Current state:** Not started — promoted 2026-04-24.
+**Current state:** Implemented and audited 2026-04-24. See history (frontmatter) and Post-audit Note below for the full delivery trail.
 
-**Prerequisites (all satisfied):**
+**Prerequisites at start (all satisfied at promotion time):**
 
 - **API bootstrap** (originally task 0023): delivered incidentally by task 0046 (`crates/api/src/main.rs`, `state.rs`) and task 0042 (OpenAPI infrastructure).
 - **OpenAPI envelope shapes** (task 0042 + ADR 0008): `ErrorEnvelope`, `PageInfo`, `Paginated<T>` live in `crates/api/src/openapi/schemas.rs`.

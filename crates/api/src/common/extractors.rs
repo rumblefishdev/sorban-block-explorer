@@ -1,19 +1,12 @@
 //! axum extractors for the standard `?limit=&cursor=` query parameters.
 //!
-//! Two levels of API:
+//! [`Pagination<P>`] is a handler argument extractor that reads `limit`
+//! and `cursor` from the query string (tolerating unknown fields so it
+//! composes with a sibling `Query<FilterParams>`), validates them, and
+//! returns a `limit: u32` plus an optional decoded cursor payload.
 //!
-//! * [`Pagination<P>`] — high-level extractor usable as a handler argument
-//!   alongside a sibling `Query<FilterParams>` (both extractors read the
-//!   same query string independently via `serde_urlencoded`). Produces a
-//!   fully validated `limit: u32` and an optional decoded cursor payload.
-//!
-//! * [`resolve`] — the underlying function; useful when a handler already
-//!   has a `Query<ListParams>` DTO carrying `limit`, `cursor` and
-//!   `filter[...]` fields flattened together. Handlers keep their existing
-//!   DTO pattern and invoke `resolve(&params.pagination, cfg)` explicitly.
-//!
-//! Both paths enforce the same validation rules and surface the same
-//! `ErrorEnvelope` codes (`INVALID_LIMIT`, `INVALID_CURSOR`) on failure.
+//! Validation failures surface the canonical `ErrorEnvelope` codes
+//! (`invalid_limit`, `invalid_cursor`).
 
 #![allow(clippy::result_large_err)]
 
@@ -41,13 +34,6 @@ impl LimitConfig {
         default: 20,
         max: 100,
     };
-
-    #[allow(dead_code)]
-    pub const fn new(default: u32, max: u32) -> Self {
-        assert!(default >= 1, "default limit must be at least 1");
-        assert!(default <= max, "default limit must not exceed max");
-        Self { default, max }
-    }
 }
 
 impl Default for LimitConfig {
@@ -82,35 +68,12 @@ pub struct Pagination<P> {
 
 impl<P: DeserializeOwned> Pagination<P> {
     /// Validate a raw `?limit=&cursor=` pair using the project-default
-    /// [`LimitConfig::DEFAULT`]. Handlers that need a different policy
-    /// call [`Pagination::resolve_with`] directly.
-    pub fn resolve_default(limit: Option<&str>, cursor: Option<&str>) -> Result<Self, Response> {
-        Self::resolve_with(limit, cursor, LimitConfig::DEFAULT)
-    }
-
-    /// Validate a raw `?limit=&cursor=` pair using an explicit
-    /// [`LimitConfig`].
-    pub fn resolve_with(
-        limit: Option<&str>,
-        cursor: Option<&str>,
-        cfg: LimitConfig,
-    ) -> Result<Self, Response> {
-        let limit = validate_limit(limit, cfg)?;
+    /// [`LimitConfig::DEFAULT`].
+    fn resolve_default(limit: Option<&str>, cursor: Option<&str>) -> Result<Self, Response> {
+        let limit = validate_limit(limit, LimitConfig::DEFAULT)?;
         let cursor = decode_cursor::<P>(cursor)?;
         Ok(Pagination { limit, cursor })
     }
-}
-
-/// Convenience wrapper for handlers that already hold a `ListParams`-style
-/// DTO. Calls [`Pagination::resolve_with`] with the pair of raw query
-/// values pulled from the DTO.
-#[allow(dead_code)]
-pub fn resolve<P: DeserializeOwned>(
-    limit: Option<&str>,
-    cursor: Option<&str>,
-    cfg: LimitConfig,
-) -> Result<Pagination<P>, Response> {
-    Pagination::<P>::resolve_with(limit, cursor, cfg)
 }
 
 // ---------------------------------------------------------------------------
@@ -158,9 +121,7 @@ fn decode_cursor<P: DeserializeOwned>(raw: Option<&str>) -> Result<Option<P>, Re
 // FromRequestParts impl
 // ---------------------------------------------------------------------------
 
-/// Extractor impl uses [`LimitConfig::DEFAULT`]. Endpoints with a custom
-/// policy should call [`Pagination::resolve_with`] manually rather than
-/// using the extractor.
+/// Extractor impl uses [`LimitConfig::DEFAULT`].
 ///
 /// Internally delegates to `axum::extract::Query<PaginationRaw>`, which
 /// tolerates unknown fields in the query string — so a handler can pair
@@ -244,14 +205,6 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(json["code"], "invalid_limit");
         assert_eq!(json["details"]["received"], "many");
-    }
-
-    #[test]
-    fn custom_limit_config_respected() {
-        let cfg = LimitConfig::new(5, 50);
-        assert_eq!(validate_limit(None, cfg).unwrap(), 5);
-        assert_eq!(validate_limit(Some("50"), cfg).unwrap(), 50);
-        assert!(validate_limit(Some("51"), cfg).is_err());
     }
 
     #[test]
