@@ -2,7 +2,7 @@
 id: '0050'
 title: 'Backend: Contracts module (detail, interface, invocations, events)'
 type: FEATURE
-status: active
+status: completed
 related_adr: ['0005', '0029', '0030', '0033', '0034']
 related_tasks: ['0023', '0043', '0046', '0092', '0150']
 tags: [layer-backend, contracts, soroban]
@@ -50,6 +50,18 @@ history:
       clean (-D warnings) and 21/21 unit tests pass. Evergreen docs
       updated (backend-overview.md §4.1 / §8.1, wiki snapshot
       bootstrap status).
+  - date: 2026-04-27
+    status: completed
+    who: FilipDz
+    note: >
+      PR #126 merged to develop (commit 8594e48). Two Copilot review
+      passes addressed in commits bd88bcf + fcc46eb (9 comments total
+      — 8 fixed, 1 deferred to task 0132 with cited justification).
+      Live E2E validated against local 120-ledger Soroban-pubnet
+      backfill (62079800–62079919): all 4 endpoints returned correct
+      shapes, cursor pagination round-tripped, 45 s cache TTL evicted,
+      400/404 paths covered. Final: api crate 23/23 unit tests pass,
+      workspace clippy clean (-D warnings).
 ---
 
 # Backend: Contracts module (detail, interface, invocations, events)
