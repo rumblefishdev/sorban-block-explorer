@@ -1729,11 +1729,27 @@ async fn clean_stub_test(pool: &PgPool) {
 // Task 0160 — SAC underlying asset identity extraction
 // ---------------------------------------------------------------------------
 
-const SAC160_LEDGER_SEQ: u32 = 90_000_401;
-const SAC160_CLOSED_AT: i64 = 1_777_212_000;
-const SAC160_LEDGER_HASH: &str = "ddd0000000000000000000000000000000000000000000000000000000000160";
-const SAC160_TX_HASH: &str = "ddd0160000000000000000000000000000000000000000000000000000000001";
-const SAC160_XLM_CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAXLMSAC";
+// Each SAC160 test gets a distinct ledger/tx pair so they don't share a
+// `ledgers.sequence` row or a `transactions.hash` under parallel
+// execution — cleanup of one would otherwise cascade into the other's
+// state mid-test.
+const SAC160_XLM_LEDGER_SEQ: u32 = 90_000_401;
+const SAC160_XLM_CLOSED_AT: i64 = 1_777_212_000;
+const SAC160_XLM_LEDGER_HASH: &str =
+    "ddd0000000000000000000000000000000000000000000000000000000000160";
+const SAC160_XLM_TX_HASH: &str = "ddd0160000000000000000000000000000000000000000000000000000000001";
+
+const SAC160_CREDIT_LEDGER_SEQ: u32 = 90_000_402;
+const SAC160_CREDIT_CLOSED_AT: i64 = 1_777_212_006;
+const SAC160_CREDIT_LEDGER_HASH: &str =
+    "ddd0000000000000000000000000000000000000000000000000000000000161";
+const SAC160_CREDIT_TX_HASH: &str =
+    "ddd0160000000000000000000000000000000000000000000000000000000002";
+/// Real mainnet XLM-SAC contract_id, published across Stellar SDKs and
+/// Stellar Expert. Pinned here as a `const` so the integration test
+/// asserts that `derive_sac_contract_id(Native, mainnet)` round-trips
+/// through the indexer into this exact StrKey in `soroban_contracts.contract_id`.
+const SAC160_XLM_CONTRACT: &str = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
 const SAC160_CREDIT_CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUSDSAC";
 /// Dedicated SAC160 issuer — disjoint from `ISSUER_STRKEY` so the
 /// classic-credit / SAC unique key `(asset_code, issuer_id)` does not
@@ -1762,17 +1778,32 @@ async fn xlm_sac_deployment_lands_with_null_identity() {
     ensure_default_partitions(&pool).await;
     clean_sac160_test(&pool).await;
 
+    // Round-trip closure: prove the contract_id we feed downstream comes
+    // from `derive_sac_contract_id` (matches stellar-core derivation) and
+    // not a hand-picked StrKey. Combined with the persist+query below,
+    // this closes the chain `derive_sac_contract_id(Native, mainnet) →
+    // ExtractedAsset.contract_id → soroban_contracts.contract_id` end to end.
+    use stellar_xdr::curr::{Asset, ContractIdPreimage};
+    let mainnet_id = xdr_parser::network_id(xdr_parser::MAINNET_PASSPHRASE);
+    let derived_xlm_sac =
+        xdr_parser::derive_sac_contract_id(&ContractIdPreimage::Asset(Asset::Native), &mainnet_id)
+            .expect("derive_sac_contract_id(Native, mainnet) must succeed");
+    assert_eq!(
+        derived_xlm_sac, SAC160_XLM_CONTRACT,
+        "SAC160_XLM_CONTRACT must equal the runtime-derived XLM-SAC StrKey"
+    );
+
     let ledger = ExtractedLedger {
-        sequence: SAC160_LEDGER_SEQ,
-        hash: SAC160_LEDGER_HASH.to_string(),
-        closed_at: SAC160_CLOSED_AT,
+        sequence: SAC160_XLM_LEDGER_SEQ,
+        hash: SAC160_XLM_LEDGER_HASH.to_string(),
+        closed_at: SAC160_XLM_CLOSED_AT,
         protocol_version: 22,
         transaction_count: 1,
         base_fee: 100,
     };
     let tx = ExtractedTransaction {
-        hash: SAC160_TX_HASH.to_string(),
-        ledger_sequence: SAC160_LEDGER_SEQ,
+        hash: SAC160_XLM_TX_HASH.to_string(),
+        ledger_sequence: SAC160_XLM_LEDGER_SEQ,
         source_account: SRC_STRKEY.to_string(),
         fee_charged: 100,
         successful: true,
@@ -1783,14 +1814,14 @@ async fn xlm_sac_deployment_lands_with_null_identity() {
         operation_tree: None,
         memo_type: None,
         memo: None,
-        created_at: SAC160_CLOSED_AT,
+        created_at: SAC160_XLM_CLOSED_AT,
         parse_error: false,
     };
     let deployments = vec![ExtractedContractDeployment {
-        contract_id: SAC160_XLM_CONTRACT.to_string(),
+        contract_id: derived_xlm_sac.clone(),
         wasm_hash: None,
         deployer_account: Some(SRC_STRKEY.to_string()),
-        deployed_at_ledger: SAC160_LEDGER_SEQ,
+        deployed_at_ledger: SAC160_XLM_LEDGER_SEQ,
         contract_type: ContractType::Token,
         is_sac: true,
         metadata: json!({}),
@@ -1800,7 +1831,7 @@ async fn xlm_sac_deployment_lands_with_null_identity() {
         asset_type: TokenAssetType::Sac,
         asset_code: None,
         issuer_address: None,
-        contract_id: Some(SAC160_XLM_CONTRACT.to_string()),
+        contract_id: Some(derived_xlm_sac.clone()),
         name: None,
         total_supply: None,
         holder_count: None,
@@ -1843,16 +1874,16 @@ async fn xlm_sac_deployment_lands_with_null_identity() {
     .await
     .expect("XLM-SAC persist_ledger must succeed");
 
-    let row: (Option<String>, Option<i64>) = sqlx::query_as(
+    let row: (Option<String>, Option<i64>, String) = sqlx::query_as(
         r#"
-        SELECT a.asset_code, a.issuer_id
+        SELECT a.asset_code, a.issuer_id, sc.contract_id
           FROM assets a
           JOIN soroban_contracts sc ON sc.id = a.contract_id
          WHERE sc.contract_id = $1
            AND a.asset_type = $2
         "#,
     )
-    .bind(SAC160_XLM_CONTRACT)
+    .bind(&derived_xlm_sac)
     .bind(TokenAssetType::Sac)
     .fetch_one(&pool)
     .await
@@ -1864,6 +1895,11 @@ async fn xlm_sac_deployment_lands_with_null_identity() {
     assert!(
         row.1.is_none(),
         "native XLM-SAC must persist with NULL issuer_id"
+    );
+    assert_eq!(
+        row.2, derived_xlm_sac,
+        "soroban_contracts.contract_id round-trips the derived StrKey end-to-end \
+         (derive_sac_contract_id → ExtractedAsset.contract_id → DB column)"
     );
 
     clean_sac160_test(&pool).await;
@@ -1890,16 +1926,16 @@ async fn classic_to_sac_greatest_promotion_is_monotonic() {
     clean_sac160_test(&pool).await;
 
     let ledger = ExtractedLedger {
-        sequence: SAC160_LEDGER_SEQ,
-        hash: SAC160_LEDGER_HASH.to_string(),
-        closed_at: SAC160_CLOSED_AT,
+        sequence: SAC160_CREDIT_LEDGER_SEQ,
+        hash: SAC160_CREDIT_LEDGER_HASH.to_string(),
+        closed_at: SAC160_CREDIT_CLOSED_AT,
         protocol_version: 22,
         transaction_count: 1,
         base_fee: 100,
     };
     let tx = ExtractedTransaction {
-        hash: SAC160_TX_HASH.to_string(),
-        ledger_sequence: SAC160_LEDGER_SEQ,
+        hash: SAC160_CREDIT_TX_HASH.to_string(),
+        ledger_sequence: SAC160_CREDIT_LEDGER_SEQ,
         source_account: SRC_STRKEY.to_string(),
         fee_charged: 100,
         successful: true,
@@ -1910,7 +1946,7 @@ async fn classic_to_sac_greatest_promotion_is_monotonic() {
         operation_tree: None,
         memo_type: None,
         memo: None,
-        created_at: SAC160_CLOSED_AT,
+        created_at: SAC160_CREDIT_CLOSED_AT,
         parse_error: false,
     };
 
@@ -1932,7 +1968,7 @@ async fn classic_to_sac_greatest_promotion_is_monotonic() {
         contract_id: SAC160_CREDIT_CONTRACT.to_string(),
         wasm_hash: None,
         deployer_account: Some(SRC_STRKEY.to_string()),
-        deployed_at_ledger: SAC160_LEDGER_SEQ,
+        deployed_at_ledger: SAC160_CREDIT_LEDGER_SEQ,
         contract_type: ContractType::Token,
         is_sac: true,
         metadata: json!({}),
@@ -2079,17 +2115,23 @@ async fn clean_sac160_test(pool: &PgPool) {
     .bind(SAC160_ISSUER_STRKEY)
     .execute(pool)
     .await;
-    let tx_hash = hex::decode(SAC160_TX_HASH).unwrap();
-    let _ = sqlx::query("DELETE FROM transactions WHERE hash = $1")
-        .bind(&tx_hash)
+    let tx_hashes = vec![
+        hex::decode(SAC160_XLM_TX_HASH).unwrap(),
+        hex::decode(SAC160_CREDIT_TX_HASH).unwrap(),
+    ];
+    let _ = sqlx::query("DELETE FROM transactions WHERE hash = ANY($1)")
+        .bind(&tx_hashes)
         .execute(pool)
         .await;
-    let _ = sqlx::query("DELETE FROM transaction_hash_index WHERE hash = $1")
-        .bind(&tx_hash)
+    let _ = sqlx::query("DELETE FROM transaction_hash_index WHERE hash = ANY($1)")
+        .bind(&tx_hashes)
         .execute(pool)
         .await;
-    let _ = sqlx::query("DELETE FROM ledgers WHERE sequence = $1")
-        .bind(i64::from(SAC160_LEDGER_SEQ))
+    let _ = sqlx::query("DELETE FROM ledgers WHERE sequence = ANY($1)")
+        .bind(vec![
+            i64::from(SAC160_XLM_LEDGER_SEQ),
+            i64::from(SAC160_CREDIT_LEDGER_SEQ),
+        ])
         .execute(pool)
         .await;
     let _ = sqlx::query("DELETE FROM soroban_contracts WHERE contract_id = ANY($1)")
