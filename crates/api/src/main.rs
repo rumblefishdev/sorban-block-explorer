@@ -1,6 +1,8 @@
 //! REST API Lambda handler for the Soroban block explorer.
 
+mod common;
 mod config;
+mod network;
 mod openapi;
 mod state;
 mod transactions;
@@ -45,6 +47,7 @@ fn app(config: &AppConfig, state: AppState) -> Router {
     // AppConfig.base_url) onto the registered spec.
     let (router, mut spec) = OpenApiRouter::with_openapi(ApiDoc::openapi())
         .routes(routes!(health))
+        .nest("/v1", network::router())
         .nest("/v1", transactions::router())
         .with_state(state)
         .split_for_parts();
@@ -213,6 +216,32 @@ mod tests {
         assert!(
             spec["components"]["schemas"]["PageInfo"].is_object(),
             "spec missing PageInfo component: {spec}"
+        );
+    }
+
+    #[tokio::test]
+    async fn api_docs_json_contains_network_stats_path() {
+        let app = test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api-docs-json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let spec: Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            spec["paths"]["/v1/network/stats"].is_object(),
+            "spec missing /v1/network/stats path: {spec}"
+        );
+        assert!(
+            spec["components"]["schemas"]["NetworkStats"].is_object(),
+            "spec missing NetworkStats component: {spec}"
         );
     }
 
