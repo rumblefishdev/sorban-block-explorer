@@ -668,7 +668,7 @@ pub(super) async fn insert_participants(
 }
 
 // ---------------------------------------------------------------------------
-// 8. operations — insert typed-cols
+// 8. operations_appearances — insert identity rows with COUNT aggregate (task 0163)
 // ---------------------------------------------------------------------------
 
 pub(super) async fn insert_operations(
@@ -683,8 +683,7 @@ pub(super) async fn insert_operations(
     }
     for chunk in staged.op_rows.chunks(CHUNK_SIZE) {
         let mut tx_id_vec: Vec<i64> = Vec::with_capacity(chunk.len());
-        let mut app_order_vec: Vec<i16> = Vec::with_capacity(chunk.len());
-        // ADR 0031: operations.type is SMALLINT (Rust OperationType enum).
+        // ADR 0031: operations_appearances.type is SMALLINT (Rust OperationType enum).
         let mut op_type_vec: Vec<OperationType> = Vec::with_capacity(chunk.len());
         let mut source_id_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
         let mut dest_id_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
@@ -692,7 +691,7 @@ pub(super) async fn insert_operations(
         let mut asset_code_vec: Vec<Option<String>> = Vec::with_capacity(chunk.len());
         let mut asset_issuer_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
         let mut pool_id_vec: Vec<Option<Vec<u8>>> = Vec::with_capacity(chunk.len());
-        let mut transfer_amt_vec: Vec<Option<String>> = Vec::with_capacity(chunk.len());
+        let mut amount_vec: Vec<i64> = Vec::with_capacity(chunk.len());
         let mut ledger_seq_vec: Vec<i64> = Vec::with_capacity(chunk.len());
         let mut created_at_vec: Vec<DateTime<Utc>> = Vec::with_capacity(chunk.len());
 
@@ -701,7 +700,6 @@ pub(super) async fn insert_operations(
                 continue;
             };
             tx_id_vec.push(tx_id);
-            app_order_vec.push(r.application_order);
             op_type_vec.push(r.op_type);
             source_id_vec.push(resolve_opt_id(
                 account_ids,
@@ -725,7 +723,7 @@ pub(super) async fn insert_operations(
                 "op.asset_issuer",
             )?);
             pool_id_vec.push(r.pool_id.map(|h| h.to_vec()));
-            transfer_amt_vec.push(r.transfer_amount.clone());
+            amount_vec.push(r.amount);
             ledger_seq_vec.push(r.ledger_sequence);
             created_at_vec.push(r.created_at);
         }
@@ -734,41 +732,39 @@ pub(super) async fn insert_operations(
             continue;
         }
 
-        // `operations.pool_id` → `liquidity_pools.pool_id` FK must hold, but
-        // a backfill starting mid-stream can see DEPOSIT/WITHDRAW ops
+        // `operations_appearances.pool_id` → `liquidity_pools.pool_id` FK must
+        // hold, but a backfill starting mid-stream can see DEPOSIT/WITHDRAW ops
         // targeting pools created in un-indexed earlier ledgers. Nullify
         // pool_id when the referenced pool is not present; the op row stays,
         // only the FK link turns NULL for historical references.
         sqlx::query(
             r#"
-            INSERT INTO operations (
-                transaction_id, application_order, type, source_id, destination_id,
-                contract_id, asset_code, asset_issuer_id, pool_id, transfer_amount,
-                ledger_sequence, created_at
+            INSERT INTO operations_appearances (
+                transaction_id, type, source_id, destination_id,
+                contract_id, asset_code, asset_issuer_id, pool_id,
+                amount, ledger_sequence, created_at
             )
             SELECT
-                t.tx_id, t.app_order, t.op_type, t.source_id, t.dest_id,
+                t.tx_id, t.op_type, t.source_id, t.dest_id,
                 t.contract_id, t.asset_code, t.asset_issuer_id,
                 CASE
                     WHEN t.pool_id IS NULL THEN NULL
                     WHEN EXISTS (SELECT 1 FROM liquidity_pools lp WHERE lp.pool_id = t.pool_id) THEN t.pool_id
                     ELSE NULL
                 END,
-                CASE WHEN t.txt IS NULL THEN NULL ELSE t.txt::NUMERIC(28,7) END,
-                t.ledger_sequence, t.created_at
+                t.amount, t.ledger_sequence, t.created_at
               FROM UNNEST(
-                $1::BIGINT[], $2::SMALLINT[], $3::SMALLINT[], $4::BIGINT[], $5::BIGINT[],
-                $6::BIGINT[], $7::VARCHAR[], $8::BIGINT[], $9::BYTEA[], $10::TEXT[],
-                $11::BIGINT[], $12::TIMESTAMPTZ[]
+                $1::BIGINT[], $2::SMALLINT[], $3::BIGINT[], $4::BIGINT[],
+                $5::BIGINT[], $6::VARCHAR[], $7::BIGINT[], $8::BYTEA[],
+                $9::BIGINT[], $10::BIGINT[], $11::TIMESTAMPTZ[]
               )
-                AS t(tx_id, app_order, op_type, source_id, dest_id,
-                     contract_id, asset_code, asset_issuer_id, pool_id, txt,
-                     ledger_sequence, created_at)
-            ON CONFLICT ON CONSTRAINT uq_operations_tx_order DO NOTHING
+                AS t(tx_id, op_type, source_id, dest_id,
+                     contract_id, asset_code, asset_issuer_id, pool_id,
+                     amount, ledger_sequence, created_at)
+            ON CONFLICT ON CONSTRAINT uq_ops_app_identity DO NOTHING
             "#,
         )
         .bind(&tx_id_vec)
-        .bind(&app_order_vec)
         .bind(&op_type_vec)
         .bind(&source_id_vec)
         .bind(&dest_id_vec)
@@ -776,7 +772,7 @@ pub(super) async fn insert_operations(
         .bind(&asset_code_vec)
         .bind(&asset_issuer_vec)
         .bind(&pool_id_vec)
-        .bind(&transfer_amt_vec)
+        .bind(&amount_vec)
         .bind(&ledger_seq_vec)
         .bind(&created_at_vec)
         .execute(&mut **db_tx)

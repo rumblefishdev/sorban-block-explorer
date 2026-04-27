@@ -2,7 +2,7 @@
 id: '0120'
 title: 'Indexer: detect Soroban-native tokens (non-SAC) and persist to assets table'
 type: FEATURE
-status: active
+status: completed
 related_adr: ['0027', '0030', '0031']
 related_tasks: ['0027', '0049', '0104', '0118', '0149']
 tags: [priority-medium, effort-small, layer-indexer, audit-F8]
@@ -67,6 +67,22 @@ history:
         table stays empty for that contract.
       - `ExtractedContractDeployment.metadata` is always `json!({})`
         (state.rs:69) — no name/symbol extraction path exists.
+  - date: '2026-04-24'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Shipped via PR #113 (commit 2bfa683). 6 files changed,
+      +856/-10 lines. `detect_assets` extended with `interfaces`
+      slice + WASM-based Fungible classification (SAC branch
+      unchanged). Late-WASM bridge `insert_assets_from_reclassified_contracts`
+      wired into persist tx after `upsert_assets` +
+      `reclassify_contracts_from_wasm`, idempotent via NOT EXISTS +
+      ON CONFLICT DO NOTHING. Tests: 6 new unit tests in xdr-parser
+      (SAC regression, Fungible WASM, NFT WASM, Other WASM,
+      dual-interface precedence, missing interface); 2 integration
+      tests in indexer including late-WASM 2-ledger bridge with
+      replay idempotency. Follow-up 0156 (name/symbol from ContractData)
+      spawned.
 ---
 
 # Indexer: detect Soroban-native tokens (non-SAC)
@@ -197,19 +213,19 @@ Runs inside the persist tx. Idempotent — replay safe.
 
 ## Acceptance Criteria
 
-- [ ] `detect_assets` extended to accept `&[ExtractedContractInterface]`
+- [x] `detect_assets` extended to accept `&[ExtractedContractInterface]`
       and emit Soroban asset rows for `Fungible` classifications.
-- [ ] Single caller in `handler/process.rs` updated to pass interfaces.
-- [ ] Non-SAC Fungible contracts deployed in a ledger result in exactly
+- [x] Single caller in `handler/process.rs` updated to pass interfaces.
+- [x] Non-SAC Fungible contracts deployed in a ledger result in exactly
       one `assets` row with `asset_type = 3` (Soroban) after persist.
-- [ ] Late WASM upload promoting an existing contract to `Fungible`
+- [x] Late WASM upload promoting an existing contract to `Fungible`
       inserts the missing assets row (idempotent, ON CONFLICT DO NOTHING).
-- [ ] NFT-classified contracts produce NO `assets` row (separation of
+- [x] NFT-classified contracts produce NO `assets` row (separation of
       concerns: NFT contracts stay in `nfts`/`nft_ownership` only).
-- [ ] Existing SAC detection unchanged (regression-guarded by unit test).
-- [ ] Integration test: deploy+classify → `assets` row, asset_type = 3.
-- [ ] Integration test: late-WASM upload → `assets` row added.
-- [ ] Name/symbol left as `None` with follow-up backlog task spawned.
+- [x] Existing SAC detection unchanged (regression-guarded by unit test).
+- [x] Integration test: deploy+classify → `assets` row, asset_type = 3.
+- [x] Integration test: late-WASM upload → `assets` row added.
+- [x] Name/symbol left as `None` with follow-up backlog task spawned.
 
 ## Design Decisions
 
@@ -242,8 +258,50 @@ Runs inside the persist tx. Idempotent — replay safe.
 
 ## Future Work → Backlog
 
-- **Extract token name/symbol from ContractData entries** (spawned
-  follow-up task): at deploy time, scan LedgerEntryChanges for standard
-  contract-data keys (`Symbol("name")`, `Symbol("symbol")`) and populate
+- **Extract token name/symbol from ContractData entries** — spawned as
+  [task 0156](../backlog/0156_FEATURE_soroban-token-name-symbol-extraction.md).
+  At deploy time, scan LedgerEntryChanges for standard contract-data keys
+  (`Symbol("name")`, `Symbol("symbol")`) and populate
   `ExtractedAsset.name`/`.symbol`. Needs reverse-engineering of the
-  OpenZeppelin / SDK storage layout. Eff effort-small.
+  OpenZeppelin / SDK storage layout. effort-small.
+
+## Implementation Notes
+
+**Files changed (6, +856/-10 lines per PR #113, commit 2bfa683):**
+
+- `crates/xdr-parser/src/state.rs` (+218, -10) — `detect_assets`
+  signature extended to take `&[ExtractedContractInterface]`; pre-index
+  interfaces by `wasm_hash` (HashMap, amortised O(1)) + cache
+  `classify_contract_from_wasm_spec` verdict per hash. SAC branch
+  unchanged. Non-SAC with Fungible verdict emits `ExtractedAsset {
+asset_type: Soroban, contract_id: Some(_), .. }`. NFT/Other verdicts
+  produce no asset row.
+- `crates/indexer/src/handler/process.rs` (+7) — single caller updated
+  to pass `&interfaces`.
+- `crates/indexer/src/handler/persist/write.rs` (+74) —
+  `insert_assets_from_reclassified_contracts`: SQL `INSERT ... SELECT
+FROM soroban_contracts WHERE contract_type = 3 AND wasm_hash = ANY($1)
+AND NOT EXISTS (SELECT 1 FROM assets WHERE contract_id = ...) ON
+CONFLICT (contract_id) WHERE asset_type IN (2, 3) DO NOTHING`.
+- `crates/indexer/src/handler/persist/mod.rs` (+4) — call site wired
+  after `upsert_assets` + `reclassify_contracts_from_wasm` so
+  `soroban_contracts.contract_type` is authoritative and duplicates are
+  avoided.
+- `crates/indexer/tests/persist_integration.rs` (+445) — 2 new
+  integration tests: same-ledger detect+classify → assets row;
+  late-WASM 2-ledger path (deploy in N, WASM in N+1) → assets row
+  inserted after second persist. Replay idempotency verified by
+  re-running ledger N+1 persist.
+- `lore/1-tasks/backlog/0156_FEATURE_soroban-token-name-symbol-extraction.md`
+  (+118) — spawned follow-up.
+
+**Tests added (8):**
+
+- Unit (`xdr-parser/src/state.rs`): `detect_assets_sac_regression`,
+  `detect_assets_fungible_from_wasm`, `detect_assets_nft_wasm_no_row`,
+  `detect_assets_other_wasm_no_row`, `detect_assets_dual_interface_precedence`,
+  `detect_assets_missing_interface_skipped`.
+- Integration (`indexer/tests/persist_integration.rs`):
+  deploy-and-classify end-to-end; `late_wasm_upload_backfills_assets_row`
+  (same fn serves as replay idempotency check — re-run second-ledger
+  persist, assert single row).

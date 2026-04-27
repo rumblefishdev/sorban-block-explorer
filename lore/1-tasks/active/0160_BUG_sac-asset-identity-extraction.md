@@ -25,8 +25,8 @@ links:
   - crates/indexer/src/handler/persist/write.rs
   - crates/indexer/tests/persist_integration.rs
   - crates/db/migrations/0002_identity_and_ledgers.sql
-  - crates/db/migrations/20260424000000_sac_identity_native_allowance.up.sql
-  - crates/db/migrations/20260424000000_sac_identity_native_allowance.down.sql
+  - crates/db/migrations/20260427000000_sac_identity_native_allowance.up.sql
+  - crates/db/migrations/20260427000000_sac_identity_native_allowance.down.sql
   - docs/audits/2026-04-10-pipeline-data-audit.md
 history:
   - date: '2026-04-24'
@@ -175,7 +175,7 @@ seed were the most invasive parts and are removed wholesale.
 
 Final scope as 5 commits:
 
-1. **migration** — new `20260424000000_sac_identity_native_allowance.{up,down}.sql`:
+1. **migration** — new `20260427000000_sac_identity_native_allowance.{up,down}.sql`:
    `ALTER TABLE assets DROP/ADD CONSTRAINT ck_assets_identity` permitting
    `(asset_type=2, asset_code=NULL, issuer_id=NULL, contract_id=NOT NULL)`
    for native XLM-SAC. Migration 0002 reverted to pre-0160 state (seed
@@ -233,7 +233,7 @@ Option<SacAssetIdentity>` (typed, not split fields).
 
 ## Acceptance Criteria
 
-- [x] New migration `20260424000000_sac_identity_native_allowance`
+- [x] New migration `20260427000000_sac_identity_native_allowance`
       loosens `ck_assets_identity` to permit native XLM-SAC with NULL
       code/issuer.
 - [x] Migration 0002 fully reverted to pre-0160 state (sqlx checksum
@@ -452,14 +452,17 @@ under parallel backfill without a feature flag.
 
 **Coordination with 0161:** 0161 seeds the native asset singleton in
 migration 0005 (`asset_type=0`). 0160's loosening migration
-(`20260424…`) is independent and can land in either order. No DML
+(`20260427…`) is independent and can land in either order. No DML
 overlap.
 
 ## Future Work → Backlog
 
 Originally-planned follow-ups (factory SAC, multi-SAC/tx correlation,
-synthetic account API filtering as 0163/0164/0165) folded into
-re-open scope; all three backlog files deleted in working tree.
+synthetic account API filtering) were spawned then deleted within
+this branch — folded into re-open scope before any commit landed on
+develop. The IDs originally used (0163/0164/0165) were ephemeral and
+have since been reassigned by develop to unrelated work; trace via
+commits `a5448e8` + `c41c15b` if needed.
 
 ### Deliberately not spawned
 

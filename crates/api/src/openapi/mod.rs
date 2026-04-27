@@ -11,7 +11,11 @@ pub mod schemas;
 
 use utoipa::OpenApi;
 
-use schemas::{ErrorEnvelope, PageInfo};
+use crate::stellar_archive::dto::{
+    E3HeavyFields, E3Response, HeavyFieldsStatus, SignatureDto, XdrEventDto, XdrOperationDto,
+};
+use crate::transactions::dto::{OperationItem, TransactionDetailLight, TransactionListItem};
+use schemas::{ErrorEnvelope, PageInfo, Paginated};
 
 /// Root OpenAPI document. Holds API metadata and declares shared
 /// schema components that are referenced across multiple endpoints.
@@ -30,6 +34,19 @@ use schemas::{ErrorEnvelope, PageInfo};
         contact(name = "Rumble Fish", url = "https://rumblefish.dev"),
         license(name = "Proprietary"),
     ),
-    components(schemas(ErrorEnvelope, PageInfo)),
+    components(schemas(
+        ErrorEnvelope,
+        PageInfo,
+        Paginated<TransactionListItem>,
+        TransactionListItem,
+        E3Response<TransactionDetailLight>,
+        TransactionDetailLight,
+        OperationItem,
+        E3HeavyFields,
+        SignatureDto,
+        XdrEventDto,
+        XdrOperationDto,
+        HeavyFieldsStatus,
+    )),
 )]
 pub struct ApiDoc;

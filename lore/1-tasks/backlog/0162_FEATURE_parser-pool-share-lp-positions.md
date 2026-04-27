@@ -3,7 +3,7 @@ id: '0162'
 title: 'Parser: emit pool_share trustlines as ExtractedLpPosition rows'
 type: FEATURE
 status: backlog
-related_adr: ['0027']
+related_adr: ['0024', '0037']
 related_tasks: ['0126', '0136']
 tags: [priority-low, effort-small, layer-xdr-parser, audit-gap]
 milestone: 1

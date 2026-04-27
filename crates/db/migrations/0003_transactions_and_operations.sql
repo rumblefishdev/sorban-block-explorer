@@ -6,11 +6,11 @@
 -- Tables:
 --   3. transactions              (partitioned on created_at)
 --   4. transaction_hash_index    (unpartitioned — hash lookup)
---   5. operations                (partitioned on created_at)
+--   5. operations_appearances    (partitioned on created_at — task 0163)
 --   6. transaction_participants  (partitioned on created_at)
 --
--- Note: operations.pool_id FK → liquidity_pools(pool_id) is attached in
--- migration 0006 once liquidity_pools exists.
+-- Note: operations_appearances.pool_id FK → liquidity_pools(pool_id) is
+-- attached in migration 0006 once liquidity_pools exists.
 
 -- 3. transactions (ADR 0027 §3)
 CREATE TABLE transactions (
@@ -43,12 +43,25 @@ CREATE TABLE transaction_hash_index (
     CONSTRAINT ck_thi_hash_len CHECK (octet_length(hash) = 32)
 );
 
--- 5. operations (ADR 0027 §5)
+-- 5. operations_appearances (ADR 0027 §5, task 0163)
+--
+-- Appearance index: one row per distinct operation-shape per transaction;
+-- `amount` counts how many operations of that shape were folded into the row.
+-- Mirrors `soroban_events_appearances` / `soroban_invocations_appearances`
+-- (ADR 0033 / ADR 0034). Per-op detail (transfer amount, application order,
+-- memo, claimants, function args, predicates, …) lives in the XDR archive and
+-- is re-materialised by the API via `xdr_parser::extract_operations` — the DB
+-- only records *that* an operation of a given identity occurred.
+--
+-- Replay idempotency: wide natural-key UNIQUE `uq_ops_app_identity` with
+-- NULLS NOT DISTINCT (PG 15+) — NULL-heavy shapes (e.g. type-14 claimable
+-- balance create, source inherited from tx) collapse to a single row under
+-- ON CONFLICT DO NOTHING on re-ingest.
+--
 -- pool_id FK added in 0006 after liquidity_pools exists.
-CREATE TABLE operations (
+CREATE TABLE operations_appearances (
     id                BIGSERIAL    NOT NULL,
     transaction_id    BIGINT       NOT NULL,
-    application_order SMALLINT     NOT NULL,
     type              SMALLINT     NOT NULL, -- ADR 0031 (Rust OperationType enum; label helper: op_type_name)
     source_id         BIGINT       REFERENCES accounts(id),
     destination_id    BIGINT       REFERENCES accounts(id),
@@ -56,25 +69,37 @@ CREATE TABLE operations (
     asset_code        VARCHAR(12),
     asset_issuer_id   BIGINT       REFERENCES accounts(id),
     pool_id           BYTEA,
-    transfer_amount   NUMERIC(28,7),
+    amount            BIGINT       NOT NULL,
     ledger_sequence   BIGINT       NOT NULL,
     created_at        TIMESTAMPTZ  NOT NULL,
     PRIMARY KEY (id, created_at),
     FOREIGN KEY (transaction_id, created_at)
         REFERENCES transactions (id, created_at) ON DELETE CASCADE,
-    CONSTRAINT ck_ops_pool_id_len   CHECK (pool_id IS NULL OR octet_length(pool_id) = 32),
-    CONSTRAINT ck_ops_type_range    CHECK (type BETWEEN 0 AND 127)  -- ADR 0031: room beyond Protocol 21's 27 variants
+    CONSTRAINT ck_ops_app_pool_id_len CHECK (pool_id IS NULL OR octet_length(pool_id) = 32),
+    CONSTRAINT ck_ops_app_type_range  CHECK (type BETWEEN 0 AND 127),  -- ADR 0031: room beyond Protocol 21's 27 variants
+    CONSTRAINT ck_ops_app_amount_pos  CHECK (amount > 0),
+    CONSTRAINT uq_ops_app_identity    UNIQUE NULLS NOT DISTINCT
+        (transaction_id, type, source_id, destination_id,
+         contract_id, asset_code, asset_issuer_id, pool_id,
+         ledger_sequence, created_at)
 ) PARTITION BY RANGE (created_at);
 
-CREATE INDEX idx_ops_tx          ON operations (transaction_id);
-CREATE INDEX idx_ops_type        ON operations (type, created_at DESC);
-CREATE INDEX idx_ops_contract    ON operations (contract_id, created_at DESC)
+-- `WHERE transaction_id = X` is served by the leftmost prefix of
+-- `uq_ops_app_identity` (starts with `transaction_id, type, ...`). A dedicated
+-- narrower index would be ~4× smaller and marginally faster at scale, but
+-- the single-endpoint cost of the wide UNIQUE prefix scan is acceptable.
+-- Add `idx_ops_app_tx (transaction_id)` later (CONCURRENTLY per partition)
+-- if production telemetry shows it's needed — the decision is reversible.
+CREATE INDEX idx_ops_app_type        ON operations_appearances (type, created_at DESC);
+CREATE INDEX idx_ops_app_contract    ON operations_appearances (contract_id, created_at DESC)
     WHERE contract_id IS NOT NULL;
-CREATE INDEX idx_ops_asset       ON operations (asset_code, asset_issuer_id, created_at DESC)
+CREATE INDEX idx_ops_app_asset       ON operations_appearances (asset_code, asset_issuer_id, created_at DESC)
     WHERE asset_code IS NOT NULL;
-CREATE INDEX idx_ops_pool        ON operations (pool_id, created_at DESC)
+CREATE INDEX idx_ops_app_pool        ON operations_appearances (pool_id, created_at DESC)
     WHERE pool_id IS NOT NULL;
-CREATE INDEX idx_ops_destination ON operations (destination_id, created_at DESC)
+CREATE INDEX idx_ops_app_source      ON operations_appearances (source_id, created_at DESC)
+    WHERE source_id IS NOT NULL;
+CREATE INDEX idx_ops_app_destination ON operations_appearances (destination_id, created_at DESC)
     WHERE destination_id IS NOT NULL;
 
 -- 6. transaction_participants (ADR 0027 §6)

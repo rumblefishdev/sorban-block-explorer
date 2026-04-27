@@ -66,11 +66,16 @@ The current design favors managed AWS services over self-operated long-running p
 
 That shows up as:
 
-- ECS Fargate for the continuously running Galexie process and one-time backfill tasks
-- AWS Lambda for event-driven processing and API handlers
+- ECS Fargate for the continuously running Galexie process
+- AWS Lambda for event-driven processing (Ledger Processor) and API handlers
 - RDS PostgreSQL for relational storage
 - API Gateway and CloudFront for public delivery
 - Secrets Manager, CloudWatch, and X-Ray for operational concerns
+- local `crates/backfill-runner` (production) or `crates/backfill-bench`
+  (benchmark) CLI on a developer workstation for historical
+  backfill per [ADR 0010](../../../lore/2-adrs/0010_local-backfill-over-fargate.md) —
+  **not** a Fargate task; streams from Stellar public archives into the same
+  `process_ledger` pipeline, writes directly to the database
 
 This keeps the runtime model operationally narrow and aligned with the serverless/event-
 driven shape of the product.
@@ -80,10 +85,14 @@ driven shape of the product.
 Infrastructure is designed around an asynchronous ingestion chain:
 
 1. Galexie streams canonical ledger data from Stellar peers
-2. XDR files land in S3
+2. `LedgerCloseMeta` XDR files land in S3
 3. S3 object creation triggers the Ledger Processor Lambda
-4. parsed records are written to PostgreSQL
-5. API and frontend read only from the explorer's own database
+4. typed summary columns + appearance-index rows + derived state are written to
+   PostgreSQL in a single atomic per-ledger transaction
+5. list / partition-pruned API reads serve entirely from the explorer's own
+   database; heavy-field detail endpoints (E3, E14) additionally fetch raw
+   `.xdr.zst` from the public Stellar ledger archive at request time
+   ([ADR 0029](../../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md))
 
 This separation is a core infrastructure assumption, not an implementation detail.
 
@@ -199,10 +208,10 @@ That split should remain stable even if the network layout expands later.
 
 **Historical backfill task**
 
-- runs on ECS Fargate as a batch/one-time process
+- runs as a **local CLI tool** (`crates/backfill-runner` or `crates/backfill-bench`)
+  on a developer workstation per [ADR 0010](../../../lore/2-adrs/0010_local-backfill-over-fargate.md)
 - reads from Stellar public history archives
-- writes the same XDR artifact format to the same S3 bucket so normal processing can be
-  reused
+- invokes the same `process_ledger` code path used by the Ledger Processor Lambda
 
 ### 5.2 Storage Components
 
@@ -224,17 +233,25 @@ That split should remain stable even if the network layout expands later.
 
 **Lambda — Ledger Processor**
 
-- is triggered by S3 PutObject events
-- downloads and parses XDR using `@stellar/stellar-sdk`
-- writes explorer records and derived state to RDS
+- is triggered by S3 PutObject events on the Galexie-owned bucket
+- downloads and parses XDR using the Rust `stellar-xdr` crate via
+  `crates/xdr-parser` (per [ADR 0004](../../../lore/2-adrs/0004_rust-only-xdr-parsing.md))
+- writes typed summary columns + appearance-index rows + derived state to RDS
+  as a single atomic transaction per ledger (14-step `persist_ledger` per
+  [ADR 0027](../../../lore/2-adrs/0027_post-surrogate-schema-and-endpoint-realizability.md))
 
 ### 5.4 API and Delivery Components
 
 **Lambda — Rust/axum API handlers**
 
 - serve all public REST endpoints
-- read from RDS PostgreSQL only
-- do not perform chain indexing or depend on external chain APIs for core responses
+- read list / partition-pruned endpoints from RDS PostgreSQL
+- additionally fetch `.xdr.zst` from the **public Stellar ledger archive** for
+  heavy-field endpoints (E3 `/transactions/:hash`, E14 `/contracts/:id/events`)
+  and re-parse with the shared `crates/xdr-parser` at request time, per
+  [ADR 0029](../../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md)
+- do not perform chain indexing and do not depend on Horizon, Soroban RPC, or
+  third-party indexers for any response
 
 **API Gateway**
 
@@ -330,13 +347,18 @@ Non-public components should remain directly unreachable to external users.
 
 ### 6.4 External Dependency Boundary
 
-The source design explicitly limits external runtime dependencies to read-only canonical
-Stellar data sources:
+External runtime dependencies are limited to read-only canonical Stellar data sources:
 
-- Stellar network peers for live data
-- Stellar public history archives for one-time backfill
+- Stellar network peers — live data feed for Galexie (ingest-time)
+- Stellar public history archives — one-time backfill feed for the local
+  `backfill-runner` or `backfill-bench` CLI run from a developer workstation per
+  [ADR 0010](../../../lore/2-adrs/0010_local-backfill-over-fargate.md)
+  (no Fargate task in production topology)
+- Stellar public ledger archive — read-time XDR fetch for E3 / E14 at the API
+  layer per [ADR 0029](../../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md)
 
-No other external API is required for core functionality.
+No other external API is required. Horizon, Soroban RPC, and third-party
+indexers are explicitly not in the trust boundary.
 
 ## 7. Environments and Scalability
 
@@ -451,7 +473,9 @@ The source design documents specific operational recovery assumptions:
 - Lambda retries S3-triggered processing automatically
 - failed ledger files remain in S3 and can be replayed by re-triggering the Lambda
 - schema migrations run before new Lambda code deployment in the CI/CD pipeline
-- protocol upgrades are handled by updating XDR type support in `@stellar/stellar-sdk`
+- protocol upgrades are handled by bumping the pinned `stellar-xdr` Rust crate
+  (per [ADR 0004](../../../lore/2-adrs/0004_rust-only-xdr-parsing.md)); the frontend consumes
+  typed API responses via OpenAPI-generated TS client (task 0096).
 
 These assumptions connect runtime infrastructure directly to safe ingestion operations.
 

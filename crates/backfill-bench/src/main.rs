@@ -328,7 +328,7 @@ async fn ensure_local_default_partitions(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     const TABLES: &[&str] = &[
         "transactions",
-        "operations",
+        "operations_appearances",
         "transaction_participants",
         "soroban_events_appearances",
         "soroban_invocations_appearances",

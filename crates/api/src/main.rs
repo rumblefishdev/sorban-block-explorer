@@ -2,10 +2,11 @@
 
 mod config;
 mod openapi;
+mod state;
+mod transactions;
 // Public-archive XDR fetch helper. Used by E3 and E14 endpoint handlers
 // (added in a follow-up task). Exposed as module so future handlers
 // can call the extractors without further wiring.
-#[allow(dead_code)]
 mod stellar_archive;
 
 use axum::{Json, Router, routing::get};
@@ -17,6 +18,8 @@ use utoipa_axum::routes;
 
 use crate::config::AppConfig;
 use crate::openapi::ApiDoc;
+use crate::state::AppState;
+use crate::stellar_archive::StellarArchiveFetcher;
 
 /// Liveness probe consumed by AWS Lambda health checks and smoke tests.
 #[utoipa::path(
@@ -31,17 +34,19 @@ async fn health() -> Json<Value> {
     Json(json!({ "status": "ok" }))
 }
 
-/// Build the application router from an explicit [`AppConfig`].
+/// Build the application router from an explicit [`AppConfig`] and [`AppState`].
 ///
 /// Kept pure (no `std::env` reads) so tests can construct their own
-/// config without mutating process state.
-fn app(config: &AppConfig) -> Router {
+/// config and state without mutating process state.
+fn app(config: &AppConfig, state: AppState) -> Router {
     // `routes!(handler)` registers the #[utoipa::path] annotation so
     // the spec returned by `split_for_parts` carries the live paths.
     // We then stamp the runtime `servers` block (resolved from
     // AppConfig.base_url) onto the registered spec.
     let (router, mut spec) = OpenApiRouter::with_openapi(ApiDoc::openapi())
         .routes(routes!(health))
+        .nest("/v1", transactions::router())
+        .with_state(state)
         .split_for_parts();
     spec.servers = Some(vec![utoipa::openapi::server::Server::new(&config.base_url)]);
 
@@ -82,8 +87,35 @@ async fn main() {
         .json()
         .init();
 
+    tracing::info!("api cold start — resolving database credentials");
+
+    let database_url = match std::env::var("DATABASE_URL") {
+        Ok(url) => url,
+        Err(_) => {
+            let secret_arn =
+                std::env::var("SECRET_ARN").expect("either DATABASE_URL or SECRET_ARN must be set");
+            let rds_endpoint = std::env::var("RDS_PROXY_ENDPOINT")
+                .expect("RDS_PROXY_ENDPOINT must be set when using SECRET_ARN");
+            db::secrets::resolve_database_url(&secret_arn, &rds_endpoint)
+                .await
+                .expect("failed to resolve database URL from Secrets Manager")
+        }
+    };
+
+    let db = db::pool::create_pool(&database_url).expect("failed to create DB pool");
+    let aws_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+        .no_credentials()
+        .region(aws_sdk_s3::config::Region::new("us-east-2"))
+        .timeout_config(stellar_archive::default_timeout_config())
+        .load()
+        .await;
+    let s3_client = aws_sdk_s3::Client::new(&aws_config);
+    let fetcher = StellarArchiveFetcher::new(s3_client);
+
     let config = AppConfig::from_env();
-    let app = app(&config);
+    let state = AppState { db, fetcher };
+    let app = app(&config, state);
+
     lambda_http::run(app).await.expect("failed to run Lambda");
 }
 
@@ -100,9 +132,24 @@ mod tests {
         }
     }
 
+    /// Build a test app. Uses `connect_lazy` so no real DB connection is opened.
+    fn test_app() -> Router {
+        let db = sqlx::PgPool::connect_lazy("postgres://localhost/test_unused")
+            .expect("connect_lazy never fails");
+        // Build a minimal StellarArchiveFetcher using a stub AWS config.
+        // The S3 client will not be called during spec/health tests.
+        let aws_cfg = aws_sdk_s3::config::Builder::new()
+            .region(aws_sdk_s3::config::Region::new("us-east-2"))
+            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+            .build();
+        let s3 = aws_sdk_s3::Client::from_conf(aws_cfg);
+        let fetcher = StellarArchiveFetcher::new(s3);
+        app(&test_config(), AppState { db, fetcher })
+    }
+
     #[tokio::test]
     async fn health_returns_ok() {
-        let app = app(&test_config());
+        let app = test_app();
         let response = app
             .oneshot(
                 Request::builder()
@@ -117,7 +164,7 @@ mod tests {
 
     #[tokio::test]
     async fn api_docs_json_contains_health_path() {
-        let app = app(&test_config());
+        let app = test_app();
         let response = app
             .oneshot(
                 Request::builder()
@@ -145,7 +192,7 @@ mod tests {
 
     #[tokio::test]
     async fn api_docs_json_has_error_envelope_component() {
-        let app = app(&test_config());
+        let app = test_app();
         let response = app
             .oneshot(
                 Request::builder()
@@ -169,10 +216,36 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn api_docs_json_contains_transactions_paths() {
+        let app = test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api-docs-json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let spec: Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            spec["paths"]["/v1/transactions"].is_object(),
+            "spec missing /v1/transactions path: {spec}"
+        );
+        assert!(
+            spec["paths"]["/v1/transactions/{hash}"].is_object(),
+            "spec missing /v1/transactions/{{hash}} path: {spec}"
+        );
+    }
+
     #[cfg(feature = "swagger-ui")]
     #[tokio::test]
     async fn swagger_ui_mounted_when_feature_enabled() {
-        let app = app(&test_config());
+        let app = test_app();
         let response = app
             .oneshot(
                 Request::builder()
@@ -182,7 +255,6 @@ mod tests {
             )
             .await
             .unwrap();
-        // SwaggerUi redirects the index path or serves HTML directly.
         assert!(
             response.status().is_success() || response.status().is_redirection(),
             "expected 2xx/3xx for /api-docs/, got {}",
@@ -193,7 +265,7 @@ mod tests {
     #[cfg(not(feature = "swagger-ui"))]
     #[tokio::test]
     async fn swagger_ui_absent_without_feature() {
-        let app = app(&test_config());
+        let app = test_app();
         let response = app
             .oneshot(
                 Request::builder()

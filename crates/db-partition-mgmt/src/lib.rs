@@ -27,7 +27,7 @@ pub const FUTURE_MONTHS: u32 = 3;
 /// Tables partitioned by RANGE (created_at) per ADR 0027.
 pub const TIME_PARTITIONED_TABLES: &[&str] = &[
     "transactions",
-    "operations",
+    "operations_appearances",
     "transaction_participants",
     "soroban_invocations_appearances",
     "soroban_events_appearances",
@@ -349,7 +349,11 @@ mod tests {
         // Regression guard: ADR 0027 moved these three from transaction_id
         // range partitioning to created_at monthly. If any assertion fails,
         // the schema changed again and this module needs updating.
-        for table in ["transactions", "operations", "transaction_participants"] {
+        for table in [
+            "transactions",
+            "operations_appearances",
+            "transaction_participants",
+        ] {
             assert!(
                 TIME_PARTITIONED_TABLES.contains(&table),
                 "missing {table} from TIME_PARTITIONED_TABLES"

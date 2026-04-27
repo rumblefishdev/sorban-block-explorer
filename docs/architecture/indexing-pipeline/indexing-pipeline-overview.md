@@ -147,19 +147,52 @@ cadence.
 
 ### 5.2 Live Processing Steps
 
-For each arriving ledger artifact, the current pipeline model is:
+For each arriving ledger artifact, the current pipeline model is the 14-step
+`persist_ledger` method in `crates/indexer/src/handler/persist/mod.rs` per
+[ADR 0027](../../../lore/2-adrs/0027_post-surrogate-schema-and-endpoint-realizability.md),
+committed in a single atomic DB transaction:
 
-1. download and decompress the XDR file
-2. parse `LedgerCloseMeta` using `@stellar/stellar-sdk`
-3. extract ledger header data
-4. extract transaction summaries and raw XDR artifacts
-5. extract operation details
-6. extract Soroban invocations
-7. extract CAP-67 contract events
-8. extract contract deployments from `LedgerEntryChanges`
-9. extract account state snapshots from `LedgerEntryChanges`
-10. detect SEP-41 token contracts (→ `assets`), NFT contracts, and liquidity pools from deployment/event-derived patterns
-11. write all resulting records to RDS PostgreSQL
+1. download and decompress the XDR file from S3
+2. parse `LedgerCloseMeta` using the Rust `stellar-xdr` crate (ADR 0004) and
+   extract the shared canonical data needed from it via `crates/xdr-parser`;
+   persistence-oriented staging/aggregation is then handled in the indexer
+3. resolve every observed StrKey (`G...`, `C...`) to the relevant `BIGINT`
+   surrogate via `accounts` and `soroban_contracts` (two-pass upsert pattern per
+   ADRs [0026](../../../lore/2-adrs/0026_accounts-surrogate-bigint-id.md) /
+   [0030](../../../lore/2-adrs/0030_contracts-surrogate-bigint-id.md))
+4. write the `ledgers` row (hash as `BYTEA(32)` per
+   [ADR 0024](../../../lore/2-adrs/0024_hashes-bytea-binary-storage.md))
+5. write `transactions` rows with typed summary columns only — no raw envelope /
+   result / result-meta XDR per
+   [ADR 0029](../../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md);
+   hash uniqueness flows through the companion `transaction_hash_index` row
+6. aggregate operations by identity (staging-time `HashMap<OpIdentity, i64>`)
+   and write `operations_appearances` rows with `type SMALLINT`
+   ([ADR 0031](../../../lore/2-adrs/0031_enum-columns-smallint-with-rust-enum.md)),
+   surrogate FKs, `BYTEA pool_id`, and `amount BIGINT` counting collapsed
+   duplicates (per task 0163 — no `transfer_amount`, no `application_order`,
+   no JSONB details; pattern from ADRs 0033/0034). Bulk INSERT with
+   `ON CONFLICT ON CONSTRAINT uq_ops_app_identity DO NOTHING` for replay
+   idempotency
+7. write `transaction_participants` appearance rows
+8. write `soroban_events_appearances` — one row per `(contract, tx, ledger)`
+   with a non-diagnostic-event count (ADR 0033; full detail re-expanded at read
+   time via `xdr_parser::extract_events`)
+9. write `soroban_invocations_appearances` — one row per trio with invocation-
+   node count and the root-level `caller_id` (ADR 0034)
+10. upsert `soroban_contracts` and `wasm_interface_metadata` on observed
+    deployments + WASM uploads (`wasm_hash` as `BYTEA(32)`, `contract_type`
+    as `SMALLINT`)
+11. derive and upsert `assets` (native, classic_credit, SAC, soroban) per
+    [ADR 0036](../../../lore/2-adrs/0036_rename-tokens-to-assets.md) (table
+    renamed from `tokens`; four `asset_type` variants)
+12. derive and upsert `nfts`, append `nft_ownership` rows
+13. derive and upsert `liquidity_pools`, append `liquidity_pool_snapshots`,
+    upsert `lp_positions`
+14. upsert `accounts` summary and `account_balances_current`
+    (the parallel `account_balance_history` append was removed in task 0159
+    per [ADR 0035](../../../lore/2-adrs/0035_drop-account-balance-history.md);
+    chart feature design deferred to launch time)
 
 ### 5.3 Write Target
 
@@ -167,46 +200,54 @@ The live ingestion path writes directly to the explorer's owned PostgreSQL schem
 
 That write includes both:
 
-- low-level structured explorer records such as ledgers, transactions, operations,
-  invocations, and events
-- derived explorer-facing state such as accounts, assets, NFTs, and liquidity pools
+- low-level structured explorer records (`ledgers`, `transactions`, `operations_appearances`,
+  `transaction_participants`, and the appearance indexes
+  `soroban_events_appearances` / `soroban_invocations_appearances`)
+- derived explorer-facing state (`accounts`, `soroban_contracts`,
+  `wasm_interface_metadata`, `assets`, `nfts`, `nft_ownership`, `liquidity_pools`,
+  `liquidity_pool_snapshots`, `lp_positions`, `account_balances_current`)
 
-The API layer reads only from this persisted result, not from live ingestion memory or raw
-S3 objects.
+List and partition-pruned reads serve entirely from this persisted state.
+Heavy-field endpoints (E3 `/transactions/:hash`, E14 `/contracts/:id/events`)
+additionally fetch raw `.xdr.zst` from the public Stellar ledger archive and
+re-parse at request time per ADR 0029 — that is a **read-path** dependency, not
+an ingest-path one; the indexing pipeline itself never calls the public archive.
 
 ## 6. Historical Backfill Flow
 
-### 6.1 Backfill Source
+### 6.1 Backfill Source and Runtime
 
-Historical backfill uses Stellar public history archives.
+Per [ADR 0010](../../../lore/2-adrs/0010_local-backfill-over-fargate.md),
+historical backfill runs as a **local CLI tool** (`crates/backfill-runner` for
+production runs, `crates/backfill-bench` for benchmarks/prototypes)
+on a developer workstation. It streams from Stellar's **public history
+archives** (the same archives Horizon used for `db reingest`) and writes
+directly to the target RDS.
 
-A separate ECS Fargate task reads historical data and emits the same `LedgerCloseMeta`
-artifacts into the same S3 bucket used by the live flow.
+### 6.2 Shared Pipeline, Not Shared Storage
 
-### 6.2 No Separate Parse Path
+Backfill and live ingestion share the `process_ledger` **code path** (both
+run the same 14-step `persist_ledger` via `crates/indexer`), but not the
+delivery medium:
 
-The source design explicitly avoids a separate processing implementation for backfill.
+- **live:** Galexie (ECS Fargate) → S3 `stellar-ledger-data` → Ledger
+  Processor Lambda → RDS
+- **backfill:** `backfill-runner` (production) or `backfill-bench` (benchmark) CLI → same `process_ledger` call → RDS
 
-Backfill and live ingestion converge at the same handoff boundary:
-
-- same XDR artifact shape
-- same S3 destination
-- same Ledger Processor Lambda
-- same downstream database write path
-
-This is important because it keeps the ingestion contract uniform and reduces divergence
-between historical and live processing logic.
+Keeping the write-path identical means backfill and live ingest produce
+byte-for-byte the same rows for a given ledger, and the replay-safe
+derived-state guards work without special-casing.
 
 ### 6.3 Backfill Scope and Execution Model
 
-Current documented assumptions are:
-
-- backfill scope starts from Soroban mainnet activation in late 2023
-- backfill runs in configurable ledger-range batches
-- batches may run in parallel only when they own non-overlapping ledger ranges and preserve
-  deterministic replay semantics
-- backfill runs as a one-time Phase 1 process while live ingestion continues in parallel,
-  with live-derived state remaining authoritative for the newest ledgers
+- scope: from Soroban mainnet activation in late 2023 to the present
+- batched in configurable ledger ranges; parallel only on non-overlapping
+  ranges that preserve deterministic replay semantics
+- one-time Phase 1 process; live ingestion continues in parallel; live-
+  derived state remains authoritative for the newest ledgers
+- no production infrastructure for backfill: no Fargate task, no ECS task
+  definitions, no EventBridge schedule. The CLI runs on-demand from an
+  operator's workstation
 
 ## 7. Worker Responsibilities
 
@@ -267,8 +308,9 @@ The documented assumptions are:
 
 - schema migrations are versioned, managed via AWS CDK, and run before deploying new Lambda
   code
-- protocol changes affecting `LedgerCloseMeta` are handled by updating
-  `@stellar/stellar-sdk` XDR support
+- protocol changes affecting `LedgerCloseMeta` are handled by bumping the
+  pinned Rust `stellar-xdr` crate version (per ADR 0004); the frontend consumes
+  typed API responses via OpenAPI-generated TS client (task 0096).
 - protocol upgrades are infrequent and announced in advance
 
 ### 8.4 Open-Source Redeployability

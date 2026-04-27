@@ -2,8 +2,8 @@
 id: '0135'
 title: 'Indexer: ongoing token holder_count tracking'
 type: FEATURE
-status: active
-related_adr: []
+status: blocked
+related_adr: ['0037']
 related_tasks: ['0027', '0049', '0119']
 tags: [priority-medium, effort-medium, layer-indexer, layer-db, audit-gap]
 milestone: 1
@@ -19,6 +19,16 @@ history:
     status: active
     who: FilipDz
     note: 'Activated — blocker 0119 (trustline extraction) completed.'
+  - date: '2026-04-24'
+    status: blocked
+    who: stkrolikiewicz
+    note: >
+      Moved to blocked pending historical backfill completion.
+      `holder_count` aggregation is meaningful only after the full
+      Soroban-era corpus lands in RDS — running it on a sparse
+      pre-backfill dataset would ship misleading counts. Unblocks
+      once `backfill-runner` (task 0145) finishes the historical
+      sweep.
 ---
 
 # Indexer: ongoing token holder_count tracking

@@ -42,6 +42,10 @@ Description of what to do.
 
 - [ ] Criterion 1
 - [ ] Criterion 2
+- [ ] **Docs updated** — if this task implements or follows an ADR, the relevant
+      files under `docs/architecture/**` are updated in the same PR per
+      [ADR 0032](../2-adrs/0032_docs-architecture-evergreen-maintenance.md).
+      Mark `N/A — reason` if the task does not change the shape of the system.
 
 ## Notes
 

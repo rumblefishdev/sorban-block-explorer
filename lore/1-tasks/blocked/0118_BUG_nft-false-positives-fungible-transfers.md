@@ -2,7 +2,7 @@
 id: '0118'
 title: 'BUG: NFT false positives from fungible token transfers'
 type: BUG
-status: active
+status: blocked
 related_adr: ['0027']
 related_tasks: ['0026', '0027', '0149']
 tags: [priority-high, effort-medium, layer-indexer, audit-F9]
@@ -98,6 +98,15 @@ history:
       operational SQL cleanup) — that phase only runs once backfill
       has indexed the full Soroban-era corpus, so it is intentionally
       not part of this PR.
+  - date: '2026-04-24'
+    status: blocked
+    who: stkrolikiewicz
+    note: >
+      Moved to blocked pending historical backfill completion. Phase 3
+      (post-backfill SQL cleanup of `Other` classifications) and the
+      false-positive rate validation against real mainnet data both
+      require the full Soroban-era corpus indexed. Unblocks once
+      `backfill-runner` (task 0145) finishes the historical sweep.
 ---
 
 # BUG: NFT false positives from fungible token transfers
@@ -340,7 +349,7 @@ reviewable and re-runnable.
 - [x] Batch cache population at ledger granularity (one query per
       ledger covering all candidate contracts). _(`resolve_nft_filter`
       issues a single `SELECT contract_id, contract_type FROM
-  soroban_contracts WHERE contract_id = ANY($1)` for cache misses
+soroban_contracts WHERE contract_id = ANY($1)` for cache misses
       before per-row filtering.)_
 - [x] NFT insert path filters by classification: `Nft` → insert,
       `Fungible` / `Token` → skip, `Other` → insert (temporary).
