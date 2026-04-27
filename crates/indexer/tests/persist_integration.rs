@@ -79,7 +79,37 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
     let assets = vec![make_sac_asset()];
     let nfts = vec![make_nft()];
     let nft_events: Vec<ExtractedNftEvent> = Vec::new();
-    let lp_positions: Vec<ExtractedLpPosition> = Vec::new();
+    // Task 0162: exercise persist insert/upsert behaviour for the
+    // `lp_positions` table, including the same-batch dedup added in
+    // staging (real-world trigger: a participant touched twice in the
+    // same ledger by separate operations would otherwise produce
+    // duplicate `(pool_id, account_id)` rows in one
+    // `INSERT … ON CONFLICT` and trip Postgres' "command cannot affect
+    // row a second time" guard). Two entries with the same key + ledger
+    // and different shares; the dedup must collapse to one row, keep
+    // the last-seen shares, and preserve the earliest
+    // `first_deposit_ledger` even when the surviving entry dropped it.
+    // SRC_STRKEY is already in the accounts staging path via the tx
+    // source account, so the FK resolves.
+    let lp_positions: Vec<ExtractedLpPosition> = vec![
+        ExtractedLpPosition {
+            pool_id: POOL_ID.to_string(),
+            account_id: SRC_STRKEY.to_string(),
+            shares: "5.0000000".to_string(),
+            first_deposit_ledger: Some(TEST_LEDGER_SEQ),
+            last_updated_ledger: TEST_LEDGER_SEQ,
+        },
+        ExtractedLpPosition {
+            pool_id: POOL_ID.to_string(),
+            account_id: SRC_STRKEY.to_string(),
+            shares: "12.0000000".to_string(),
+            // Newcomer drops first_deposit (the parser only sets it on
+            // `created`; this second touch is an `updated`). Dedup must
+            // preserve the earlier entry's value.
+            first_deposit_ledger: None,
+            last_updated_ledger: TEST_LEDGER_SEQ,
+        },
+    ];
     let inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
     let classification_cache = ClassificationCache::new();
 
@@ -180,12 +210,41 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
         "account_balances_current row count"
     );
 
-    // Parser does not yet produce these today.
+    // Parser does not yet produce nft_ownership today (deferred from 0118).
     assert_eq!(
         counts_first.nft_ownership, 0,
         "nft_ownership expected empty"
     );
-    assert_eq!(counts_first.lp_positions, 0, "lp_positions expected empty");
+    // Task 0162: parser-emitted LP position must land in the table.
+    // The two LP positions in the fixture share `(pool_id, account_id)`
+    // — staging dedup collapses them to a single row before persist.
+    assert_eq!(
+        counts_first.lp_positions, 1,
+        "lp_positions row from extract_lp_positions must persist (and dedup)"
+    );
+
+    // Dedup correctness: last-seen shares win on equal ledger ties; the
+    // earliest `first_deposit_ledger` is preserved across the collapse.
+    let lp_row: (String, i64, i64) = sqlx::query_as(
+        r#"
+        SELECT shares::TEXT, first_deposit_ledger, last_updated_ledger
+          FROM lp_positions
+         WHERE pool_id = decode($1, 'hex')
+           AND account_id = (SELECT id FROM accounts WHERE account_id = $2)
+        "#,
+    )
+    .bind(POOL_ID)
+    .bind(SRC_STRKEY)
+    .fetch_one(&pool)
+    .await
+    .expect("deduped LP position row exists");
+    assert_eq!(lp_row.0, "12.0000000", "last-seen shares win on tie");
+    assert_eq!(
+        lp_row.1,
+        i64::from(TEST_LEDGER_SEQ),
+        "first_deposit_ledger preserved from the earlier entry"
+    );
+    assert_eq!(lp_row.2, i64::from(TEST_LEDGER_SEQ));
 
     // ADR 0031 round-trip — operations_appearances.type SMALLINT decodes back
     // to the typed enum, and the SQL helper renders the same canonical label
