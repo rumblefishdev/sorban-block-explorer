@@ -1198,13 +1198,26 @@ const TK_LEDGER_SEQ_1: u32 = 90_000_301;
 const TK_LEDGER_SEQ_2: u32 = 90_000_302;
 /// 2026-04-22 12:20:00 UTC
 const TK_CLOSED_AT_1: i64 = 1_777_205_400;
-const TK_CLOSED_AT_2: i64 = TK_CLOSED_AT_1 + 6;
 const TK_LEDGER_HASH_1: &str = "eeee111111111111111111111111111111111111111111111111111111111111";
-const TK_LEDGER_HASH_2: &str = "eeee222222222222222222222222222222222222222222222222222222222222";
 const TK_TX_HASH_1: &str = "eeee333333333333333333333333333333333333333333333333333333333333";
 const TK_TX_HASH_2: &str = "eeee444444444444444444444444444444444444444444444444444444444444";
 const TK_CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAATKNSOR";
 const TK_WASM_HASH: &str = "eeee555555555555555555555555555555555555555555555555555555555555";
+
+// Task 0160 — late-WASM test gets its own constant set so it can run in
+// parallel with `soroban_fungible_contract_produces_assets_row` without
+// racing on TK_CONTRACT / TK_TX_HASH_* / TK_LEDGER_* DB rows.
+const LWU_LEDGER_SEQ_1: u32 = 90_001_301;
+const LWU_LEDGER_SEQ_2: u32 = 90_001_302;
+/// 2026-04-22 14:00:00 UTC
+const LWU_CLOSED_AT_1: i64 = 1_777_211_400;
+const LWU_CLOSED_AT_2: i64 = LWU_CLOSED_AT_1 + 6;
+const LWU_LEDGER_HASH_1: &str = "eeee661111111111111111111111111111111111111111111111111111111111";
+const LWU_LEDGER_HASH_2: &str = "eeee662222222222222222222222222222222222222222222222222222222222";
+const LWU_TX_HASH_1: &str = "eeee663333333333333333333333333333333333333333333333333333333333";
+const LWU_TX_HASH_2: &str = "eeee664444444444444444444444444444444444444444444444444444444444";
+const LWU_CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALWUWASMSC";
+const LWU_WASM_HASH: &str = "eeee665555555555555555555555555555555555555555555555555555555555";
 
 /// End-to-end check of task 0120's same-ledger detection path.
 ///
@@ -1373,20 +1386,20 @@ async fn late_wasm_upload_backfills_assets_row() {
     };
 
     ensure_default_partitions(&pool).await;
-    clean_tk_test(&pool).await;
+    clean_lwu_test(&pool).await;
 
     // ── L1: deploy without the WASM upload. Parser emits no asset row. ──
     let ledger1 = ExtractedLedger {
-        sequence: TK_LEDGER_SEQ_1,
-        hash: TK_LEDGER_HASH_1.to_string(),
-        closed_at: TK_CLOSED_AT_1,
+        sequence: LWU_LEDGER_SEQ_1,
+        hash: LWU_LEDGER_HASH_1.to_string(),
+        closed_at: LWU_CLOSED_AT_1,
         protocol_version: 22,
         transaction_count: 1,
         base_fee: 100,
     };
     let tx1 = ExtractedTransaction {
-        hash: TK_TX_HASH_1.to_string(),
-        ledger_sequence: TK_LEDGER_SEQ_1,
+        hash: LWU_TX_HASH_1.to_string(),
+        ledger_sequence: LWU_LEDGER_SEQ_1,
         source_account: SRC_STRKEY.to_string(),
         fee_charged: 100,
         successful: true,
@@ -1397,14 +1410,14 @@ async fn late_wasm_upload_backfills_assets_row() {
         operation_tree: None,
         memo_type: None,
         memo: None,
-        created_at: TK_CLOSED_AT_1,
+        created_at: LWU_CLOSED_AT_1,
         parse_error: false,
     };
     let deployments = vec![ExtractedContractDeployment {
-        contract_id: TK_CONTRACT.to_string(),
-        wasm_hash: Some(TK_WASM_HASH.to_string()),
+        contract_id: LWU_CONTRACT.to_string(),
+        wasm_hash: Some(LWU_WASM_HASH.to_string()),
         deployer_account: Some(SRC_STRKEY.to_string()),
-        deployed_at_ledger: TK_LEDGER_SEQ_1,
+        deployed_at_ledger: LWU_LEDGER_SEQ_1,
         contract_type: ContractType::Other,
         is_sac: false,
         metadata: json!({}),
@@ -1457,7 +1470,7 @@ async fn late_wasm_upload_backfills_assets_row() {
             WHERE sc.contract_id = $1
               AND t.asset_type = $2"#,
     )
-    .bind(TK_CONTRACT)
+    .bind(LWU_CONTRACT)
     .bind(TokenAssetType::Soroban)
     .fetch_one(&pool)
     .await
@@ -1467,16 +1480,16 @@ async fn late_wasm_upload_backfills_assets_row() {
     // ── L2: WASM upload arrives. Interface has SEP-0041 surface.
     //   Reclassify promotes Other → Fungible; bridge inserts assets row.
     let ledger2 = ExtractedLedger {
-        sequence: TK_LEDGER_SEQ_2,
-        hash: TK_LEDGER_HASH_2.to_string(),
-        closed_at: TK_CLOSED_AT_2,
+        sequence: LWU_LEDGER_SEQ_2,
+        hash: LWU_LEDGER_HASH_2.to_string(),
+        closed_at: LWU_CLOSED_AT_2,
         protocol_version: 22,
         transaction_count: 1,
         base_fee: 100,
     };
     let tx2 = ExtractedTransaction {
-        hash: TK_TX_HASH_2.to_string(),
-        ledger_sequence: TK_LEDGER_SEQ_2,
+        hash: LWU_TX_HASH_2.to_string(),
+        ledger_sequence: LWU_LEDGER_SEQ_2,
         source_account: SRC_STRKEY.to_string(),
         fee_charged: 100,
         successful: true,
@@ -1487,11 +1500,11 @@ async fn late_wasm_upload_backfills_assets_row() {
         operation_tree: None,
         memo_type: None,
         memo: None,
-        created_at: TK_CLOSED_AT_2,
+        created_at: LWU_CLOSED_AT_2,
         parse_error: false,
     };
     let interfaces = vec![iface_with(
-        TK_WASM_HASH,
+        LWU_WASM_HASH,
         &["transfer", "balance", "decimals", "name", "symbol"],
     )];
     let no_deployments: Vec<ExtractedContractDeployment> = Vec::new();
@@ -1522,7 +1535,7 @@ async fn late_wasm_upload_backfills_assets_row() {
     // After L2: contract promoted to Fungible, assets row inserted.
     let fun_ty: Option<i16> =
         sqlx::query_scalar("SELECT contract_type FROM soroban_contracts WHERE contract_id = $1")
-            .bind(TK_CONTRACT)
+            .bind(LWU_CONTRACT)
             .fetch_one(&pool)
             .await
             .expect("soroban_contracts row exists");
@@ -1539,7 +1552,7 @@ async fn late_wasm_upload_backfills_assets_row() {
             WHERE sc.contract_id = $1
               AND t.asset_type = $2"#,
     )
-    .bind(TK_CONTRACT)
+    .bind(LWU_CONTRACT)
     .bind(TokenAssetType::Soroban)
     .fetch_one(&pool)
     .await
@@ -1552,8 +1565,8 @@ async fn late_wasm_upload_backfills_assets_row() {
         &pool,
         &ledger2,
         &[ExtractedTransaction {
-            hash: TK_TX_HASH_2.to_string(),
-            ledger_sequence: TK_LEDGER_SEQ_2,
+            hash: LWU_TX_HASH_2.to_string(),
+            ledger_sequence: LWU_LEDGER_SEQ_2,
             source_account: SRC_STRKEY.to_string(),
             fee_charged: 100,
             successful: true,
@@ -1564,7 +1577,7 @@ async fn late_wasm_upload_backfills_assets_row() {
             operation_tree: None,
             memo_type: None,
             memo: None,
-            created_at: TK_CLOSED_AT_2,
+            created_at: LWU_CLOSED_AT_2,
             parse_error: false,
         }],
         &empty_operations,
@@ -1593,14 +1606,14 @@ async fn late_wasm_upload_backfills_assets_row() {
             WHERE sc.contract_id = $1
               AND t.asset_type = $2"#,
     )
-    .bind(TK_CONTRACT)
+    .bind(LWU_CONTRACT)
     .bind(TokenAssetType::Soroban)
     .fetch_one(&pool)
     .await
     .expect("assets count succeeds");
     assert_eq!(count_replay, 1, "replay does not duplicate assets row");
 
-    clean_tk_test(&pool).await;
+    clean_lwu_test(&pool).await;
 }
 
 async fn clean_tk_test(pool: &PgPool) {
@@ -1633,6 +1646,43 @@ async fn clean_tk_test(pool: &PgPool) {
         .await;
     let _ = sqlx::query("DELETE FROM wasm_interface_metadata WHERE wasm_hash = decode($1, 'hex')")
         .bind(TK_WASM_HASH)
+        .execute(pool)
+        .await;
+}
+
+async fn clean_lwu_test(pool: &PgPool) {
+    let tx_hashes = vec![
+        hex::decode(LWU_TX_HASH_1).unwrap(),
+        hex::decode(LWU_TX_HASH_2).unwrap(),
+    ];
+    let _ = sqlx::query(
+        "DELETE FROM assets
+          WHERE contract_id IN (SELECT id FROM soroban_contracts WHERE contract_id = $1)",
+    )
+    .bind(LWU_CONTRACT)
+    .execute(pool)
+    .await;
+    let _ = sqlx::query("DELETE FROM transactions WHERE hash = ANY($1)")
+        .bind(&tx_hashes)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM transaction_hash_index WHERE hash = ANY($1)")
+        .bind(&tx_hashes)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM ledgers WHERE sequence = ANY($1)")
+        .bind(vec![
+            i64::from(LWU_LEDGER_SEQ_1),
+            i64::from(LWU_LEDGER_SEQ_2),
+        ])
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM soroban_contracts WHERE contract_id = $1")
+        .bind(LWU_CONTRACT)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM wasm_interface_metadata WHERE wasm_hash = decode($1, 'hex')")
+        .bind(LWU_WASM_HASH)
         .execute(pool)
         .await;
 }
