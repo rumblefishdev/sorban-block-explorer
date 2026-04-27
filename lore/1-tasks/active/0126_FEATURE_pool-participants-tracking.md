@@ -2,10 +2,9 @@
 id: '0126'
 title: 'LP: pool participants and share tracking'
 type: FEATURE
-status: blocked
+status: active
 related_adr: ['0037']
 related_tasks: ['0052', '0077', '0136', '0162']
-blocked_by: ['0162']
 tags: [priority-low, effort-medium, layer-indexer, layer-db, audit-gap]
 milestone: 1
 links:
@@ -38,6 +37,18 @@ history:
       draft proposed a new `liquidity_pool_participants` table —
       that was redundant. No DDL change needed; task is now
       persist + API only.
+  - date: '2026-04-27'
+    status: active
+    who: stkrolikiewicz
+    note: >
+      Unblocked. 0162 merged on develop (PR #129) — parser now emits
+      `ExtractedLpPosition` from pool_share trustline changes and
+      persist already lands rows in `lp_positions` (verified by
+      `synthetic_ledger_insert_and_replay_is_idempotent` regression).
+      Remaining 0126 scope: API endpoint(s) for pool participants
+      list + per-account LP holdings, frontend integration, and the
+      prune-vs-keep decision for zero-share rows from
+      `removed`-typed trustline changes.
 ---
 
 # LP: pool participants and share tracking
