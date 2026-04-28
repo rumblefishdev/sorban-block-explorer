@@ -181,6 +181,51 @@ pub async fn ensure_time_partitions(
     Ok(created)
 }
 
+/// Ensures the `<table>_default` catch-all partition exists. Idempotent —
+/// `CREATE TABLE IF NOT EXISTS` plus the same `42P07 → ATTACH PARTITION`
+/// fallback used by `ensure_time_partitions`, so a partition that exists
+/// detached (rare, but possible after manual ops) gets re-attached instead
+/// of erroring.
+///
+/// Required at-least-once on every fresh DB before backfill writes anything,
+/// because Postgres routes any `created_at` outside the explicit monthly
+/// children to `_default`. Without it, every INSERT on a partitioned parent
+/// fails with "no partition of relation found".
+pub async fn ensure_default_partition(pool: &PgPool, table: &str) -> Result<(), Error> {
+    let name = format!("{table}_default");
+    let create_ddl = format!("CREATE TABLE IF NOT EXISTS {name} PARTITION OF {table} DEFAULT");
+
+    match sqlx::query(&create_ddl).execute(pool).await {
+        Ok(_) => Ok(()),
+        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("42P07") => {
+            let attach_ddl = format!("ALTER TABLE {table} ATTACH PARTITION {name} DEFAULT");
+            sqlx::query(&attach_ddl).execute(pool).await?;
+            Ok(())
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
+/// Ensures every partitioned parent in `TIME_PARTITIONED_TABLES` has both
+/// its `_default` catch-all and the full monthly children covering
+/// `SOROBAN_START → today + FUTURE_MONTHS`. The CLI binary and the Lambda
+/// both call this; backfill-bench replaces its inline `_default`-only setup
+/// by depending on this crate.
+///
+/// Returns the total number of newly-created monthly children across all
+/// seven tables. `_default` partitions are not counted because the
+/// `CREATE TABLE IF NOT EXISTS` form does not distinguish "created" from
+/// "already existed".
+pub async fn ensure_all_partitions(pool: &PgPool, today: NaiveDate) -> Result<u32, Error> {
+    let mut total_created = 0u32;
+    for table in TIME_PARTITIONED_TABLES {
+        ensure_default_partition(pool, table).await?;
+        let created = ensure_time_partitions(pool, table, today).await?;
+        total_created += created;
+    }
+    Ok(total_created)
+}
+
 /// Counts partitions that cover months strictly after today.
 pub async fn count_future_partitions(
     pool: &PgPool,
