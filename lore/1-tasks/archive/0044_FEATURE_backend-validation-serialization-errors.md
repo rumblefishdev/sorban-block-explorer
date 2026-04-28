@@ -2,7 +2,7 @@
 id: '0044'
 title: 'Backend: request validation, response serialization, error mapping'
 type: FEATURE
-status: active
+status: completed
 related_adr: ['0005', '0008', '0029']
 related_tasks: ['0023', '0014', '0043', '0046', '0050', '0092']
 tags: [layer-backend, validation, serialization, error-handling]
@@ -72,6 +72,22 @@ history:
       literal `raw_xdr` would be dead code while the compile-time guard
       holds. Pending confirmation; backlog task spawned only if a
       mid-protocol-bump scenario materialises in practice.
+  - date: '2026-04-28'
+    status: completed
+    who: karolkow
+    note: >
+      Completed. Steps 1-4 + 6 shipped (0042/0043/0046/0150 +
+      `common/path.rs` + audit + 9 graceful-degradation locks in
+      `tests_integration.rs`). Step 5 (`raw_xdr` for unknown ops)
+      deferred — compile-time exhaustive match in `xdr-parser` plus
+      light fallback `"unknown"` cover the resilience requirement; no
+      backlog task spawned unless mid-protocol-bump scenario
+      materialises in practice. 87/87 api-crate tests pass; clippy
+      clean. AC 1-6, 8-10 satisfied; AC 7 deferred with documented
+      rationale. Body realigned to ADR 0008 envelope shape and
+      lowercase canonical codes. Path-param validators consolidated
+      into `common/path.rs` per spec literal Step 1. No new ADRs
+      required (consumes 0005, 0008, 0029).
 ---
 
 # Backend: request validation, response serialization, error mapping
