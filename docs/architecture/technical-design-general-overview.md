@@ -927,7 +927,9 @@ Cross-cutting schema disciplines applied to every table:
 - **Monthly range partitioning on `created_at`** for high-volume child tables
   (see §6.12). Partitions follow the `<table>_y{YYYY}m{MM}` naming convention and are
   provisioned by the partition-management Lambda in `crates/db-partition-mgmt`
-  (see task 0139).
+  (see task 0139). The same crate ships a `bin/cli` that runs the identical
+  `ensure_all_partitions` code path against `DATABASE_URL` for local docker DBs
+  and one-shot staging bootstrap before the EventBridge cron takes over.
 - **No raw XDR in the DB** ([ADR 0029](../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md)):
   `transactions` carries only typed summary columns. Full envelope / result / result-meta
   XDR for E3 `/transactions/:hash` and decoded event / invocation payloads for
