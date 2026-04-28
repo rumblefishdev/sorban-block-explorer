@@ -39,6 +39,11 @@ pub const INVALID_QUERY: &str = "invalid_query";
 /// not interpret (unknown enum name, malformed StrKey, etc.).
 pub const INVALID_FILTER: &str = "invalid_filter";
 
+/// A path-segment identifier (`:id`, `:hash`, …) did not match any of the
+/// shapes the endpoint accepts. Distinct from `INVALID_FILTER` — that one
+/// is reserved for `filter[...]` query parameters.
+pub const INVALID_ID: &str = "invalid_id";
+
 /// Resource not found by its primary key (hash, ID, …).
 pub const NOT_FOUND: &str = "not_found";
 

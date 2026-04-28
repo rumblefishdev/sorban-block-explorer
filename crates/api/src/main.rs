@@ -1,8 +1,11 @@
 //! REST API Lambda handler for the Soroban block explorer.
 
+mod assets;
 mod common;
 mod config;
 mod contracts;
+mod liquidity_pools;
+mod network;
 mod openapi;
 mod state;
 #[cfg(test)]
@@ -49,8 +52,11 @@ fn app(config: &AppConfig, state: AppState) -> Router {
     // AppConfig.base_url) onto the registered spec.
     let (router, mut spec) = OpenApiRouter::with_openapi(ApiDoc::openapi())
         .routes(routes!(health))
+        .nest("/v1", network::router())
         .nest("/v1", transactions::router())
         .nest("/v1", contracts::router())
+        .nest("/v1", liquidity_pools::router())
+        .nest("/v1", assets::router())
         .with_state(state)
         .split_for_parts();
     spec.servers = Some(vec![utoipa::openapi::server::Server::new(&config.base_url)]);
@@ -273,6 +279,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn api_docs_json_contains_assets_paths() {
+        let app = test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api-docs-json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let spec: Value = serde_json::from_slice(&bytes).unwrap();
+        for path in [
+            "/v1/assets",
+            "/v1/assets/{id}",
+            "/v1/assets/{id}/transactions",
+        ] {
+            assert!(
+                spec["paths"][path].is_object(),
+                "spec missing {path} path: {spec}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn api_docs_json_contains_transactions_paths() {
         let app = test_app();
         let response = app
@@ -295,6 +329,32 @@ mod tests {
         assert!(
             spec["paths"]["/v1/transactions/{hash}"].is_object(),
             "spec missing /v1/transactions/{{hash}} path: {spec}"
+        );
+    }
+
+    #[tokio::test]
+    async fn api_docs_json_contains_network_stats_path() {
+        let app = test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api-docs-json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let spec: Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            spec["paths"]["/v1/network/stats"].is_object(),
+            "spec missing /v1/network/stats path: {spec}"
+        );
+        assert!(
+            spec["components"]["schemas"]["NetworkStats"].is_object(),
+            "spec missing NetworkStats component: {spec}"
         );
     }
 

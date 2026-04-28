@@ -22,7 +22,6 @@
 //! Every write uses UNNEST batching; pool.begin()/commit() is retried with
 //! exponential backoff on SQLSTATE 40001 (serialization) / 40P01 (deadlock).
 
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use sqlx::PgPool;
@@ -77,10 +76,12 @@ struct StepTimings {
 ///
 /// * `nft_events`        — `nft_ownership` rows (task 0118 / follow-up)
 /// * `lp_positions`      — `lp_positions` rows (task 0126)
-/// * `inner_tx_hashes`   — `transactions.inner_tx_hash` (follow-up parser work)
 ///
 /// `process_ledger` passes empty slices / `None` for these until the parser
 /// catches up; the wiring is already in place end-to-end.
+///
+/// `inner_tx_hash` is now read directly off each `ExtractedTransaction`
+/// (task 0169) — no separate map needed.
 #[allow(clippy::too_many_arguments)]
 pub async fn persist_ledger(
     pool: &PgPool,
@@ -99,7 +100,6 @@ pub async fn persist_ledger(
     nfts: &[ExtractedNft],
     nft_events: &[ExtractedNftEvent],
     lp_positions: &[ExtractedLpPosition],
-    inner_tx_hashes: &HashMap<String, Option<String>>,
     classification_cache: &ClassificationCache,
 ) -> Result<(), HandlerError> {
     let stage_start = Instant::now();
@@ -118,7 +118,6 @@ pub async fn persist_ledger(
         nfts,
         nft_events,
         lp_positions,
-        inner_tx_hashes,
     )?;
     let stage_ms = stage_start.elapsed().as_millis();
 

@@ -95,9 +95,14 @@ SELECT
     oa.asset_code,
     iss.account_id                  AS asset_issuer,
     encode(oa.pool_id, 'hex')       AS pool_id_hex,
-    oa.amount,
     oa.ledger_sequence,
     oa.created_at
+    -- not in DB: per-op stroop amount
+    --           — `operations_appearances.amount` is a fold count of
+    --             collapsed identity-tuple duplicates (task 0163), NOT a
+    --             value. Real per-op amounts are encoded inside
+    --             envelope_xdr / result_meta_xdr and surfaced via the
+    --             archive overlay below. ADR 0029.
     -- not in DB: raw operation parameters / arguments
     --           — encoded inside envelope_xdr operation entries. Archive
     --             overlay required for Advanced mode (frontend §6.4). ADR 0029.

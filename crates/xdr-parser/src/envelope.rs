@@ -112,6 +112,33 @@ pub fn tx_envelope_hash(env: &TransactionEnvelope, network_id: &[u8; 32]) -> [u8
             TransactionSignaturePayloadTaggedTransaction::TxFeeBump(fb.tx.clone())
         }
     };
+    hash_tagged_transaction(tagged, network_id)
+}
+
+/// Compute the **inner** transaction hash for a fee-bump envelope.
+///
+/// Returns `Some(hash)` only for `TxFeeBump`; non-fee-bump envelopes return
+/// `None` (the outer hash from `tx_envelope_hash` already IS the principal
+/// hash for those). The inner hash is what Horizon reports as
+/// `inner_transaction.hash` and what the inner-tx's sequence number was
+/// signed against.
+///
+/// Per protocol the inner tx is a `TransactionV1` wrapped in
+/// `FeeBumpTransactionInnerTx::Tx`. We re-tag it as
+/// `TaggedTransaction::Tx(inner)` and hash against the same network_id.
+pub fn inner_tx_hash(env: &TransactionEnvelope, network_id: &[u8; 32]) -> Option<[u8; 32]> {
+    let TransactionEnvelope::TxFeeBump(fb) = env else {
+        return None;
+    };
+    let FeeBumpTransactionInnerTx::Tx(inner) = &fb.tx.inner_tx;
+    let tagged = TransactionSignaturePayloadTaggedTransaction::Tx(inner.tx.clone());
+    Some(hash_tagged_transaction(tagged, network_id))
+}
+
+fn hash_tagged_transaction(
+    tagged: TransactionSignaturePayloadTaggedTransaction,
+    network_id: &[u8; 32],
+) -> [u8; 32] {
     let payload = TransactionSignaturePayload {
         network_id: Hash(*network_id),
         tagged_transaction: tagged,
@@ -324,6 +351,34 @@ mod tests {
         let got = envelope_source(&env);
         assert_eq!(got, ed25519_strkey(&inner_source));
         assert_ne!(got, ed25519_strkey(&fee_source));
+    }
+
+    #[test]
+    fn inner_tx_hash_returns_none_for_non_fee_bump_envelopes() {
+        // Bug 0169 regression: only fee-bump envelopes carry an inner hash;
+        // V0 / V1 envelopes' principal hash already comes from
+        // tx_envelope_hash, so inner_tx_hash MUST return None there.
+        assert!(inner_tx_hash(&v0_envelope([0xAA; 32]), &NET_ID).is_none());
+        assert!(inner_tx_hash(&v1_envelope([0xBB; 32]), &NET_ID).is_none());
+    }
+
+    #[test]
+    fn inner_tx_hash_for_fee_bump_differs_from_outer_and_matches_inner_v1_hash() {
+        // The inner hash is what Horizon reports as `inner_transaction.hash`.
+        // Construct a fee-bump wrapping a known V1 inner; the inner hash
+        // must equal `tx_envelope_hash` of the standalone V1 envelope and
+        // must NOT equal the outer (TxFeeBump) hash.
+        let fee_source = [0x11; 32];
+        let inner_source = [0x22; 32];
+        let fb_env = fee_bump_envelope(fee_source, inner_source);
+        let inner_v1_env = v1_envelope(inner_source);
+
+        let outer = tx_envelope_hash(&fb_env, &NET_ID);
+        let inner_via_helper = inner_tx_hash(&fb_env, &NET_ID).expect("fee-bump has inner");
+        let inner_via_v1 = tx_envelope_hash(&inner_v1_env, &NET_ID);
+
+        assert_eq!(inner_via_helper, inner_via_v1);
+        assert_ne!(inner_via_helper, outer);
     }
 
     // --- alignment: synthetic in-memory coverage of `align_envelopes` ---

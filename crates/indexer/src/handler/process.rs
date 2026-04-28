@@ -213,11 +213,10 @@ pub async fn process_ledger(
     //
     // Signature extension params (task 0149) — the parser does not yet produce
     // these; pass empty slices so wiring is in place end-to-end:
-    //   * nft_events        → `nft_ownership` rows (follow-up from 0118)
-    //   * inner_tx_hashes   → `transactions.inner_tx_hash` (follow-up parser work)
+    //   * nft_events → `nft_ownership` rows (follow-up from 0118)
     // `lp_positions` is now produced by `extract_lp_positions` above (task 0162).
+    // `inner_tx_hash` is now carried per-row on `ExtractedTransaction` (task 0169).
     let nft_events: Vec<xdr_parser::types::ExtractedNftEvent> = Vec::new();
-    let inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
 
     let persist_timer = Instant::now();
     persist::persist_ledger(
@@ -237,7 +236,6 @@ pub async fn process_ledger(
         &all_nfts,
         &nft_events,
         &all_lp_positions,
-        &inner_tx_hashes,
         classification_cache,
     )
     .await?;

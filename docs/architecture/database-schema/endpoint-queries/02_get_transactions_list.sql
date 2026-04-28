@@ -50,24 +50,13 @@
 --     never in WHERE.
 --   • For statement B the DISTINCT ON keeps one row per transaction even if
 --     the tx has multiple matching ops.
---   • Per-row "primary op" preview (StellarChain-style FROM / TO / AMOUNT):
---     a second LATERAL picks the FIRST op of each tx (`ORDER BY oa.id LIMIT 1`)
---     and projects its from/to/interacted_with/amount/asset_code plus a
---     coarse `primary_op_method` bucket. For multi-op tx (operation_count > 1)
---     the frontend shows the primary op + a "+N more" indicator and links to
---     /transactions/:hash for the full list. Cost: one extra PK seek per
---     row, partition-pruned via the same composite FK as op_types LATERAL.
---   • `primary_op_from` falls back to tx-level `source_account` when the
---     op-level source is NULL (per Stellar protocol, an op without explicit
---     source uses the tx source).
---   • `primary_op_interacted_with` is a COALESCE across the three FK
---     targets in `operations_appearances` (contract_id / pool_id /
---     destination_id) — exactly one is non-NULL for op types that have a
---     "to" semantically; for offers all three are NULL and the frontend
---     shows the asset_code alone (the second leg of the trading pair lives
---     in archive XDR per ADR 0029, not here). The companion column
---     `primary_op_interacted_with_kind` ('contract' / 'pool' / 'account' /
---     NULL) tells the frontend how to render the value.
+--   • The frontend list (frontend-overview §6.3) shows hash / ledger /
+--     source / status / fee / operation_count / operation_types[]. No
+--     per-tx "primary op" FROM/TO/AMOUNT preview is exposed: per-op
+--     stroop value lives in archive XDR (ADR 0029) and the equivalent
+--     DB column on `operations_appearances` is a fold count, not a value
+--     (task 0163 / 0169). Detail view at `/transactions/:hash` carries
+--     full per-op data via the archive overlay.
 
 -- ============================================================================
 -- Statement A — no contract / op_type filter (default path)
@@ -84,36 +73,6 @@ SELECT
     t.has_soroban,
     ops.operation_types,           -- frontend §6.3 "operation type" column
 
-    -- Primary-op preview (one row per tx; first op by oa.id).
-    op_type_name(pop.type)         AS primary_op_type,
-    CASE
-        WHEN pop.type IN (1, 2, 13)         THEN 'payment'
-        WHEN pop.type IN (3, 4, 12)         THEN 'offer'
-        WHEN pop.type IN (24, 25, 26)       THEN 'contract'
-        WHEN pop.type IN (22, 23)           THEN 'liquidity_pool'
-        WHEN pop.type IN (6, 7, 19, 21)     THEN 'trust'
-        WHEN pop.type IN (14, 15, 20)       THEN 'claimable_balance'
-        WHEN pop.type IN (16, 17, 18)       THEN 'sponsorship'
-        WHEN pop.type IS NULL               THEN NULL
-        ELSE 'account'
-    END                            AS primary_op_method,
-    COALESCE(op_src.account_id,
-             src.account_id)       AS primary_op_from,
-    COALESCE(
-        op_ctr.contract_id,
-        encode(pop.pool_id, 'hex'),
-        op_dst.account_id
-    )                              AS primary_op_interacted_with,
-    CASE
-        WHEN op_ctr.contract_id IS NOT NULL THEN 'contract'
-        WHEN pop.pool_id        IS NOT NULL THEN 'pool'
-        WHEN op_dst.account_id  IS NOT NULL THEN 'account'
-        ELSE NULL
-    END                            AS primary_op_interacted_with_kind,
-    pop.amount                     AS primary_op_amount,
-    pop.asset_code                 AS primary_op_asset_code,
-    op_iss.account_id              AS primary_op_asset_issuer,
-
     t.created_at,
     t.id                          AS cursor_id  -- echo for next-page cursor
 FROM transactions t
@@ -128,29 +87,6 @@ LEFT JOIN LATERAL (
     WHERE oa.transaction_id = t.id
       AND oa.created_at     = t.created_at
 ) ops ON TRUE
-LEFT JOIN LATERAL (
-    -- Primary op preview: first op of the tx, identified by smallest oa.id
-    -- (BIGSERIAL is monotone with ingestion order, which equals op application
-    -- order within a single tx). One PK seek + LIMIT 1 per row.
-    SELECT
-        oa.type,
-        oa.source_id,
-        oa.destination_id,
-        oa.contract_id,
-        oa.pool_id,
-        oa.asset_code,
-        oa.asset_issuer_id,
-        oa.amount
-    FROM operations_appearances oa
-    WHERE oa.transaction_id = t.id
-      AND oa.created_at     = t.created_at
-    ORDER BY oa.id
-    LIMIT 1
-) pop ON TRUE
-LEFT JOIN accounts          op_src ON op_src.id = pop.source_id
-LEFT JOIN accounts          op_dst ON op_dst.id = pop.destination_id
-LEFT JOIN soroban_contracts op_ctr ON op_ctr.id = pop.contract_id
-LEFT JOIN accounts          op_iss ON op_iss.id = pop.asset_issuer_id
 WHERE
     ($2::timestamptz IS NULL OR (t.created_at, t.id) < ($2, $3))
     AND ($4::bigint IS NULL OR t.source_id = $4)
@@ -197,36 +133,6 @@ SELECT
     t.has_soroban,
     ops.operation_types,           -- ALL op types in tx, not just matched
 
-    -- Primary-op preview (same shape as statement A).
-    op_type_name(pop.type)         AS primary_op_type,
-    CASE
-        WHEN pop.type IN (1, 2, 13)         THEN 'payment'
-        WHEN pop.type IN (3, 4, 12)         THEN 'offer'
-        WHEN pop.type IN (24, 25, 26)       THEN 'contract'
-        WHEN pop.type IN (22, 23)           THEN 'liquidity_pool'
-        WHEN pop.type IN (6, 7, 19, 21)     THEN 'trust'
-        WHEN pop.type IN (14, 15, 20)       THEN 'claimable_balance'
-        WHEN pop.type IN (16, 17, 18)       THEN 'sponsorship'
-        WHEN pop.type IS NULL               THEN NULL
-        ELSE 'account'
-    END                            AS primary_op_method,
-    COALESCE(op_src.account_id,
-             src.account_id)       AS primary_op_from,
-    COALESCE(
-        op_ctr.contract_id,
-        encode(pop.pool_id, 'hex'),
-        op_dst.account_id
-    )                              AS primary_op_interacted_with,
-    CASE
-        WHEN op_ctr.contract_id IS NOT NULL THEN 'contract'
-        WHEN pop.pool_id        IS NOT NULL THEN 'pool'
-        WHEN op_dst.account_id  IS NOT NULL THEN 'account'
-        ELSE NULL
-    END                            AS primary_op_interacted_with_kind,
-    pop.amount                     AS primary_op_amount,
-    pop.asset_code                 AS primary_op_asset_code,
-    op_iss.account_id              AS primary_op_asset_issuer,
-
     t.created_at,
     t.id                          AS cursor_id
 FROM matched_ops m
@@ -240,26 +146,6 @@ LEFT JOIN LATERAL (
     WHERE oa.transaction_id = t.id
       AND oa.created_at     = t.created_at
 ) ops ON TRUE
-LEFT JOIN LATERAL (
-    SELECT
-        oa.type,
-        oa.source_id,
-        oa.destination_id,
-        oa.contract_id,
-        oa.pool_id,
-        oa.asset_code,
-        oa.asset_issuer_id,
-        oa.amount
-    FROM operations_appearances oa
-    WHERE oa.transaction_id = t.id
-      AND oa.created_at     = t.created_at
-    ORDER BY oa.id
-    LIMIT 1
-) pop ON TRUE
-LEFT JOIN accounts          op_src ON op_src.id = pop.source_id
-LEFT JOIN accounts          op_dst ON op_dst.id = pop.destination_id
-LEFT JOIN soroban_contracts op_ctr ON op_ctr.id = pop.contract_id
-LEFT JOIN accounts          op_iss ON op_iss.id = pop.asset_issuer_id
 WHERE ($4::bigint IS NULL OR t.source_id = $4)
   AND ($2::timestamptz IS NULL OR (t.created_at, t.id) < ($2, $3))
 ORDER BY t.created_at DESC, t.id DESC
