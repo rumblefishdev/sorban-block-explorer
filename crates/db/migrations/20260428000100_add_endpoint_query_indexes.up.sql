@@ -18,7 +18,7 @@
 
 -- E2 GET /transactions — no-filter keyset on (created_at DESC, id DESC).
 -- Without it the planner falls back to per-partition seq + sort.
--- See 02_get_transactions_list.sql:33.
+-- See 02_get_transactions_list.sql header (INDEX GAP — Statement A).
 CREATE INDEX IF NOT EXISTS idx_tx_keyset
     ON transactions (created_at DESC, id DESC);
 
