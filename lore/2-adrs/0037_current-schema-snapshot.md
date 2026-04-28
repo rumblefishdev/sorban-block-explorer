@@ -3,7 +3,7 @@ id: '0037'
 title: 'Current schema snapshot — live DB after operations_appearances collapse'
 status: proposed
 deciders: [fmazur]
-related_tasks: ['0163', '0164']
+related_tasks: ['0132', '0163', '0164']
 related_adrs:
   [
     '0019',
@@ -38,6 +38,16 @@ history:
       `20260427000000`). Body left untouched pending @fmazur's call
       whether to refresh inline or keep the original snapshot frozen
       with ADR 0038 serving as the official delta.
+  - date: 2026-04-28
+    status: proposed
+    who: stkrolikiewicz
+    note: >
+      Added five indexes from task 0132 inline next to the existing
+      indexes for `transactions`, `nfts`, `liquidity_pools`,
+      `soroban_invocations_appearances`, and `soroban_events_appearances`
+      with `-- task 0132 / ...` provenance comments. Migration anchor
+      now `20260428000100` (this ADR's snapshot SQL stays accurate; no
+      delta ADR needed — task 0132 is purely additive).
 ---
 
 # ADR 0037: Current schema snapshot — live DB after `operations_appearances` collapse
@@ -216,6 +226,7 @@ CREATE TABLE transactions (
 CREATE INDEX idx_tx_ledger         ON transactions (ledger_sequence);
 CREATE INDEX idx_tx_source_created ON transactions (source_id, created_at DESC);
 CREATE INDEX idx_tx_has_soroban    ON transactions (created_at DESC) WHERE has_soroban;
+CREATE INDEX idx_tx_keyset         ON transactions (created_at DESC, id DESC);  -- task 0132 / E02 no-filter keyset
 ```
 
 > Note: `idx_tx_hash` / `idx_tx_hash_prefix` from ADR 0019 are absent — hash lookups route through `transaction_hash_index` (fail-fast unique, cross-partition).
@@ -300,6 +311,7 @@ CREATE TABLE soroban_events_appearances (
 
 CREATE INDEX idx_sea_contract_ledger ON soroban_events_appearances (contract_id, ledger_sequence DESC, created_at DESC);
 CREATE INDEX idx_sea_transaction     ON soroban_events_appearances (transaction_id, created_at DESC);
+CREATE INDEX idx_sea_contract_keyset ON soroban_events_appearances (contract_id, created_at DESC, transaction_id DESC);  -- task 0132 / E02 Statement B
 ```
 
 ### 10. `soroban_invocations_appearances` (partitioned, per ADR 0034)
@@ -319,6 +331,7 @@ CREATE TABLE soroban_invocations_appearances (
 
 CREATE INDEX idx_sia_contract_ledger ON soroban_invocations_appearances (contract_id, ledger_sequence DESC);
 CREATE INDEX idx_sia_transaction     ON soroban_invocations_appearances (transaction_id);
+CREATE INDEX idx_sia_contract_keyset ON soroban_invocations_appearances (contract_id, created_at DESC, transaction_id DESC);  -- task 0132 / E02 Statement B
 ```
 
 ### 11. `assets` (renamed from `tokens` per ADR 0036)
@@ -369,9 +382,10 @@ CREATE TABLE nfts (
     current_owner_ledger  BIGINT,
     UNIQUE (contract_id, token_id)
 );
-CREATE INDEX idx_nfts_collection ON nfts (collection_name);
-CREATE INDEX idx_nfts_owner      ON nfts (current_owner_id);
-CREATE INDEX idx_nfts_name_trgm  ON nfts USING GIN (name gin_trgm_ops);
+CREATE INDEX idx_nfts_collection      ON nfts (collection_name);
+CREATE INDEX idx_nfts_collection_trgm ON nfts USING GIN (collection_name gin_trgm_ops);  -- task 0132 / E15 ILIKE
+CREATE INDEX idx_nfts_owner           ON nfts (current_owner_id);
+CREATE INDEX idx_nfts_name_trgm       ON nfts USING GIN (name gin_trgm_ops);
 ```
 
 ### 13. `nft_ownership` (partitioned)
@@ -410,8 +424,9 @@ CREATE TABLE liquidity_pools (
     CONSTRAINT ck_lp_asset_a_type_range CHECK (asset_a_type >= 0 AND asset_a_type <= 15),
     CONSTRAINT ck_lp_asset_b_type_range CHECK (asset_b_type >= 0 AND asset_b_type <= 15)
 );
-CREATE INDEX idx_pools_asset_a ON liquidity_pools (asset_a_code, asset_a_issuer_id);
-CREATE INDEX idx_pools_asset_b ON liquidity_pools (asset_b_code, asset_b_issuer_id);
+CREATE INDEX idx_pools_asset_a            ON liquidity_pools (asset_a_code, asset_a_issuer_id);
+CREATE INDEX idx_pools_asset_b            ON liquidity_pools (asset_b_code, asset_b_issuer_id);
+CREATE INDEX idx_pools_created_at_ledger  ON liquidity_pools (created_at_ledger DESC, pool_id DESC);  -- task 0132 / E18 keyset
 ```
 
 ### 15. `liquidity_pool_snapshots` (partitioned)
