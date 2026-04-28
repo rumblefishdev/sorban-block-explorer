@@ -123,7 +123,7 @@ pub fn sequence(value: &str) -> Result<u32, Response> {
         )
     };
     let n = value.parse::<u32>().map_err(|_| invalid())?;
-    if n == 0 { Err(invalid()) } else { Ok(n) }
+    (n != 0).then_some(n).ok_or_else(invalid)
 }
 
 #[cfg(test)]
