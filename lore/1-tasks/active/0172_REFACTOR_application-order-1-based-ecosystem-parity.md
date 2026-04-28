@@ -87,8 +87,8 @@ for (app_order, tx) in transactions.iter().enumerate() {
 
 Rust's `.enumerate()` is 0-indexed. The choice was codified in:
 
-- **ADR 0028** §parsed_ledger.json: _"`application_order` — 0-based tx
-  index within the ledger."_
+- **ADR 0028** §parsed*ledger.json: *"`application_order` — 0-based tx
+  index within the ledger."\_
 - **DTO comment** `crates/api/src/stellar_archive/dto.rs:100`:
   _"Application order within the transaction (zero-based)."_
 - **Audit doc** `docs/database-audit-first-implementation.md:133`: _"Zero-based

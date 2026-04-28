@@ -119,13 +119,14 @@ S3-served.
 
 **Final response:**
 
-| Field                     | Source                                                                 |
-| ------------------------- | ---------------------------------------------------------------------- |
-| `latest_ledger_sequence`  | DB → `ledgers.sequence` (newest by `closed_at`)                        |
-| `latest_ledger_closed_at` | DB → `ledgers.closed_at` (newest) — drives §7 polling indicator        |
-| `tps_60s`                 | DB → `SUM(transaction_count)/window_seconds` over trailing 60 s        |
-| `total_accounts`          | DB → `pg_class.reltuples` for `accounts` (planner estimate, not exact) |
-| `total_contracts`         | DB → `pg_class.reltuples` for `soroban_contracts`                      |
+| Field                     | Source                                                                                          |
+| ------------------------- | ----------------------------------------------------------------------------------------------- |
+| `latest_ledger_sequence`  | DB → `ledgers.sequence` (newest by `closed_at`)                                                 |
+| `latest_ledger_closed_at` | DB → `ledgers.closed_at` (newest) — drives §7 polling indicator                                 |
+| `generated_at`            | DB → `NOW()` at SELECT time; preserved across cache hits so client can split lag from staleness |
+| `tps_60s`                 | DB → `SUM(transaction_count)/window_seconds` over trailing 60 s, cast `::float8`                |
+| `total_accounts`          | DB → `pg_class.reltuples` for `accounts` (planner estimate, not exact)                          |
+| `total_contracts`         | DB → `pg_class.reltuples` for `soroban_contracts`                                               |
 
 ### 02. `GET /transactions`
 
