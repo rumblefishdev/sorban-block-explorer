@@ -194,9 +194,11 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "stellar-xdr",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "zstd",
 ]
 
 [[package]]

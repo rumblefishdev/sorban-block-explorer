@@ -2,11 +2,15 @@
 name = "audit-harness"
 version = "0.1.0"
 edition = "2024"
-description = "Continuous data-correctness audit for the Soroban block explorer DB. Phase 1 (SQL invariants) lives in ./sql/ + run-invariants.sh; Phase 2a (DB↔Horizon diff) ships as the `horizon-diff` binary in this crate."
+description = "Continuous data-correctness audit for the Soroban block explorer DB. Phase 1 (SQL invariants) lives in ./sql/ + run-invariants.sh; Phase 2a (DB↔Horizon diff) ships as the `horizon-diff` binary; Phase 2c (DB↔archive XDR re-parse) ships as `archive-diff`."
 
 [[bin]]
 name = "horizon-diff"
 path = "src/bin/horizon-diff.rs"
+
+[[bin]]
+name = "archive-diff"
+path = "src/bin/archive-diff.rs"
 
 [dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
@@ -21,3 +25,6 @@ clap = { version = "4", features = ["derive", "env"] }
 # for a hand-written hyper layer.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 hex = { workspace = true }
+# Phase 2c needs to re-parse XDR independently of `crates/xdr-parser`.
+stellar-xdr = { workspace = true }
+zstd = { workspace = true }
