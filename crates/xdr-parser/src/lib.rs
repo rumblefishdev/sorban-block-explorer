@@ -43,7 +43,7 @@ pub use sac::{
 pub use scval::scval_to_typed_json;
 pub use state::{
     detect_assets, detect_nfts, extract_account_states, extract_contract_deployments,
-    extract_liquidity_pools,
+    extract_liquidity_pools, extract_lp_positions,
 };
 pub use transaction::extract_transactions;
 pub use types::{
