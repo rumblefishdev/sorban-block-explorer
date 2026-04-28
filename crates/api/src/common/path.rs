@@ -2,9 +2,9 @@
 //!
 //! The `:id` placeholder takes different shapes per resource:
 //!
-//!   | Resource          | Shape                 | Helper                    |
-//!   | ----------------- | --------------------- | ------------------------- |
-//!   | `transactions`    | 64-char lowercase hex | [`hash`]                  |
+//!   | Resource          | Shape        | Helper                    |
+//!   | ----------------- | ------------ | ------------------------- |
+//!   | `transactions`    | 64-char hex  | [`hash`]                  |
 //!   | `contracts`       | StrKey, prefix `C`    | [`strkey`] with `'C'`     |
 //!   | `accounts`        | StrKey, prefix `G`    | [`strkey`] with `'G'`     |
 //!   | `ledgers`         | numeric `u32`         | [`sequence`]              |
