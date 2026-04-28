@@ -2,9 +2,9 @@
 id: '0049'
 title: 'Backend: Assets module (list + detail + transactions)'
 type: FEATURE
-status: active
-related_adr: ['0005', '0036', '0037']
-related_tasks: ['0023', '0043', '0050', '0092']
+status: completed
+related_adr: ['0005', '0036', '0037', '0038']
+related_tasks: ['0023', '0043', '0050', '0092', '0167', '0172']
 tags: [layer-backend, assets]
 milestone: 2
 links: []
@@ -67,6 +67,22 @@ history:
       one OR'd query covering both classic and contract identity branches
       instead of canonical's split A/B statements — both produce the
       same result. 78/78 tests green; clippy clean (-D warnings).
+  - date: 2026-04-28
+    status: completed
+    who: FilipDz
+    note: >
+      PR #134 merged to develop (commit 6aab21a). Two Copilot review
+      passes addressed in commits 091ad34 + c9e47d2. After the second
+      review (5 comments) all addressed: rename
+      `AssetIdentity::issuer_address` → `issuer` (consistency with
+      `AssetRow` + `fetch_by_code_issuer` parameter); add early-return
+      empty-identity guard in `fetch_transactions`; refactor
+      `/transactions` to canonical `matched_ops` CTE pattern with
+      pre-LIMIT to `limit*4` before the join (better plan on
+      high-traffic assets); reject `%` / `_` literals in `filter[code]`
+      with `INVALID_FILTER` envelope; tighten AC text to match shipped
+      substring-trigram behaviour. Final: api crate 79/79 tests pass
+      live; workspace clippy clean.
 ---
 
 # Backend: Assets module (list + detail + transactions)
