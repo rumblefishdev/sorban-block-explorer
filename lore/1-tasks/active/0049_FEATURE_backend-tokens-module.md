@@ -275,7 +275,8 @@ Implement `GET /assets/:id/transactions` with cursor pagination. Join through op
       drives the SQL lookup)
 - [x] `filter[type]` works for native, classic_credit, sac, soroban
       (`domain::TokenAssetType` via `common::filters::parse_enum_opt`)
-- [x] `filter[code]` filters by `asset_code` (exact match)
+- [x] `filter[code]` filters by `asset_code` (case-insensitive substring
+      match via trigram; `%` / `_` literals are rejected with `invalid_filter`)
 - [x] All asset classes served through unified API
 - [x] Identity distinctions preserved per asset_type. Native XLM short-circuits
       to empty page on the `/transactions` sub-resource (no

@@ -157,23 +157,24 @@ pub async fn fetch_by_contract_id(
 pub async fn fetch_by_code_issuer(
     pool: &PgPool,
     asset_code: &str,
-    issuer_address: &str,
+    issuer: &str,
 ) -> Result<Option<AssetRow>, sqlx::Error> {
     let sql = format!("{ASSET_SELECT} WHERE a.asset_code = $1 AND iss.account_id = $2 LIMIT 1");
     let raw: Option<PgRow> = sqlx::query(&sql)
         .bind(asset_code)
-        .bind(issuer_address)
+        .bind(issuer)
         .fetch_optional(pool)
         .await?;
     Ok(raw.as_ref().map(map_asset_row))
 }
 
 /// Identity slice used by [`fetch_transactions`] to compose its predicate.
-/// Native XLM (no identity at all) is filtered upstream by
-/// [`asset_predicate_present`] so this struct never carries an empty triple.
+/// `fetch_transactions` enforces non-empty identity — see its own guard —
+/// but the upstream [`asset_predicate_present`] check is the canonical
+/// short-circuit for native-XLM and friends.
 pub struct AssetIdentity<'a> {
     pub asset_code: Option<&'a str>,
-    pub issuer_address: Option<&'a str>,
+    pub issuer: Option<&'a str>,
     pub contract_id: Option<&'a str>,
 }
 
@@ -182,42 +183,47 @@ pub struct AssetIdentity<'a> {
 ///   sac (classic-wrap)     → classic identity OR `contract_id`
 ///   sac (native-wrap)      → `contract_id` only
 ///   soroban                → `contract_id` only
-///   native                 → never reaches this fn (caller short-circuits)
+///   native                 → defended below: empty identity → empty result
+///
+/// SQL shape mirrors canonical `10_get_assets_transactions.sql`:
+/// drive from `operations_appearances` first (matched_ops CTE) so the
+/// partial indexes (`idx_ops_app_asset`, `idx_ops_app_contract`) carry
+/// the cursor-bounded scan; pre-LIMIT to `limit*4` caps duplicate-tx
+/// blowup before joining to `transactions`. The final SELECT then
+/// sees a small de-duplicated set instead of asking `DISTINCT` to dedupe
+/// after the join.
 pub async fn fetch_transactions(
     pool: &PgPool,
     identity: &AssetIdentity<'_>,
     limit: i64,
     cursor: Option<&TsIdCursor>,
 ) -> Result<Vec<AssetTxRow>, sqlx::Error> {
-    let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
-        "SELECT DISTINCT t.id, encode(t.hash, 'hex') AS hash, t.ledger_sequence, \
-         a.account_id AS source_account, t.successful, t.fee_charged, \
-         t.created_at, t.operation_count, t.has_soroban, \
-         COALESCE(ops.operation_types, ARRAY[]::text[]) AS operation_types \
-         FROM transactions t \
-         JOIN accounts a ON a.id = t.source_id \
-         JOIN operations_appearances oa \
-              ON oa.transaction_id = t.id AND oa.created_at = t.created_at \
-         LEFT JOIN LATERAL ( \
-             SELECT array_agg(DISTINCT op_type_name(oa2.type) ORDER BY op_type_name(oa2.type)) \
-                    AS operation_types \
-             FROM operations_appearances oa2 \
-             WHERE oa2.transaction_id = t.id \
-               AND oa2.created_at     = t.created_at \
-         ) ops ON TRUE",
-    );
-
-    let has_classic = identity.asset_code.is_some() && identity.issuer_address.is_some();
+    let has_classic = identity.asset_code.is_some() && identity.issuer.is_some();
     let has_contract = identity.contract_id.is_some();
 
-    qb.push(" WHERE (");
-    let mut wrote_branch = false;
+    // Defensive: never emit `WHERE ()`. The upstream handler routes through
+    // `asset_predicate_present`, but `pub fn` callers in the future could
+    // miss it — short-circuit here so a misuse degrades to empty rather
+    // than to an invalid SQL string.
+    if !has_classic && !has_contract {
+        return Ok(Vec::new());
+    }
 
+    let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+        "WITH matched_ops AS ( \
+             SELECT DISTINCT ON (oa.created_at, oa.transaction_id) \
+                    oa.transaction_id, \
+                    oa.created_at \
+             FROM operations_appearances oa \
+             WHERE (",
+    );
+
+    let mut wrote_branch = false;
     if has_classic {
         qb.push("(oa.asset_code = ");
         qb.push_bind(identity.asset_code.expect("guarded above"));
         qb.push(" AND oa.asset_issuer_id = (SELECT id FROM accounts WHERE account_id = ");
-        qb.push_bind(identity.issuer_address.expect("guarded above"));
+        qb.push_bind(identity.issuer.expect("guarded above"));
         qb.push("))");
         wrote_branch = true;
     }
@@ -232,14 +238,38 @@ pub async fn fetch_transactions(
     qb.push(")");
 
     if let Some(c) = cursor {
-        qb.push(" AND (t.created_at, t.id) < (");
+        qb.push(" AND (oa.created_at, oa.transaction_id) < (");
         qb.push_bind(c.ts);
         qb.push(", ");
         qb.push_bind(c.id);
         qb.push(")");
     }
 
-    qb.push(" ORDER BY t.created_at DESC, t.id DESC LIMIT ");
+    qb.push(
+        " ORDER BY oa.created_at DESC, oa.transaction_id DESC, oa.id \
+          LIMIT ",
+    );
+    qb.push_bind(limit * 4);
+    qb.push(
+        ") \
+         SELECT t.id, encode(t.hash, 'hex') AS hash, t.ledger_sequence, \
+                a.account_id AS source_account, t.successful, t.fee_charged, \
+                t.created_at, t.operation_count, t.has_soroban, \
+                COALESCE(ops.operation_types, ARRAY[]::text[]) AS operation_types \
+         FROM matched_ops m \
+         JOIN transactions t \
+              ON t.id = m.transaction_id AND t.created_at = m.created_at \
+         JOIN accounts a ON a.id = t.source_id \
+         LEFT JOIN LATERAL ( \
+             SELECT array_agg(DISTINCT op_type_name(oa2.type) \
+                              ORDER BY op_type_name(oa2.type)) AS operation_types \
+             FROM operations_appearances oa2 \
+             WHERE oa2.transaction_id = t.id \
+               AND oa2.created_at     = t.created_at \
+         ) ops ON TRUE \
+         ORDER BY t.created_at DESC, t.id DESC \
+         LIMIT ",
+    );
     qb.push_bind(limit + 1);
 
     let raw: Vec<PgRow> = qb.build().fetch_all(pool).await?;
@@ -264,7 +294,7 @@ pub async fn fetch_transactions(
 /// short-circuits with an empty page so [`fetch_transactions`] never emits
 /// a degenerate `WHERE ()` SQL.
 pub fn asset_predicate_present(identity: &AssetIdentity<'_>) -> bool {
-    let has_classic = identity.asset_code.is_some() && identity.issuer_address.is_some();
+    let has_classic = identity.asset_code.is_some() && identity.issuer.is_some();
     let has_contract = identity.contract_id.is_some();
     has_classic || has_contract
 }

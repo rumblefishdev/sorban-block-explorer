@@ -102,6 +102,20 @@ pub async fn list_assets(
         Err(resp) => return resp,
     };
 
+    // The query builder wraps `filter[code]` in `'%' || $1 || '%'` for the
+    // trigram match — bare `%` / `_` from the caller would silently change
+    // match semantics. Reject explicitly so a confused caller gets a 400
+    // instead of an unexplained over-broad result set.
+    if let Some(code) = params.filter_code.as_deref()
+        && code.bytes().any(|b| b == b'%' || b == b'_')
+    {
+        return errors::bad_request_with_details(
+            errors::INVALID_FILTER,
+            "filter[code] must not contain `%` or `_` (SQL wildcard literals)",
+            serde_json::json!({ "filter": "code", "received": code }),
+        );
+    }
+
     let resolved = ResolvedListParams {
         limit: i64::from(pagination.limit),
         cursor: pagination.cursor,
@@ -243,7 +257,7 @@ pub async fn list_asset_transactions(
 
     let identity = AssetIdentity {
         asset_code: row.asset_code.as_deref(),
-        issuer_address: row.issuer.as_deref(),
+        issuer: row.issuer.as_deref(),
         contract_id: row.contract_id.as_deref(),
     };
 

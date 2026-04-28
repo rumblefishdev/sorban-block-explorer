@@ -236,6 +236,27 @@ async fn assets_invalid_filter_type_returns_envelope_before_db() {
     assert_eq!(json["details"]["filter"], "type");
 }
 
+/// `filter[code]` must reject SQL wildcard literals (`%`, `_`) so a
+/// confused caller can't silently change match semantics through the
+/// trigram-substring path.
+#[tokio::test]
+async fn assets_filter_code_rejects_wildcard_literals() {
+    for q in [
+        "/v1/assets?filter%5Bcode%5D=USD%25", // %25 = `%`
+        "/v1/assets?filter%5Bcode%5D=USD_",
+    ] {
+        let app = lazy_app();
+        let resp = app
+            .oneshot(Request::builder().uri(q).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let (status, json) = body_json(resp).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "uri={q} json={json}");
+        assert_eq!(json["code"], "invalid_filter");
+        assert_eq!(json["details"]["filter"], "code");
+    }
+}
+
 #[tokio::test]
 async fn assets_invalid_id_returns_400_envelope() {
     // Not numeric, not a 56-char StrKey, not a code-issuer composite — must
