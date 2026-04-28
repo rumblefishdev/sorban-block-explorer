@@ -25,10 +25,12 @@ const CACHE_CONTROL_VALUE: HeaderValue = HeaderValue::from_static("public, max-a
 
 /// Get top-level chain overview stats.
 ///
-/// Reads four small queries (`ledgers` aggregate, `transactions` 60s
-/// rolling count, `accounts` count, `soroban_contracts` count) and
-/// caches the assembled response for 30s in process memory. See the
-/// task 0045 spec for the full data-source mapping.
+/// Reads the canonical single-statement network-stats query (latest
+/// ledger row + `ledgers` 60s aggregate for TPS + `pg_class.reltuples`
+/// estimates for accounts / contracts) and caches the assembled
+/// response for 30s in process memory. See the task 0045 spec and
+/// `docs/architecture/database-schema/endpoint-queries/01_get_network_stats.sql`
+/// for the full data-source mapping.
 #[utoipa::path(
     get,
     path = "/network/stats",

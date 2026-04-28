@@ -1,80 +1,93 @@
 //! Database queries backing `GET /v1/network/stats`.
 //!
-//! All four queries are individually cheap and run sequentially on a
-//! single connection acquired up-front via `pool.acquire()` — total
-//! miss latency dominated by the largest `count(*)` (accounts table).
-//! Pinning to one connection avoids four pool acquire/release round
-//! trips per cache miss. Repeat-call traffic is absorbed by the 30s
-//! in-memory cache (see `cache.rs`); the DB sees one round of these
-//! queries every ~30s per warm Lambda instance.
+//! Implementation of the canonical SQL in
+//! `docs/architecture/database-schema/endpoint-queries/01_get_network_stats.sql`
+//! (deliverable of task 0167) — one statement, one round-trip.
+//!
+//! Cost profile per cache miss:
+//!   * latest ledger:    index lookup on `idx_ledgers_closed_at DESC`, 1 row.
+//!   * tps_60s:          index range on the same index, ~12 rows (5s × 60s).
+//!   * total_accounts:   `pg_class.reltuples` catalog read, microseconds.
+//!   * total_contracts:  `pg_class.reltuples` catalog read, microseconds.
+//!
+//! No `count(*)` over user tables — at chain scale (10s of millions of
+//! accounts) an exact count is a full heap scan that would dominate this
+//! hot dashboard path. Reltuples is refreshed by autovacuum / ANALYZE
+//! and is well within the accuracy a "total accounts" UI cell needs.
+//!
+//! Repeat-call traffic is absorbed by the 30s in-process cache (see
+//! `cache.rs`); the DB sees one statement every ~30s per warm Lambda.
 
 use sqlx::{PgPool, Row};
 
 use super::dto::NetworkStats;
 
-/// Run the four network-stats queries against `pool` and assemble the
-/// response DTO.
+/// Run the canonical network-stats statement against `pool` and assemble
+/// the response DTO.
 ///
 /// Returns `sqlx::Error` on any DB failure; the handler turns this into
-/// the canonical `db_error` envelope. Queries are written in raw SQL
-/// (not the `query!` macro) so they do not require `DATABASE_URL` at
-/// build time — consistent with how `crates/api/src/transactions/queries.rs`
-/// handles the same trade-off.
+/// the canonical `db_error` envelope. Written in raw SQL (not the
+/// `query!` macro) so it does not require `DATABASE_URL` at build time
+/// — consistent with `crates/api/src/transactions/queries.rs`.
+///
+/// Empty-`ledgers` case (cold-bootstrap cluster, no rows ingested yet):
+/// the canonical SELECT yields zero rows because the inner
+/// `ORDER BY closed_at DESC LIMIT 1` is empty. We map that to a
+/// zero-valued response with `ingestion_lag_seconds = None`, preserving
+/// the wire shape from before the canonical-SQL alignment.
+///
+/// DTO field naming intentionally retained (`tps`, `highest_indexed_ledger`,
+/// `ingestion_lag_seconds`) pending the PM call flagged in the PR review:
+/// the canonical SQL exposes `tps_60s`, `latest_ledger_sequence`, and a
+/// raw `latest_ledger_closed_at` timestamp instead of a derived lag. Lag
+/// is computed inline via `EXTRACT(EPOCH FROM now() - latest.closed_at)`
+/// so the wire contract is unchanged for now.
 pub async fn fetch_stats(pool: &PgPool) -> Result<NetworkStats, sqlx::Error> {
-    // Acquire one connection and run all four queries on it, so the
-    // cache-miss path makes a single trip through the pool rather than
-    // four. Connection is released when `conn` drops at end of fn.
-    let mut conn = pool.acquire().await?;
-
-    // One row from `ledgers` carries both the highest indexed sequence
-    // and the lag derived from the latest `closed_at`. Combining them
-    // into a single SELECT saves one round-trip on the cache-miss path.
-    //
-    // `coalesce(..., 0)` returns 0 when the table is empty (Stellar
-    // genesis is ledger 1, so 0 is a safe sentinel for "no data").
-    // The `CASE` keeps `ingestion_lag_seconds` nullable distinctly from
-    // the sequence, since lag is only computable once we have data.
-    let ledger_row = sqlx::query(
+    let row_opt = sqlx::query(
         "SELECT \
-            COALESCE(max(sequence), 0)::BIGINT AS highest_indexed_ledger, \
-            CASE WHEN max(closed_at) IS NULL THEN NULL \
-                 ELSE EXTRACT(EPOCH FROM now() - max(closed_at))::BIGINT \
-            END AS ingestion_lag_seconds \
-         FROM ledgers",
+            latest.sequence AS highest_indexed_ledger, \
+            EXTRACT(EPOCH FROM now() - latest.closed_at)::BIGINT AS ingestion_lag_seconds, \
+            ( \
+                SELECT COALESCE( \
+                    SUM(transaction_count)::float8 \
+                        / NULLIF(EXTRACT(EPOCH FROM (MAX(closed_at) - MIN(closed_at))), 0), \
+                    0 \
+                )::float8 \
+                FROM ledgers \
+                WHERE closed_at >= now() - INTERVAL '60 seconds' \
+            ) AS tps, \
+            (SELECT GREATEST(reltuples::bigint, 0) FROM pg_class \
+                WHERE oid = 'public.accounts'::regclass) AS total_accounts, \
+            (SELECT GREATEST(reltuples::bigint, 0) FROM pg_class \
+                WHERE oid = 'public.soroban_contracts'::regclass) AS total_contracts \
+         FROM ( \
+             SELECT sequence, closed_at \
+             FROM ledgers \
+             ORDER BY closed_at DESC \
+             LIMIT 1 \
+         ) latest",
     )
-    .fetch_one(&mut *conn)
+    .fetch_optional(pool)
     .await?;
 
-    let highest_indexed_ledger: i64 = ledger_row.get("highest_indexed_ledger");
-    let ingestion_lag_seconds: Option<i64> = ledger_row.get("ingestion_lag_seconds");
-
-    // TPS — 60s rolling window per ADR 0021 §E1. Source is the
-    // `transactions` partitioned fact table; the recent `created_at`
-    // predicate is expected to stay within the newest partition(s) via
-    // partition pruning.
-    // `::float8` cast yields f64 server-side so we don't materialise a
-    // PostgreSQL `NUMERIC` (which would need rust_decimal to decode).
-    let tps: f64 = sqlx::query_scalar(
-        "SELECT count(*)::float8 / 60.0 \
-         FROM transactions \
-         WHERE created_at > now() - interval '1 minute'",
-    )
-    .fetch_one(&mut *conn)
-    .await?;
-
-    let total_accounts: i64 = sqlx::query_scalar("SELECT count(*) FROM accounts")
-        .fetch_one(&mut *conn)
-        .await?;
-
-    let total_contracts: i64 = sqlx::query_scalar("SELECT count(*) FROM soroban_contracts")
-        .fetch_one(&mut *conn)
-        .await?;
+    let Some(row) = row_opt else {
+        // Empty `ledgers` table — cold-bootstrap cluster. Sequence 0 is a
+        // safe sentinel (Stellar genesis is ledger 1) and lag is undefined
+        // when no ledger has been ingested.
+        return Ok(NetworkStats {
+            tps: 0.0,
+            total_accounts: 0,
+            total_contracts: 0,
+            highest_indexed_ledger: 0,
+            ingestion_lag_seconds: None,
+        });
+    };
 
     Ok(NetworkStats {
-        tps,
-        total_accounts,
-        total_contracts,
-        highest_indexed_ledger,
-        ingestion_lag_seconds,
+        tps: row.get("tps"),
+        total_accounts: row.get("total_accounts"),
+        total_contracts: row.get("total_contracts"),
+        highest_indexed_ledger: row.get("highest_indexed_ledger"),
+        ingestion_lag_seconds: row.get("ingestion_lag_seconds"),
     })
 }
