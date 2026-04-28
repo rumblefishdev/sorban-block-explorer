@@ -53,6 +53,7 @@ fn build_app(db: PgPool) -> Router {
         db,
         fetcher,
         contract_cache,
+        network_id: xdr_parser::network_id(xdr_parser::MAINNET_PASSPHRASE),
     };
 
     let (router, _spec) = OpenApiRouter::new()

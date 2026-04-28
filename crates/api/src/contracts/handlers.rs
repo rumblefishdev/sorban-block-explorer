@@ -108,12 +108,14 @@ struct ParsedLedger<'a> {
     /// Built once so each appearance row is O(1) instead of an O(N) scan
     /// across the ledger's transactions.
     tx_index: HashMap<String, usize>,
-    /// Only populated when invocation expansion is needed.
-    envelopes: Option<Vec<TransactionEnvelope>>,
+    /// Only populated when invocation expansion is needed. Aligned 1:1 with
+    /// `extracted_txs` / `tx_metas` (apply order). `None` slot = envelope
+    /// missing from `tx_set` (corrupt LedgerCloseMeta).
+    envelopes: Option<Vec<Option<TransactionEnvelope>>>,
 }
 
 impl<'a> ParsedLedger<'a> {
-    fn new(meta: &'a LedgerCloseMeta, want_envelopes: bool) -> Option<Self> {
+    fn new(meta: &'a LedgerCloseMeta, want_envelopes: bool, network_id: &[u8; 32]) -> Option<Self> {
         let ledger = match xdr_parser::extract_ledger(meta) {
             Ok(l) => l,
             Err(e) => {
@@ -124,14 +126,15 @@ impl<'a> ParsedLedger<'a> {
             }
         };
         let extracted_txs =
-            xdr_parser::extract_transactions(meta, ledger.sequence, ledger.closed_at);
+            xdr_parser::extract_transactions(meta, ledger.sequence, ledger.closed_at, network_id);
         let tx_metas = collect_tx_metas(meta);
         let tx_index: HashMap<String, usize> = extracted_txs
             .iter()
             .enumerate()
             .map(|(i, t)| (t.hash.clone(), i))
             .collect();
-        let envelopes = want_envelopes.then(|| xdr_parser::envelope::extract_envelopes(meta));
+        let envelopes =
+            want_envelopes.then(|| xdr_parser::envelope::extract_envelopes(meta, network_id));
         Some(Self {
             ledger_sequence: ledger.sequence,
             closed_at: ledger.closed_at,
@@ -153,11 +156,12 @@ impl<'a> ParsedLedger<'a> {
 fn build_parsed_ledgers<'a>(
     ledger_map: &'a HashMap<u32, LedgerCloseMeta>,
     want_envelopes: bool,
+    network_id: &[u8; 32],
 ) -> HashMap<u32, ParsedLedger<'a>> {
     ledger_map
         .iter()
         .filter_map(|(seq, meta)| {
-            let parsed = ParsedLedger::new(meta, want_envelopes)?;
+            let parsed = ParsedLedger::new(meta, want_envelopes, network_id)?;
             Some((*seq, parsed))
         })
         .collect()
@@ -437,7 +441,11 @@ pub async fn list_invocations(
 
     let sequences: Vec<i64> = rows.iter().map(|r| r.ledger_sequence).collect();
     let ledger_map = fetch_unique_ledgers(&state, &sequences).await;
-    let parsed = build_parsed_ledgers(&ledger_map, /* want_envelopes */ true);
+    let parsed = build_parsed_ledgers(
+        &ledger_map,
+        /* want_envelopes */ true,
+        &state.network_id,
+    );
 
     let expanded = expand_invocations(&rows, &parsed, &contract_id);
     let next_cursor = expansion_cursor(&rows, &expanded, params.cursor.as_deref());
@@ -505,7 +513,7 @@ fn expand_invocations(
         let Some(envelopes) = ledger.envelopes.as_ref() else {
             break;
         };
-        let Some(envelope) = envelopes.get(idx) else {
+        let Some(envelope) = envelopes.get(idx).and_then(Option::as_ref) else {
             break;
         };
         let Some(ext_tx) = ledger.extracted_txs.get(idx) else {
@@ -655,7 +663,11 @@ pub async fn list_events(
 
     let sequences: Vec<i64> = rows.iter().map(|r| r.ledger_sequence).collect();
     let ledger_map = fetch_unique_ledgers(&state, &sequences).await;
-    let parsed = build_parsed_ledgers(&ledger_map, /* want_envelopes */ false);
+    let parsed = build_parsed_ledgers(
+        &ledger_map,
+        /* want_envelopes */ false,
+        &state.network_id,
+    );
 
     let expanded = expand_events(&rows, &parsed, &contract_id);
     let next_cursor = expansion_cursor(&rows, &expanded, params.cursor.as_deref());

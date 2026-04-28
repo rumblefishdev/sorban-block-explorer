@@ -26,14 +26,18 @@ use super::dto::{E3HeavyFields, E14HeavyEventFields, SignatureDto, XdrEventDto, 
 /// Both failure modes are currently conflated into a single `None`; the
 /// calling handler should treat it as "no heavy fields available" and
 /// fall back to DB-only response with `heavy_fields_status: unavailable`.
-#[instrument(skip(meta), fields(tx_hash = %tx_hash))]
-pub fn extract_e3_heavy(meta: &LedgerCloseMeta, tx_hash: &str) -> Option<E3HeavyFields> {
+#[instrument(skip(meta, network_id), fields(tx_hash = %tx_hash))]
+pub fn extract_e3_heavy(
+    meta: &LedgerCloseMeta,
+    tx_hash: &str,
+    network_id: &[u8; 32],
+) -> Option<E3HeavyFields> {
     let ledger = xdr_parser::extract_ledger(meta).ok()?;
     let ledger_seq = ledger.sequence;
     let closed_at = ledger.closed_at;
 
-    let extracted_txs = xdr_parser::extract_transactions(meta, ledger_seq, closed_at);
-    let envelopes = xdr_parser::envelope::extract_envelopes(meta);
+    let extracted_txs = xdr_parser::extract_transactions(meta, ledger_seq, closed_at, network_id);
+    let envelopes = xdr_parser::envelope::extract_envelopes(meta, network_id);
     let tx_metas = collect_tx_metas(meta);
 
     let (idx, ext_tx) = extracted_txs
@@ -41,7 +45,7 @@ pub fn extract_e3_heavy(meta: &LedgerCloseMeta, tx_hash: &str) -> Option<E3Heavy
         .enumerate()
         .find(|(_, t)| t.hash == tx_hash)?;
 
-    let envelope = envelopes.get(idx);
+    let envelope = envelopes.get(idx).and_then(Option::as_ref);
     let tx_meta = tx_metas.get(idx).copied();
 
     // Envelope-level details: signatures + fee-bump source.
@@ -117,13 +121,15 @@ pub fn extract_e3_heavy(meta: &LedgerCloseMeta, tx_hash: &str) -> Option<E3Heavy
 /// fields on `E3HeavyFields`. Returns `None` when the ledger header cannot be
 /// extracted or the ledger does not contain a transaction matching `tx_hash`
 /// — same semantics as `extract_e3_heavy` so callers can degrade identically.
-#[instrument(skip(meta), fields(tx_hash = %tx_hash))]
+#[instrument(skip(meta, network_id), fields(tx_hash = %tx_hash))]
 pub fn extract_e3_memo(
     meta: &LedgerCloseMeta,
     tx_hash: &str,
+    network_id: &[u8; 32],
 ) -> Option<(Option<String>, Option<String>)> {
     let ledger = xdr_parser::extract_ledger(meta).ok()?;
-    let extracted_txs = xdr_parser::extract_transactions(meta, ledger.sequence, ledger.closed_at);
+    let extracted_txs =
+        xdr_parser::extract_transactions(meta, ledger.sequence, ledger.closed_at, network_id);
     let ext_tx = extracted_txs.iter().find(|t| t.hash == tx_hash)?;
     Some((ext_tx.memo_type.clone(), ext_tx.memo.clone()))
 }
@@ -134,8 +140,12 @@ pub fn extract_e3_memo(
 ///
 /// `contract_id` is the StrKey C… address (56 chars).
 #[allow(dead_code)] // used by future E14 events endpoint
-#[instrument(skip(meta), fields(contract_id = %contract_id, events = tracing::field::Empty))]
-pub fn extract_e14_heavy(meta: &LedgerCloseMeta, contract_id: &str) -> Vec<E14HeavyEventFields> {
+#[instrument(skip(meta, network_id), fields(contract_id = %contract_id, events = tracing::field::Empty))]
+pub fn extract_e14_heavy(
+    meta: &LedgerCloseMeta,
+    contract_id: &str,
+    network_id: &[u8; 32],
+) -> Vec<E14HeavyEventFields> {
     let ledger = match xdr_parser::extract_ledger(meta) {
         Ok(l) => l,
         Err(_) => return Vec::new(),
@@ -143,7 +153,7 @@ pub fn extract_e14_heavy(meta: &LedgerCloseMeta, contract_id: &str) -> Vec<E14He
     let ledger_seq = ledger.sequence;
     let closed_at = ledger.closed_at;
 
-    let extracted_txs = xdr_parser::extract_transactions(meta, ledger_seq, closed_at);
+    let extracted_txs = xdr_parser::extract_transactions(meta, ledger_seq, closed_at, network_id);
     let tx_metas = collect_tx_metas(meta);
 
     let mut out = Vec::new();

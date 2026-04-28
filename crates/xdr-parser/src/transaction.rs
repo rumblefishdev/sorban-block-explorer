@@ -15,14 +15,19 @@ use crate::xdr_limits;
 
 /// Extract all transactions from a LedgerCloseMeta.
 ///
-/// Returns one `ExtractedTransaction` per transaction in the ledger.
-/// Malformed transactions produce partial records with `parse_error = true`.
+/// Returns one `ExtractedTransaction` per transaction in the ledger, in
+/// **apply order** (matching `tx_processing`). Malformed transactions
+/// produce partial records with `parse_error = true`.
+///
+/// `network_id` is required to align envelopes from `tx_set` (hash-sorted)
+/// with `tx_processing` (apply order) — see `envelope::extract_envelopes`.
 pub fn extract_transactions(
     meta: &LedgerCloseMeta,
     ledger_sequence: u32,
     closed_at: i64,
+    network_id: &[u8; 32],
 ) -> Vec<ExtractedTransaction> {
-    let envelopes = extract_envelopes(meta);
+    let envelopes = extract_envelopes(meta, network_id);
     let limits = xdr_limits::serialization_limits();
 
     let tx_infos = collect_tx_infos(meta);
@@ -31,7 +36,7 @@ pub fn extract_transactions(
     for (i, info) in tx_infos.iter().enumerate() {
         let tx = extract_single_transaction(
             info,
-            envelopes.get(i),
+            envelopes.get(i).and_then(Option::as_ref),
             ledger_sequence,
             closed_at,
             i,

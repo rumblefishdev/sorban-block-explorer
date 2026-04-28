@@ -134,7 +134,7 @@ pub async fn list_transactions(
             let (memo_type, memo) = u32::try_from(row.ledger_sequence)
                 .ok()
                 .and_then(|seq| ledger_map.get(&seq))
-                .and_then(|meta| extract_e3_memo(meta, &row.hash))
+                .and_then(|meta| extract_e3_memo(meta, &row.hash, &state.network_id))
                 .unwrap_or((None, None));
 
             TransactionListItem {
@@ -228,7 +228,7 @@ pub async fn get_transaction(State(state): State<AppState>, Path(hash): Path<Str
     // degrades to heavy = None rather than wrapping silently.
     let heavy = match u32::try_from(index.ledger_sequence) {
         Ok(seq) => match state.fetcher.fetch_ledger(seq).await {
-            Ok(meta) => extract_e3_heavy(&meta, &hash),
+            Ok(meta) => extract_e3_heavy(&meta, &hash, &state.network_id),
             Err(e) => {
                 tracing::warn!("failed to fetch ledger {seq} for tx detail: {e}");
                 None

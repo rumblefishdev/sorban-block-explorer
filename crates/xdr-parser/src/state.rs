@@ -13,7 +13,7 @@ use crate::classification::{ContractClassification, classify_contract_from_wasm_
 use crate::types::{
     ExtractedAccountState, ExtractedAsset, ExtractedContractDeployment, ExtractedContractInterface,
     ExtractedLedgerEntryChange, ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot,
-    ExtractedNft, NftEvent, SacAssetIdentity,
+    ExtractedLpPosition, ExtractedNft, NftEvent, SacAssetIdentity,
 };
 use domain::{ContractType, TokenAssetType};
 
@@ -253,7 +253,10 @@ pub fn extract_account_states(
                             .get("type")
                             .and_then(|v| v.as_str())
                             .unwrap_or("unknown");
-                        // Skip pool_share trustlines — LP positions, not asset balances
+                        // pool_share trustlines are LP positions, not asset
+                        // balances — handled by the sibling producer
+                        // `extract_lp_positions` (task 0162). Skipping here
+                        // is intentional, not a data drop.
                         if asset_type == "pool_share" {
                             continue;
                         }
@@ -319,6 +322,9 @@ pub fn extract_account_states(
                             .get("type")
                             .and_then(|v| v.as_str())
                             .unwrap_or("unknown");
+                        // pool_share removal is handled by `extract_lp_positions`
+                        // (task 0162) which emits a zero-shares row from the
+                        // change.key; skipping here keeps account-state focus.
                         if asset_type == "pool_share" {
                             continue;
                         }
@@ -485,6 +491,104 @@ pub fn extract_liquidity_pools(
     }
 
     (pools, snapshots)
+}
+
+// ---------------------------------------------------------------------------
+// Step 4b: Liquidity-pool participant positions (task 0162)
+// ---------------------------------------------------------------------------
+
+/// Extract LP participant positions from `pool_share` trustline changes.
+///
+/// `extract_account_states` skips `pool_share` trustlines on purpose —
+/// they are not classic asset balances and do not belong in the per-account
+/// trustline_balances JSON. They DO encode `(account, pool_id, share balance)`
+/// triples that the `lp_positions` table is shaped for, so this sibling fn
+/// produces them as `ExtractedLpPosition` records on the same `changes`
+/// slice. Two passes over `changes` is intentional: keeps each producer fn
+/// single-purpose and matches the existing one-fn-per-output-type idiom in
+/// this module.
+///
+/// Change-type semantics:
+///
+/// - `created` → emit with `first_deposit_ledger = Some(ledger_sequence)`;
+///   staging layer COALESCEs to keep the original on subsequent updates.
+/// - `updated` / `restored` → emit with `first_deposit_ledger = None`.
+/// - `removed` → emit with `shares = "0.0000000"` and
+///   `first_deposit_ledger = None`. Persist layer (task 0126) decides
+///   whether zero-share rows are pruned or kept as historical
+///   participant records — this fn just reports the data.
+///
+/// `state` change_type is observation-only (no balance change) and is
+/// skipped here, matching the trustline path in `extract_account_states`.
+pub fn extract_lp_positions(changes: &[ExtractedLedgerEntryChange]) -> Vec<ExtractedLpPosition> {
+    let mut positions = Vec::new();
+
+    for change in changes {
+        if change.entry_type != "trustline" {
+            continue;
+        }
+
+        let (asset_holder, account_id, shares, first_deposit) = match change.change_type.as_str() {
+            "created" | "updated" | "restored" => {
+                let Some(ref data) = change.data else {
+                    continue;
+                };
+                let Some(account_id) = data.get("account_id").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let Some(asset) = data.get("asset") else {
+                    continue;
+                };
+                let balance = data.get("balance").and_then(|v| v.as_i64()).unwrap_or(0);
+                let first_deposit = if change.change_type == "created" {
+                    Some(change.ledger_sequence)
+                } else {
+                    None
+                };
+                (
+                    asset.clone(),
+                    account_id.to_string(),
+                    format_stroops(balance),
+                    first_deposit,
+                )
+            }
+            "removed" => {
+                let Some(account_id) = change.key.get("account_id").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let Some(asset) = change.key.get("asset") else {
+                    continue;
+                };
+                (
+                    asset.clone(),
+                    account_id.to_string(),
+                    format_stroops(0),
+                    None,
+                )
+            }
+            _ => continue,
+        };
+
+        let Some(asset_obj) = asset_holder.as_object() else {
+            continue;
+        };
+        if asset_obj.get("type").and_then(|v| v.as_str()) != Some("pool_share") {
+            continue;
+        }
+        let Some(pool_id) = asset_obj.get("pool_id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+
+        positions.push(ExtractedLpPosition {
+            pool_id: pool_id.to_string(),
+            account_id,
+            shares,
+            first_deposit_ledger: first_deposit,
+            last_updated_ledger: change.ledger_sequence,
+        });
+    }
+
+    positions
 }
 
 // ---------------------------------------------------------------------------
@@ -1066,6 +1170,128 @@ mod tests {
 
         let accounts = extract_account_states(&changes);
         assert!(accounts.is_empty());
+    }
+
+    // -- Task 0162: extract_lp_positions --
+
+    #[test]
+    fn lp_position_extracted_from_created_pool_share_trustline() {
+        let changes = vec![make_change(
+            "trustline",
+            "created",
+            json!({
+                "account_id": "GABC",
+                "asset": { "type": "pool_share", "pool_id": "aabb" },
+            }),
+            Some(json!({
+                "account_id": "GABC",
+                "asset": { "type": "pool_share", "pool_id": "aabb" },
+                "balance": 420_000_000_i64,  // 42 shares in stroops
+                "limit": 99_999_999_999_i64,
+                "flags": 0,
+            })),
+        )];
+
+        let positions = extract_lp_positions(&changes);
+        assert_eq!(positions.len(), 1);
+        assert_eq!(positions[0].pool_id, "aabb");
+        assert_eq!(positions[0].account_id, "GABC");
+        assert_eq!(positions[0].shares, "42.0000000");
+        assert_eq!(positions[0].first_deposit_ledger, Some(100));
+        assert_eq!(positions[0].last_updated_ledger, 100);
+    }
+
+    #[test]
+    fn lp_position_updated_drops_first_deposit_ledger() {
+        let changes = vec![make_change(
+            "trustline",
+            "updated",
+            json!({
+                "account_id": "GABC",
+                "asset": { "type": "pool_share", "pool_id": "aabb" },
+            }),
+            Some(json!({
+                "account_id": "GABC",
+                "asset": { "type": "pool_share", "pool_id": "aabb" },
+                "balance": 50_000_000_i64,
+                "limit": 99_999_999_999_i64,
+                "flags": 0,
+            })),
+        )];
+
+        let positions = extract_lp_positions(&changes);
+        assert_eq!(positions.len(), 1);
+        assert_eq!(positions[0].shares, "5.0000000");
+        // updated → preserve original first_deposit_ledger via NULL +
+        // staging COALESCE, not overwrite from this change.
+        assert!(positions[0].first_deposit_ledger.is_none());
+    }
+
+    #[test]
+    fn lp_position_removed_emits_zero_shares_from_key() {
+        // `removed` change has no `data`; account_id + asset come from `key`.
+        let changes = vec![make_change(
+            "trustline",
+            "removed",
+            json!({
+                "account_id": "GABC",
+                "asset": { "type": "pool_share", "pool_id": "aabb" },
+            }),
+            None,
+        )];
+
+        let positions = extract_lp_positions(&changes);
+        assert_eq!(positions.len(), 1);
+        assert_eq!(positions[0].shares, "0.0000000");
+        assert!(positions[0].first_deposit_ledger.is_none());
+        assert_eq!(positions[0].last_updated_ledger, 100);
+    }
+
+    #[test]
+    fn lp_positions_ignore_credit_trustlines() {
+        // Regular credit trustline must not produce an LP position;
+        // account-state path handles it instead.
+        let changes = vec![make_change(
+            "trustline",
+            "created",
+            json!({
+                "account_id": "GABC",
+                "asset": { "type": "credit_alphanum4", "code": "USDC", "issuer": "GISSUER" },
+            }),
+            Some(json!({
+                "account_id": "GABC",
+                "asset": { "type": "credit_alphanum4", "code": "USDC", "issuer": "GISSUER" },
+                "balance": 5_000_000_i64,
+                "limit": 99_999_999_999_i64,
+                "flags": 0,
+            })),
+        )];
+
+        assert!(extract_lp_positions(&changes).is_empty());
+        // The same change does still contribute to account state.
+        assert_eq!(extract_account_states(&changes).len(), 1);
+    }
+
+    #[test]
+    fn lp_positions_ignore_state_change_type() {
+        // `state` is observation-only (no balance change) — do not emit.
+        let changes = vec![make_change(
+            "trustline",
+            "state",
+            json!({
+                "account_id": "GABC",
+                "asset": { "type": "pool_share", "pool_id": "aabb" },
+            }),
+            Some(json!({
+                "account_id": "GABC",
+                "asset": { "type": "pool_share", "pool_id": "aabb" },
+                "balance": 100_000_000_i64,
+                "limit": 99_999_999_999_i64,
+                "flags": 0,
+            })),
+        )];
+
+        assert!(extract_lp_positions(&changes).is_empty());
     }
 
     #[test]
