@@ -96,10 +96,10 @@ mod tests {
 
     fn sample(seq: i64) -> NetworkStats {
         NetworkStats {
-            tps: 1.5,
+            tps_60s: 1.5,
             total_accounts: 100,
             total_contracts: 5,
-            highest_indexed_ledger: seq,
+            latest_ledger_sequence: seq,
             ingestion_lag_seconds: Some(2),
         }
     }
@@ -111,7 +111,7 @@ mod tests {
         let s = sample(42);
         put(s.clone());
         let read = get().expect("cache populated within TTL");
-        assert_eq!(read.highest_indexed_ledger, 42);
+        assert_eq!(read.latest_ledger_sequence, 42);
         assert_eq!(read.total_accounts, 100);
     }
 }

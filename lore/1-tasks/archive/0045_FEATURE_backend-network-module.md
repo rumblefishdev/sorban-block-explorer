@@ -4,7 +4,7 @@ title: 'Backend: Network module (GET /network/stats)'
 type: FEATURE
 status: completed
 related_adr: ['0005', '0008', '0021', '0027']
-related_tasks: ['0042', '0043', '0046', '0092']
+related_tasks: ['0042', '0043', '0046', '0092', '0167', '0170', '0171']
 tags: [layer-backend, network, stats]
 milestone: 2
 links: []
@@ -32,6 +32,20 @@ history:
       `crate::common::errors` cherry-picked from feat/0043 branch (slim mod.rs);
       0045 PR depends on 0043 merge order. 24/24 api-bin tests pass,
       cargo clippy --all-targets -D warnings clean.
+  - date: '2026-04-28'
+    status: completed
+    who: karolkow
+    note: >
+      Post-merge alignment with canonical SQL (task 0167) per stkrolikiewicz
+      PR #125 review. queries.rs rewritten to single-statement form: TPS
+      now SUM(ledgers.transaction_count) over actual MIN/MAX closed_at span
+      (was count(*) on transactions partition); total_accounts/contracts
+      switched from count(*) heap scan to pg_class.reltuples; four
+      sequential fetch_one calls collapsed into one fetch_optional. Commit
+      8d28b3e on feat/0045_backend-network-module. 2/2 network tests pass,
+      clippy -D warnings clean. Original §Data Sources / §AC / §Design
+      Decisions left intact as historical record — see Post-merge Alignment
+      section below for delta.
 ---
 
 # Backend: Network module (GET /network/stats)
@@ -214,3 +228,32 @@ Map query results to the documented response shape. Ensure `ingestion_lag_second
 - One of the simplest API endpoints but one of the most frequently called.
 - The in-memory cache is critical for reducing database load from repeated dashboard refreshes.
 - TPS calculation methodology documented in `queries.rs` doc-comment.
+
+---
+
+## Post-merge Alignment (2026-04-28)
+
+Append-only postscript. Sections above frozen as the 2026-04-27 record;
+this section captures the delta after PR #125 review.
+
+**Trigger:** stkrolikiewicz flagged that `queries.rs` diverged from
+canonical SQL in `docs/architecture/database-schema/endpoint-queries/01_get_network_stats.sql`
+(task 0167 deliverable, never back-linked here).
+
+**Changed in commit 8d28b3e:**
+
+- `total_accounts` / `total_contracts`: `count(*)` → `pg_class.reltuples`.
+- TPS: `count(*) FROM transactions` → `SUM(ledgers.transaction_count) /
+EXTRACT(EPOCH FROM MAX-MIN closed_at)` with `NULLIF`/`COALESCE` guard.
+- 4 sequential `fetch_one` calls → 1 `fetch_optional` over canonical
+  single-statement form.
+
+**Wire contract changes** in the alignment work: `tps` → `tps_60s`,
+`highest_indexed_ledger` → `latest_ledger_sequence`.
+
+### Cross-references
+
+- Canonical SQL: `docs/architecture/database-schema/endpoint-queries/01_get_network_stats.sql`
+- Driving task: **0167** | Spawned follow-ups: **0170**, **0171**
+- PR #125 review: https://github.com/rumblefishdev/soroban-block-explorer/pull/125
+- Alignment commit: `8d28b3e`

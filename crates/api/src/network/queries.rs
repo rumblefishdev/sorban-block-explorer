@@ -30,22 +30,26 @@ use super::dto::NetworkStats;
 /// `query!` macro) so it does not require `DATABASE_URL` at build time
 /// — consistent with `crates/api/src/transactions/queries.rs`.
 ///
+/// Field naming follows canonical SQL except for one deliberate
+/// divergence: `ingestion_lag_seconds` is computed server-side via
+/// `EXTRACT(EPOCH FROM now() - latest.closed_at)::BIGINT` instead of
+/// surfacing a raw `latest_ledger_closed_at` timestamp. Frontend
+/// consumes lag directly; raw timestamp can be added later if a
+/// "data refreshed at" UI element materialises.
+///
+/// `::float8` is a pragmatic divergence from canonical `::numeric` —
+/// TPS is a 0–1000 display metric with FE-side rounding, f64 has
+/// 14-digit headroom, and avoiding the `rust_decimal` dep keeps the
+/// cache-miss decode path native.
+///
 /// Empty-`ledgers` case (cold-bootstrap cluster, no rows ingested yet):
 /// the canonical SELECT yields zero rows because the inner
 /// `ORDER BY closed_at DESC LIMIT 1` is empty. We map that to a
-/// zero-valued response with `ingestion_lag_seconds = None`, preserving
-/// the wire shape from before the canonical-SQL alignment.
-///
-/// DTO field naming intentionally retained (`tps`, `highest_indexed_ledger`,
-/// `ingestion_lag_seconds`) pending the PM call flagged in the PR review:
-/// the canonical SQL exposes `tps_60s`, `latest_ledger_sequence`, and a
-/// raw `latest_ledger_closed_at` timestamp instead of a derived lag. Lag
-/// is computed inline via `EXTRACT(EPOCH FROM now() - latest.closed_at)`
-/// so the wire contract is unchanged for now.
+/// zero-valued response with `ingestion_lag_seconds = None`.
 pub async fn fetch_stats(pool: &PgPool) -> Result<NetworkStats, sqlx::Error> {
     let row_opt = sqlx::query(
         "SELECT \
-            latest.sequence AS highest_indexed_ledger, \
+            latest.sequence AS latest_ledger_sequence, \
             EXTRACT(EPOCH FROM now() - latest.closed_at)::BIGINT AS ingestion_lag_seconds, \
             ( \
                 SELECT COALESCE( \
@@ -55,10 +59,10 @@ pub async fn fetch_stats(pool: &PgPool) -> Result<NetworkStats, sqlx::Error> {
                 )::float8 \
                 FROM ledgers \
                 WHERE closed_at >= now() - INTERVAL '60 seconds' \
-            ) AS tps, \
-            (SELECT GREATEST(reltuples::bigint, 0) FROM pg_class \
+            ) AS tps_60s, \
+            (SELECT reltuples::bigint FROM pg_class \
                 WHERE oid = 'public.accounts'::regclass) AS total_accounts, \
-            (SELECT GREATEST(reltuples::bigint, 0) FROM pg_class \
+            (SELECT reltuples::bigint FROM pg_class \
                 WHERE oid = 'public.soroban_contracts'::regclass) AS total_contracts \
          FROM ( \
              SELECT sequence, closed_at \
@@ -72,22 +76,22 @@ pub async fn fetch_stats(pool: &PgPool) -> Result<NetworkStats, sqlx::Error> {
 
     let Some(row) = row_opt else {
         // Empty `ledgers` table — cold-bootstrap cluster. Sequence 0 is a
-        // safe sentinel (Stellar genesis is ledger 1) and lag is undefined
+        // safe sentinel (Stellar genesis is ledger 1); lag is undefined
         // when no ledger has been ingested.
         return Ok(NetworkStats {
-            tps: 0.0,
+            tps_60s: 0.0,
             total_accounts: 0,
             total_contracts: 0,
-            highest_indexed_ledger: 0,
+            latest_ledger_sequence: 0,
             ingestion_lag_seconds: None,
         });
     };
 
     Ok(NetworkStats {
-        tps: row.get("tps"),
+        tps_60s: row.get("tps_60s"),
         total_accounts: row.get("total_accounts"),
         total_contracts: row.get("total_contracts"),
-        highest_indexed_ledger: row.get("highest_indexed_ledger"),
+        latest_ledger_sequence: row.get("latest_ledger_sequence"),
         ingestion_lag_seconds: row.get("ingestion_lag_seconds"),
     })
 }

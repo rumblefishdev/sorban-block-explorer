@@ -107,6 +107,7 @@ mod tests {
             db,
             fetcher,
             contract_cache: ContractMetadataCache::new(),
+            network_id: xdr_parser::network_id(xdr_parser::MAINNET_PASSPHRASE),
         };
 
         let (router, _spec) = OpenApiRouter::new()
@@ -168,14 +169,14 @@ mod tests {
 
         // Shape asserted regardless of row counts — empty DB is fine.
         for key in [
-            "tps",
+            "tps_60s",
             "total_accounts",
             "total_contracts",
-            "highest_indexed_ledger",
+            "latest_ledger_sequence",
         ] {
             assert!(json.get(key).is_some(), "envelope missing `{key}`: {json}");
         }
-        assert!(json["tps"].is_number(), "tps not number: {json}");
+        assert!(json["tps_60s"].is_number(), "tps_60s not number: {json}");
         assert!(
             json["total_accounts"].is_number(),
             "total_accounts not number: {json}"
@@ -185,8 +186,8 @@ mod tests {
             "total_contracts not number: {json}"
         );
         assert!(
-            json["highest_indexed_ledger"].is_number(),
-            "highest_indexed_ledger not number: {json}"
+            json["latest_ledger_sequence"].is_number(),
+            "latest_ledger_sequence not number: {json}"
         );
         // `ingestion_lag_seconds` may be `null` (empty DB) or a number.
         if let Some(v) = json.get("ingestion_lag_seconds") {

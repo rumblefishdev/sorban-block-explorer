@@ -9,31 +9,32 @@ use utoipa::ToSchema;
 
 /// Top-level chain overview returned by `GET /v1/network/stats`.
 ///
-/// `total_accounts` and `total_contracts` are planner estimates from
-/// `pg_class.reltuples` (refreshed by autovacuum / ANALYZE), not exact
-/// counts — see `queries.rs` for the rationale. `ingestion_lag_seconds`
-/// is `None` only on a cold-bootstrap cluster where no ledger has been
-/// indexed yet.
+/// Field naming follows canonical SQL in task 0167
+/// (`docs/architecture/database-schema/endpoint-queries/01_get_network_stats.sql`)
+/// modulo one deliberate divergence: `ingestion_lag_seconds` is a
+/// server-derived integer instead of canonical's raw
+/// `latest_ledger_closed_at` timestamp. `total_accounts` and
+/// `total_contracts` are planner estimates from `pg_class.reltuples`
+/// (refreshed by autovacuum / ANALYZE), not exact counts.
+/// `ingestion_lag_seconds` is `None` only on a cold-bootstrap cluster
+/// where no ledger has been indexed yet.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct NetworkStats {
-    /// Current transactions per second — 60s rolling window computed
-    /// from `SUM(ledgers.transaction_count)` divided by the actual
-    /// span between MIN/MAX `closed_at` in the window (per ADR 0021
-    /// §E1 and the canonical SQL in task 0167). Yields a stable rate
-    /// even on partial / single-ledger windows; consumers display
-    /// rounded.
-    pub tps: f64,
+    /// Transactions per second over a 60s rolling window. Computed as
+    /// `SUM(ledgers.transaction_count)` divided by the actual span
+    /// between MIN/MAX `closed_at` in the window. Stable on partial /
+    /// single-ledger windows (NULLIF guards zero-span).
+    pub tps_60s: f64,
     /// Estimated indexed account count from `pg_class.reltuples` for
-    /// `public.accounts`. Estimate (not exact) — see `queries.rs`.
+    /// `public.accounts`.
     pub total_accounts: i64,
     /// Estimated indexed Soroban contract count from `pg_class.reltuples`
-    /// for `public.soroban_contracts`. Estimate (not exact).
+    /// for `public.soroban_contracts`.
     pub total_contracts: i64,
-    /// Highest ledger sequence currently in the database. Sourced from
-    /// the newest row in `ledgers` ordered by `closed_at DESC`. `0`
-    /// sentinel indicates an empty cluster (no ledger 0 exists in
-    /// Stellar).
-    pub highest_indexed_ledger: i64,
+    /// Sequence of the newest ledger in the database (ordered by
+    /// `closed_at DESC`). `0` sentinel indicates an empty cluster (no
+    /// ledger 0 exists in Stellar).
+    pub latest_ledger_sequence: i64,
     /// Seconds the indexer is behind the latest closed ledger's
     /// `closed_at`, computed server-side as
     /// `EXTRACT(EPOCH FROM now() - latest.closed_at)`. `null` only when
