@@ -28,8 +28,8 @@ history:
 `/network/stats` returns `total_accounts` and `total_contracts` from
 `pg_class.reltuples` per the canonical SQL deliverable of task 0167
 (`docs/architecture/database-schema/endpoint-queries/01_get_network_stats.sql`).
-That file's header comment explicitly anticipates this task: *"If exact is
-ever needed, spawn a periodic counter table — do NOT add COUNT(*) here."*
+That file's header comment explicitly anticipates this task: _"If exact is
+ever needed, spawn a periodic counter table — do NOT add COUNT(_) here."\*
 
 Activate only if measured drift between the reltuples estimate and ground
 truth becomes user-visible (UI feedback, partner reporting, press
@@ -74,7 +74,7 @@ have closed the gap before resorting to a counter table.
 5. **Update canonical SQL.** Edit
    `docs/architecture/database-schema/endpoint-queries/01_get_network_stats.sql`
    to read from `network_counters` instead of `pg_class.reltuples`;
-   remove the "do NOT add COUNT(*) here" guidance comment as it no
+   remove the "do NOT add COUNT(\*) here" guidance comment as it no
    longer applies.
 
 ## Acceptance Criteria

@@ -128,7 +128,7 @@ inner_tx_hash IS NULL AND <fee-bump heuristic>;` to gauge scope.
 - [x] **Finding 2 resolved.** Doc-only path chosen (team decision: schema
       with fold-count semantics stays; frontend list shows operation_count
       only). E02 primary-op preview cut; E03 `oa.amount` cut with `-- not
-  in DB` marker pointing at archive XDR overlay (ADR 0029). README
+in DB` marker pointing at archive XDR overlay (ADR 0029). README
       §03 entry updated.
 - [x] Re-running E02 verification on the audit row no longer surfaces
       either discrepancy after local reindex: `primary_op_*` columns

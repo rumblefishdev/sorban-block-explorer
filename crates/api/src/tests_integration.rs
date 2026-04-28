@@ -23,6 +23,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 use utoipa_axum::router::OpenApiRouter;
 
+use crate::assets;
 use crate::state::AppState;
 use crate::stellar_archive::StellarArchiveFetcher;
 use crate::{liquidity_pools, transactions};
@@ -59,6 +60,7 @@ fn build_app(db: PgPool) -> Router {
     let (router, _spec) = OpenApiRouter::new()
         .nest("/v1", transactions::router())
         .nest("/v1", liquidity_pools::router())
+        .nest("/v1", assets::router())
         .with_state(state)
         .split_for_parts();
     router
@@ -210,6 +212,416 @@ async fn list_endpoint_returns_paginated_envelope_against_real_db() {
     if let Some(c) = page.get("cursor") {
         assert!(c.is_string() || c.is_null(), "page.cursor bad type: {json}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Assets endpoints (task 0049) — mirror the transactions coverage shape.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn assets_invalid_filter_type_returns_envelope_before_db() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/assets?filter%5Btype%5D=NOT_A_TYPE")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_filter");
+    assert_eq!(json["details"]["filter"], "type");
+}
+
+/// `filter[code]` must reject SQL wildcard literals (`%`, `_`) so a
+/// confused caller can't silently change match semantics through the
+/// trigram-substring path.
+#[tokio::test]
+async fn assets_filter_code_rejects_wildcard_literals() {
+    for q in [
+        "/v1/assets?filter%5Bcode%5D=USD%25", // %25 = `%`
+        "/v1/assets?filter%5Bcode%5D=USD_",
+    ] {
+        let app = lazy_app();
+        let resp = app
+            .oneshot(Request::builder().uri(q).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let (status, json) = body_json(resp).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "uri={q} json={json}");
+        assert_eq!(json["code"], "invalid_filter");
+        assert_eq!(json["details"]["filter"], "code");
+    }
+}
+
+#[tokio::test]
+async fn assets_invalid_id_returns_400_envelope() {
+    // Not numeric, not a 56-char StrKey, not a code-issuer composite — must
+    // fail parsing in the handler before the DB is touched.
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/assets/not-an-asset-id")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_id");
+    assert_eq!(json["details"]["received"], "not-an-asset-id");
+}
+
+#[tokio::test]
+async fn assets_list_returns_paginated_envelope_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping assets list integration test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping");
+            return;
+        }
+    };
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri("/v1/assets?limit=5")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200, got {status}: {json}");
+    assert!(json["data"].is_array(), "data not array: {json}");
+    assert_eq!(json["page"]["limit"], 5, "page.limit not echoed: {json}");
+    assert!(
+        json["page"]["has_more"].is_boolean(),
+        "page.has_more not bool: {json}"
+    );
+}
+
+/// `filter[type]=native` must return at most the singleton native row
+/// (seeded by migration `20260428000000_seed_native_asset_singleton`).
+#[tokio::test]
+async fn assets_filter_type_native_returns_singleton_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri("/v1/assets?filter%5Btype%5D=native")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = json["data"].as_array().unwrap();
+    // Allow zero (DB without seed) or one — never more than one native asset.
+    assert!(rows.len() <= 1, "more than one native asset: {json}");
+    if let Some(row) = rows.first() {
+        // Canonical SQL projects BOTH the decoded label (asset_type_name)
+        // and the raw SMALLINT (asset_type). Lock both contracts so a
+        // future drift on either side surfaces here.
+        assert_eq!(row["asset_type_name"], "native");
+        assert_eq!(row["asset_type"], 0);
+        assert!(
+            row["asset_code"].is_null(),
+            "native must have null asset_code"
+        );
+    }
+}
+
+/// Resolution by numeric `assets.id`. Skips cleanly if the table is
+/// completely empty.
+#[tokio::test]
+async fn assets_detail_by_numeric_id_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    // Find any existing id (the singleton at id=1 always works after the
+    // migration; guard regardless so the test stays robust).
+    let row: Option<(i32,)> = sqlx::query_as("SELECT id FROM assets ORDER BY id LIMIT 1")
+        .fetch_optional(&pool)
+        .await
+        .ok()
+        .flatten();
+    let Some((id,)) = row else {
+        eprintln!("assets table empty — skipping numeric-id resolution test");
+        return;
+    };
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/assets/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200: {json}");
+    assert_eq!(json["id"], id, "id mismatch: {json}");
+    assert!(
+        json.get("description").is_some(),
+        "detail response must carry the description slot (even if null): {json}"
+    );
+}
+
+/// 404 path for a numeric id that does not exist.
+#[tokio::test]
+async fn assets_detail_unknown_id_returns_404_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                // Use a clearly-absent numeric id; SERIAL never reaches i32::MAX
+                // in any realistic backfill.
+                .uri("/v1/assets/2147483647")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "expected 404: {json}");
+    assert_eq!(json["code"], "not_found");
+}
+
+/// `:id` resolution by contract StrKey. Skips when the DB has no SAC or
+/// Soroban-native asset row with a non-NULL `contract_id`.
+#[tokio::test]
+async fn assets_detail_by_contract_strkey_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    let row: Option<(i32, String)> = sqlx::query_as(
+        "SELECT a.id, sc.contract_id \
+         FROM assets a \
+         JOIN soroban_contracts sc ON sc.id = a.contract_id \
+         LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    let Some((expected_id, contract_strkey)) = row else {
+        eprintln!("no asset with contract_id — skipping contract-StrKey resolution test");
+        return;
+    };
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/assets/{contract_strkey}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200: {json}");
+    assert_eq!(json["id"], expected_id, "wrong asset surfaced: {json}");
+    assert_eq!(json["contract_id"], contract_strkey);
+}
+
+/// `:id` resolution by `code-issuer` composite. Skips when the DB has no
+/// classic_credit / SAC-classic-wrap row.
+#[tokio::test]
+async fn assets_detail_by_code_issuer_composite_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    let row: Option<(i32, String, String)> = sqlx::query_as(
+        "SELECT a.id, a.asset_code, iss.account_id \
+         FROM assets a \
+         JOIN accounts iss ON iss.id = a.issuer_id \
+         WHERE a.asset_code IS NOT NULL \
+         LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    let Some((expected_id, code, issuer)) = row else {
+        eprintln!("no classic-identity asset — skipping code-issuer resolution test");
+        return;
+    };
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/assets/{code}-{issuer}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200: {json}");
+    assert_eq!(json["id"], expected_id);
+    assert_eq!(json["asset_code"], code);
+    assert_eq!(json["issuer"], issuer);
+}
+
+/// Non-native `/transactions` happy path — picks any non-native asset that
+/// actually appears in `operations_appearances` and asserts the page
+/// returns at least one tx (proving the per-asset_type predicate composer
+/// resolves the right join branch on real data).
+#[tokio::test]
+async fn assets_transactions_returns_at_least_one_row_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    // Try classic identity first, fall back to contract identity.
+    let by_classic: Option<(i32,)> = sqlx::query_as(
+        "SELECT a.id FROM assets a \
+         JOIN accounts iss ON iss.id = a.issuer_id \
+         JOIN operations_appearances oa \
+              ON oa.asset_code = a.asset_code AND oa.asset_issuer_id = iss.id \
+         LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    let by_contract: Option<(i32,)> = if by_classic.is_none() {
+        sqlx::query_as(
+            "SELECT a.id FROM assets a \
+             JOIN soroban_contracts sc ON sc.id = a.contract_id \
+             JOIN operations_appearances oa ON oa.contract_id = sc.id \
+             LIMIT 1",
+        )
+        .fetch_optional(&pool)
+        .await
+        .ok()
+        .flatten()
+    } else {
+        None
+    };
+    let Some((asset_id,)) = by_classic.or(by_contract) else {
+        eprintln!(
+            "no non-native asset references found in operations_appearances — \
+             skipping happy-path /transactions assertion"
+        );
+        return;
+    };
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/assets/{asset_id}/transactions?limit=5"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200: {json}");
+    let data = json["data"].as_array().unwrap();
+    assert!(
+        !data.is_empty(),
+        "asset {asset_id} appears in operations_appearances but \
+         /transactions returned 0 rows: {json}"
+    );
+    // Lock the canonical-aligned response shape: every row must carry
+    // `has_soroban` (bool) and `operation_types` (string[]) — these are
+    // the §6.9 fields canonical 10_get_assets_transactions.sql projects.
+    let first = &data[0];
+    assert!(
+        first["has_soroban"].is_boolean(),
+        "has_soroban missing or not bool: {first}"
+    );
+    assert!(
+        first["operation_types"].is_array(),
+        "operation_types missing or not array: {first}"
+    );
+}
+
+/// Native XLM has no DB-side identity referenced by `operations_appearances`
+/// — the sub-resource short-circuits to an empty page rather than emit a
+/// degenerate `WHERE ()` SQL. Lock the contract here.
+#[tokio::test]
+async fn assets_native_transactions_returns_empty_page_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    // Native singleton is asset_type=0; resolve its id rather than hard-coding.
+    let row: Option<(i32,)> = sqlx::query_as("SELECT id FROM assets WHERE asset_type = 0 LIMIT 1")
+        .fetch_optional(&pool)
+        .await
+        .ok()
+        .flatten();
+    let Some((native_id,)) = row else {
+        eprintln!("no native asset row — skipping");
+        return;
+    };
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/assets/{native_id}/transactions"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200: {json}");
+    assert_eq!(
+        json["data"].as_array().unwrap().len(),
+        0,
+        "native asset must produce empty transactions page: {json}"
+    );
+    assert_eq!(json["page"]["has_more"], false);
 }
 
 /// Full request → response → next cursor → request chain.
