@@ -72,6 +72,11 @@ pub async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
     let mut metrics = Vec::new();
 
     for table in TIME_PARTITIONED_TABLES {
+        // Same primitive ordering as the CLI's `ensure_all_partitions`:
+        // `_default` first so any out-of-range row has somewhere to land,
+        // then the monthly children. Per-table loop is preserved here so
+        // CloudWatch metrics still publish per-table dimensions.
+        ensure_default_partition(&pool, table).await?;
         let created = ensure_time_partitions(&pool, table, today).await?;
         total_created += created;
 
@@ -179,6 +184,82 @@ pub async fn ensure_time_partitions(
     }
 
     Ok(created)
+}
+
+/// Ensures the `<table>_default` catch-all partition exists **and is
+/// attached**. Required at-least-once on every fresh DB before backfill
+/// writes anything, because Postgres routes any `created_at` outside the
+/// explicit monthly children to `_default`. Without it, every INSERT on a
+/// partitioned parent fails with "no partition of relation found".
+///
+/// Three explicit branches against the live state, queried up front via
+/// `pg_inherits` + `to_regclass`, so the function reaches the right DDL on
+/// the first try instead of relying on a SQLSTATE sentinel:
+///
+/// 1. **Already attached** — no-op.
+/// 2. **Exists detached** (rare; only after manual `DETACH PARTITION`) —
+///    `ALTER TABLE ... ATTACH PARTITION ... DEFAULT`.
+/// 3. **Missing entirely** — `CREATE TABLE ... PARTITION OF ... DEFAULT`.
+///
+/// `CREATE TABLE IF NOT EXISTS` was tried originally and rejected — it
+/// silently swallows the "exists detached" case (no error code raised) and
+/// would leave a detached `_default` permanently invisible to inserts.
+pub async fn ensure_default_partition(pool: &PgPool, table: &str) -> Result<(), Error> {
+    let name = format!("{table}_default");
+
+    let attached: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM pg_inherits
+              WHERE inhrelid  = to_regclass($1)
+                AND inhparent = to_regclass($2)
+         )",
+    )
+    .bind(&name)
+    .bind(table)
+    .fetch_one(pool)
+    .await?;
+
+    if attached {
+        return Ok(());
+    }
+
+    let exists_anywhere: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
+        .bind(&name)
+        .fetch_one(pool)
+        .await?;
+
+    let ddl = if exists_anywhere {
+        format!("ALTER TABLE {table} ATTACH PARTITION {name} DEFAULT")
+    } else {
+        format!("CREATE TABLE {name} PARTITION OF {table} DEFAULT")
+    };
+    sqlx::query(&ddl).execute(pool).await?;
+    Ok(())
+}
+
+/// Ensures every partitioned parent in `TIME_PARTITIONED_TABLES` has both
+/// its `_default` catch-all and the full monthly children covering
+/// `SOROBAN_START → today + FUTURE_MONTHS`. Used by the CLI binary; the
+/// Lambda performs the same two steps inline so it can publish per-table
+/// CloudWatch dimensions between calls (see `handler` above).
+///
+/// Returns the total number of monthly children that were either created
+/// or reattached across all seven tables — `ensure_time_partitions`
+/// increments its counter for both fresh `CREATE` and the recovery
+/// `ATTACH PARTITION` branch, so callers should treat the value as "DDL
+/// statements run", not "rows newly inserted into pg_class". `_default`
+/// is intentionally not in the count: each call resolves to exactly one
+/// of three states (already-attached / reattach / create) and the
+/// distinction matters only for diagnostics, not the operator-facing
+/// total.
+pub async fn ensure_all_partitions(pool: &PgPool, today: NaiveDate) -> Result<u32, Error> {
+    let mut total_created = 0u32;
+    for table in TIME_PARTITIONED_TABLES {
+        ensure_default_partition(pool, table).await?;
+        let created = ensure_time_partitions(pool, table, today).await?;
+        total_created += created;
+    }
+    Ok(total_created)
 }
 
 /// Counts partitions that cover months strictly after today.

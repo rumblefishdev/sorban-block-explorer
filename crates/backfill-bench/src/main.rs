@@ -321,35 +321,24 @@ fn summarize(latencies_ms: &[u128]) -> Option<LatencyStats> {
 // Local DEFAULT partition bootstrap
 // ---------------------------------------------------------------------------
 
-/// Create a DEFAULT partition on each partitioned table if one doesn't exist.
-/// Idempotent — `CREATE TABLE IF NOT EXISTS` per table.
+/// Ensure each partitioned parent has its `_default` catch-all so backfill
+/// inserts route somewhere even on a fresh docker DB. Delegates to
+/// `db_partition_mgmt::ensure_default_partition` so the bench, the Lambda,
+/// and the `db-partition-mgmt-cli` all share one code path.
+///
+/// **Default-only.** This is the bench's safety net, not a partition-pruning
+/// setup — every backfilled row will land in `_default`. Operators who want
+/// real monthly partitions (and therefore real partition pruning during
+/// queries) should run `cargo run -p db-partition-mgmt --bin cli` against
+/// the same `DATABASE_URL` *before* the bench. See task 0130 +
+/// `lore/3-wiki/backfill-execution-plan.md` for context.
 async fn ensure_local_default_partitions(
     pool: &PgPool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    const TABLES: &[&str] = &[
-        "transactions",
-        "operations_appearances",
-        "transaction_participants",
-        "soroban_events_appearances",
-        "soroban_invocations_appearances",
-        "nft_ownership",
-        "liquidity_pool_snapshots",
-    ];
-    for table in TABLES {
-        let ddl =
-            format!("CREATE TABLE IF NOT EXISTS {table}_default PARTITION OF {table} DEFAULT");
-        if let Err(err) = sqlx::query(&ddl).execute(pool).await {
-            // 42P07 = duplicate_table. If it exists under a slightly different
-            // form (e.g. attached range partitions already own the slice), skip.
-            let code = match &err {
-                sqlx::Error::Database(db) => db.code().map(|c| c.into_owned()),
-                _ => None,
-            };
-            if code.as_deref() != Some("42P07") {
-                warn!(table, error = %err, "default-partition bootstrap failed");
-            }
-        } else {
-            info!(table, "local DEFAULT partition ensured");
+    for table in db_partition_mgmt::TIME_PARTITIONED_TABLES {
+        match db_partition_mgmt::ensure_default_partition(pool, table).await {
+            Ok(()) => info!(table, "local DEFAULT partition ensured"),
+            Err(err) => warn!(table, error = %err, "default-partition bootstrap failed"),
         }
     }
     Ok(())
