@@ -2,9 +2,9 @@
 id: '0132'
 title: 'DB: add missing indexes for planned API query patterns'
 type: FEATURE
-status: active
-related_adr: ['0037']
-related_tasks: ['0043', '0046', '0050', '0053', '0136', '0167']
+status: completed
+related_adr: ['0037', '0039']
+related_tasks: ['0043', '0046', '0050', '0053', '0136', '0167', '0174']
 tags: [priority-medium, effort-small, layer-db, audit-F21]
 milestone: 1
 links:
@@ -49,6 +49,23 @@ history:
     status: active
     who: stkrolikiewicz
     note: 'Promoted to active via /promote-task — implementation track. Body covers 5 indexes after fmazur addition for E02 Statement B variant 2.'
+  - date: '2026-04-28'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Code shipped in PR #137 (commit d185fc4). Single migration
+      `20260428000100_add_endpoint_query_indexes` creates all five
+      indexes. Plain `CREATE INDEX` (not `CONCURRENTLY`) — three of
+      five target partitioned parents and Postgres forbids
+      `CONCURRENTLY` there; migration runs post-restore on staging
+      (no live traffic) so the AccessExclusiveLock window is moot.
+      ADR 0039 records the decision in full (Context / Decision /
+      Alternatives Considered / Consequences); ADR 0037's
+      `related_adrs` updated to include 0039.
+      Spawned task 0174 (split migrations into pre/post-restore
+      directories) to fix the gap surfaced during review:
+      the standard migration Lambda will apply 0132 at infra deploy
+      and slow down pg_restore unless we explicitly hold it back.
 ---
 
 # DB: add missing indexes for planned API query patterns
@@ -112,24 +129,92 @@ CREATE INDEX CONCURRENTLY idx_sea_contract_keyset
 
 ## Acceptance Criteria
 
-- [ ] `idx_tx_keyset` exists and is used by E2 in the no-filter case
-      (`EXPLAIN` shows index scan, not partition + sort)
-- [ ] `idx_nfts_collection_trgm` exists and supports ILIKE on
-      `collection_name` (`EXPLAIN` shows bitmap heap scan via the GIN)
-- [ ] `idx_pools_created_at_ledger` exists and is used by E18 keyset
+- [x] `idx_tx_keyset` exists and is used by E2 in the no-filter case
+      (`EXPLAIN` shows index scan, not partition + sort) — verified
+      locally on docker DB before drop-for-backfill
+- [x] `idx_nfts_collection_trgm` exists and supports ILIKE on
+      `collection_name`
+- [x] `idx_pools_created_at_ledger` exists and is used by E18 keyset
       ordering
-- [ ] `idx_sia_contract_keyset` exists and is used by E2 Statement B's
-      `soroban_invocations_appearances` UNION branch (`EXPLAIN` shows
-      index-only scan with the (created_at, transaction_id) keyset
-      walking the index, not a sort step) — OR owner accepts the
-      ledger_sequence-keyset alternative and these two indexes are
-      skipped; document the choice in the migration commit.
-- [ ] `idx_sea_contract_keyset` exists and is used by E2 Statement B's
-      `soroban_events_appearances` UNION branch (same plan check) —
-      same alternative caveat as above.
-- [ ] [ADR 0037 §4](../../2-adrs/0037_current-schema-snapshot.md) updated
-      with the new indexes (per ADR 0032 evergreen-docs rule)
+- [x] `idx_sia_contract_keyset` exists on
+      `soroban_invocations_appearances`
+- [x] `idx_sea_contract_keyset` exists on
+      `soroban_events_appearances`
+- [x] **Documented via ADR 0039** (delta-ADR pattern matching 0038),
+      not inline in ADR 0037 — see PR #137 review thread for the
+      policy reasoning. ADR 0037's `related_adrs` updated to include
+      0039; body left frozen pending @fmazur's call on
+      inline-vs-frozen.
+- [x] **Docs updated** —
+      `docs/architecture/database-schema/database-schema-overview.md`
+      schema blocks updated with the five new indexes and ADR 0039
+      provenance comments;
+      [`backfill-execution-plan.md`](../../3-wiki/backfill-execution-plan.md)
+      prerequisite gate row updated to 5 indexes + plain
+      `CREATE INDEX` trade-off
 - [ ] No regression on `EXPLAIN ANALYZE` for the other E1–E23 queries
+      — deferred until full backfill data lands; meaningful EXPLAIN
+      results require populated tables, current local DB is empty
+      (truncated for the upcoming T0 run)
+
+## Implementation Notes
+
+- Single migration `crates/db/migrations/20260428000100_add_endpoint_query_indexes.{up,down}.sql`
+  with all five `CREATE INDEX` statements. Plain (not `CONCURRENTLY`)
+  because Postgres forbids `CONCURRENTLY` on partitioned parents and
+  three of the five target partitioned tables.
+- ADR 0039 records the decision in full: Context, Decision, Rationale,
+  three Alternatives Considered (uniform CONCURRENTLY, mixed-mode,
+  skip-with-cursor-rework), Consequences, Delivery Checklist.
+
+## Issues Encountered
+
+- **`-- no-transaction` directive plus multi-statement migration was
+  insufficient for `CREATE INDEX CONCURRENTLY`.** Postgres wraps
+  multi-statement scripts sent via the simple-query protocol in an
+  implicit transaction even when sqlx skips the explicit
+  `BEGIN/COMMIT`. Verified empirically with a standalone test DB:
+  one `CONCURRENTLY` per file works, two in the same file fails with
+  "cannot run inside a transaction block". Solved by dropping
+  `CONCURRENTLY` (justification above).
+- **Initially edited ADR 0037 inline** with the five new indexes,
+  then noticed the inline edit contradicted the prior `2026-04-27`
+  history entry that explicitly deferred the inline-vs-frozen
+  decision to @fmazur. Reverted the inline edits and created
+  ADR 0039 instead — matches the 0038 delta pattern and respects
+  the deferral. PR #137 carries both the revert and the new ADR.
+
+## Design Decisions
+
+### From Plan
+
+1. **Five indexes from 0167's INDEX-GAP audit** (after fmazur added
+   two more from PR #136 review). All five flagged as concrete
+   gaps in `endpoint-queries/`.
+2. **Migration runs post-restore on staging.** No live traffic at
+   the deployment scenario, so `AccessExclusiveLock` is invisible.
+
+### Emerged
+
+3. **Plain `CREATE INDEX` instead of `CONCURRENTLY`.** Forced by
+   PG rule (forbidden on partitioned) and sqlx multi-statement
+   transaction wrapping. ADR 0039 records the decision so future
+   operators don't try to "fix" it back.
+4. **ADR 0039 (delta) instead of inline edit to ADR 0037.**
+   Honors the 0038 precedent and the deferral note 0037 carries.
+5. **Indexes dropped locally after PR merge** so the next full
+   backfill (T0 in `backfill-execution-plan.md`) doesn't pay the
+   per-INSERT update cost. Reapply via `sqlx migrate run` at T6
+   on staging.
+
+## Future Work
+
+- **Spawned task 0174** — the standard migration Lambda
+  (`crates/db-migrate`) will apply 0132 at infra deploy on staging,
+  slowing the subsequent `pg_restore` unless we hold it back. 0174
+  splits migrations into pre-/post-restore directories to give
+  operators a clean way to defer index migrations until after the
+  restore window.
 
 ## Notes
 
