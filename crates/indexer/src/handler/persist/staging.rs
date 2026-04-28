@@ -8,7 +8,8 @@
 //!   (ADR 0033 — one row per `(contract, tx, ledger)` trio)
 //! * Split `account_balances_current` rows into native (NULL code/issuer) and
 //!   credit (both NOT NULL) per the `ck_abc_native` CHECK
-//! * Derive `transactions.has_soroban` from presence of events/invocations
+//! * Derive `transactions.has_soroban` strictly from envelope op type
+//!   (`InvokeHostFunction | ExtendFootprintTtl | RestoreFootprint`)
 //! * Build tx_participants union (source + op destinations + invokers + …)
 
 use std::collections::{HashMap, HashSet};
@@ -275,7 +276,6 @@ impl Staged {
         nfts: &[ExtractedNft],
         nft_events: &[ExtractedNftEvent],
         lp_positions: &[ExtractedLpPosition],
-        inner_tx_hashes: &HashMap<String, Option<String>>,
     ) -> Result<Self, HandlerError> {
         let ledger_hash = decode_hash(&ledger.hash, "ledger.hash")?;
         let ledger_closed_at = ts_from_unix(ledger.closed_at)?;
@@ -284,7 +284,7 @@ impl Staged {
         // --- Accounts universe + per-tx participant set -----------------------
         let mut account_keys_set: HashSet<String> = HashSet::new();
         let mut participants_per_tx: HashMap<String, HashSet<String>> = HashMap::new();
-        let has_soroban: HashMap<String, bool> = tx_has_soroban_map(events, invocations);
+        let has_soroban: HashMap<String, bool> = tx_has_soroban_map(operations);
 
         for tx in transactions {
             account_keys_set.insert(tx.source_account.clone());
@@ -478,7 +478,7 @@ impl Staged {
         let mut tx_rows: Vec<TxRow> = Vec::with_capacity(transactions.len());
         for (app_order, tx) in transactions.iter().enumerate() {
             let hash = decode_hash(&tx.hash, "tx.hash")?;
-            let inner_tx_hash = match inner_tx_hashes.get(&tx.hash).and_then(Option::as_ref) {
+            let inner_tx_hash = match tx.inner_tx_hash.as_deref() {
                 Some(hex_str) => Some(decode_hash(hex_str, "inner_tx_hash")?),
                 None => None,
             };
@@ -765,17 +765,60 @@ impl Staged {
             });
         }
 
-        let mut lp_position_rows: Vec<LpPositionRow> = Vec::with_capacity(lp_positions.len());
+        // Dedup by `(pool_id, account_id)` — the `lp_positions` UPSERT
+        // lives inside `write::upsert_pools_and_snapshots` (`write.rs`)
+        // as a single `INSERT … FROM UNNEST … ON CONFLICT
+        // (pool_id, account_id) DO UPDATE`, and Postgres rejects
+        // multiple proposed rows hitting the same conflict target in
+        // one command:
+        //   "ON CONFLICT DO UPDATE command cannot affect row a second time"
+        // The parser legitimately emits more than one position per
+        // `(pool, account)` per ledger when several txs touch the same
+        // pool_share trustline — collapse to the latest by
+        // `last_updated_ledger`. Equal-ledger ties keep the last-seen
+        // entry (Stellar replays in operation order, so last-seen
+        // matches the post-ledger state). `first_deposit_ledger` is
+        // taken from whichever entry carried it (parser only sets it on
+        // `created`); falling back to the latest's value keeps the
+        // pre-existing `unwrap_or(last_updated_ledger)` shim in
+        // `write.rs` valid for the ON CONFLICT side, while a true
+        // earliest-Created in the same batch wins by appearing first
+        // and being preserved by the `>=` comparison below.
+        use std::collections::hash_map::Entry;
+        let mut lp_position_dedup: HashMap<([u8; 32], String), LpPositionRow> = HashMap::new();
         for pos in lp_positions {
             let pool_id = decode_hash(&pos.pool_id, "lp_position.pool_id")?;
-            lp_position_rows.push(LpPositionRow {
+            let key = (pool_id, pos.account_id.clone());
+            let new_row = LpPositionRow {
                 pool_id,
                 account_str_key: pos.account_id.clone(),
                 shares: pos.shares.clone(),
                 first_deposit_ledger: pos.first_deposit_ledger.map(i64::from),
                 last_updated_ledger: i64::from(pos.last_updated_ledger),
-            });
+            };
+            match lp_position_dedup.entry(key) {
+                Entry::Occupied(mut occ) => {
+                    let existing = occ.get_mut();
+                    if new_row.last_updated_ledger >= existing.last_updated_ledger {
+                        // Preserve the first-seen `first_deposit_ledger`
+                        // if the newcomer drops it (parser emits None on
+                        // updated/restored/removed) — matches the intent
+                        // of the LEAST() merge in write.rs.
+                        let preserved_first = new_row
+                            .first_deposit_ledger
+                            .or(existing.first_deposit_ledger);
+                        *existing = new_row;
+                        existing.first_deposit_ledger = preserved_first;
+                    } else if existing.first_deposit_ledger.is_none() {
+                        existing.first_deposit_ledger = new_row.first_deposit_ledger;
+                    }
+                }
+                Entry::Vacant(vac) => {
+                    vac.insert(new_row);
+                }
+            }
         }
+        let lp_position_rows: Vec<LpPositionRow> = lp_position_dedup.into_values().collect();
 
         // --- assets (dedup by identity — native singleton, classic_credit/sac by
         // (code,issuer), soroban by contract_id; SAC satisfies both uniques so
@@ -1054,24 +1097,30 @@ fn staging_err(msg: &str) -> HandlerError {
     HandlerError::Staging(msg.to_string())
 }
 
-/// Derive `transactions.has_soroban` from the presence of any event or
-/// invocation for a given tx. Cheap and exact.
-fn tx_has_soroban_map(
-    events: &[(String, Vec<ExtractedEvent>)],
-    invocations: &[(String, Vec<ExtractedInvocation>)],
-) -> HashMap<String, bool> {
-    let mut out: HashMap<String, bool> = HashMap::new();
-    for (tx_hash, evs) in events {
-        if !evs.is_empty() {
-            out.insert(tx_hash.clone(), true);
-        }
-    }
-    for (tx_hash, invs) in invocations {
-        if !invs.is_empty() {
-            out.insert(tx_hash.clone(), true);
-        }
-    }
-    out
+/// Derive `transactions.has_soroban` strictly from the operation list of
+/// the (correctly-unwrapped) envelope: `true` iff the tx carries at least
+/// one `INVOKE_HOST_FUNCTION` / `EXTEND_FOOTPRINT_TTL` / `RESTORE_FOOTPRINT`.
+///
+/// Events and invocations are NOT used as the signal: a classic payment on
+/// a SAC-backed asset (HELIX, USDC, EURC, …) emits SAC transfer events as a
+/// side-effect, which would make every such tx look "soroban" to a loose
+/// derivation. The field name + the `idx_tx_has_soroban` partial index both
+/// imply the strict reading — only txs whose **author** wrote a Soroban op.
+fn tx_has_soroban_map(operations: &[(String, Vec<ExtractedOperation>)]) -> HashMap<String, bool> {
+    operations
+        .iter()
+        .map(|(tx_hash, ops)| {
+            let has = ops.iter().any(|op| {
+                matches!(
+                    op.op_type,
+                    OperationType::InvokeHostFunction
+                        | OperationType::ExtendFootprintTtl
+                        | OperationType::RestoreFootprint
+                )
+            });
+            (tx_hash.clone(), has)
+        })
+        .collect()
 }
 
 /// Identity columns for the `operations_appearances` natural key (task 0163).

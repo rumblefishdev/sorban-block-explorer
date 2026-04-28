@@ -2,9 +2,9 @@
 id: '0049'
 title: 'Backend: Assets module (list + detail + transactions)'
 type: FEATURE
-status: active
-related_adr: ['0005', '0036', '0037']
-related_tasks: ['0023', '0043', '0050', '0092']
+status: completed
+related_adr: ['0005', '0036', '0037', '0038']
+related_tasks: ['0023', '0043', '0050', '0092', '0167', '0172']
 tags: [layer-backend, assets]
 milestone: 2
 links: []
@@ -29,6 +29,60 @@ history:
       same M2 list/detail/sub-resource shape, mirrors the contracts module
       layout in crates/api/src/. Will adapt to task 0043 pagination helpers
       once Karol's PR #124 lands.
+  - date: 2026-04-28
+    status: active
+    who: FilipDz
+    note: >
+      Implementation shipped under crates/api/src/assets/ on branch
+      feature/0049_backend-assets-module. Mirrors the transactions
+      post-refactor layout (mod / dto / queries / handlers, no per-module
+      cursor) and reuses common::* throughout. List paginates by `id DESC`
+      via custom AssetIdCursor (assets is unpartitioned + has no
+      created_at). :id resolution tries numeric → C-StrKey → code-issuer
+      composite. /transactions sub-resource composes per-asset_type
+      predicates against operations_appearances; native XLM short-circuits
+      to empty page. SEP-1 description/home_page emitted as null pending
+      task 0164.
+  - date: 2026-04-28
+    status: active
+    who: FilipDz
+    note: >
+      Aligned response shape and SQL with the canonical SQL deliverable
+      from task 0167 (docs/architecture/database-schema/endpoint-queries/
+      08_get_assets_list.sql, 09_get_assets_by_id.sql,
+      10_get_assets_transactions.sql) BEFORE first PR review — caught
+      the same divergence pattern that hit 0050 post-merge. Wire-shape
+      changes vs initial 0049 implementation: rename `issuer_address` →
+      `issuer`; `asset_type` is now the raw SMALLINT (i16) and decoded
+      label moves to `asset_type_name: Option<String>` (via
+      `token_asset_type_name()` SQL helper, ADR 0031); detail response
+      adds `deployed_at_ledger` from `soroban_contracts.deployed_at_ledger`;
+      `/transactions` rows add `has_soroban` and `operation_types[]`
+      (LATERAL `array_agg(DISTINCT op_type_name(...))`); `filter[code]`
+      switched from exact match to substring trigram (`ILIKE '%' || $1 || '%'`)
+      served by `idx_assets_code_trgm` (gin_trgm_ops). Two architectural
+      divergences kept deliberately and documented in queries.rs module
+      docs: (a) `:id` resolution stays at the API layer (3 fetch_by_*
+      paths, no surrogate-first single-SQL) and (b) `/transactions` is
+      one OR'd query covering both classic and contract identity branches
+      instead of canonical's split A/B statements — both produce the
+      same result. 78/78 tests green; clippy clean (-D warnings).
+  - date: 2026-04-28
+    status: completed
+    who: FilipDz
+    note: >
+      PR #134 merged to develop (commit 6aab21a). Two Copilot review
+      passes addressed in commits 091ad34 + c9e47d2. After the second
+      review (5 comments) all addressed: rename
+      `AssetIdentity::issuer_address` → `issuer` (consistency with
+      `AssetRow` + `fetch_by_code_issuer` parameter); add early-return
+      empty-identity guard in `fetch_transactions`; refactor
+      `/transactions` to canonical `matched_ops` CTE pattern with
+      pre-LIMIT to `limit*4` before the join (better plan on
+      high-traffic assets); reject `%` / `_` literals in `filter[code]`
+      with `INVALID_FILTER` envelope; tighten AC text to match shipped
+      substring-trigram behaviour. Final: api crate 79/79 tests pass
+      live; workspace clippy clean.
 ---
 
 # Backend: Assets module (list + detail + transactions)
@@ -229,16 +283,30 @@ Implement `GET /assets/:id/transactions` with cursor pagination. Join through op
 
 ## Acceptance Criteria
 
-- [ ] `GET /v1/assets` returns paginated asset list
-- [ ] `GET /v1/assets/:id` returns asset detail
-- [ ] `GET /v1/assets/:id/transactions` returns paginated transaction list
-- [ ] `:id` supports numeric ID, contract_id, and code+issuer identification
-- [ ] `filter[type]` works for native, classic_credit, sac, soroban
-- [ ] `filter[code]` filters by asset_code
-- [ ] All asset classes served through unified API
-- [ ] Identity distinctions preserved (asset_code+issuer vs contract_id vs native singleton)
-- [ ] Standard pagination and error envelopes
-- [ ] 404 for non-existent assets
+- [x] `GET /v1/assets` returns paginated asset list
+- [x] `GET /v1/assets/:id` returns asset detail
+- [x] `GET /v1/assets/:id/transactions` returns paginated transaction list
+- [x] `:id` supports numeric ID, contract_id, and code+issuer identification
+      (priority order: numeric → C-StrKey → code-issuer; first that parses
+      drives the SQL lookup)
+- [x] `filter[type]` works for native, classic_credit, sac, soroban
+      (`domain::TokenAssetType` via `common::filters::parse_enum_opt`)
+- [x] `filter[code]` filters by `asset_code` (case-insensitive substring
+      match via trigram; `%` / `_` literals are rejected with `invalid_filter`)
+- [x] All asset classes served through unified API
+- [x] Identity distinctions preserved per asset_type. Native XLM short-circuits
+      to empty page on the `/transactions` sub-resource (no
+      `operations_appearances` rows reference it; documented via
+      `asset_predicate_present`)
+- [x] Standard pagination (`Paginated<T>` + `PageInfo` from
+      `openapi::schemas` via `common::pagination::into_envelope`) and
+      canonical error envelopes (`common::errors::*`)
+- [x] 404 for non-existent assets — covered by integration test
+      `assets_detail_unknown_id_returns_404_against_real_db`
+
+> SEP-1 `description` / `home_page` are emitted as `null` (not implemented).
+> Per ADR 0037 §342 they live in S3 per-entity, not in the DB; their
+> hydration is owned by task 0164 and is a deferred follow-up to this PR.
 
 ## Notes
 

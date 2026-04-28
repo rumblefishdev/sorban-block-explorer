@@ -119,13 +119,14 @@ S3-served.
 
 **Final response:**
 
-| Field                     | Source                                                                 |
-| ------------------------- | ---------------------------------------------------------------------- |
-| `latest_ledger_sequence`  | DB → `ledgers.sequence` (newest by `closed_at`)                        |
-| `latest_ledger_closed_at` | DB → `ledgers.closed_at` (newest) — drives §7 polling indicator        |
-| `tps_60s`                 | DB → `SUM(transaction_count)/window_seconds` over trailing 60 s        |
-| `total_accounts`          | DB → `pg_class.reltuples` for `accounts` (planner estimate, not exact) |
-| `total_contracts`         | DB → `pg_class.reltuples` for `soroban_contracts`                      |
+| Field                     | Source                                                                                          |
+| ------------------------- | ----------------------------------------------------------------------------------------------- |
+| `latest_ledger_sequence`  | DB → `ledgers.sequence` (newest by `closed_at`)                                                 |
+| `latest_ledger_closed_at` | DB → `ledgers.closed_at` (newest) — drives §7 polling indicator                                 |
+| `generated_at`            | DB → `NOW()` at SELECT time; preserved across cache hits so client can split lag from staleness |
+| `tps_60s`                 | DB → `SUM(transaction_count)/window_seconds` over trailing 60 s, cast `::float8`                |
+| `total_accounts`          | DB → `pg_class.reltuples` for `accounts` (planner estimate, not exact)                          |
+| `total_contracts`         | DB → `pg_class.reltuples` for `soroban_contracts`                                               |
 
 ### 02. `GET /transactions`
 
@@ -175,9 +176,9 @@ The API uses the resolved `(ledger_sequence, hash)` to fetch the per-ledger `.xd
 
 **Step 3 — DB operations (statement C):**
 
-| Field                                                                                                                                                                                               | Source                                                      |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Per op: `appearance_id`, `type` (SMALLINT), `type_name`, `source_account`, `destination_account`, `contract_id`, `asset_code`, `asset_issuer`, `pool_id`, `amount`, `ledger_sequence`, `created_at` | DB → `operations_appearances` + joins for StrKey resolution |
+| Field                                                                                                                                                                                     | Source                                                                                                                                                                                                               |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Per op: `appearance_id`, `type` (SMALLINT), `type_name`, `source_account`, `destination_account`, `contract_id`, `asset_code`, `asset_issuer`, `pool_id`, `ledger_sequence`, `created_at` | DB → `operations_appearances` + joins for StrKey resolution. `operations_appearances.amount` is a fold count (task 0163), not a stroop value — per-op stroop amounts come from the archive overlay below (ADR 0029). |
 
 **Step 4 — Archive overlay on operations:**
 

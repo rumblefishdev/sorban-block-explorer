@@ -61,10 +61,13 @@ pub async fn process_ledger(
 
     info!(ledger_sequence, "parsing ledger");
 
-    let extracted_transactions = xdr_parser::extract_transactions(meta, ledger_sequence, closed_at);
+    let net_id = network_id();
+    let extracted_transactions =
+        xdr_parser::extract_transactions(meta, ledger_sequence, closed_at, net_id);
 
-    // Get envelopes and per-tx metas for downstream stages
-    let envelopes = xdr_parser::envelope::extract_envelopes(meta);
+    // Get envelopes and per-tx metas for downstream stages. Both are
+    // aligned 1:1 with `tx_processing` (apply order).
+    let envelopes = xdr_parser::envelope::extract_envelopes(meta, net_id);
     let tx_metas = collect_tx_metas(meta);
 
     // Per-transaction parsing (stages 0025, 0026, 0027)
@@ -89,7 +92,7 @@ pub async fn process_ledger(
             continue;
         }
 
-        let envelope = envelopes.get(tx_index);
+        let envelope = envelopes.get(tx_index).and_then(Option::as_ref);
         let tx_meta = tx_metas.get(tx_index).copied();
 
         // --- Stage 0025: Operation extraction ---
@@ -153,6 +156,7 @@ pub async fn process_ledger(
     let mut all_liquidity_pools = Vec::new();
     let mut all_pool_snapshots = Vec::new();
     let mut all_assets = Vec::new();
+    let mut all_lp_positions = Vec::new();
 
     // Task 0160 — correlate SAC deployments with their underlying classic
     // asset. Each SAC's `contract_id` is deterministically derived from the
@@ -161,13 +165,12 @@ pub async fn process_ledger(
     // multi-SAC/tx ambiguity and batch-boundary fragility in one stroke:
     // preimages come from both top-level `CreateContract` operations AND
     // `CreateContractHostFn` auth entries (factory pattern).
-    let net_id = network_id();
     let sac_identity_by_contract: HashMap<String, xdr_parser::SacAssetIdentity> =
         extracted_transactions
             .iter()
             .enumerate()
             .filter(|(_, ext_tx)| !ext_tx.parse_error)
-            .filter_map(|(tx_index, _)| envelopes.get(tx_index))
+            .filter_map(|(tx_index, _)| envelopes.get(tx_index).and_then(Option::as_ref))
             .flat_map(|env| {
                 let inner = xdr_parser::envelope::inner_transaction(env);
                 xdr_parser::extract_sac_identities(&inner, net_id)
@@ -192,6 +195,11 @@ pub async fn process_ledger(
         let (pools, snapshots) = xdr_parser::extract_liquidity_pools(changes);
         all_liquidity_pools.extend(pools);
         all_pool_snapshots.extend(snapshots);
+
+        // Task 0162 — pool_share trustlines as LP participant positions.
+        // Parser-side producer; persist + API layer is task 0126.
+        let lp_pos = xdr_parser::extract_lp_positions(changes);
+        all_lp_positions.extend(lp_pos);
     }
 
     let all_nfts = xdr_parser::detect_nfts(&all_nft_events);
@@ -205,12 +213,10 @@ pub async fn process_ledger(
     //
     // Signature extension params (task 0149) — the parser does not yet produce
     // these; pass empty slices so wiring is in place end-to-end:
-    //   * nft_events        → `nft_ownership` rows (follow-up from 0118)
-    //   * lp_positions      → `lp_positions` rows  (task 0126)
-    //   * inner_tx_hashes   → `transactions.inner_tx_hash` (follow-up parser work)
+    //   * nft_events → `nft_ownership` rows (follow-up from 0118)
+    // `lp_positions` is now produced by `extract_lp_positions` above (task 0162).
+    // `inner_tx_hash` is now carried per-row on `ExtractedTransaction` (task 0169).
     let nft_events: Vec<xdr_parser::types::ExtractedNftEvent> = Vec::new();
-    let lp_positions: Vec<xdr_parser::types::ExtractedLpPosition> = Vec::new();
-    let inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
 
     let persist_timer = Instant::now();
     persist::persist_ledger(
@@ -229,8 +235,7 @@ pub async fn process_ledger(
         &all_assets,
         &all_nfts,
         &nft_events,
-        &lp_positions,
-        &inner_tx_hashes,
+        &all_lp_positions,
         classification_cache,
     )
     .await?;
