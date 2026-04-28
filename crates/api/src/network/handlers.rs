@@ -173,6 +173,7 @@ mod tests {
             "total_accounts",
             "total_contracts",
             "latest_ledger_sequence",
+            "generated_at",
         ] {
             assert!(json.get(key).is_some(), "envelope missing `{key}`: {json}");
         }
@@ -189,12 +190,19 @@ mod tests {
             json["latest_ledger_sequence"].is_number(),
             "latest_ledger_sequence not number: {json}"
         );
-        // `ingestion_lag_seconds` may be `null` (empty DB) or a number.
-        if let Some(v) = json.get("ingestion_lag_seconds") {
+        // `latest_ledger_closed_at` may be `null` (empty DB) or an
+        // ISO-8601 timestamp string serialised by chrono.
+        if let Some(v) = json.get("latest_ledger_closed_at") {
             assert!(
-                v.is_null() || v.is_number(),
-                "ingestion_lag_seconds bad type: {json}"
+                v.is_null() || v.is_string(),
+                "latest_ledger_closed_at bad type: {json}"
             );
         }
+        // `generated_at` is always present (DB `NOW()` on populated
+        // cluster, `Utc::now()` fallback on empty cluster).
+        assert!(
+            json["generated_at"].is_string(),
+            "generated_at not string: {json}"
+        );
     }
 }

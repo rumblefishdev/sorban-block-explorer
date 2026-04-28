@@ -1,8 +1,9 @@
 -- Endpoint:     GET /network/stats
 -- Purpose:      Top-level chain summary for the home dashboard:
 --               latest ledger sequence + close-time, TPS over a 60s window,
---               total accounts, total contracts. Cacheable with a short
---               TTL (5–15 s).
+--               total accounts, total contracts, plus the wall-clock time
+--               the SELECT was executed (for cache-aware freshness on the
+--               client). Cacheable with a short TTL (5–15 s).
 -- Source:       backend-overview.md §6.3 / frontend-overview.md §6.2 + §7
 -- Schema:       ADR 0037
 -- Data sources: DB-only.
@@ -26,21 +27,31 @@
 --     ledgers in the trailing 60s, computed from the actual span between
 --     min/max closed_at in the window (so partial windows and single-ledger
 --     windows still yield a stable number, falling back to 0 via NULLIF).
+--     `::float8` is used (not `::numeric`) — TPS is a 0–1000 display metric
+--     with FE-side rounding, f64 has 14-digit headroom, and surfacing as
+--     `float8` keeps the API decode path native (no `rust_decimal` dep).
 --   • `latest_ledger_sequence` and `latest_ledger_closed_at` come from a
 --     shared LATERAL on the newest ledger row so the planner uses
 --     idx_ledgers_closed_at exactly once, not twice.
 --   • The remaining sub-selects are independent and run in parallel under
 --     the planner's executor; the whole statement is one round-trip.
+--   • `generated_at` is `NOW()` evaluated at SELECT time. The API caches
+--     the assembled response in-process (~30 s TTL); cache hits return
+--     the original `generated_at`, so the frontend can split two
+--     distinct signals without mixing them with cache age:
+--       - indexer-health lag = generated_at − latest_ledger_closed_at
+--       - data staleness ("info from N seconds ago") = Date.now() − generated_at
 
 SELECT
     latest.sequence                                                                            AS latest_ledger_sequence,
     latest.closed_at                                                                           AS latest_ledger_closed_at,
+    NOW()                                                                                      AS generated_at,
     (
         SELECT COALESCE(
-            SUM(transaction_count)::numeric
+            SUM(transaction_count)::float8
                 / NULLIF(EXTRACT(EPOCH FROM (MAX(closed_at) - MIN(closed_at))), 0),
             0
-        )
+        )::float8
         FROM ledgers
         WHERE closed_at >= NOW() - INTERVAL '60 seconds'
     )                                                                                          AS tps_60s,

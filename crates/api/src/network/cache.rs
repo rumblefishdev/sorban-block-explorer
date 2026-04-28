@@ -95,12 +95,15 @@ mod tests {
     use super::*;
 
     fn sample(seq: i64) -> NetworkStats {
+        use chrono::TimeZone;
+        let ts = chrono::Utc.timestamp_opt(1_700_000_000, 0).unwrap();
         NetworkStats {
             tps_60s: 1.5,
             total_accounts: 100,
             total_contracts: 5,
             latest_ledger_sequence: seq,
-            ingestion_lag_seconds: Some(2),
+            latest_ledger_closed_at: Some(ts),
+            generated_at: ts,
         }
     }
 

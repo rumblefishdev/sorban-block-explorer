@@ -302,6 +302,32 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn api_docs_json_contains_network_stats_path() {
+        let app = test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api-docs-json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let spec: Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            spec["paths"]["/v1/network/stats"].is_object(),
+            "spec missing /v1/network/stats path: {spec}"
+        );
+        assert!(
+            spec["components"]["schemas"]["NetworkStats"].is_object(),
+            "spec missing NetworkStats component: {spec}"
+        );
+    }
+
     #[cfg(feature = "swagger-ui")]
     #[tokio::test]
     async fn swagger_ui_mounted_when_feature_enabled() {

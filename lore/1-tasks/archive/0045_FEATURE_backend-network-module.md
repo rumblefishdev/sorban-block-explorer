@@ -208,7 +208,7 @@ Map query results to the documented response shape. Ensure `ingestion_lag_second
 9. **`Cache-Control: public, max-age=10` response header** — not in original spec AC. Added to match `apiGatewayCacheTtlMutable: 10` in `infra/envs/{staging,production}.json` so the gateway cache cluster (when enabled) honours the same freshness budget. AC retroactively added for the audit trail.
 10. **`ok_response()` helper centralising headers** — single source of truth so cache-hit and cache-miss paths cannot drift on the header set if more headers are added later.
 11. **Cherry-pick subset of `common/*` from `feat/0043` branch** — only `errors.rs` + slim `mod.rs` pulled in. Full `common/*` set arrives when 0043 merges to `develop`. Slim `common/mod.rs` carries `#[allow(dead_code)]` on `pub mod errors;` as a temporary marker; allow disappears naturally once 0050+ adopt the unused codes (`INVALID_*`, `bad_request*`, `not_found`). 0045 PR depends on 0043 PR — merge order: 0043 then 0045.
-12. **Cache-miss path treats mutex poison as miss** — `.lock().ok()?` returns None, handler refetches. No explicit poison recovery; in practice the lock cannot poison (no panic across the critical section).
+12. **Cache mutex poison recovered, not treated as miss** — `lock().unwrap_or_else(|p| p.into_inner())` on both `get()` and `put()` paths. A panic in some other handler path would otherwise silently kill caching for the lifetime of the process; in practice the lock cannot poison (no panic across the critical section), but the recovery costs nothing and removes a class of debug pain. (Earlier draft of this DD said "treats poison as miss" with `.lock().ok()?`; corrected after PR #125 review fix made the recovery explicit.)
 
 ## Issues Encountered
 
@@ -257,3 +257,67 @@ EXTRACT(EPOCH FROM MAX-MIN closed_at)` with `NULLIF`/`COALESCE` guard.
 - Driving task: **0167** | Spawned follow-ups: **0170**, **0171**
 - PR #125 review: https://github.com/rumblefishdev/soroban-block-explorer/pull/125
 - Alignment commit: `8d28b3e`
+
+---
+
+## Second Alignment Pass (2026-04-28, audit follow-up)
+
+Append-only. Triggered by self-audit against canonical SQL + PR review
+trail; closes the three remaining gaps.
+
+**Wire shape — lag field reconciled with canonical.**
+`ingestion_lag_seconds: Option<i64>` (server-derived) replaced with
+`latest_ledger_closed_at: Option<DateTime<Utc>>` (raw close-time) so
+DTO matches canonical SQL one-for-one. Frontend now derives lag
+client-side and re-uses the same timestamp for the §7 "polling
+indicator — when data was last refreshed" UI element. Resolves the
+"PM call" item from PR #125 review (option 2 from the three options
+listed).
+
+**Canonical SQL — `::numeric` → `::float8`.**
+`docs/.../01_get_network_stats.sql` now casts the TPS expression as
+`float8` (matches the Rust query and the DTO `f64`). Avoids forcing a
+`rust_decimal` decode on the API hot path.
+
+**OpenAPI assertion test added.**
+`main::tests::api_docs_json_contains_network_stats_path` asserts the
+spec carries `/v1/network/stats` and the `NetworkStats` schema
+component, mirroring the existing contracts/transactions tests. The
+earlier completion record claimed this test was added but it never
+landed in `main.rs`; the test now exists.
+
+Unrelated drift in active task **0044** (still references
+`highest_indexed_ledger`) flagged for owner — not in scope of this PR.
+
+---
+
+## Third Alignment Pass (2026-04-28, FE/BE design call)
+
+Append-only. Triggered by the
+cache-vs-lag interaction. After the second pass surfaced
+`latest_ledger_closed_at`, the in-process 30 s cache
+breaks the naive client-side lag formula:
+`Date.now() − latest_ledger_closed_at` includes cache age, so
+"indexer lag" ends up dominated by "how stale my cached response is",
+which is not what the indicator is supposed to mean.
+
+**Resolution.** New field `generated_at: DateTime<Utc>` added to
+`NetworkStats`, sourced from `NOW()` in the canonical SELECT. Cache
+holds the assembled DTO so cache hits keep the original
+`generated_at` from the moment the SELECT ran. Frontend now derives
+two distinct signals:
+
+- indexer-health lag = `generated_at − latest_ledger_closed_at`
+- data staleness ("info from N seconds ago") = `Date.now() − generated_at`
+
+The two answer different questions and no longer interfere. Empty-DB
+fallback uses `Utc::now()` so the field is always present (its only
+consumer is "how stale is what you're looking at" which is well-defined
+even with no rows ingested).
+
+**Files touched:** `crates/api/src/network/dto.rs`,
+`crates/api/src/network/queries.rs`,
+`crates/api/src/network/cache.rs` (test fixture),
+`crates/api/src/network/handlers.rs` (test asserts),
+`docs/architecture/database-schema/endpoint-queries/01_get_network_stats.sql`,
+`docs/architecture/database-schema/endpoint-queries/README.md`.
