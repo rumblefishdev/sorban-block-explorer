@@ -4,6 +4,7 @@ mod assets;
 mod common;
 mod config;
 mod contracts;
+mod liquidity_pools;
 mod openapi;
 mod state;
 #[cfg(test)]
@@ -52,6 +53,7 @@ fn app(config: &AppConfig, state: AppState) -> Router {
         .routes(routes!(health))
         .nest("/v1", transactions::router())
         .nest("/v1", contracts::router())
+        .nest("/v1", liquidity_pools::router())
         .nest("/v1", assets::router())
         .with_state(state)
         .split_for_parts();

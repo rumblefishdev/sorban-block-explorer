@@ -14,8 +14,6 @@
 //! `db-partition-mgmt` in production; default partitions make the write-path
 //! work in isolation).
 
-use std::collections::HashMap;
-
 use chrono::{DateTime, Utc};
 use domain::{
     AssetType, ContractEventType, ContractType, NftEventType, OperationType, TokenAssetType,
@@ -110,7 +108,6 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
             last_updated_ledger: TEST_LEDGER_SEQ,
         },
     ];
-    let inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
     let classification_cache = ClassificationCache::new();
 
     // --- First insert ---
@@ -131,7 +128,6 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
         &nfts,
         &nft_events,
         &lp_positions,
-        &inner_tx_hashes,
         &classification_cache,
     )
     .await
@@ -292,7 +288,6 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
         &nfts,
         &nft_events,
         &lp_positions,
-        &inner_tx_hashes,
         &classification_cache,
     )
     .await
@@ -380,6 +375,7 @@ fn make_ledger() -> ExtractedLedger {
 fn make_transaction() -> ExtractedTransaction {
     ExtractedTransaction {
         hash: TEST_TX_HASH.to_string(),
+        inner_tx_hash: None,
         ledger_sequence: TEST_LEDGER_SEQ,
         source_account: SRC_STRKEY.to_string(),
         fee_charged: 1000,
@@ -840,6 +836,7 @@ async fn stub_wasm_unblocks_unknown_hash_and_real_upload_upgrades_it() {
     };
     let tx1 = ExtractedTransaction {
         hash: STUB_TX_HASH.to_string(),
+        inner_tx_hash: None,
         ledger_sequence: STUB_LEDGER_SEQ,
         source_account: SRC_STRKEY.to_string(),
         fee_charged: 100,
@@ -877,7 +874,6 @@ async fn stub_wasm_unblocks_unknown_hash_and_real_upload_upgrades_it() {
     let no_nfts: Vec<ExtractedNft> = Vec::new();
     let no_nft_events: Vec<ExtractedNftEvent> = Vec::new();
     let no_lp_positions: Vec<ExtractedLpPosition> = Vec::new();
-    let no_inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
     let classification_cache = ClassificationCache::new();
 
     persist_ledger(
@@ -897,7 +893,6 @@ async fn stub_wasm_unblocks_unknown_hash_and_real_upload_upgrades_it() {
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
-        &no_inner_tx_hashes,
         &classification_cache,
     )
     .await
@@ -938,6 +933,7 @@ async fn stub_wasm_unblocks_unknown_hash_and_real_upload_upgrades_it() {
     };
     let tx2 = ExtractedTransaction {
         hash: STUB_TX_HASH_2.to_string(),
+        inner_tx_hash: None,
         ledger_sequence: STUB_LEDGER_SEQ_2,
         source_account: SRC_STRKEY.to_string(),
         fee_charged: 100,
@@ -976,7 +972,6 @@ async fn stub_wasm_unblocks_unknown_hash_and_real_upload_upgrades_it() {
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
-        &no_inner_tx_hashes,
         &classification_cache,
     )
     .await
@@ -1046,6 +1041,7 @@ async fn nft_filter_drops_fungible_classified_contract() {
     };
     let tx = ExtractedTransaction {
         hash: FILTER_TX_HASH.to_string(),
+        inner_tx_hash: None,
         ledger_sequence: FILTER_LEDGER_SEQ,
         source_account: SRC_STRKEY.to_string(),
         fee_charged: 100,
@@ -1084,7 +1080,6 @@ async fn nft_filter_drops_fungible_classified_contract() {
     let no_assets: Vec<ExtractedAsset> = Vec::new();
     let no_nft_events: Vec<ExtractedNftEvent> = Vec::new();
     let no_lp_positions: Vec<ExtractedLpPosition> = Vec::new();
-    let no_inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
     let classification_cache = ClassificationCache::new();
 
     persist_ledger(
@@ -1104,7 +1099,6 @@ async fn nft_filter_drops_fungible_classified_contract() {
         &nfts,
         &no_nft_events,
         &no_lp_positions,
-        &no_inner_tx_hashes,
         &classification_cache,
     )
     .await
@@ -1317,6 +1311,7 @@ async fn soroban_fungible_contract_produces_assets_row() {
     };
     let tx = ExtractedTransaction {
         hash: TK_TX_HASH_1.to_string(),
+        inner_tx_hash: None,
         ledger_sequence: TK_LEDGER_SEQ_1,
         source_account: SRC_STRKEY.to_string(),
         fee_charged: 100,
@@ -1368,7 +1363,6 @@ async fn soroban_fungible_contract_produces_assets_row() {
     let no_nfts: Vec<ExtractedNft> = Vec::new();
     let no_nft_events: Vec<ExtractedNftEvent> = Vec::new();
     let no_lp_positions: Vec<ExtractedLpPosition> = Vec::new();
-    let no_inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
     let classification_cache = ClassificationCache::new();
 
     persist_ledger(
@@ -1388,7 +1382,6 @@ async fn soroban_fungible_contract_produces_assets_row() {
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
-        &no_inner_tx_hashes,
         &classification_cache,
     )
     .await
@@ -1465,6 +1458,7 @@ async fn late_wasm_upload_backfills_assets_row() {
     };
     let tx1 = ExtractedTransaction {
         hash: LWU_TX_HASH_1.to_string(),
+        inner_tx_hash: None,
         ledger_sequence: LWU_LEDGER_SEQ_1,
         source_account: SRC_STRKEY.to_string(),
         fee_charged: 100,
@@ -1502,7 +1496,6 @@ async fn late_wasm_upload_backfills_assets_row() {
     let no_nfts: Vec<ExtractedNft> = Vec::new();
     let no_nft_events: Vec<ExtractedNftEvent> = Vec::new();
     let no_lp_positions: Vec<ExtractedLpPosition> = Vec::new();
-    let no_inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
     let classification_cache = ClassificationCache::new();
 
     persist_ledger(
@@ -1522,7 +1515,6 @@ async fn late_wasm_upload_backfills_assets_row() {
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
-        &no_inner_tx_hashes,
         &classification_cache,
     )
     .await
@@ -1555,6 +1547,7 @@ async fn late_wasm_upload_backfills_assets_row() {
     };
     let tx2 = ExtractedTransaction {
         hash: LWU_TX_HASH_2.to_string(),
+        inner_tx_hash: None,
         ledger_sequence: LWU_LEDGER_SEQ_2,
         source_account: SRC_STRKEY.to_string(),
         fee_charged: 100,
@@ -1592,7 +1585,6 @@ async fn late_wasm_upload_backfills_assets_row() {
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
-        &no_inner_tx_hashes,
         &classification_cache,
     )
     .await
@@ -1632,6 +1624,7 @@ async fn late_wasm_upload_backfills_assets_row() {
         &ledger2,
         &[ExtractedTransaction {
             hash: LWU_TX_HASH_2.to_string(),
+            inner_tx_hash: None,
             ledger_sequence: LWU_LEDGER_SEQ_2,
             source_account: SRC_STRKEY.to_string(),
             fee_charged: 100,
@@ -1659,7 +1652,6 @@ async fn late_wasm_upload_backfills_assets_row() {
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
-        &no_inner_tx_hashes,
         &classification_cache2,
     )
     .await
@@ -1869,6 +1861,7 @@ async fn xlm_sac_deployment_lands_with_null_identity() {
     };
     let tx = ExtractedTransaction {
         hash: SAC160_XLM_TX_HASH.to_string(),
+        inner_tx_hash: None,
         ledger_sequence: SAC160_XLM_LEDGER_SEQ,
         source_account: SRC_STRKEY.to_string(),
         fee_charged: 100,
@@ -1914,7 +1907,6 @@ async fn xlm_sac_deployment_lands_with_null_identity() {
     let no_nfts: Vec<ExtractedNft> = Vec::new();
     let no_nft_events: Vec<ExtractedNftEvent> = Vec::new();
     let no_lp_positions: Vec<ExtractedLpPosition> = Vec::new();
-    let no_inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
     let cache = ClassificationCache::new();
 
     persist_ledger(
@@ -1934,7 +1926,6 @@ async fn xlm_sac_deployment_lands_with_null_identity() {
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
-        &no_inner_tx_hashes,
         &cache,
     )
     .await
@@ -2001,6 +1992,7 @@ async fn classic_to_sac_greatest_promotion_is_monotonic() {
     };
     let tx = ExtractedTransaction {
         hash: SAC160_CREDIT_TX_HASH.to_string(),
+        inner_tx_hash: None,
         ledger_sequence: SAC160_CREDIT_LEDGER_SEQ,
         source_account: SRC_STRKEY.to_string(),
         fee_charged: 100,
@@ -2027,7 +2019,6 @@ async fn classic_to_sac_greatest_promotion_is_monotonic() {
     let no_nfts: Vec<ExtractedNft> = Vec::new();
     let no_nft_events: Vec<ExtractedNftEvent> = Vec::new();
     let no_lp_positions: Vec<ExtractedLpPosition> = Vec::new();
-    let no_inner_tx_hashes: HashMap<String, Option<String>> = HashMap::new();
 
     // ---- Phase 1: SAC(type=2) lands first with a populated contract_id.
     let sac_deployments = vec![ExtractedContractDeployment {
@@ -2070,7 +2061,6 @@ async fn classic_to_sac_greatest_promotion_is_monotonic() {
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
-        &no_inner_tx_hashes,
         &cache,
     )
     .await
@@ -2107,7 +2097,6 @@ async fn classic_to_sac_greatest_promotion_is_monotonic() {
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
-        &no_inner_tx_hashes,
         &cache2,
     )
     .await

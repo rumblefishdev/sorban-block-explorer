@@ -175,9 +175,9 @@ The API uses the resolved `(ledger_sequence, hash)` to fetch the per-ledger `.xd
 
 **Step 3 — DB operations (statement C):**
 
-| Field                                                                                                                                                                                               | Source                                                      |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Per op: `appearance_id`, `type` (SMALLINT), `type_name`, `source_account`, `destination_account`, `contract_id`, `asset_code`, `asset_issuer`, `pool_id`, `amount`, `ledger_sequence`, `created_at` | DB → `operations_appearances` + joins for StrKey resolution |
+| Field                                                                                                                                                                                     | Source                                                                                                                                                                                                               |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Per op: `appearance_id`, `type` (SMALLINT), `type_name`, `source_account`, `destination_account`, `contract_id`, `asset_code`, `asset_issuer`, `pool_id`, `ledger_sequence`, `created_at` | DB → `operations_appearances` + joins for StrKey resolution. `operations_appearances.amount` is a fold count (task 0163), not a stroop value — per-op stroop amounts come from the archive overlay below (ADR 0029). |
 
 **Step 4 — Archive overlay on operations:**
 
