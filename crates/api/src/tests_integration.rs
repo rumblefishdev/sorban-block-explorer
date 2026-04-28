@@ -457,6 +457,19 @@ async fn lp_participants_e2e_sort_filter_pagination() {
     assert_eq!(data1.len(), 1, "page1 should have exactly limit rows");
     assert_eq!(data1[0]["account"], ACC_TOP, "highest-shares account first");
     assert_eq!(data1[0]["shares"], "100.0000000");
+    // share_percentage = 100 / 200 * 100 = 50.0 (snapshot total_shares=200).
+    // PG NUMERIC division retains generous precision; assert by parsed
+    // numeric rather than exact string to insulate against PG version
+    // drift in the divisor's scale calculation.
+    let pct_top: f64 = data1[0]["share_percentage"]
+        .as_str()
+        .expect("share_percentage present when snapshot is fresh")
+        .parse()
+        .expect("share_percentage parses as numeric");
+    assert!(
+        (pct_top - 50.0).abs() < 1e-9,
+        "expected ~50.0%, got {pct_top}"
+    );
     assert_eq!(
         page1["page"]["has_more"], true,
         "second page must exist (3rd row is filtered, 2nd remains)"
@@ -485,6 +498,16 @@ async fn lp_participants_e2e_sort_filter_pagination() {
     assert_eq!(data2.len(), 1);
     assert_eq!(data2[0]["account"], ACC_MID, "mid-shares account second");
     assert_eq!(data2[0]["shares"], "50.0000000");
+    // share_percentage = 50 / 200 * 100 = 25.0
+    let pct_mid: f64 = data2[0]["share_percentage"]
+        .as_str()
+        .expect("share_percentage present when snapshot is fresh")
+        .parse()
+        .expect("share_percentage parses as numeric");
+    assert!(
+        (pct_mid - 25.0).abs() < 1e-9,
+        "expected ~25.0%, got {pct_mid}"
+    );
     // Tail flag — third row is zero-shares, filtered out, so no page 3.
     assert_eq!(
         page2["page"]["has_more"], false,
@@ -587,9 +610,30 @@ async fn setup_lp_e2e_fixture(
     .execute(pool)
     .await
     .expect("insert lp_positions");
+
+    // Snapshot row — total_shares = 200 so the canonical query's
+    // `share_percentage` CTE has a fresh divisor. `created_at = NOW()`
+    // lands in the live `_default` partition and is well within the
+    // 7-day freshness window the spec uses.
+    sqlx::query(
+        r#"
+        INSERT INTO liquidity_pool_snapshots (
+            pool_id, ledger_sequence, reserve_a, reserve_b, total_shares, created_at
+        )
+        VALUES (decode($1, 'hex'), 1, 1000.0, 2000.0, 200.0, NOW())
+        "#,
+    )
+    .bind(pool_hex)
+    .execute(pool)
+    .await
+    .expect("insert liquidity_pool_snapshots");
 }
 
 async fn teardown_lp_e2e_fixture(pool: &PgPool, pool_hex: &str, accounts: &[&str]) {
+    let _ = sqlx::query("DELETE FROM liquidity_pool_snapshots WHERE pool_id = decode($1, 'hex')")
+        .bind(pool_hex)
+        .execute(pool)
+        .await;
     let _ = sqlx::query("DELETE FROM lp_positions WHERE pool_id = decode($1, 'hex')")
         .bind(pool_hex)
         .execute(pool)
