@@ -11,6 +11,7 @@ pub mod schemas;
 
 use utoipa::OpenApi;
 
+use crate::assets::dto::{AssetDetailResponse, AssetItem, AssetTransactionItem};
 use crate::contracts::dto::{
     ContractDetailResponse, ContractStats, EventItem, InterfaceFunction, InterfaceParam,
     InterfaceResponse, InvocationItem,
@@ -60,6 +61,11 @@ use schemas::{ErrorEnvelope, PageInfo, Paginated};
         InvocationItem,
         Paginated<EventItem>,
         EventItem,
+        Paginated<AssetItem>,
+        AssetItem,
+        AssetDetailResponse,
+        Paginated<AssetTransactionItem>,
+        AssetTransactionItem,
     )),
 )]
 pub struct ApiDoc;

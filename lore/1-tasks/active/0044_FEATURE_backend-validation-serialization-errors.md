@@ -122,7 +122,7 @@ When an operation type is not recognized by the current SDK version:
 
 - All endpoints function when ingestion is behind the network tip
 - No errors solely due to stale data
-- Freshness is communicated via network stats (highest_indexed_ledger, ingestion_lag_seconds)
+- Freshness is communicated via network stats (latest_ledger_sequence, latest_ledger_closed_at — frontend derives lag from the timestamp)
 - Missing recent data simply means it has not been indexed yet, not an error condition
 
 ### Caching
