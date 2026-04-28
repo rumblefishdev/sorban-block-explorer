@@ -24,12 +24,12 @@ use std::collections::{HashMap, HashSet};
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
 use domain::{ContractEventType, ContractType};
 use stellar_xdr::curr::{LedgerCloseMeta, TransactionEnvelope, TransactionMeta};
 
+use crate::common::{errors, path};
 use crate::openapi::schemas::{ErrorEnvelope, PageInfo, Paginated};
 use crate::state::AppState;
 use crate::stellar_archive::extractors::collect_tx_metas;
@@ -47,24 +47,6 @@ use super::queries::{
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn err(status: StatusCode, code: &str, msg: &str) -> Response {
-    (
-        status,
-        Json(ErrorEnvelope {
-            code: code.to_string(),
-            message: msg.to_string(),
-            details: None,
-        }),
-    )
-        .into_response()
-}
-
-/// Shape-validate a Stellar StrKey (same rule as `transactions::handlers`):
-/// required prefix character + 56 chars in the RFC 4648 base32 alphabet.
-fn is_valid_strkey(s: &str, prefix: char) -> bool {
-    s.len() == 56 && s.starts_with(prefix) && s.chars().all(|c| matches!(c, 'A'..='Z' | '2'..='7'))
-}
 
 /// Decode a `SMALLINT` `contract_type` into its label. Unknown discriminants
 /// degrade to `None` rather than failing the response — they indicate a
@@ -241,12 +223,8 @@ pub async fn get_contract(
     State(state): State<AppState>,
     Path(contract_id): Path<String>,
 ) -> Response {
-    if !is_valid_strkey(&contract_id, 'C') {
-        return err(
-            StatusCode::BAD_REQUEST,
-            "invalid_contract_id",
-            "contract_id must be a 56-character Stellar StrKey starting with 'C'",
-        );
+    if let Err(resp) = path::strkey(&contract_id, 'C', "contract_id") {
+        return resp;
     }
 
     if let Some(cached) = state.contract_cache.get(&contract_id) {
@@ -255,14 +233,10 @@ pub async fn get_contract(
 
     let contract = match fetch_contract(&state.db, &contract_id).await {
         Ok(Some(c)) => c,
-        Ok(None) => return err(StatusCode::NOT_FOUND, "not_found", "contract not found"),
+        Ok(None) => return errors::not_found("contract not found"),
         Err(e) => {
             tracing::error!("DB error fetching contract {contract_id}: {e}");
-            return err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "db_error",
-                "database error",
-            );
+            return errors::internal_error(errors::DB_ERROR, "database error");
         }
     };
 
@@ -270,11 +244,7 @@ pub async fn get_contract(
         Ok(v) => v,
         Err(e) => {
             tracing::error!("DB error fetching stats for {contract_id}: {e}");
-            return err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "db_error",
-                "database error",
-            );
+            return errors::internal_error(errors::DB_ERROR, "database error");
         }
     };
 
@@ -322,30 +292,18 @@ pub async fn get_interface(
     State(state): State<AppState>,
     Path(contract_id): Path<String>,
 ) -> Response {
-    if !is_valid_strkey(&contract_id, 'C') {
-        return err(
-            StatusCode::BAD_REQUEST,
-            "invalid_contract_id",
-            "contract_id must be a 56-character Stellar StrKey starting with 'C'",
-        );
+    if let Err(resp) = path::strkey(&contract_id, 'C', "contract_id") {
+        return resp;
     }
 
     let metadata = match fetch_wasm_interface(&state.db, &contract_id).await {
         Ok(Some(m)) => m,
         Ok(None) => {
-            return err(
-                StatusCode::NOT_FOUND,
-                "not_found",
-                "contract not found or no interface metadata available",
-            );
+            return errors::not_found("contract not found or no interface metadata available");
         }
         Err(e) => {
             tracing::error!("DB error fetching interface for {contract_id}: {e}");
-            return err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "db_error",
-                "database error",
-            );
+            return errors::internal_error(errors::DB_ERROR, "database error");
         }
     };
 
@@ -438,30 +396,22 @@ pub async fn list_invocations(
     Path(contract_id): Path<String>,
     Query(params): Query<ListParams>,
 ) -> Response {
-    if !is_valid_strkey(&contract_id, 'C') {
-        return err(
-            StatusCode::BAD_REQUEST,
-            "invalid_contract_id",
-            "contract_id must be a 56-character Stellar StrKey starting with 'C'",
-        );
+    if let Err(resp) = path::strkey(&contract_id, 'C', "contract_id") {
+        return resp;
     }
     let (raw_limit, cursor_pair) = match resolve_list_params(&params) {
         ListParamsOutcome::Ok(limit, cursor) => (limit, cursor),
         ListParamsOutcome::BadRequest { code, message } => {
-            return err(StatusCode::BAD_REQUEST, code, message);
+            return errors::bad_request(code, message);
         }
     };
 
     let contract = match fetch_contract(&state.db, &contract_id).await {
         Ok(Some(c)) => c,
-        Ok(None) => return err(StatusCode::NOT_FOUND, "not_found", "contract not found"),
+        Ok(None) => return errors::not_found("contract not found"),
         Err(e) => {
             tracing::error!("DB error fetching contract {contract_id}: {e}");
-            return err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "db_error",
-                "database error",
-            );
+            return errors::internal_error(errors::DB_ERROR, "database error");
         }
     };
 
@@ -476,11 +426,7 @@ pub async fn list_invocations(
         Ok(r) => r,
         Err(e) => {
             tracing::error!("DB error in list_invocations: {e}");
-            return err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "db_error",
-                "database error",
-            );
+            return errors::internal_error(errors::DB_ERROR, "database error");
         }
     };
 
@@ -672,30 +618,22 @@ pub async fn list_events(
     Path(contract_id): Path<String>,
     Query(params): Query<ListParams>,
 ) -> Response {
-    if !is_valid_strkey(&contract_id, 'C') {
-        return err(
-            StatusCode::BAD_REQUEST,
-            "invalid_contract_id",
-            "contract_id must be a 56-character Stellar StrKey starting with 'C'",
-        );
+    if let Err(resp) = path::strkey(&contract_id, 'C', "contract_id") {
+        return resp;
     }
     let (raw_limit, cursor_pair) = match resolve_list_params(&params) {
         ListParamsOutcome::Ok(limit, cursor) => (limit, cursor),
         ListParamsOutcome::BadRequest { code, message } => {
-            return err(StatusCode::BAD_REQUEST, code, message);
+            return errors::bad_request(code, message);
         }
     };
 
     let contract = match fetch_contract(&state.db, &contract_id).await {
         Ok(Some(c)) => c,
-        Ok(None) => return err(StatusCode::NOT_FOUND, "not_found", "contract not found"),
+        Ok(None) => return errors::not_found("contract not found"),
         Err(e) => {
             tracing::error!("DB error fetching contract {contract_id}: {e}");
-            return err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "db_error",
-                "database error",
-            );
+            return errors::internal_error(errors::DB_ERROR, "database error");
         }
     };
 
@@ -706,11 +644,7 @@ pub async fn list_events(
             Ok(r) => r,
             Err(e) => {
                 tracing::error!("DB error in list_events: {e}");
-                return err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "db_error",
-                    "database error",
-                );
+                return errors::internal_error(errors::DB_ERROR, "database error");
             }
         };
 

@@ -42,6 +42,27 @@ pub const INVALID_FILTER: &str = "invalid_filter";
 /// Resource not found by its primary key (hash, ID, …).
 pub const NOT_FOUND: &str = "not_found";
 
+/// Path parameter `:hash` failed shape validation (not 64 hex chars).
+/// Used by `transactions/:hash` and any other hex-hash path.
+pub const INVALID_HASH: &str = "invalid_hash";
+
+/// Path parameter `:contract_id` failed Stellar StrKey validation
+/// (not 56 chars / wrong prefix `C` / wrong base32 alphabet).
+pub const INVALID_CONTRACT_ID: &str = "invalid_contract_id";
+
+/// Path parameter `:account_id` failed Stellar StrKey validation
+/// (not 56 chars / wrong prefix `G` / wrong base32 alphabet).
+pub const INVALID_ACCOUNT_ID: &str = "invalid_account_id";
+
+/// Path parameter `:sequence` failed numeric / range validation
+/// (not a positive integer fitting in `u32`).
+///
+/// Reserved for the `/v1/ledgers/:sequence` endpoint shipped by task 0047;
+/// declared here alongside the other path-param codes so the canonical
+/// set lives in one file.
+#[allow(dead_code)]
+pub const INVALID_SEQUENCE: &str = "invalid_sequence";
+
 /// Unrecoverable database error. Surfaces as HTTP 500; the detailed
 /// cause is logged server-side and never returned to the client.
 pub const DB_ERROR: &str = "db_error";

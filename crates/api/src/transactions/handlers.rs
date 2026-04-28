@@ -10,6 +10,7 @@ use crate::common::errors;
 use crate::common::extractors::Pagination;
 use crate::common::filters;
 use crate::common::pagination::{finalize_ts_id_page, into_envelope};
+use crate::common::path;
 use crate::openapi::schemas::{ErrorEnvelope, Paginated};
 use crate::state::AppState;
 use crate::stellar_archive::extractors::{extract_e3_heavy, extract_e3_memo};
@@ -184,11 +185,8 @@ pub async fn list_transactions(
     ),
 )]
 pub async fn get_transaction(State(state): State<AppState>, Path(hash): Path<String>) -> Response {
-    if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
-        return errors::bad_request(
-            "invalid_hash",
-            "hash must be a 64-character hexadecimal string",
-        );
+    if let Err(resp) = path::hash(&hash) {
+        return resp;
     }
     // Normalize to lowercase: extract_e3_heavy does case-sensitive matching
     // against ExtractedTransaction.hash (always lowercase hex), so an
