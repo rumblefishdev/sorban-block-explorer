@@ -35,12 +35,34 @@
 --                            EXISTS post-filter when $6 is also set.
 --               Statement C: idx_ops_app_type (type, created_at DESC) keyset,
 --                            then PK-joined to transactions.
--- INDEX GAP: ADR 0037 has no global `(created_at DESC, id DESC)` index on
---             `transactions`. Statement A relies on partition-append + per-
---             partition seq scan ordered at the planner's discretion — fast
---             for first-page in the latest partition (LIMIT short-circuits)
---             but degrades on deep pagination. Add the index in task **0132**
+-- INDEX GAP (Statement A): ADR 0037 has no global
+--             `(created_at DESC, id DESC)` index on `transactions`.
+--             Statement A relies on partition-append + per-partition seq
+--             scan ordered at the planner's discretion — fast for first-
+--             page in the latest partition (LIMIT short-circuits) but
+--             degrades on deep pagination. Add the index in task **0132**
 --             if the no-filter case becomes hot.
+-- INDEX GAP (Statement B): the soroban_invocations_appearances and
+--             soroban_events_appearances UNION branches keyset-filter
+--             and ORDER BY `(created_at, transaction_id)` while the
+--             contract-leading partial indexes lead with
+--             `(contract_id, ledger_sequence DESC)` —
+--             `idx_sia_contract_ledger` has no `created_at`,
+--             `idx_sea_contract_ledger` has it but in third position
+--             (after `ledger_sequence`). On rare contracts the planner
+--             falls through to the composite PK and serves the few
+--             matches in sub-ms (verified 0.287 ms on a 100-ledger
+--             sample), but on a popular contract with millions of
+--             rows mainnet-side the cursor walk forces a sort step.
+--             Two fixes are equivalent and both belong in task **0132**:
+--             (a) add aligned indexes
+--             `(contract_id, created_at DESC, transaction_id DESC)`
+--             on both tables; (b) switch the UNION branches to keyset
+--             on `ledger_sequence` (uses existing indexes natively but
+--             complicates the API's cursor encoding by introducing
+--             two cursor flavors). Owner's call. Until then, plan
+--             quality on those branches scales linearly with per-
+--             contract row count.
 -- Notes:
 --   • Three statements. The API picks one at request time:
 --       — Statement A: no contract / op_type filter (the common case).

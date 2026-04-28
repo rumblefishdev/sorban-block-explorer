@@ -5,17 +5,7 @@ type: BUG
 status: active
 related_adr: ['0002', '0033']
 related_tasks: ['0167', '0026']
-tags:
-  [
-    bug,
-    indexer,
-    xdr-parser,
-    cap-67,
-    protocol-23,
-    events,
-    priority-critical,
-    pre-mainnet-backfill,
-  ]
+tags: [xdr-parser, cap-67, events, priority-critical, pre-mainnet-backfill]
 links:
   - 'crates/xdr-parser/src/event.rs'
   - 'lore/2-adrs/0002_rust-ledger-processor-lambda.md'
