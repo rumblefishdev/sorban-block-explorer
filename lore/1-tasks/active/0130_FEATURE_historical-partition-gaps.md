@@ -2,7 +2,7 @@
 id: '0130'
 title: 'DB: ensure monthly partitions before backfill (local + staging)'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0037']
 related_tasks: ['0022', '0145', '0167']
 tags: [priority-high, effort-small, layer-db, layer-infra, audit-F19]
@@ -29,6 +29,10 @@ history:
       a docker DB. Triage's "Nov 2023" date was wrong — Soroban activated
       Feb 2024. Type changed BUG → FEATURE because no buggy behavior
       exists; the work is wiring + ops.
+  - date: '2026-04-28'
+    status: active
+    who: stkrolikiewicz
+    note: 'Promoted to active via /promote-task — single blocker for backfill T0 per `lore/3-wiki/backfill-execution-plan.md`.'
 ---
 
 # DB: ensure monthly partitions before backfill (local + staging)
