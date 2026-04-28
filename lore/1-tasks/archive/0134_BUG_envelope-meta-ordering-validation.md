@@ -2,21 +2,38 @@
 id: '0134'
 title: 'BUG: add envelope/meta ordering validation in indexer'
 type: BUG
-status: backlog
-related_adr: []
-related_tasks: ['0024', '0029']
+status: superseded
+related_adr: ['0024', '0029']
+related_tasks: ['0024', '0029', '0160', '0167']
 tags: [priority-medium, effort-small, layer-indexer, audit-F18]
 milestone: 1
 links:
   - crates/xdr-parser/src/envelope.rs
   - crates/indexer/src/handler/process.rs
-  - crates/xdr-parser/src/transaction.rs
   - docs/audits/2026-04-10-pipeline-data-audit.md
 history:
   - date: '2026-04-10'
     status: backlog
     who: stkrolikiewicz
     note: 'Spawned from pipeline audit finding F18 (MEDIUM). Silent data corruption risk from envelope/meta mismatch.'
+  - date: '2026-04-28'
+    status: superseded
+    who: stkrolikiewicz
+    by: ['0167']
+    note: >
+      Closed as superseded — 0167's audit work (mainnet ledger 62016099,
+      0/256 transactions aligned by index) drove a hash-based pairing
+      rewrite of `extract_envelopes` in `crates/xdr-parser/src/envelope.rs`
+      that satisfies every concrete acceptance criterion of 0134:
+      hash cross-check (`SHA256(network_id || ENVELOPE_TYPE_TX || tx_body)`
+      via `tx_envelope_hash`), length match by construction (returned Vec
+      mirrors `tx_processing.len()`), unit + integration tests for both
+      reordering and missing-hash cases, and downstream `if let Some(env)`
+      short-circuits prevent silent mis-attribution. Network passphrase
+      plumbing (additional 0134 AC) was delivered separately by task 0160.
+      The only unshipped delta — fail-fast on mismatch vs the current
+      skip-with-log behavior — is a deliberate design choice (a single
+      corrupt tx should not kill the whole ledger), not a regression.
 ---
 
 # BUG: add envelope/meta ordering validation in indexer
