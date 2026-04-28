@@ -23,6 +23,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 use utoipa_axum::router::OpenApiRouter;
 
+use crate::assets;
 use crate::state::AppState;
 use crate::stellar_archive::StellarArchiveFetcher;
 use crate::transactions;
@@ -57,6 +58,7 @@ fn build_app(db: PgPool) -> Router {
 
     let (router, _spec) = OpenApiRouter::new()
         .nest("/v1", transactions::router())
+        .nest("/v1", assets::router())
         .with_state(state)
         .split_for_parts();
     router
@@ -208,6 +210,226 @@ async fn list_endpoint_returns_paginated_envelope_against_real_db() {
     if let Some(c) = page.get("cursor") {
         assert!(c.is_string() || c.is_null(), "page.cursor bad type: {json}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Assets endpoints (task 0049) — mirror the transactions coverage shape.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn assets_invalid_filter_type_returns_envelope_before_db() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/assets?filter%5Btype%5D=NOT_A_TYPE")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_filter");
+    assert_eq!(json["details"]["filter"], "type");
+}
+
+#[tokio::test]
+async fn assets_invalid_id_returns_400_envelope() {
+    // Not numeric, not a 56-char StrKey, not a code-issuer composite — must
+    // fail parsing in the handler before the DB is touched.
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/assets/not-an-asset-id")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_filter");
+    assert_eq!(json["details"]["received"], "not-an-asset-id");
+}
+
+#[tokio::test]
+async fn assets_list_returns_paginated_envelope_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping assets list integration test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping");
+            return;
+        }
+    };
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri("/v1/assets?limit=5")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200, got {status}: {json}");
+    assert!(json["data"].is_array(), "data not array: {json}");
+    assert_eq!(json["page"]["limit"], 5, "page.limit not echoed: {json}");
+    assert!(
+        json["page"]["has_more"].is_boolean(),
+        "page.has_more not bool: {json}"
+    );
+}
+
+/// `filter[type]=native` must return at most the singleton native row
+/// (seeded by migration `20260428000000_seed_native_asset_singleton`).
+#[tokio::test]
+async fn assets_filter_type_native_returns_singleton_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri("/v1/assets?filter%5Btype%5D=native")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = json["data"].as_array().unwrap();
+    // Allow zero (DB without seed) or one — never more than one native asset.
+    assert!(rows.len() <= 1, "more than one native asset: {json}");
+    if let Some(row) = rows.first() {
+        assert_eq!(row["asset_type"], "native");
+        assert!(
+            row["asset_code"].is_null(),
+            "native must have null asset_code"
+        );
+    }
+}
+
+/// Resolution by numeric `assets.id`. Skips cleanly if the table is
+/// completely empty.
+#[tokio::test]
+async fn assets_detail_by_numeric_id_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    // Find any existing id (the singleton at id=1 always works after the
+    // migration; guard regardless so the test stays robust).
+    let row: Option<(i32,)> = sqlx::query_as("SELECT id FROM assets ORDER BY id LIMIT 1")
+        .fetch_optional(&pool)
+        .await
+        .ok()
+        .flatten();
+    let Some((id,)) = row else {
+        eprintln!("assets table empty — skipping numeric-id resolution test");
+        return;
+    };
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/assets/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200: {json}");
+    assert_eq!(json["id"], id, "id mismatch: {json}");
+    assert!(
+        json.get("description").is_some(),
+        "detail response must carry the description slot (even if null): {json}"
+    );
+}
+
+/// 404 path for a numeric id that does not exist.
+#[tokio::test]
+async fn assets_detail_unknown_id_returns_404_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                // Use a clearly-absent numeric id; SERIAL never reaches i32::MAX
+                // in any realistic backfill.
+                .uri("/v1/assets/2147483647")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "expected 404: {json}");
+    assert_eq!(json["code"], "not_found");
+}
+
+/// Native XLM has no DB-side identity referenced by `operations_appearances`
+/// — the sub-resource short-circuits to an empty page rather than emit a
+/// degenerate `WHERE ()` SQL. Lock the contract here.
+#[tokio::test]
+async fn assets_native_transactions_returns_empty_page_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    // Native singleton is asset_type=0; resolve its id rather than hard-coding.
+    let row: Option<(i32,)> = sqlx::query_as("SELECT id FROM assets WHERE asset_type = 0 LIMIT 1")
+        .fetch_optional(&pool)
+        .await
+        .ok()
+        .flatten();
+    let Some((native_id,)) = row else {
+        eprintln!("no native asset row — skipping");
+        return;
+    };
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/assets/{native_id}/transactions"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200: {json}");
+    assert_eq!(
+        json["data"].as_array().unwrap().len(),
+        0,
+        "native asset must produce empty transactions page: {json}"
+    );
+    assert_eq!(json["page"]["has_more"], false);
 }
 
 /// Full request → response → next cursor → request chain.

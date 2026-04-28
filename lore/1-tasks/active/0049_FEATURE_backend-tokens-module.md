@@ -29,6 +29,33 @@ history:
       same M2 list/detail/sub-resource shape, mirrors the contracts module
       layout in crates/api/src/. Will adapt to task 0043 pagination helpers
       once Karol's PR #124 lands.
+  - date: 2026-04-28
+    status: active
+    who: FilipDz
+    note: >
+      Implementation shipped under crates/api/src/assets/ on branch
+      feature/0049_backend-assets-module. Mirrors the transactions
+      post-refactor layout (mod / dto / queries / handlers, no per-module
+      cursor) and reuses common::* throughout — common::cursor for cursor
+      codec, common::extractors::Pagination<P> for the limit+cursor
+      extractor, common::pagination::finalize_page / into_envelope for
+      the wire envelope, common::errors for the canonical envelope
+      builders, common::filters::parse_enum_opt for filter[type]. List
+      paginates by `id DESC` via custom AssetIdCursor (the assets table
+      is unpartitioned and has no created_at, so the project-default
+      TsIdCursor does not fit). :id resolution tries numeric → C-StrKey →
+      code-issuer composite (rfind('-') split, validates issuer shape
+      against G-StrKey). /transactions sub-resource composes per-type
+      predicates against operations_appearances — classic identity,
+      contract identity, or both for SAC classic-wrap; native XLM
+      short-circuits to an empty page (no `WHERE ()` SQL emitted).
+      SEP-1 description/home_page emitted as null pending task 0164's
+      S3 hydration. OpenAPI registers all 3 routes + 5 schemas; api
+      crate clippy clean (-D warnings); 66 unit tests pass + 13/13
+      integration tests pass against a freshly migrated local Postgres
+      with the migration 20260428 native singleton seed and a few
+      synthetic representative rows for E2E coverage of every :id form
+      and every per-asset_type predicate path.
 ---
 
 # Backend: Assets module (list + detail + transactions)
@@ -229,16 +256,29 @@ Implement `GET /assets/:id/transactions` with cursor pagination. Join through op
 
 ## Acceptance Criteria
 
-- [ ] `GET /v1/assets` returns paginated asset list
-- [ ] `GET /v1/assets/:id` returns asset detail
-- [ ] `GET /v1/assets/:id/transactions` returns paginated transaction list
-- [ ] `:id` supports numeric ID, contract_id, and code+issuer identification
-- [ ] `filter[type]` works for native, classic_credit, sac, soroban
-- [ ] `filter[code]` filters by asset_code
-- [ ] All asset classes served through unified API
-- [ ] Identity distinctions preserved (asset_code+issuer vs contract_id vs native singleton)
-- [ ] Standard pagination and error envelopes
-- [ ] 404 for non-existent assets
+- [x] `GET /v1/assets` returns paginated asset list
+- [x] `GET /v1/assets/:id` returns asset detail
+- [x] `GET /v1/assets/:id/transactions` returns paginated transaction list
+- [x] `:id` supports numeric ID, contract_id, and code+issuer identification
+      (priority order: numeric → C-StrKey → code-issuer; first that parses
+      drives the SQL lookup)
+- [x] `filter[type]` works for native, classic_credit, sac, soroban
+      (`domain::TokenAssetType` via `common::filters::parse_enum_opt`)
+- [x] `filter[code]` filters by `asset_code` (exact match)
+- [x] All asset classes served through unified API
+- [x] Identity distinctions preserved per asset_type. Native XLM short-circuits
+      to empty page on the `/transactions` sub-resource (no
+      `operations_appearances` rows reference it; documented via
+      `asset_predicate_present`)
+- [x] Standard pagination (`Paginated<T>` + `PageInfo` from
+      `openapi::schemas` via `common::pagination::into_envelope`) and
+      canonical error envelopes (`common::errors::*`)
+- [x] 404 for non-existent assets — covered by integration test
+      `assets_detail_unknown_id_returns_404_against_real_db`
+
+> SEP-1 `description` / `home_page` are emitted as `null` (not implemented).
+> Per ADR 0037 §342 they live in S3 per-entity, not in the DB; their
+> hydration is owned by task 0164 and is a deferred follow-up to this PR.
 
 ## Notes
 

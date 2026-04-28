@@ -1,5 +1,6 @@
 //! REST API Lambda handler for the Soroban block explorer.
 
+mod assets;
 mod common;
 mod config;
 mod contracts;
@@ -51,6 +52,7 @@ fn app(config: &AppConfig, state: AppState) -> Router {
         .routes(routes!(health))
         .nest("/v1", transactions::router())
         .nest("/v1", contracts::router())
+        .nest("/v1", assets::router())
         .with_state(state)
         .split_for_parts();
     spec.servers = Some(vec![utoipa::openapi::server::Server::new(&config.base_url)]);
@@ -264,6 +266,34 @@ mod tests {
             "/v1/contracts/{contract_id}/interface",
             "/v1/contracts/{contract_id}/invocations",
             "/v1/contracts/{contract_id}/events",
+        ] {
+            assert!(
+                spec["paths"][path].is_object(),
+                "spec missing {path} path: {spec}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn api_docs_json_contains_assets_paths() {
+        let app = test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api-docs-json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let spec: Value = serde_json::from_slice(&bytes).unwrap();
+        for path in [
+            "/v1/assets",
+            "/v1/assets/{id}",
+            "/v1/assets/{id}/transactions",
         ] {
             assert!(
                 spec["paths"][path].is_object(),
