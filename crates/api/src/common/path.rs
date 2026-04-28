@@ -77,9 +77,11 @@ pub fn strkey(value: &str, prefix: char, param: &str) -> Result<(), Response> {
         'C' => errors::INVALID_CONTRACT_ID,
         'G' => errors::INVALID_ACCOUNT_ID,
         // Future-proofing: any other prefix (M for muxed, T for pre-auth, …)
-        // is wired through the generic `INVALID_FILTER` code as a safe
-        // fallback. Add a dedicated const here if a real consumer appears.
-        _ => errors::INVALID_FILTER,
+        // is a path-parameter validation failure, so route through
+        // `INVALID_ID` rather than `INVALID_FILTER` (which is reserved for
+        // `filter[...]` query params). Add a dedicated const here if a
+        // real consumer appears.
+        _ => errors::INVALID_ID,
     };
 
     if is_strkey_shape(value, prefix) {
@@ -102,23 +104,26 @@ pub fn strkey(value: &str, prefix: char, param: &str) -> Result<(), Response> {
 /// Validate a ledger-sequence path parameter.
 ///
 /// Stellar ledger sequences are monotonically-increasing `u32` values
-/// (the network has been below 2^32 since genesis and is expected to
-/// stay there for the lifetime of this codebase — see Stellar Core's
-/// `LedgerHeader.ledgerSeq: uint32`). Negative / non-numeric / overflow
-/// inputs map to 400 `INVALID_SEQUENCE`.
+/// starting at 1 (ledger 0 does not exist in Stellar — genesis is
+/// sequence 1; see Stellar Core's `LedgerHeader.ledgerSeq: uint32`).
+/// The network has been below 2^32 since genesis and is expected to
+/// stay there for the lifetime of this codebase. Zero / negative /
+/// non-numeric / overflow inputs map to 400 `INVALID_SEQUENCE`.
 ///
 /// Reserved for the `/v1/ledgers/:sequence` endpoint shipped by task 0047;
 /// declared here alongside the other path validators so the canonical
 /// set lives in one module.
 #[allow(dead_code)]
 pub fn sequence(value: &str) -> Result<u32, Response> {
-    value.parse::<u32>().map_err(|_| {
+    let invalid = || {
         errors::bad_request_with_details(
             errors::INVALID_SEQUENCE,
             "sequence must be a positive integer that fits in 32 bits",
             serde_json::json!({ "param": "sequence", "received": value }),
         )
-    })
+    };
+    let n = value.parse::<u32>().map_err(|_| invalid())?;
+    if n == 0 { Err(invalid()) } else { Ok(n) }
 }
 
 #[cfg(test)]
@@ -227,12 +232,14 @@ mod tests {
 
     #[tokio::test]
     async fn strkey_invalid_alphabet_rejected() {
-        // Contains `0` and `1`, not in RFC 4648 base32.
-        let bad = "C0000000000000000000000000000000000000000000000000001J";
-        let err = strkey(bad, 'C', "contract_id").unwrap_err();
+        // Keep the correct 56-character shape and `C` prefix, but inject `0`
+        // (not in the RFC 4648 base32 alphabet) so the failure is unambiguously
+        // an alphabet violation rather than a length mismatch.
+        let mut bad = VALID_C.to_string();
+        bad.replace_range(1..2, "0");
+        assert_eq!(bad.len(), 56);
+        let err = strkey(&bad, 'C', "contract_id").unwrap_err();
         let (_, json) = body_json(err).await;
-        // 55-char string actually — but rejected on length too. Use a 56-char
-        // bad alphabet to be precise:
         assert_eq!(json["code"], "invalid_contract_id");
     }
 
@@ -242,9 +249,19 @@ mod tests {
 
     #[test]
     fn sequence_valid_accepted() {
+        assert_eq!(sequence("1").unwrap(), 1);
         assert_eq!(sequence("12345678").unwrap(), 12_345_678);
-        assert_eq!(sequence("0").unwrap(), 0);
         assert_eq!(sequence("4294967295").unwrap(), u32::MAX);
+    }
+
+    #[tokio::test]
+    async fn sequence_zero_rejected() {
+        // Stellar ledger 0 does not exist — genesis is sequence 1.
+        let err = sequence("0").unwrap_err();
+        let (status, json) = body_json(err).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(json["code"], "invalid_sequence");
+        assert_eq!(json["details"]["received"], "0");
     }
 
     #[tokio::test]

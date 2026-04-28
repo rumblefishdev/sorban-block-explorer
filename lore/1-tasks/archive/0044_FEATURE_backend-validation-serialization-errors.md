@@ -88,6 +88,22 @@ history:
       lowercase canonical codes. Path-param validators consolidated
       into `common/path.rs` per spec literal Step 1. No new ADRs
       required (consumes 0005, 0008, 0029).
+  - date: '2026-04-28'
+    status: completed
+    who: karolkow
+    note: >
+      PR #132 Copilot review fixups. (1) `path::sequence` now rejects 0 —
+      Stellar genesis is ledger 1, not 0; docstring and `INVALID_SEQUENCE`
+      const docstring already said "positive integer", now matches behaviour.
+      Tests: dropped `sequence("0")` from `sequence_valid_accepted`; added
+      `sequence_zero_rejected`. (2) `path::strkey` non-`C`/`G` fallback now
+      uses `errors::INVALID_ID` (path-param code) instead of `INVALID_FILTER`
+      (which is reserved for `filter[...]` query params). (3)
+      `strkey_invalid_alphabet_rejected` test rewritten to inject `0`
+      (non-base32) into a 56-char shape so the failure is unambiguously an
+      alphabet violation rather than a length mismatch. Module table wording
+      was already "64-char hex" — review touched an earlier commit. 113/113
+      api-crate tests pass (+1 new test); clippy clean.
 ---
 
 # Backend: request validation, response serialization, error mapping
