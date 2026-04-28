@@ -8,7 +8,7 @@ use base64::Engine;
 use stellar_xdr::curr::*;
 use tracing::warn;
 
-use crate::envelope::{self, extract_envelopes, inner_transaction};
+use crate::envelope::{self, extract_envelopes, inner_transaction, inner_tx_hash};
 use crate::memo;
 use crate::types::ExtractedTransaction;
 use crate::xdr_limits;
@@ -41,6 +41,7 @@ pub fn extract_transactions(
             closed_at,
             i,
             &limits,
+            network_id,
         );
         transactions.push(tx);
     }
@@ -100,6 +101,7 @@ fn extract_single_transaction(
     closed_at: i64,
     tx_index: usize,
     limits: &Limits,
+    network_id: &[u8; 32],
 ) -> ExtractedTransaction {
     // Hash from TransactionResultPair — authoritative, avoids needing network_id.
     let hash = hex::encode(info.hash);
@@ -110,20 +112,21 @@ fn extract_single_transaction(
     let result_xdr = encode_xdr(info.result, limits, ledger_sequence, tx_index);
     let result_meta_xdr = encode_xdr_opt(info.meta, limits, ledger_sequence, tx_index);
 
-    let (source_account, envelope_xdr, memo_type, memo_value) = match envelope {
+    let (source_account, envelope_xdr, memo_type, memo_value, inner_tx_hash_hex) = match envelope {
         Some(env) => {
             let source = envelope::envelope_source(env);
             let env_xdr = encode_xdr(env, limits, ledger_sequence, tx_index);
             let inner = inner_transaction(env);
             let (mt, mv) = memo::extract_memo(inner.memo());
-            (source, env_xdr, mt, mv)
+            let inner_hash = inner_tx_hash(env, network_id).map(hex::encode);
+            (source, env_xdr, mt, mv, inner_hash)
         }
         None => {
             warn!(
                 ledger_sequence,
                 tx_index, "envelope missing for transaction — parse_error"
             );
-            (String::new(), String::new(), None, None)
+            (String::new(), String::new(), None, None, None)
         }
     };
 
@@ -131,6 +134,7 @@ fn extract_single_transaction(
 
     ExtractedTransaction {
         hash,
+        inner_tx_hash: inner_tx_hash_hex,
         ledger_sequence,
         source_account,
         fee_charged,
