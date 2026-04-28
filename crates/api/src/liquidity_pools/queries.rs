@@ -97,8 +97,8 @@ pub(super) async fn fetch_participants(
           LEFT JOIN latest_snap snap  ON TRUE
          WHERE lpp.pool_id = decode($1, 'hex')
            AND lpp.shares > 0
-           AND ($3::NUMERIC(28,7) IS NULL
-                OR (lpp.shares, lpp.account_id) < ($3::NUMERIC(28,7), $4::BIGINT))
+           AND ($3::numeric IS NULL
+                OR (lpp.shares, lpp.account_id) < ($3::numeric, $4::BIGINT))
          ORDER BY lpp.shares DESC, lpp.account_id DESC
          LIMIT $2
         "#,
