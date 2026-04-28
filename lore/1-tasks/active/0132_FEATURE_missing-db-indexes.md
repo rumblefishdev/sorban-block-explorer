@@ -2,7 +2,7 @@
 id: '0132'
 title: 'DB: add missing indexes for planned API query patterns'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0037']
 related_tasks: ['0043', '0046', '0050', '0053', '0136', '0167']
 tags: [priority-medium, effort-small, layer-db, audit-F21]
@@ -45,6 +45,10 @@ history:
       popular-contract queries at mainnet scale. Same migration,
       same `CONCURRENTLY` rule. Inline INDEX GAP comment added in
       02_get_transactions_list.sql header.
+  - date: '2026-04-28'
+    status: active
+    who: stkrolikiewicz
+    note: 'Promoted to active via /promote-task — implementation track. Body covers 5 indexes after fmazur addition for E02 Statement B variant 2.'
 ---
 
 # DB: add missing indexes for planned API query patterns
