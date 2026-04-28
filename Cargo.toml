@@ -10,6 +10,7 @@ members = [
     "crates/domain",
     "crates/backfill-bench",
     "crates/backfill-runner",
+    "crates/audit-harness",
 ]
 
 [workspace.dependencies]
