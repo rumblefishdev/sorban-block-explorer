@@ -395,7 +395,7 @@ fn make_transaction() -> ExtractedTransaction {
 fn make_payment_op() -> ExtractedOperation {
     ExtractedOperation {
         transaction_hash: TEST_TX_HASH.to_string(),
-        operation_index: 0,
+        operation_index: 1,
         op_type: OperationType::Payment,
         source_account: None,
         details: json!({
@@ -409,7 +409,7 @@ fn make_payment_op() -> ExtractedOperation {
 fn make_invoke_op() -> ExtractedOperation {
     ExtractedOperation {
         transaction_hash: TEST_TX_HASH.to_string(),
-        operation_index: 1,
+        operation_index: 2,
         op_type: OperationType::InvokeHostFunction,
         source_account: None,
         details: json!({

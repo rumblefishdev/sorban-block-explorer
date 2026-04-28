@@ -33,15 +33,28 @@ history:
       flagged inline as `INDEX GAP:` comments in
       `docs/architecture/database-schema/endpoint-queries/`. Confirmed
       not a backfill blocker (CONCURRENTLY, post-restore).
+  - date: '2026-04-28'
+    status: backlog
+    who: fmazur
+    note: >
+      Added two more indexes from Copilot review on PR 136 (task 0172
+      / E02 Statement B variant 2): the contract-leading partial
+      indexes on `soroban_invocations_appearances` and
+      `soroban_events_appearances` don't align with Statement B's
+      `(created_at, transaction_id)` keyset, forcing a sort step on
+      popular-contract queries at mainnet scale. Same migration,
+      same `CONCURRENTLY` rule. Inline INDEX GAP comment added in
+      02_get_transactions_list.sql header.
 ---
 
 # DB: add missing indexes for planned API query patterns
 
 ## Summary
 
-Three concrete index gaps surfaced by [task 0167](../archive/0167_FEATURE_endpoint-sql-query-reference-set.md)
-when each public-endpoint query was profiled against the live schema. All
-three are flagged inline as `INDEX GAP:` comments inside
+Five concrete index gaps surfaced by per-endpoint EXPLAIN audits ([task
+0167](../archive/0167_FEATURE_endpoint-sql-query-reference-set.md) +
+PR 136 review on E02 Statement B variant 2). All flagged inline as
+`INDEX GAP:` comments inside
 [`docs/architecture/database-schema/endpoint-queries/`](../../../docs/architecture/database-schema/endpoint-queries/);
 this task wraps them up into a single migration.
 
@@ -69,6 +82,28 @@ CREATE INDEX CONCURRENTLY idx_nfts_collection_trgm
 -- See 18_get_liquidity_pools_list.sql:31.
 CREATE INDEX CONCURRENTLY idx_pools_created_at_ledger
   ON liquidity_pools (created_at_ledger DESC, pool_id DESC);
+
+-- E2 Statement B (variant 2) — broad-match contract filter UNIONs three
+-- appearance tables and keyset-orders the result by
+-- (created_at DESC, transaction_id DESC). The two below align the
+-- soroban_invocations_appearances and soroban_events_appearances
+-- contract-leading indexes with that cursor; the existing
+-- idx_sia_contract_ledger / idx_sea_contract_ledger lead with
+-- ledger_sequence and don't carry the keyset shape. On rare
+-- contracts the planner falls back to the composite PK and works
+-- (sub-ms in 100-ledger sample); on a popular contract with millions
+-- of rows mainnet-side it forces a sort step. Owner alternative:
+-- switch the UNION branches to keyset on `ledger_sequence` and skip
+-- these indexes (uses existing indexes natively but introduces a
+-- second cursor flavor in the API).
+-- See 02_get_transactions_list.sql header (INDEX GAP — Statement B).
+CREATE INDEX CONCURRENTLY idx_sia_contract_keyset
+  ON soroban_invocations_appearances
+     (contract_id, created_at DESC, transaction_id DESC);
+
+CREATE INDEX CONCURRENTLY idx_sea_contract_keyset
+  ON soroban_events_appearances
+     (contract_id, created_at DESC, transaction_id DESC);
 ```
 
 ## Acceptance Criteria
@@ -79,13 +114,22 @@ CREATE INDEX CONCURRENTLY idx_pools_created_at_ledger
       `collection_name` (`EXPLAIN` shows bitmap heap scan via the GIN)
 - [ ] `idx_pools_created_at_ledger` exists and is used by E18 keyset
       ordering
+- [ ] `idx_sia_contract_keyset` exists and is used by E2 Statement B's
+      `soroban_invocations_appearances` UNION branch (`EXPLAIN` shows
+      index-only scan with the (created_at, transaction_id) keyset
+      walking the index, not a sort step) — OR owner accepts the
+      ledger_sequence-keyset alternative and these two indexes are
+      skipped; document the choice in the migration commit.
+- [ ] `idx_sea_contract_keyset` exists and is used by E2 Statement B's
+      `soroban_events_appearances` UNION branch (same plan check) —
+      same alternative caveat as above.
 - [ ] [ADR 0037 §4](../../2-adrs/0037_current-schema-snapshot.md) updated
-      with the three new indexes (per ADR 0032 evergreen-docs rule)
+      with the new indexes (per ADR 0032 evergreen-docs rule)
 - [ ] No regression on `EXPLAIN ANALYZE` for the other E1–E23 queries
 
 ## Notes
 
-- **Does not block backfill T0.** All three use `CONCURRENTLY` and can be
+- **Does not block backfill T0.** All five use `CONCURRENTLY` and can be
   added post-restore on staging; the backfill execution plan
   ([wiki](../../3-wiki/backfill-execution-plan.md)) lists this as a
   post-cutover step.
@@ -93,3 +137,10 @@ CREATE INDEX CONCURRENTLY idx_pools_created_at_ledger
 event_type, created_at)` and `operations(type)` — both base tables were
   collapsed into `*_appearances` by archived task 0163, and the queries
   that would have used them no longer exist in the endpoint set.
+- **Last two indexes have an alternative.** `idx_sia_contract_keyset` /
+  `idx_sea_contract_keyset` solve the perf gap by aligning the index
+  with E2 Statement B's cursor. Owner can instead change the SQL to
+  keyset on `ledger_sequence` in the two UNION branches (already covered
+  by `idx_sia_contract_ledger` / `idx_sea_contract_ledger`), at the
+  cost of a second cursor flavor in the API. Both fixes equivalent
+  for plan quality; pick one before backfill.

@@ -421,8 +421,9 @@ pub struct ExtractedOperation {
     /// Parent transaction hash, hex-encoded (64 chars). Used to resolve the
     /// surrogate `transaction_id` FK at persistence time.
     pub transaction_hash: String,
-    /// Zero-based index of this operation within the transaction. Not persisted
-    /// in `operations_appearances` — the API re-derives ordering from XDR.
+    /// 1-based index of this operation within the transaction (matches Horizon
+    /// `paging_token` convention; see ADR 0028 / task 0172). Not persisted in
+    /// `operations_appearances` — the API re-derives ordering from XDR.
     pub operation_index: u32,
     /// Operation type (ADR 0031). Maps to `operations_appearances.type SMALLINT`.
     pub op_type: OperationType,
