@@ -21,20 +21,12 @@ use super::queries::{
 };
 
 fn map_item(row: AssetRow) -> AssetItem {
-    let label = TokenAssetType::try_from(row.asset_type)
-        .map(|t| t.to_string())
-        .unwrap_or_else(|_| {
-            tracing::warn!(
-                "unknown asset_type discriminant {}; surfacing as \"unknown\"",
-                row.asset_type
-            );
-            "unknown".to_string()
-        });
     AssetItem {
         id: row.id,
-        asset_type: label,
+        asset_type_name: row.asset_type_name,
+        asset_type: row.asset_type,
         asset_code: row.asset_code,
-        issuer_address: row.issuer_address,
+        issuer: row.issuer,
         contract_id: row.contract_id,
         name: row.name,
         total_supply: row.total_supply,
@@ -57,8 +49,8 @@ fn parse_asset_id(raw: &str) -> Option<AssetIdRef<'_>> {
     if is_strkey_shape(raw, 'C') {
         return Some(AssetIdRef::Contract(raw));
     }
-    // Split on the LAST `-`; the issuer half must be a G-StrKey. Codes never
-    // contain `-`, so this is unambiguous in practice.
+    // Codes never contain `-`; split on the LAST one and validate the
+    // issuer half as a G-StrKey to disambiguate from C-StrKeys with stray dashes.
     if let Some(idx) = raw.rfind('-')
         && idx > 0
         && idx < raw.len() - 1
@@ -170,10 +162,10 @@ pub async fn get_asset(State(state): State<AppState>, Path(id): Path<String>) ->
         }
     };
 
-    // SEP-1 description / home_page live in S3 (ADR 0037 §342); hydration
-    // is owned by task 0164.
+    let deployed_at_ledger = row.deployed_at_ledger;
     let response = AssetDetailResponse {
         item: map_item(row),
+        deployed_at_ledger,
         description: None,
         home_page: None,
     };
@@ -251,12 +243,12 @@ pub async fn list_asset_transactions(
 
     let identity = AssetIdentity {
         asset_code: row.asset_code.as_deref(),
-        issuer_address: row.issuer_address.as_deref(),
+        issuer_address: row.issuer.as_deref(),
         contract_id: row.contract_id.as_deref(),
     };
 
-    // Native XLM has no DB-side identity referenced by ops — return empty
-    // page rather than emit `WHERE ()`.
+    // Native XLM has no DB-side identity referenced by ops — empty page
+    // rather than emit `WHERE ()` SQL.
     if !asset_predicate_present(&identity) {
         let empty = into_envelope::<AssetTransactionItem>(
             Vec::new(),
@@ -295,6 +287,8 @@ pub async fn list_asset_transactions(
             fee_charged: r.fee_charged,
             created_at: r.created_at,
             operation_count: r.operation_count,
+            has_soroban: r.has_soroban,
+            operation_types: r.operation_types,
         })
         .collect();
 

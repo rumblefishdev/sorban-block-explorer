@@ -315,7 +315,11 @@ async fn assets_filter_type_native_returns_singleton_against_real_db() {
     // Allow zero (DB without seed) or one — never more than one native asset.
     assert!(rows.len() <= 1, "more than one native asset: {json}");
     if let Some(row) = rows.first() {
-        assert_eq!(row["asset_type"], "native");
+        // Canonical SQL projects BOTH the decoded label (asset_type_name)
+        // and the raw SMALLINT (asset_type). Lock both contracts so a
+        // future drift on either side surfaces here.
+        assert_eq!(row["asset_type_name"], "native");
+        assert_eq!(row["asset_type"], 0);
         assert!(
             row["asset_code"].is_null(),
             "native must have null asset_code"
@@ -474,7 +478,7 @@ async fn assets_detail_by_code_issuer_composite_against_real_db() {
     assert_eq!(status, StatusCode::OK, "expected 200: {json}");
     assert_eq!(json["id"], expected_id);
     assert_eq!(json["asset_code"], code);
-    assert_eq!(json["issuer_address"], issuer);
+    assert_eq!(json["issuer"], issuer);
 }
 
 /// Non-native `/transactions` happy path — picks any non-native asset that
@@ -541,6 +545,18 @@ async fn assets_transactions_returns_at_least_one_row_against_real_db() {
         !data.is_empty(),
         "asset {asset_id} appears in operations_appearances but \
          /transactions returned 0 rows: {json}"
+    );
+    // Lock the canonical-aligned response shape: every row must carry
+    // `has_soroban` (bool) and `operation_types` (string[]) — these are
+    // the §6.9 fields canonical 10_get_assets_transactions.sql projects.
+    let first = &data[0];
+    assert!(
+        first["has_soroban"].is_boolean(),
+        "has_soroban missing or not bool: {first}"
+    );
+    assert!(
+        first["operation_types"].is_array(),
+        "operation_types missing or not array: {first}"
     );
 }
 

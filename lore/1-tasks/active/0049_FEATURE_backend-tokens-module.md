@@ -36,26 +36,37 @@ history:
       Implementation shipped under crates/api/src/assets/ on branch
       feature/0049_backend-assets-module. Mirrors the transactions
       post-refactor layout (mod / dto / queries / handlers, no per-module
-      cursor) and reuses common::* throughout — common::cursor for cursor
-      codec, common::extractors::Pagination<P> for the limit+cursor
-      extractor, common::pagination::finalize_page / into_envelope for
-      the wire envelope, common::errors for the canonical envelope
-      builders, common::filters::parse_enum_opt for filter[type]. List
-      paginates by `id DESC` via custom AssetIdCursor (the assets table
-      is unpartitioned and has no created_at, so the project-default
-      TsIdCursor does not fit). :id resolution tries numeric → C-StrKey →
-      code-issuer composite (rfind('-') split, validates issuer shape
-      against G-StrKey). /transactions sub-resource composes per-type
-      predicates against operations_appearances — classic identity,
-      contract identity, or both for SAC classic-wrap; native XLM
-      short-circuits to an empty page (no `WHERE ()` SQL emitted).
-      SEP-1 description/home_page emitted as null pending task 0164's
-      S3 hydration. OpenAPI registers all 3 routes + 5 schemas; api
-      crate clippy clean (-D warnings); 66 unit tests pass + 13/13
-      integration tests pass against a freshly migrated local Postgres
-      with the migration 20260428 native singleton seed and a few
-      synthetic representative rows for E2E coverage of every :id form
-      and every per-asset_type predicate path.
+      cursor) and reuses common::* throughout. List paginates by `id DESC`
+      via custom AssetIdCursor (assets is unpartitioned + has no
+      created_at). :id resolution tries numeric → C-StrKey → code-issuer
+      composite. /transactions sub-resource composes per-asset_type
+      predicates against operations_appearances; native XLM short-circuits
+      to empty page. SEP-1 description/home_page emitted as null pending
+      task 0164.
+  - date: 2026-04-28
+    status: active
+    who: FilipDz
+    note: >
+      Aligned response shape and SQL with the canonical SQL deliverable
+      from task 0167 (docs/architecture/database-schema/endpoint-queries/
+      08_get_assets_list.sql, 09_get_assets_by_id.sql,
+      10_get_assets_transactions.sql) BEFORE first PR review — caught
+      the same divergence pattern that hit 0050 post-merge. Wire-shape
+      changes vs initial 0049 implementation: rename `issuer_address` →
+      `issuer`; `asset_type` is now the raw SMALLINT (i16) and decoded
+      label moves to `asset_type_name: Option<String>` (via
+      `token_asset_type_name()` SQL helper, ADR 0031); detail response
+      adds `deployed_at_ledger` from `soroban_contracts.deployed_at_ledger`;
+      `/transactions` rows add `has_soroban` and `operation_types[]`
+      (LATERAL `array_agg(DISTINCT op_type_name(...))`); `filter[code]`
+      switched from exact match to substring trigram (`ILIKE '%' || $1 || '%'`)
+      served by `idx_assets_code_trgm` (gin_trgm_ops). Two architectural
+      divergences kept deliberately and documented in queries.rs module
+      docs: (a) `:id` resolution stays at the API layer (3 fetch_by_*
+      paths, no surrogate-first single-SQL) and (b) `/transactions` is
+      one OR'd query covering both classic and contract identity branches
+      instead of canonical's split A/B statements — both produce the
+      same result. 78/78 tests green; clippy clean (-D warnings).
 ---
 
 # Backend: Assets module (list + detail + transactions)

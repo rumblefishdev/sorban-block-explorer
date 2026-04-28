@@ -1,4 +1,10 @@
 //! Database queries for the assets endpoints.
+//!
+//! Aligned with canonical SQL `endpoint-queries/{08,09,10}_*.sql` (task 0167).
+//! Two deliberate divergences: (1) `:id` resolution stays at the API layer
+//! (3 fetch_by_* paths, no surrogate-first single-SQL); (2) `/transactions`
+//! is one OR'd query instead of canonical's split A/B variants. Both produce
+//! the same result.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -11,13 +17,22 @@ use crate::common::cursor::TsIdCursor;
 pub struct AssetRow {
     pub id: i32,
     pub asset_type: i16,
+    /// Pre-decoded via `token_asset_type_name()` SQL helper. `None` only
+    /// when the discriminant is outside the schema CHECK range — defensive
+    /// against future schema drift.
+    pub asset_type_name: Option<String>,
     pub asset_code: Option<String>,
-    pub issuer_address: Option<String>,
+    /// Already resolved through `accounts.account_id` join.
+    pub issuer: Option<String>,
+    /// Already resolved through `soroban_contracts.contract_id` join.
     pub contract_id: Option<String>,
     pub name: Option<String>,
     pub total_supply: Option<String>,
     pub holder_count: Option<i32>,
     pub icon_url: Option<String>,
+    /// `soroban_contracts.deployed_at_ledger` — populated for SAC and
+    /// Soroban-native rows; `None` for native and classic_credit.
+    pub deployed_at_ledger: Option<i64>,
 }
 
 #[derive(Debug)]
@@ -30,6 +45,8 @@ pub struct AssetTxRow {
     pub fee_charged: i64,
     pub created_at: DateTime<Utc>,
     pub operation_count: i16,
+    pub has_soroban: bool,
+    pub operation_types: Vec<String>,
 }
 
 /// Pagination payload for `GET /v1/assets`. The `assets` table is
@@ -44,6 +61,8 @@ pub struct ResolvedListParams {
     pub limit: i64,
     pub cursor: Option<AssetIdCursor>,
     pub asset_type: Option<i16>,
+    /// Raw substring (no `%` / `_` from the caller). The SQL builder
+    /// wraps it in `%...%` for the trigram match.
     pub asset_code: Option<String>,
 }
 
@@ -52,9 +71,17 @@ fn push_glue(qb: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>, has_where: &mut bo
     *has_where = true;
 }
 
-const ASSET_SELECT: &str = "SELECT a.id, a.asset_type, a.asset_code, \
-     iss.account_id AS issuer_address, sc.contract_id, a.name, \
-     a.total_supply::text AS total_supply, a.holder_count, a.icon_url \
+const ASSET_SELECT: &str = "SELECT a.id, \
+     token_asset_type_name(a.asset_type) AS asset_type_name, \
+     a.asset_type AS asset_type, \
+     a.asset_code, \
+     iss.account_id AS issuer, \
+     sc.contract_id, \
+     a.name, \
+     a.total_supply::text AS total_supply, \
+     a.holder_count, \
+     a.icon_url, \
+     sc.deployed_at_ledger AS deployed_at_ledger \
      FROM assets a \
      LEFT JOIN accounts iss ON iss.id = a.issuer_id \
      LEFT JOIN soroban_contracts sc ON sc.id = a.contract_id";
@@ -63,13 +90,15 @@ fn map_asset_row(r: &PgRow) -> AssetRow {
     AssetRow {
         id: r.get("id"),
         asset_type: r.get("asset_type"),
+        asset_type_name: r.get("asset_type_name"),
         asset_code: r.get("asset_code"),
-        issuer_address: r.get("issuer_address"),
+        issuer: r.get("issuer"),
         contract_id: r.get("contract_id"),
         name: r.get("name"),
         total_supply: r.get("total_supply"),
         holder_count: r.get("holder_count"),
         icon_url: r.get("icon_url"),
+        deployed_at_ledger: r.get("deployed_at_ledger"),
     }
 }
 
@@ -86,9 +115,13 @@ pub async fn fetch_list(
         qb.push_bind(t);
     }
     if let Some(code) = &params.asset_code {
+        // Substring trigram match — leading `%` defeats btree but is served
+        // by `idx_assets_code_trgm` (GIN gin_trgm_ops). The wrap happens here
+        // so callers pass the raw substring (not a LIKE pattern).
         push_glue(&mut qb, &mut has_where);
-        qb.push(" a.asset_code = ");
+        qb.push(" a.asset_code ILIKE '%' || ");
         qb.push_bind(code.as_str());
+        qb.push(" || '%'");
     }
     if let Some(cursor) = &params.cursor {
         push_glue(&mut qb, &mut has_where);
@@ -159,11 +192,19 @@ pub async fn fetch_transactions(
     let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
         "SELECT DISTINCT t.id, encode(t.hash, 'hex') AS hash, t.ledger_sequence, \
          a.account_id AS source_account, t.successful, t.fee_charged, \
-         t.created_at, t.operation_count \
+         t.created_at, t.operation_count, t.has_soroban, \
+         COALESCE(ops.operation_types, ARRAY[]::text[]) AS operation_types \
          FROM transactions t \
          JOIN accounts a ON a.id = t.source_id \
          JOIN operations_appearances oa \
-              ON oa.transaction_id = t.id AND oa.created_at = t.created_at",
+              ON oa.transaction_id = t.id AND oa.created_at = t.created_at \
+         LEFT JOIN LATERAL ( \
+             SELECT array_agg(DISTINCT op_type_name(oa2.type) ORDER BY op_type_name(oa2.type)) \
+                    AS operation_types \
+             FROM operations_appearances oa2 \
+             WHERE oa2.transaction_id = t.id \
+               AND oa2.created_at     = t.created_at \
+         ) ops ON TRUE",
     );
 
     let has_classic = identity.asset_code.is_some() && identity.issuer_address.is_some();
@@ -213,6 +254,8 @@ pub async fn fetch_transactions(
             fee_charged: r.get("fee_charged"),
             created_at: r.get("created_at"),
             operation_count: r.get("operation_count"),
+            has_soroban: r.get("has_soroban"),
+            operation_types: r.get("operation_types"),
         })
         .collect())
 }
