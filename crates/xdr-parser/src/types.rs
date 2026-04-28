@@ -60,6 +60,10 @@ pub struct ExtractedTransaction {
     /// SHA-256 hash of the TransactionEnvelope, hex-encoded (64 chars).
     /// This is the public lookup key.
     pub hash: String,
+    /// SHA-256 hash of the **inner** transaction for fee-bump envelopes,
+    /// hex-encoded. `None` for non-fee-bump (where `hash` already IS the
+    /// principal hash). Matches Horizon's `inner_transaction.hash`.
+    pub inner_tx_hash: Option<String>,
     /// Parent ledger sequence number (FK to ledgers.sequence).
     pub ledger_sequence: u32,
     /// Transaction source account (G... or M... address, max 56 chars).

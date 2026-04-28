@@ -276,7 +276,6 @@ impl Staged {
         nfts: &[ExtractedNft],
         nft_events: &[ExtractedNftEvent],
         lp_positions: &[ExtractedLpPosition],
-        inner_tx_hashes: &HashMap<String, Option<String>>,
     ) -> Result<Self, HandlerError> {
         let ledger_hash = decode_hash(&ledger.hash, "ledger.hash")?;
         let ledger_closed_at = ts_from_unix(ledger.closed_at)?;
@@ -479,7 +478,7 @@ impl Staged {
         let mut tx_rows: Vec<TxRow> = Vec::with_capacity(transactions.len());
         for (app_order, tx) in transactions.iter().enumerate() {
             let hash = decode_hash(&tx.hash, "tx.hash")?;
-            let inner_tx_hash = match inner_tx_hashes.get(&tx.hash).and_then(Option::as_ref) {
+            let inner_tx_hash = match tx.inner_tx_hash.as_deref() {
                 Some(hex_str) => Some(decode_hash(hex_str, "inner_tx_hash")?),
                 None => None,
             };
