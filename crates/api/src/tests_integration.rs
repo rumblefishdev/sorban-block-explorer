@@ -252,7 +252,7 @@ async fn assets_invalid_id_returns_400_envelope() {
         .unwrap();
     let (status, json) = body_json(resp).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(json["code"], "invalid_filter");
+    assert_eq!(json["code"], "invalid_id");
     assert_eq!(json["details"]["received"], "not-an-asset-id");
 }
 
@@ -389,6 +389,159 @@ async fn assets_detail_unknown_id_returns_404_against_real_db() {
     let (status, json) = body_json(resp).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "expected 404: {json}");
     assert_eq!(json["code"], "not_found");
+}
+
+/// `:id` resolution by contract StrKey. Skips when the DB has no SAC or
+/// Soroban-native asset row with a non-NULL `contract_id`.
+#[tokio::test]
+async fn assets_detail_by_contract_strkey_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    let row: Option<(i32, String)> = sqlx::query_as(
+        "SELECT a.id, sc.contract_id \
+         FROM assets a \
+         JOIN soroban_contracts sc ON sc.id = a.contract_id \
+         LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    let Some((expected_id, contract_strkey)) = row else {
+        eprintln!("no asset with contract_id — skipping contract-StrKey resolution test");
+        return;
+    };
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/assets/{contract_strkey}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200: {json}");
+    assert_eq!(json["id"], expected_id, "wrong asset surfaced: {json}");
+    assert_eq!(json["contract_id"], contract_strkey);
+}
+
+/// `:id` resolution by `code-issuer` composite. Skips when the DB has no
+/// classic_credit / SAC-classic-wrap row.
+#[tokio::test]
+async fn assets_detail_by_code_issuer_composite_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    let row: Option<(i32, String, String)> = sqlx::query_as(
+        "SELECT a.id, a.asset_code, iss.account_id \
+         FROM assets a \
+         JOIN accounts iss ON iss.id = a.issuer_id \
+         WHERE a.asset_code IS NOT NULL \
+         LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    let Some((expected_id, code, issuer)) = row else {
+        eprintln!("no classic-identity asset — skipping code-issuer resolution test");
+        return;
+    };
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/assets/{code}-{issuer}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200: {json}");
+    assert_eq!(json["id"], expected_id);
+    assert_eq!(json["asset_code"], code);
+    assert_eq!(json["issuer_address"], issuer);
+}
+
+/// Non-native `/transactions` happy path — picks any non-native asset that
+/// actually appears in `operations_appearances` and asserts the page
+/// returns at least one tx (proving the per-asset_type predicate composer
+/// resolves the right join branch on real data).
+#[tokio::test]
+async fn assets_transactions_returns_at_least_one_row_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    // Try classic identity first, fall back to contract identity.
+    let by_classic: Option<(i32,)> = sqlx::query_as(
+        "SELECT a.id FROM assets a \
+         JOIN accounts iss ON iss.id = a.issuer_id \
+         JOIN operations_appearances oa \
+              ON oa.asset_code = a.asset_code AND oa.asset_issuer_id = iss.id \
+         LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    let by_contract: Option<(i32,)> = if by_classic.is_none() {
+        sqlx::query_as(
+            "SELECT a.id FROM assets a \
+             JOIN soroban_contracts sc ON sc.id = a.contract_id \
+             JOIN operations_appearances oa ON oa.contract_id = sc.id \
+             LIMIT 1",
+        )
+        .fetch_optional(&pool)
+        .await
+        .ok()
+        .flatten()
+    } else {
+        None
+    };
+    let Some((asset_id,)) = by_classic.or(by_contract) else {
+        eprintln!(
+            "no non-native asset references found in operations_appearances — \
+             skipping happy-path /transactions assertion"
+        );
+        return;
+    };
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/assets/{asset_id}/transactions?limit=5"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200: {json}");
+    let data = json["data"].as_array().unwrap();
+    assert!(
+        !data.is_empty(),
+        "asset {asset_id} appears in operations_appearances but \
+         /transactions returned 0 rows: {json}"
+    );
 }
 
 /// Native XLM has no DB-side identity referenced by `operations_appearances`

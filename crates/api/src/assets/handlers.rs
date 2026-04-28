@@ -153,7 +153,7 @@ pub async fn get_asset(State(state): State<AppState>, Path(id): Path<String>) ->
         Some(p) => p,
         None => {
             return errors::bad_request_with_details(
-                errors::INVALID_FILTER,
+                errors::INVALID_ID,
                 "id must be a numeric assets.id, contract StrKey (C…, 56 chars), \
                  or `code-issuer` composite (e.g. USDC-GA…XYZ)",
                 serde_json::json!({ "received": id }),
@@ -220,7 +220,7 @@ pub async fn list_asset_transactions(
         Some(p) => p,
         None => {
             return errors::bad_request_with_details(
-                errors::INVALID_FILTER,
+                errors::INVALID_ID,
                 "id must be a numeric assets.id, contract StrKey (C…, 56 chars), \
                  or `code-issuer` composite (e.g. USDC-GA…XYZ)",
                 serde_json::json!({ "received": id }),
