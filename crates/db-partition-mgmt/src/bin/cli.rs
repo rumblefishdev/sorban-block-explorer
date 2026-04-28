@@ -1,6 +1,12 @@
 //! Local / staging CLI for partition management.
 //!
-//! Same `ensure_all_partitions` code path as the Lambda — no duplication.
+//! Calls `ensure_all_partitions` — the convenience wrapper around the same
+//! `ensure_default_partition` + `ensure_time_partitions` primitives the
+//! Lambda invokes per-table inside its handler. Both ultimately go through
+//! the same DDL, just composed differently: the Lambda keeps the per-table
+//! loop so it can publish a CloudWatch dimension between calls; the CLI
+//! collapses to a single function for terseness.
+//!
 //! Used to bootstrap monthly children on docker DBs (where no Lambda runs)
 //! and as the one-shot first invocation on a fresh staging RDS before the
 //! EventBridge cron takes over.
