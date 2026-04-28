@@ -264,7 +264,9 @@ When true, sub-arrays (`operations`, `events`, `invocations`,
 **Builder-computed fields** (not in `ExtractedTransaction` struct;
 derived by the task 0146 builder from parser-accessible data):
 
-- `application_order` — 0-based tx index within the ledger.
+- `application_order` — 1-based tx index within the ledger (matches the
+  Stellar ecosystem convention used by Horizon `paging_token`,
+  stellar-core, stellar.expert; bumped from 0-based per task **0172**).
 - `source_account_muxed`, `fee_account`, `fee_account_muxed` — derived
   from the `TransactionEnvelope` returned by `extract_envelopes`; the
   builder matches on `TxV0` / `TxV1` / `TxFeeBump` variants and

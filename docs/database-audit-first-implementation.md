@@ -130,7 +130,7 @@ monthly (per ADR 0027).
 | ------------------- | ------------------------------- | --------------------------------------------------------------------------------------------- |
 | `id`                | `BIGSERIAL NOT NULL`            | Auto-generated surrogate. Part of composite PK `(id, created_at)`.                            |
 | `transaction_id`    | `BIGINT NOT NULL`               | Parent transaction. FK `(transaction_id, created_at) → transactions(id, created_at)` CASCADE. |
-| `application_order` | `SMALLINT NOT NULL`             | Zero-based index of this operation within its parent transaction.                             |
+| `application_order` | `SMALLINT NOT NULL`             | 1-based index of this operation within its parent transaction (matches Horizon convention).   |
 | `type`              | `SMALLINT NOT NULL`             | Operation type (ADR 0031 enum; label via `op_type_name`). CK `BETWEEN 0 AND 127`.             |
 | `source_id`         | `BIGINT` FK `accounts`          | Operation source account (nullable — inherited from transaction if not overridden).           |
 | `destination_id`    | `BIGINT` FK `accounts`          | Destination account for payment-like ops. Nullable.                                           |

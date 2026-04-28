@@ -33,17 +33,23 @@ pub fn extract_operations(
     ops.iter()
         .enumerate()
         .map(|(i, op)| {
+            // operation_index is 1-based to match Stellar ecosystem convention
+            // (Horizon paging_token encodes op_app_order in low 12 bits, also
+            // 1-based). Surfaces as user-facing `application_order` in
+            // `XdrOperationDto`. See task 0172 / ADR 0028.
+            let op_index = i + 1;
             let source_account = op.source_account.as_ref().map(|a| a.to_string());
             let (op_type, details) = extract_op_details(
                 &op.body,
                 return_value.as_ref(),
                 ledger_sequence,
                 tx_index,
-                i,
+                op_index,
             );
             ExtractedOperation {
                 transaction_hash: transaction_hash.to_string(),
-                operation_index: u32::try_from(i).expect("operation index does not fit into u32"),
+                operation_index: u32::try_from(op_index)
+                    .expect("operation index does not fit into u32"),
                 op_type,
                 source_account,
                 details,
@@ -443,7 +449,7 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].op_type, OperationType::Payment);
         assert_eq!(result[0].transaction_hash, "abcd1234");
-        assert_eq!(result[0].operation_index, 0);
+        assert_eq!(result[0].operation_index, 1);
         assert!(result[0].source_account.is_none());
         assert_eq!(result[0].details["asset"], "native");
         assert_eq!(result[0].details["amount"], 10_000_000);
@@ -567,12 +573,12 @@ mod tests {
         let result = extract_operations(&inner, None, "abcd1234", 100, 0);
 
         assert_eq!(result.len(), 3);
-        assert_eq!(result[0].operation_index, 0);
+        assert_eq!(result[0].operation_index, 1);
         assert_eq!(result[0].op_type, OperationType::Inflation);
-        assert_eq!(result[1].operation_index, 1);
+        assert_eq!(result[1].operation_index, 2);
         assert_eq!(result[1].op_type, OperationType::BumpSequence);
         assert_eq!(result[1].details["bumpTo"], 42);
-        assert_eq!(result[2].operation_index, 2);
+        assert_eq!(result[2].operation_index, 3);
         assert_eq!(
             result[2].op_type,
             OperationType::EndSponsoringFutureReserves

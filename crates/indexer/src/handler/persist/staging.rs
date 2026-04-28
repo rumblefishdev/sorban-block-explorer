@@ -476,7 +476,11 @@ impl Staged {
 
         // --- transactions rows ---------------------------------------------
         let mut tx_rows: Vec<TxRow> = Vec::with_capacity(transactions.len());
-        for (app_order, tx) in transactions.iter().enumerate() {
+        for (idx, tx) in transactions.iter().enumerate() {
+            // 1-based to match Stellar ecosystem convention (Horizon paging_token,
+            // stellar-core, stellar.expert all use 1-based application_order).
+            // See task 0172 / ADR 0028.
+            let app_order = idx + 1;
             let hash = decode_hash(&tx.hash, "tx.hash")?;
             let inner_tx_hash = match tx.inner_tx_hash.as_deref() {
                 Some(hex_str) => Some(decode_hash(hex_str, "inner_tx_hash")?),
