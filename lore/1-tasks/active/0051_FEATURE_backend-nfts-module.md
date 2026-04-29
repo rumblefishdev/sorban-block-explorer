@@ -3,7 +3,7 @@ id: '0051'
 title: 'Backend: NFTs module (list + detail + transfers)'
 type: FEATURE
 status: active
-related_adr: ['0005']
+related_adr: ['0005', '0027', '0030', '0031']
 related_tasks: ['0023', '0043', '0092']
 tags: [layer-backend, nfts, soroban]
 milestone: 2
@@ -21,6 +21,10 @@ history:
     status: active
     who: karolkow
     note: 'Activated — bundled with 0052 (liquidity-pools) on shared branch, parallel module shape to 0048 accounts.'
+  - date: 2026-04-29
+    status: active
+    who: karolkow
+    note: 'Spec refresh vs current schema (ADR 0027/0030/0031): contract_id and owner_account are BIGINT FKs internally (soroban_contracts.id, accounts.id) — exposed as C/G-strkeys externally; transfers come from nft_ownership partitioned history table, not soroban_events.'
 ---
 
 # Backend: NFTs module (list + detail + transfers)
@@ -132,6 +136,8 @@ NFTs on Stellar/Soroban are modeled as explorer entities with potentially sparse
 
 **Sparse metadata tolerance:** All fields except `id`, `contract_id`, and `token_id` may be null. The API must handle sparse metadata gracefully without errors.
 
+**Storage note (ADR 0030/0031):** Internally `nfts.contract_id` is `BIGINT FK → soroban_contracts.id` and `nfts.current_owner_id` is `BIGINT FK → accounts.id`. Handlers JOIN to render the external C-strkey (`contract_id`) and G-strkey (`owner_account`) shapes shown above.
+
 ---
 
 #### GET /v1/nfts/:id/transfers
@@ -173,13 +179,13 @@ NFTs on Stellar/Soroban are modeled as explorer entities with potentially sparse
 }
 ```
 
-**Transfer data source:** Derived from `soroban_events` + linked transactions, NOT a separate NFT transfers table. Transfer events are identified by matching contract_id and known transfer event patterns in the events table.
+**Transfer data source:** `nft_ownership` table (ADR 0027 §13) — partitioned ownership history filtered on `event_type = transfer` (NftEventType, ADR 0031), joined with `transactions` for hash/timestamp. Earlier draft of this task pointed at `soroban_events`; that was superseded once the dedicated `nft_ownership` table landed.
 
 ### Behavioral Requirements
 
 - Sparse metadata tolerance: most fields nullable, no errors on missing metadata
-- Transfers derived from soroban_events, not a dedicated table
-- Filter by collection_name and contract_id
+- Transfers from `nft_ownership` (event_type = transfer), joined with transactions
+- Filter by collection_name and contract_id (external C-strkey, resolved to internal FK)
 - NFT uniqueness scoped by contract_id + token_id
 
 ### Caching
@@ -212,14 +218,14 @@ Implement `GET /nfts/:id` with sparse metadata tolerance (nullable fields).
 
 ### Step 4: Transfers Endpoint
 
-Implement `GET /nfts/:id/transfers` deriving transfer history from soroban_events table by matching contract_id and known transfer event patterns, joined with transactions for hash and timestamp.
+Implement `GET /nfts/:id/transfers` reading from `nft_ownership` (filter `event_type = transfer`, NftEventType per ADR 0031), joined with `transactions` for hash/timestamp and with `accounts` to render `from_account`/`to_account` G-strkeys.
 
 ## Acceptance Criteria
 
 - [ ] `GET /v1/nfts` returns paginated NFT list
 - [ ] `GET /v1/nfts/:id` returns NFT detail with all fields (nullable where sparse)
 - [ ] `GET /v1/nfts/:id/transfers` returns paginated transfer history
-- [ ] Transfers derived from soroban_events, not a separate table
+- [ ] Transfers sourced from `nft_ownership` (event_type = transfer), not soroban_events
 - [ ] Sparse metadata handled gracefully (no errors on null fields)
 - [ ] `filter[collection]` and `filter[contract_id]` work correctly
 - [ ] Standard pagination and error envelopes
@@ -228,5 +234,5 @@ Implement `GET /nfts/:id/transfers` deriving transfer history from soroban_event
 ## Notes
 
 - NFT metadata quality varies significantly across the Soroban ecosystem.
-- Transfer derivation from events is the main implementation complexity.
+- Transfer derivation reads from `nft_ownership` (partitioned), filtered on NftEventType = transfer; main complexity is FK joins back to `accounts` and `transactions` to render external strkeys + tx hash.
 - The contract_id + token_id unique constraint ensures correct NFT identity resolution.

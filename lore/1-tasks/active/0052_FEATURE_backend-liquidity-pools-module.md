@@ -3,7 +3,7 @@ id: '0052'
 title: 'Backend: Liquidity Pools module (list + detail + transactions + chart)'
 type: FEATURE
 status: active
-related_adr: ['0005']
+related_adr: ['0005', '0024', '0027', '0031']
 related_tasks: ['0023', '0043', '0092']
 tags: [layer-backend, liquidity-pools, charts]
 milestone: 2
@@ -21,6 +21,10 @@ history:
     status: active
     who: karolkow
     note: 'Activated — bundled with 0051 (NFTs) on shared branch, parallel module shape to 0048 accounts.'
+  - date: 2026-04-29
+    status: active
+    who: karolkow
+    note: 'Spec refresh vs current schema (ADR 0024/0027/0031): pool_id is BYTEA(32) hex-encoded externally; assets stored as flat columns (asset_X_type/code/issuer_id) and assembled into JSONB shape in handler; reserves/total_shares/tvl/last_updated_ledger live in liquidity_pool_snapshots, not on liquidity_pools — detail joins latest snapshot. Module already exists with participants endpoint (task 0126); list/detail/transactions/chart still TODO.'
 ---
 
 # Backend: Liquidity Pools module (list + detail + transactions + chart)
@@ -41,7 +45,7 @@ Liquidity pools combine current-state reads with historical aggregate reads. The
 
 ### API Specification
 
-**Location:** `crates/api/src/liquidity-pools/`
+**Location:** `crates/api/src/liquidity_pools/` (already scaffolded; participants endpoint from task 0126 is mounted, list/detail/transactions/chart added by this task).
 
 ---
 
@@ -133,6 +137,8 @@ Liquidity pools combine current-state reads with historical aggregate reads. The
 | `tvl`                 | string         | Total value locked                        |
 | `created_at_ledger`   | number         | Ledger where pool was created             |
 | `last_updated_ledger` | number         | Most recent ledger with pool state change |
+
+**Storage note (ADR 0024/0027/0031):** `liquidity_pools` only carries static metadata (`pool_id BYTEA(32)`, `asset_X_type/code/issuer_id`, `fee_bps`, `created_at_ledger`). Dynamic fields — `reserves`, `total_shares`, `tvl`, `last_updated_ledger` — come from the **latest** `liquidity_pool_snapshots` row for that pool (`ORDER BY ledger_sequence DESC LIMIT 1`). `pool_id` is hex-encoded (64-char lowercase) for the API; `asset_a`/`asset_b` JSONB shapes are assembled in the handler from the flat asset columns + `accounts`/`assets` joins.
 
 ---
 
@@ -242,10 +248,11 @@ Liquidity pools combine current-state reads with historical aggregate reads. The
 
 ### Behavioral Requirements
 
-- Separate pool current-state queries (liquidity_pools table) from chart queries (snapshots table)
+- Pool detail current-state values (`reserves`, `total_shares`, `tvl`, `last_updated_ledger`) come from the latest `liquidity_pool_snapshots` row; static fields (`pool_id`, assets, `fee_bps`, `created_at_ledger`) come from `liquidity_pools`
 - Pool transactions derived from transactions + operations + soroban_events
-- Chart data from pre-computed liquidity_pool_snapshots
-- Asset pair payloads are JSONB (may span classic and Soroban-native)
+- Chart data from pre-computed liquidity_pool_snapshots (interval aggregation)
+- Asset pair response payloads are JSONB **shapes** assembled in the handler from flat schema columns (`asset_X_type/code/issuer_id`); may span classic and Soroban-native
+- `pool_id` rendered as 64-char lowercase hex externally, stored as `BYTEA(32)` (ADR 0024)
 - Validate interval parameter strictly
 
 ### Caching
@@ -276,15 +283,15 @@ Liquidity pools combine current-state reads with historical aggregate reads. The
 
 ### Step 1: Route + handler setup
 
-Create `crates/api/src/liquidity-pools/` with module, controller, service, and request/response types (ToSchema).
+Module already exists at `crates/api/src/liquidity_pools/` (participants from task 0126). Add new `dto`/`handlers`/`queries` items and register the new routes alongside the existing `list_participants`.
 
 ### Step 2: List Endpoint
 
-Implement `GET /liquidity-pools` with cursor pagination and filter[assets]/filter[min_tvl] support.
+Implement `GET /liquidity-pools` with cursor pagination and filter[assets]/filter[min_tvl] support. List rows JOIN latest snapshot for `reserves`/`total_shares`/`tvl`; hex-encode `pool_id`; assemble asset JSONB from flat columns.
 
 ### Step 3: Detail Endpoint
 
-Implement `GET /liquidity-pools/:id` querying the `liquidity_pools` table.
+Implement `GET /liquidity-pools/:id` joining `liquidity_pools` (static) with the latest `liquidity_pool_snapshots` row (dynamic). Decode hex `pool_id` → BYTEA at the boundary (reuse `is_valid_pool_id_hex` from existing handlers).
 
 ### Step 4: Transactions Endpoint
 
@@ -297,7 +304,7 @@ Implement `GET /liquidity-pools/:id/chart` querying `liquidity_pool_snapshots` w
 ## Acceptance Criteria
 
 - [ ] `GET /v1/liquidity-pools` returns paginated pool list
-- [ ] `GET /v1/liquidity-pools/:id` returns pool detail
+- [ ] `GET /v1/liquidity-pools/:id` returns pool detail (static fields from `liquidity_pools` + dynamic fields from latest `liquidity_pool_snapshots` row)
 - [ ] `GET /v1/liquidity-pools/:id/transactions` returns paginated pool transactions
 - [ ] `GET /v1/liquidity-pools/:id/chart` returns time-series data points
 - [ ] Chart data sourced from liquidity_pool_snapshots, not computed at query time
@@ -306,6 +313,8 @@ Implement `GET /liquidity-pools/:id/chart` querying `liquidity_pool_snapshots` w
 - [ ] filter[assets] and filter[min_tvl] work correctly
 - [ ] Pool transactions derived from transactions + operations + events
 - [ ] Pool current state separate from chart queries
+- [ ] `pool_id` accepted/rendered as 64-char lowercase hex; rejected with 400 otherwise (BYTEA(32) on the wire)
+- [ ] Asset JSONB shapes assembled in handler from flat schema columns + `accounts`/`assets` joins
 - [ ] Standard pagination and error envelopes
 - [ ] 404 for non-existent pools
 
