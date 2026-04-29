@@ -47,6 +47,13 @@ pub fn extract_events(
             extracted
         }
         TransactionMeta::V4(v4) => {
+            // CAP-67 (Protocol 23+) reorganises events into three locations
+            // — tx-level (fee BeforeAllTxs / AfterTx refund / AfterAllTxs),
+            // per-operation (Soroban contract events emitted during
+            // InvokeHostFunction execution + classic-op SAC events under
+            // Protocol 23 unification), and diagnostic. `event_index` is
+            // numbered sequentially across all three sources so the V3
+            // contract (monotonic per-tx index) is preserved.
             let mut extracted: Vec<ExtractedEvent> = v4
                 .events
                 .iter()
@@ -61,17 +68,32 @@ pub fn extract_events(
                     )
                 })
                 .collect();
-            // Include diagnostic_events
-            let base = extracted.len();
-            for (j, diag) in v4.diagnostic_events.iter().enumerate() {
+
+            let mut next_idx = extracted.len();
+            for op_meta in v4.operations.iter() {
+                for event in op_meta.events.iter() {
+                    extracted.push(extract_single_event(
+                        event,
+                        transaction_hash,
+                        ledger_sequence,
+                        created_at,
+                        next_idx,
+                    ));
+                    next_idx += 1;
+                }
+            }
+
+            for diag in v4.diagnostic_events.iter() {
                 extracted.push(extract_single_event(
                     &diag.event,
                     transaction_hash,
                     ledger_sequence,
                     created_at,
-                    base + j,
+                    next_idx,
                 ));
+                next_idx += 1;
             }
+
             extracted
         }
         _ => Vec::new(),
@@ -336,6 +358,133 @@ mod tests {
         assert_eq!(events[0].event_type, DomainEventType::Contract);
         assert!(events[0].contract_id.is_some());
         assert_eq!(events[0].data["value"], 77);
+    }
+
+    // ---- CAP-67 / Protocol 23+ per-operation event coverage ----------------
+    //
+    // V4 events live in three locations (`v4.events`,
+    // `v4.operations[i].events`, `v4.diagnostic_events`). The tests below
+    // pin each pattern individually plus a mixed-sources case that proves
+    // the iteration order (tx-level → per-op → diagnostic) and sequential
+    // `event_index` numbering.
+
+    fn make_contract_event(contract_byte: u8, data: u32) -> ContractEvent {
+        ContractEvent {
+            ext: ExtensionPoint::V0,
+            contract_id: Some(ContractId(Hash([contract_byte; 32]))),
+            type_: ContractEventType::Contract,
+            body: ContractEventBody::V0(ContractEventV0 {
+                topics: VecM::default(),
+                data: ScVal::U32(data),
+            }),
+        }
+    }
+
+    fn make_v4_meta(
+        tx_events: Vec<TransactionEvent>,
+        operations: Vec<OperationMetaV2>,
+        diagnostic_events: Vec<DiagnosticEvent>,
+    ) -> TransactionMeta {
+        TransactionMeta::V4(TransactionMetaV4 {
+            ext: ExtensionPoint::V0,
+            tx_changes_before: LedgerEntryChanges::default(),
+            operations: operations.try_into().unwrap(),
+            tx_changes_after: LedgerEntryChanges::default(),
+            soroban_meta: None,
+            events: tx_events.try_into().unwrap(),
+            diagnostic_events: diagnostic_events.try_into().unwrap(),
+        })
+    }
+
+    #[test]
+    fn extract_events_v4_per_op_single() {
+        // One operation carrying one contract event, no tx-level / diag.
+        // Pre-fix this returned an empty vec; post-fix it returns the event.
+        let op = OperationMetaV2 {
+            ext: ExtensionPoint::V0,
+            changes: LedgerEntryChanges::default(),
+            events: vec![make_contract_event(0xCC, 11)].try_into().unwrap(),
+        };
+        let tx_meta = make_v4_meta(Vec::new(), vec![op], Vec::new());
+
+        let events = extract_events(&tx_meta, "abcd1234", 100, 1700000000);
+        assert_eq!(events.len(), 1, "per-op event must be extracted");
+        assert_eq!(events[0].event_type, DomainEventType::Contract);
+        assert_eq!(events[0].event_index, 0);
+        assert_eq!(events[0].data["value"], 11);
+        assert!(events[0].contract_id.is_some());
+    }
+
+    #[test]
+    fn extract_events_v4_mixed_sources_preserve_order_and_indexing() {
+        // tx-level (1) + per-op across two operations (2 + 1) + diagnostic (1).
+        // Expected order: tx-level → op0 → op1 → diagnostic, with sequential
+        // `event_index` 0..=4 and contract bytes `0xAA, 0xB0, 0xB1, 0xC0, 0xDD`.
+        let tx_event = TransactionEvent {
+            stage: TransactionEventStage::default(),
+            event: make_contract_event(0xAA, 100),
+        };
+        let op0 = OperationMetaV2 {
+            ext: ExtensionPoint::V0,
+            changes: LedgerEntryChanges::default(),
+            events: vec![
+                make_contract_event(0xB0, 200),
+                make_contract_event(0xB1, 201),
+            ]
+            .try_into()
+            .unwrap(),
+        };
+        let op1 = OperationMetaV2 {
+            ext: ExtensionPoint::V0,
+            changes: LedgerEntryChanges::default(),
+            events: vec![make_contract_event(0xC0, 300)].try_into().unwrap(),
+        };
+        let diag = DiagnosticEvent {
+            in_successful_contract_call: false,
+            event: make_contract_event(0xDD, 400),
+        };
+        let tx_meta = make_v4_meta(vec![tx_event], vec![op0, op1], vec![diag]);
+
+        let events = extract_events(&tx_meta, "abcd1234", 100, 1700000000);
+        assert_eq!(events.len(), 5, "1 tx-level + 3 per-op + 1 diagnostic");
+
+        // Sequential event_index across the three sources.
+        for (i, e) in events.iter().enumerate() {
+            assert_eq!(
+                e.event_index, i as u32,
+                "event_index must be sequential across all sources"
+            );
+        }
+
+        // Iteration order proven by the data values we planted per source.
+        assert_eq!(events[0].data["value"], 100, "tx-level event first");
+        assert_eq!(events[1].data["value"], 200, "op0 event[0] second");
+        assert_eq!(events[2].data["value"], 201, "op0 event[1] third");
+        assert_eq!(events[3].data["value"], 300, "op1 event[0] fourth");
+        assert_eq!(events[4].data["value"], 400, "diagnostic event last");
+    }
+
+    #[test]
+    fn extract_events_v4_empty_per_op_produces_no_spurious_rows() {
+        // Two operations, both with empty events vec, plus one tx-level
+        // event. Result must contain only the tx-level event — empty
+        // OperationMetaV2.events must not advance the index or push
+        // empty rows.
+        let tx_event = TransactionEvent {
+            stage: TransactionEventStage::default(),
+            event: make_contract_event(0xAA, 7),
+        };
+        let empty_op = || OperationMetaV2 {
+            ext: ExtensionPoint::V0,
+            changes: LedgerEntryChanges::default(),
+            events: VecM::default(),
+        };
+        let tx_meta = make_v4_meta(vec![tx_event], vec![empty_op(), empty_op()], Vec::new());
+
+        let events = extract_events(&tx_meta, "abcd1234", 100, 1700000000);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_index, 0);
+        assert_eq!(events[0].data["value"], 7);
     }
 
     #[test]
