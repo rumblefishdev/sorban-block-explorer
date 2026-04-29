@@ -27,10 +27,11 @@ pub fn detect_nft_events(events: &[ExtractedEvent]) -> Vec<NftEvent> {
         if event.event_type != ContractEventType::Contract {
             continue;
         }
-        // Skip diagnostic-container mirrors — Stellar core copies every
-        // per-op consensus Contract event into `v4.diagnostic_events`
-        // byte-identically; without this guard NFT detection would
-        // double-emit transfer/mint/burn rows (task 0182).
+        // Skip diagnostic-container Contract-typed copies — when
+        // diagnostic mode is enabled, every per-op consensus Contract
+        // event is also present byte-identically in `v4.diagnostic_events`;
+        // without this guard NFT detection would double-emit
+        // transfer/mint/burn rows (task 0182).
         if event.source == EventSource::Diagnostic {
             continue;
         }

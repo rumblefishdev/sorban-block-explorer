@@ -551,16 +551,17 @@ async fn v4_per_op_events_land_in_appearance_index() {
     );
 }
 
-/// Task 0182 — `v4.diagnostic_events` carries `Contract`-typed mirrors of
-/// the per-op consensus events (Stellar core copies them in byte-identically
-/// when `--diagnostic-events` is enabled). Filtering by inner `event_type`
-/// passes those mirrors through and double-counts `amount` on the
-/// `soroban_events_appearances` index. The fix routes the staging filter
-/// on `EventSource::Diagnostic` instead — this test pins that the entire
-/// diagnostic_events container drops at staging, regardless of inner type.
+/// Task 0182 — when diagnostic mode is enabled, `v4.diagnostic_events`
+/// holds byte-identical Contract-typed copies of the per-op consensus
+/// events alongside the host-VM trace entries. Filtering by inner
+/// `event_type` passes those copies through and double-counts `amount`
+/// on the `soroban_events_appearances` index. The fix routes the staging
+/// filter on `EventSource::Diagnostic` instead — this test pins that the
+/// entire diagnostic_events container drops at staging, regardless of
+/// inner type.
 ///
 /// Pre-fix this test would assert `amount = 2` (per-op + Contract-typed
-/// mirror); post-fix it asserts `amount = 1` (per-op only).
+/// duplicate); post-fix it asserts `amount = 1` (per-op only).
 #[tokio::test]
 async fn v4_diag_contract_mirror_does_not_inflate_amount() {
     use stellar_xdr::curr::{

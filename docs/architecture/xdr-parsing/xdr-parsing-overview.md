@@ -302,21 +302,21 @@ regardless of inner type**: the staging filter
 (`crates/indexer/src/handler/persist/staging.rs`) routes on
 `source == EventSource::Diagnostic`, not on inner `event_type`.
 
-Why: Stellar core (when run with `--diagnostic-events`, the default for
-archive-bound captive core) **mirrors every consensus per-op Contract
-event into `v4.diagnostic_events` byte-identically** — the mirror
-carries the same inner `type_ = Contract` as the original. CAP-67
-explicitly says diagnostic_events are auxiliary, "not hashed into the
-ledger, and therefore are not part of the protocol", so they must not
-contribute to the appearance index. A type-based filter
-(`event_type == Diagnostic`) cannot tell the original from the mirror
-and silently double-counts. Container-based filtering is the only
-reliable signal.
+Why: when diagnostic mode is enabled (the default for archive-bound
+captive-core like Galexie), `v4.diagnostic_events` **holds
+byte-identical Contract-typed copies of every consensus per-op
+Contract event** — the copy carries the same inner `type_ = Contract`
+as the original. CAP-67 explicitly says diagnostic_events are
+auxiliary, "not hashed into the ledger, and therefore are not part of
+the protocol", so they must not contribute to the appearance index.
+A type-based filter (`event_type == Diagnostic`) cannot tell the
+original from the copy and silently double-counts. Container-based
+filtering is the only reliable signal.
 
 The same routing applies at read time: `split_events`
 (`crates/api/src/stellar_archive/extractors.rs`) and the
 `/contracts/:id/events` handler (`crates/api/src/contracts/handlers.rs`)
-both filter on `EventSource::Diagnostic` to suppress the mirrors when
+both filter on `EventSource::Diagnostic` to suppress the duplicates when
 rendering contract event lists. The host-VM Diagnostic-typed entries
 (`fn_call`, `fn_return`, `core_metrics`, errors) drop out the same way.
 

@@ -679,13 +679,14 @@ impl Staged {
         // appearance index only counts consensus events.
         //
         // Filter on `EventSource::Diagnostic` — NOT on inner
-        // `event_type == Diagnostic`. Stellar core mirrors every per-op
-        // consensus Contract event into `v4.diagnostic_events` with
-        // inner `type_ = Contract` (byte-identical), so a type-based
-        // filter passes the duplicate through and inflates `amount` by
-        // the per-op event count. Container-based filter drops both the
-        // host-VM trace entries and the Contract-typed mirrors in one
-        // step (task 0182).
+        // `event_type == Diagnostic`. When diagnostic mode is enabled
+        // (default for Galexie's captive-core), `v4.diagnostic_events`
+        // holds byte-identical Contract-typed copies of every per-op
+        // consensus Contract event (inner `type_ = Contract`), so a
+        // type-based filter passes the duplicate through and inflates
+        // `amount` by the per-op event count. Container-based filter
+        // drops both the host-VM trace entries and the Contract-typed
+        // duplicates in one step (task 0182).
         //
         // On a mainnet sample diagnostic events are ~85 % of event
         // volume and previously dominated events_ms in persist_ledger.

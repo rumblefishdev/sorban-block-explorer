@@ -64,8 +64,9 @@ pub fn extract_events(
             // contract (monotonic per-tx index) is preserved. Each event
             // is tagged with its `EventSource` so consumers can drop the
             // diagnostic container without trusting the inner `type_`
-            // (Stellar core mirrors per-op Contract events into the
-            // diagnostic container byte-identically — task 0182).
+            // (the diagnostic container holds byte-identical Contract-typed
+            // copies of per-op consensus events when diagnostic mode is
+            // enabled — task 0182).
             let mut extracted: Vec<ExtractedEvent> = v4
                 .events
                 .iter()

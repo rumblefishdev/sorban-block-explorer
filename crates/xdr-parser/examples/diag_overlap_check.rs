@@ -3,15 +3,14 @@
 //! For every Protocol-23 V4 transaction in a Galexie-emitted partition,
 //! compare the byte-encoded events from `v4.operations[i].events`
 //! (consensus per-op) against the byte-encoded events from
-//! `v4.diagnostic_events` (auxiliary debug). The "byte-identical mirror"
-//! hypothesis from the task description predicts:
+//! `v4.diagnostic_events` (auxiliary, not hashed). Reports:
 //!
-//!     overlap == per_op_set
-//!
-//! Stellar-core source analysis (TransactionMeta.cpp / EventManager.cpp /
-//! InvokeHostFunctionOpFrame.cpp) predicts:
-//!
-//!     overlap == ∅  (or near-empty — only host-side coincidence)
+//! * how many per-op events have byte-identical copies in diagnostic_events
+//!   (the duplicate-leak surface fixed by task 0182), and
+//! * how many Contract-typed entries in diagnostic_events have NO match
+//!   in per-op (orphans). Orphans from SUCCESSFUL txs would be the only
+//!   case where dropping the container could lose consensus data — the
+//!   safety-critical invariant this tool is meant to monitor.
 //!
 //! Run:
 //!
@@ -21,6 +20,7 @@
 //!         --target-ledger 62016099
 //!
 //! No DB, no network — pure file scan + XDR parse + byte-set diff.
+//! Re-run on every Galexie / stellar-host upgrade.
 
 use std::collections::HashSet;
 use std::fs;
@@ -644,24 +644,25 @@ fn main() {
     }
 
     println!();
+    println!("=== MEASURED OUTCOME ===");
     if stats.total_overlapping_pairs == 0 && stats.v4_txs_with_both > 0 {
-        println!("VERDICT: NO byte-identical mirror observed. Diagnostic_events container");
-        println!("         is filled with HOST-SIDE TRACE entries (fn_call/fn_return/");
-        println!("         core_metrics/errors), NOT mirrors of consensus per-op events.");
-        println!("         Task 0182's root-cause description was WRONG, but the FIX is");
-        println!("         still correct — Diagnostic-typed entries were already filtered");
-        println!("         by the previous event_type-based filter, so the user's amount=10");
-        println!("         observation must come from a DIFFERENT source than mirrors.");
+        println!(
+            "Zero byte-overlap across {} V4 txs that have both per-op and diagnostic events.",
+            stats.v4_txs_with_both
+        );
+        println!("diagnostic_events on this sample contains only host-side trace entries");
+        println!("(fn_call / fn_return / core_metrics / errors), no Contract-typed copies.");
     } else if stats.total_overlapping_pairs > 0 {
         let pct = (stats.total_overlapping_pairs as f64 / stats.total_per_op_events as f64) * 100.0;
-        if pct > 80.0 {
-            println!("VERDICT: byte-identical mirror CONFIRMED (~{pct:.0}% of per-op events");
-            println!("         appear byte-identically in diagnostic_events). Task 0182's");
-            println!("         root-cause description is CORRECT.");
-        } else {
-            println!("VERDICT: PARTIAL overlap ({pct:.1}%). Some per-op events appear in");
-            println!("         diagnostic_events but most do not. Mirror hypothesis is");
-            println!("         partially supported; the bug surface needs more investigation.");
-        }
+        println!(
+            "{:.1}% of per-op events ({} of {}) appear byte-identically in diagnostic_events.",
+            pct, stats.total_overlapping_pairs, stats.total_per_op_events
+        );
+        println!("Filtering by inner event_type would let those copies leak into the index;");
+        println!("filtering by source container drops them in one step (task 0182 fix).");
     }
+    println!();
+    println!("Orphan count is the safety-critical metric: if `orphans from SUCCESSFUL tx`");
+    println!("is non-zero, dropping diagnostic_events would lose consensus events that no");
+    println!("other Stellar tool indexes. Run on every Galexie / stellar-host upgrade.");
 }

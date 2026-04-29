@@ -252,10 +252,11 @@ fn envelope_fee_bump_source(env: &TransactionEnvelope) -> Option<String> {
 fn split_events(events: Vec<xdr_parser::ExtractedEvent>) -> (Vec<XdrEventDto>, Vec<XdrEventDto>) {
     use xdr_parser::EventSource;
 
-    // Route on container source, not inner `event_type` — Stellar core
-    // mirrors per-op Contract events into `v4.diagnostic_events` with
-    // inner `type_ = Contract`, so a type-based split would surface those
-    // mirrors as additional contract events (task 0182).
+    // Route on container source, not inner `event_type` — the
+    // diagnostic_events container holds byte-identical Contract-typed
+    // copies of per-op consensus events (inner `type_ = Contract`) when
+    // diagnostic mode is enabled, so a type-based split would surface
+    // those copies as additional contract events (task 0182).
     let mut contract = Vec::new();
     let mut diagnostic = Vec::new();
     for e in events {

@@ -99,10 +99,11 @@ pub struct ExtractedTransaction {
 ///
 /// CAP-67 (Protocol 23+) splits events across three V4 locations:
 /// `v4.events` (tx-level), `v4.operations[i].events` (per-op), and
-/// `v4.diagnostic_events` (host VM trace + a byte-identical mirror of the
-/// per-op consensus events). Filtering by inner `event_type` cannot
-/// distinguish a real consensus Contract event from its diagnostic mirror;
-/// the source container is the only reliable signal. Task 0182.
+/// `v4.diagnostic_events` (host-VM trace entries + byte-identical
+/// Contract-typed copies of the per-op consensus events). Filtering by
+/// inner `event_type` cannot distinguish a real consensus Contract event
+/// from its diagnostic-container copy; the source container is the only
+/// reliable signal. Task 0182.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventSource {
     /// `v4.events` (Protocol 23+) or `soroban_meta.events` (Protocol 22).
@@ -113,10 +114,11 @@ pub enum EventSource {
     /// Not produced for V3 meta.
     PerOp,
     /// `v4.diagnostic_events` or `soroban_meta.diagnostic_events`. NOT
-    /// hashed (CAP-67 spec). Stellar core mirrors every consensus Contract
-    /// event into this container with `type_ = Contract`, byte-identical
-    /// to the per-op original — staging must drop the entire container
-    /// regardless of inner type.
+    /// hashed (CAP-67 spec). When diagnostic mode is enabled (the default
+    /// for Galexie's captive-core), this container holds byte-identical
+    /// Contract-typed copies of every consensus per-op Contract event
+    /// alongside the host-VM trace entries — staging must drop the
+    /// entire container regardless of inner type.
     Diagnostic,
 }
 
