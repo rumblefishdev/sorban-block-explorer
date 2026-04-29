@@ -129,8 +129,13 @@ Raw XDR is exposed only for advanced transaction inspection.
 
 ### 4.1 Ledger Header
 
-From `LedgerHeader`, the parsing layer extracts:
+From the enclosing `LedgerHeaderHistoryEntry` and its `LedgerHeader`, the
+parsing layer extracts:
 
+- `hash` — the canonical Stellar ledger hash, taken **directly** from
+  `LedgerHeaderHistoryEntry.hash` (already populated by stellar-core).
+  Never recomputed by the parser — that is the value Horizon
+  (`/ledgers/:N.hash`) and every other Stellar tool publishes
 - `sequence`
 - `closeTime`
 - `protocolVersion`
