@@ -2,7 +2,7 @@
 id: '0182'
 title: 'BUG: diagnostic_events container leak — Contract-typed mirrors overcount soroban_events_appearances.amount ~2-3x'
 type: BUG
-status: backlog
+status: active
 related_adr: ['0033']
 related_tasks: ['0173']
 tags: ['xdr-parser', 'staging', 'data-correctness', 'effort-small', 'cap-67']
@@ -19,6 +19,10 @@ history:
       (drops `event_type == Diagnostic`), but Stellar core mirrors every
       consensus Contract event into `v4.diagnostic_events` with inner
       `type_ = Contract`, which slips through the filter as a duplicate.
+  - date: '2026-04-29'
+    status: active
+    who: fmazur
+    note: Promoted from backlog to active.
 ---
 
 # BUG: diagnostic_events container leak — Contract-typed mirrors overcount soroban_events_appearances.amount ~2-3×
