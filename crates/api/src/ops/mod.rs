@@ -1,15 +1,7 @@
 //! Operational endpoints (health checks, diagnostics).
 
 use axum::Json;
-use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
-
-/// Response body for the liveness probe.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct HealthResponse {
-    /// Always `"ok"` when the service is reachable.
-    pub status: String,
-}
+use serde_json::{Value, json};
 
 /// Liveness probe consumed by AWS Lambda health checks and smoke tests.
 #[utoipa::path(
@@ -17,11 +9,9 @@ pub struct HealthResponse {
     path = "/health",
     tag = "ops",
     responses(
-        (status = 200, description = "Service is healthy", body = HealthResponse),
+        (status = 200, description = "Service is healthy", body = serde_json::Value),
     ),
 )]
-pub async fn health() -> Json<HealthResponse> {
-    Json(HealthResponse {
-        status: "ok".to_string(),
-    })
+pub async fn health() -> Json<Value> {
+    Json(json!({ "status": "ok" }))
 }

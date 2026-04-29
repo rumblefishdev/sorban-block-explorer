@@ -45,7 +45,6 @@ import type {
   GetTransactionError,
   GetTransactionResponse,
   HealthData,
-  HealthResponse2,
   ListAssetsData,
   ListAssetsError,
   ListAssetsResponse,
@@ -117,9 +116,9 @@ export const healthQueryKey = (options?: Options<HealthData>) =>
  */
 export const healthOptions = (options?: Options<HealthData>) =>
   queryOptions<
-    HealthResponse2,
+    unknown,
     DefaultError,
-    HealthResponse2,
+    unknown,
     ReturnType<typeof healthQueryKey>
   >({
     queryFn: async ({ queryKey, signal }) => {

@@ -17,7 +17,6 @@ use crate::assets::dto::{AssetDetailResponse, AssetItem, AssetTransactionItem};
 use crate::contracts::dto::{
     ContractDetailResponse, ContractStats, EventItem, InterfaceResponse, InvocationItem,
 };
-use crate::ops::HealthResponse;
 use crate::stellar_archive::dto::{
     E3HeavyFields, E3Response, HeavyFieldsStatus, SignatureDto, XdrEventDto, XdrOperationDto,
 };
@@ -42,7 +41,6 @@ use schemas::{ErrorEnvelope, PageInfo, Paginated};
         license(name = "Proprietary"),
     ),
     components(schemas(
-        HealthResponse,
         ErrorEnvelope,
         PageInfo,
         Paginated<TransactionListItem>,

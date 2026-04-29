@@ -23,9 +23,7 @@
             "description": "Service is healthy",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HealthResponse"
-                }
+                "schema": {}
               }
             }
           }
@@ -1354,17 +1352,6 @@
           "transaction_id": {
             "type": "integer",
             "format": "int64"
-          }
-        }
-      },
-      "HealthResponse": {
-        "type": "object",
-        "description": "Response body for the liveness probe.",
-        "required": ["status"],
-        "properties": {
-          "status": {
-            "type": "string",
-            "description": "Always `\"ok\"` when the service is reachable."
           }
         }
       },

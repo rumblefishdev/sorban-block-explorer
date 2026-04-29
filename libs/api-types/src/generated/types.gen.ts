@@ -237,16 +237,6 @@ export type EventItem = {
 };
 
 /**
- * Response body for the liveness probe.
- */
-export type HealthResponse = {
-  /**
-   * Always `"ok"` when the service is reachable.
-   */
-  status: string;
-};
-
-/**
  * Indicates whether the XDR-sourced fields were loaded successfully.
  */
 export type HeavyFieldsStatus = 'ok' | 'unavailable';
@@ -779,10 +769,8 @@ export type HealthResponses = {
   /**
    * Service is healthy
    */
-  200: HealthResponse;
+  200: unknown;
 };
-
-export type HealthResponse2 = HealthResponses[keyof HealthResponses];
 
 export type ListAssetsData = {
   body?: never;
