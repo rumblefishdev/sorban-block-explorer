@@ -385,7 +385,11 @@ fn map_interface(blob: serde_json::Value) -> InterfaceResponse {
     tag = "contracts",
     params(
         ("contract_id" = String, Path, description = "Contract StrKey (C…, 56 chars)"),
-        ListParams,
+        ("limit" = Option<u32>, Query,
+         description = "Items per page (1–100, default 20). Page granularity is per\n`(contract, transaction, ledger)` appearance — a single appearance\ncan expand to multiple per-node items in the response, so the\nreturned `data.len()` may exceed `limit`.",
+         minimum = 1, maximum = 100),
+        ("cursor" = Option<String>, Query,
+         description = "Opaque pagination cursor from a previous response."),
     ),
     responses(
         (status = 200, description = "Paginated invocation history",
@@ -611,7 +615,11 @@ impl AppearanceRow for EventAppearanceRow {
     tag = "contracts",
     params(
         ("contract_id" = String, Path, description = "Contract StrKey (C…, 56 chars)"),
-        ListParams,
+        ("limit" = Option<u32>, Query,
+         description = "Items per page (1–100, default 20). Page granularity is per\n`(contract, transaction, ledger)` appearance — a single appearance\ncan expand to multiple per-node items in the response, so the\nreturned `data.len()` may exceed `limit`.",
+         minimum = 1, maximum = 100),
+        ("cursor" = Option<String>, Query,
+         description = "Opaque pagination cursor from a previous response."),
     ),
     responses(
         (status = 200, description = "Paginated event history",

@@ -1,2 +1,2 @@
 #!/usr/bin/env sh
-npm run -s format:staged && npm run -s verify:staged
+npx lint-staged && npm run -s verify:staged

@@ -10,12 +10,13 @@ use utoipa::{IntoParams, ToSchema};
 
 /// Query parameters shared by `GET /v1/contracts/:contract_id/invocations`
 /// and `GET /v1/contracts/:contract_id/events`.
-#[derive(Debug, Deserialize, IntoParams)]
+#[derive(Debug, Deserialize, IntoParams, ToSchema)]
 pub struct ListParams {
     /// Items per page (1–100, default 20). Page granularity is per
     /// `(contract, transaction, ledger)` appearance — a single appearance
     /// can expand to multiple per-node items in the response, so the
     /// returned `data.len()` may exceed `limit`.
+    #[schema(minimum = 1, maximum = 100)]
     pub limit: Option<u32>,
     /// Opaque pagination cursor from a previous response.
     pub cursor: Option<String>,

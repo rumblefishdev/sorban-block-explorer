@@ -43,8 +43,8 @@
             "schema": {
               "type": "integer",
               "format": "int32",
-              "minimum": 1,
-              "maximum": 100
+              "maximum": 100,
+              "minimum": 1
             }
           },
           {
@@ -189,8 +189,8 @@
             "schema": {
               "type": "integer",
               "format": "int32",
-              "minimum": 1,
-              "maximum": 100
+              "maximum": 100,
+              "minimum": 1
             }
           },
           {
@@ -329,10 +329,10 @@
             "description": "Items per page (1–100, default 20). Page granularity is per\n`(contract, transaction, ledger)` appearance — a single appearance\ncan expand to multiple per-node items in the response, so the\nreturned `data.len()` may exceed `limit`.",
             "required": false,
             "schema": {
-              "type": ["integer", "null"],
+              "type": "integer",
               "format": "int32",
-              "minimum": 1,
-              "maximum": 100
+              "maximum": 100,
+              "minimum": 1
             }
           },
           {
@@ -341,7 +341,7 @@
             "description": "Opaque pagination cursor from a previous response.",
             "required": false,
             "schema": {
-              "type": ["string", "null"]
+              "type": "string"
             }
           }
         ],
@@ -472,10 +472,10 @@
             "description": "Items per page (1–100, default 20). Page granularity is per\n`(contract, transaction, ledger)` appearance — a single appearance\ncan expand to multiple per-node items in the response, so the\nreturned `data.len()` may exceed `limit`.",
             "required": false,
             "schema": {
-              "type": ["integer", "null"],
+              "type": "integer",
               "format": "int32",
-              "minimum": 1,
-              "maximum": 100
+              "maximum": 100,
+              "minimum": 1
             }
           },
           {
@@ -484,7 +484,7 @@
             "description": "Opaque pagination cursor from a previous response.",
             "required": false,
             "schema": {
-              "type": ["string", "null"]
+              "type": "string"
             }
           }
         ],
@@ -554,8 +554,8 @@
             "schema": {
               "type": "integer",
               "format": "int32",
-              "minimum": 1,
-              "maximum": 100
+              "maximum": 100,
+              "minimum": 1
             }
           },
           {
@@ -656,8 +656,8 @@
             "schema": {
               "type": "integer",
               "format": "int32",
-              "minimum": 1,
-              "maximum": 100
+              "maximum": 100,
+              "minimum": 1
             }
           },
           {
@@ -1372,8 +1372,8 @@
             "type": "integer",
             "format": "int32",
             "description": "Page size that produced `data`. Echoes the client's requested\nlimit (clamped server-side).",
-            "minimum": 1,
-            "maximum": 100
+            "maximum": 100,
+            "minimum": 1
           }
         }
       },
