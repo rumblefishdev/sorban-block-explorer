@@ -13,6 +13,18 @@ contract. No reimplementation of the write path.
   Startup fails fast if `aws --version` can't run.
 - A reachable Postgres with the project schema migrated (ADR 0027).
   Startup fails fast if `SELECT 1` fails.
+- **Monthly partitions exist on every partitioned parent.** The runner
+  itself does **not** create partitions — assumes they're already
+  provisioned (in production, by the EventBridge-triggered partition-mgmt
+  Lambda; locally, by the CLI below). Without them, every ingested row
+  lands in `_default`, defeating partition pruning and forcing a costly
+  detach-and-migrate later. Run once before the backfill:
+  ```bash
+  cargo run -p db-partition-mgmt --bin cli   # uses $DATABASE_URL
+  ```
+  Idempotent — re-runs are a no-op once monthly children exist for the
+  Soroban era. See task **0130** + `lore/3-wiki/backfill-execution-plan.md`
+  for context.
 - `DATABASE_URL` exported, or passed via `--database-url`.
 - Run from `us-east-1` (same region as the public archive) to avoid
   cross-region ingress costs.

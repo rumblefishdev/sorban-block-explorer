@@ -235,6 +235,7 @@ CREATE TABLE transactions (
 CREATE INDEX idx_tx_source_created ON transactions (source_id, created_at DESC);
 CREATE INDEX idx_tx_ledger         ON transactions (ledger_sequence);
 CREATE INDEX idx_tx_has_soroban    ON transactions (created_at DESC) WHERE has_soroban;
+CREATE INDEX idx_tx_keyset         ON transactions (created_at DESC, id DESC);  -- task 0132 / ADR 0039 — E02 no-filter keyset
 ```
 
 Uniqueness on `hash` is enforced by the companion `transaction_hash_index` table
@@ -488,6 +489,9 @@ CREATE INDEX idx_sea_contract_ledger ON soroban_events_appearances
     (contract_id, ledger_sequence DESC, created_at DESC);
 CREATE INDEX idx_sea_transaction     ON soroban_events_appearances
     (transaction_id, created_at DESC);
+-- task 0132 / ADR 0039 — E02 Statement B (variant 2)
+CREATE INDEX idx_sea_contract_keyset ON soroban_events_appearances
+    (contract_id, created_at DESC, transaction_id DESC);
 ```
 
 Purpose:
@@ -531,6 +535,9 @@ CREATE INDEX idx_sia_contract_ledger ON soroban_invocations_appearances
     (contract_id, ledger_sequence DESC);
 CREATE INDEX idx_sia_transaction     ON soroban_invocations_appearances
     (transaction_id);
+-- task 0132 / ADR 0039 — E02 Statement B (variant 2)
+CREATE INDEX idx_sia_contract_keyset ON soroban_invocations_appearances
+    (contract_id, created_at DESC, transaction_id DESC);
 ```
 
 Purpose:
@@ -690,9 +697,10 @@ CREATE TABLE nfts (
     current_owner_ledger BIGINT,
     UNIQUE (contract_id, token_id)
 );
-CREATE INDEX idx_nfts_collection ON nfts (collection_name);
-CREATE INDEX idx_nfts_owner      ON nfts (current_owner_id);
-CREATE INDEX idx_nfts_name_trgm  ON nfts USING GIN (name gin_trgm_ops);
+CREATE INDEX idx_nfts_collection      ON nfts (collection_name);
+CREATE INDEX idx_nfts_collection_trgm ON nfts USING GIN (collection_name gin_trgm_ops);  -- task 0132 / ADR 0039 — E15 ILIKE
+CREATE INDEX idx_nfts_owner           ON nfts (current_owner_id);
+CREATE INDEX idx_nfts_name_trgm       ON nfts USING GIN (name gin_trgm_ops);
 ```
 
 Purpose:
@@ -761,8 +769,9 @@ CREATE TABLE liquidity_pools (
     CONSTRAINT ck_lp_asset_a_type_range CHECK (asset_a_type BETWEEN 0 AND 15),
     CONSTRAINT ck_lp_asset_b_type_range CHECK (asset_b_type BETWEEN 0 AND 15)
 );
-CREATE INDEX idx_pools_asset_a ON liquidity_pools (asset_a_code, asset_a_issuer_id);
-CREATE INDEX idx_pools_asset_b ON liquidity_pools (asset_b_code, asset_b_issuer_id);
+CREATE INDEX idx_pools_asset_a            ON liquidity_pools (asset_a_code, asset_a_issuer_id);
+CREATE INDEX idx_pools_asset_b            ON liquidity_pools (asset_b_code, asset_b_issuer_id);
+CREATE INDEX idx_pools_created_at_ledger  ON liquidity_pools (created_at_ledger DESC, pool_id DESC);  -- task 0132 / ADR 0039 — E18 keyset
 ```
 
 Purpose:

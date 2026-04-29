@@ -19,20 +19,17 @@ use super::dto::{E3HeavyFields, E14HeavyEventFields, SignatureDto, XdrEventDto, 
 /// `tx_hash` is the lowercase hex (64 chars) transaction hash — same format
 /// as `ExtractedTransaction.hash` produced by `xdr_parser::extract_transactions`.
 ///
-/// Returns `None` when either:
-/// - the ledger header cannot be extracted (malformed `LedgerCloseMeta`), or
-/// - the ledger does not contain a transaction matching `tx_hash`.
-///
-/// Both failure modes are currently conflated into a single `None`; the
-/// calling handler should treat it as "no heavy fields available" and
-/// fall back to DB-only response with `heavy_fields_status: unavailable`.
+/// Returns `None` when the ledger does not contain a transaction matching
+/// `tx_hash`. The calling handler should treat that as "no heavy fields
+/// available" and fall back to DB-only response with
+/// `heavy_fields_status: unavailable`.
 #[instrument(skip(meta, network_id), fields(tx_hash = %tx_hash))]
 pub fn extract_e3_heavy(
     meta: &LedgerCloseMeta,
     tx_hash: &str,
     network_id: &[u8; 32],
 ) -> Option<E3HeavyFields> {
-    let ledger = xdr_parser::extract_ledger(meta).ok()?;
+    let ledger = xdr_parser::extract_ledger(meta);
     let ledger_seq = ledger.sequence;
     let closed_at = ledger.closed_at;
 
@@ -112,6 +109,28 @@ pub fn extract_e3_heavy(
     })
 }
 
+/// Extract just the memo for a transaction within a ledger — slim alternative
+/// to `extract_e3_heavy` for callers that only need memo fields (e.g. the
+/// `/v1/transactions` list endpoint, where extracting events / invocations /
+/// operations / signatures per item would be wasted CPU).
+///
+/// Returns `(memo_type, memo)` — both `Option<String>` mirroring the same
+/// fields on `E3HeavyFields`. Returns `None` when the ledger does not
+/// contain a transaction matching `tx_hash` — same semantics as
+/// `extract_e3_heavy` so callers can degrade identically.
+#[instrument(skip(meta, network_id), fields(tx_hash = %tx_hash))]
+pub fn extract_e3_memo(
+    meta: &LedgerCloseMeta,
+    tx_hash: &str,
+    network_id: &[u8; 32],
+) -> Option<(Option<String>, Option<String>)> {
+    let ledger = xdr_parser::extract_ledger(meta);
+    let extracted_txs =
+        xdr_parser::extract_transactions(meta, ledger.sequence, ledger.closed_at, network_id);
+    let ext_tx = extracted_txs.iter().find(|t| t.hash == tx_hash)?;
+    Some((ext_tx.memo_type.clone(), ext_tx.memo.clone()))
+}
+
 /// Extract the heavy-field subset of the E14 (`/contracts/:id/events`) response:
 /// full `topics[0..N]` + decoded `data` for every event emitted by `contract_id`
 /// within the supplied ledger.
@@ -124,10 +143,7 @@ pub fn extract_e14_heavy(
     contract_id: &str,
     network_id: &[u8; 32],
 ) -> Vec<E14HeavyEventFields> {
-    let ledger = match xdr_parser::extract_ledger(meta) {
-        Ok(l) => l,
-        Err(_) => return Vec::new(),
-    };
+    let ledger = xdr_parser::extract_ledger(meta);
     let ledger_seq = ledger.sequence;
     let closed_at = ledger.closed_at;
 

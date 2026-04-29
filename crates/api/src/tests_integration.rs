@@ -24,6 +24,7 @@ use tower::ServiceExt;
 use utoipa_axum::router::OpenApiRouter;
 
 use crate::assets;
+use crate::contracts;
 use crate::ledgers;
 use crate::state::AppState;
 use crate::stellar_archive::StellarArchiveFetcher;
@@ -60,6 +61,7 @@ fn build_app(db: PgPool) -> Router {
 
     let (router, _spec) = OpenApiRouter::new()
         .nest("/v1", transactions::router())
+        .nest("/v1", contracts::router())
         .nest("/v1", liquidity_pools::router())
         .nest("/v1", assets::router())
         .nest("/v1", ledgers::router())
@@ -1510,4 +1512,318 @@ async fn ledgers_detail_embedded_cursor_traversal_against_real_db() {
             "tx hash {h} appears on both embedded pages A={hashes_a:?} B={hashes_b:?}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Graceful-degradation tests (task 0044 §6).
+//
+// Lock the wire-level invariant that no endpoint returns 5xx purely because
+// ingestion is behind the network tip. Concretely:
+//
+//   * Missing-resource lookups (hash not yet indexed, contract not yet
+//     indexed) must surface as 404 with a `not_found` envelope, never 500.
+//   * Upstream public-archive (S3) outages must degrade XDR-derived fields
+//     to null with the parent response still 200; the endpoint must not
+//     surface the underlying error to the client.
+//   * Malformed input that short-circuits before the DB still maps to 400
+//     with the canonical envelope code (no panic, no 500).
+//
+// These complement the per-record degradation tests in 0046's S3-gated
+// suite (`extract_e3_*`) by exercising the full handler chain end-to-end.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn detail_invalid_hash_format_returns_400_before_db() {
+    // Short / non-hex hash short-circuits before any DB or S3 call. Locks in
+    // the pre-DB validation branch so a future refactor cannot start
+    // forwarding malformed hashes into `lookup_hash_index` and 500-ing on
+    // the SQL bind.
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/transactions/notahash")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_hash");
+}
+
+#[tokio::test]
+async fn detail_unknown_hash_returns_404_not_500() {
+    // The "ledger 60M+1 not yet indexed" scenario — well-formed hash, no row
+    // in `transactions`. The handler must surface this as 404 with the
+    // `not_found` envelope, never 500. This is the literal invariant
+    // documented in ADR 0008 + spec §"Graceful Degradation": missing recent
+    // data is normal, not an error condition.
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping detail-unknown-hash test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping detail-unknown-hash test");
+            return;
+        }
+    };
+
+    // 64 hex chars, all zeros — guaranteed to not match any real ledger.
+    let unknown_hash = "0".repeat(64);
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/transactions/{unknown_hash}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "expected 404, got {status}: {json}"
+    );
+    assert_eq!(json["code"], "not_found");
+    assert!(
+        json.get("error").is_none(),
+        "envelope must be flat (ADR 0008): {json}"
+    );
+}
+
+#[tokio::test]
+async fn list_with_unreachable_s3_returns_200_with_degraded_memo() {
+    // The fake AWS credentials in `build_app` mean every public-archive
+    // fetch fails. The list handler must still return 200 with degraded
+    // memo fields (None) for any rows that happen to be in the DB —
+    // never 500. Skips when the DB is empty (cannot prove degradation
+    // without rows to enrich).
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping list-degraded-memo test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping list-degraded-memo test");
+            return;
+        }
+    };
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri("/v1/transactions?limit=5")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "list must stay 200 even when S3 is unreachable: {status} {json}"
+    );
+
+    let data = json["data"].as_array().expect("data array").clone();
+    if data.is_empty() {
+        eprintln!("DB empty — cannot assert per-row memo degradation, skipping");
+        return;
+    }
+
+    // Every row must serialise; memo / memo_type are allowed to be null
+    // (degraded) but the row itself must be present and well-formed.
+    for row in &data {
+        assert!(row["hash"].is_string(), "row missing hash: {row}");
+        // memo_type / memo are Option<String> with skip_serializing_if on the
+        // None branch — either absent or null is valid for the degraded path.
+        if let Some(mt) = row.get("memo_type") {
+            assert!(mt.is_null() || mt.is_string(), "memo_type bad shape: {row}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Contracts handlers — graceful-degradation regression coverage (task 0044 §6).
+//
+// Mirror the transactions tests for /v1/contracts/:id{,/interface,/invocations,
+// /events}. The contracts module ships its own ListParams parser + S3
+// stop-and-retry expansion; these tests lock that no path returns 5xx for
+// missing-resource or malformed-input scenarios. A future refactor that, e.g.,
+// flips `Ok(None) => not_found` to `internal_error` or starts forwarding bad
+// StrKey paths into the SQL bind will fail one of these tests.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn contract_invalid_id_returns_400_before_db() {
+    // Malformed StrKey (lowercase, wrong length) short-circuits before any DB
+    // hit. Locks the pre-DB validation branch in `get_contract`.
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/contracts/notavalidstrkey")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_contract_id");
+    assert_eq!(json["details"]["param"], "contract_id");
+    assert_eq!(json["details"]["expected_prefix"], "C");
+}
+
+#[tokio::test]
+async fn contract_invocations_invalid_id_returns_400_before_db() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/contracts/notavalidstrkey/invocations")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_contract_id");
+}
+
+#[tokio::test]
+async fn contract_events_invalid_id_returns_400_before_db() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/contracts/notavalidstrkey/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_contract_id");
+}
+
+#[tokio::test]
+async fn contract_unknown_id_returns_404_not_500() {
+    // Well-formed StrKey, no row in `soroban_contracts`. Equivalent of
+    // `detail_unknown_hash_returns_404_not_500` for the contracts route.
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping contract-unknown-id test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping contract-unknown-id test");
+            return;
+        }
+    };
+
+    // Synthetic 56-char StrKey (no CRC) guaranteed not to exist.
+    let unknown_contract = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJ";
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/contracts/{unknown_contract}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "expected 404, got {status}: {json}"
+    );
+    assert_eq!(json["code"], "not_found");
+}
+
+#[tokio::test]
+async fn contract_interface_unknown_returns_404() {
+    // No `wasm_interface_metadata` row for the contract → 404.
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping interface-unknown test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping interface-unknown test");
+            return;
+        }
+    };
+
+    let unknown_contract = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJ";
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/contracts/{unknown_contract}/interface"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "expected 404, got {status}: {json}"
+    );
+    assert_eq!(json["code"], "not_found");
+}
+
+// ---------------------------------------------------------------------------
+// Out-of-u32-range `ledger_sequence` — pure logic test (no fixture row needed).
+//
+// Stellar `LedgerHeader.ledgerSeq` is `uint32` so any DB row with
+// `ledger_sequence > u32::MAX` indicates corrupted ingestion or a
+// hypothetical schema drift. The handler responds by skipping the row from
+// memo enrichment / heavy fetch and logging a `warn`, never panicking.
+// Seeding such a row in PG is unrealistic (would require a deliberate
+// out-of-bound BIGINT), so we lock the conversion behaviour at the type
+// boundary instead.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn u32_try_from_invariants_relied_on_by_handlers() {
+    // Inputs the handler converts via `u32::try_from(i64)`:
+    assert!(
+        u32::try_from(i64::MAX).is_err(),
+        "i64::MAX must overflow u32"
+    );
+    assert!(
+        u32::try_from(i64::from(u32::MAX) + 1).is_err(),
+        "u32::MAX + 1 must overflow"
+    );
+    assert!(u32::try_from(-1_i64).is_err(), "negative must fail");
+
+    // Boundary: u32::MAX itself fits.
+    assert_eq!(u32::try_from(i64::from(u32::MAX)).unwrap(), u32::MAX);
+
+    // The handler's pattern: failed conversion → warn + skip / heavy=None,
+    // not panic. Verified by the call sites in
+    // `transactions/handlers.rs::list_transactions` (memo enrichment loop),
+    // `transactions/handlers.rs::get_transaction` (heavy fetch),
+    // and `contracts/handlers.rs::expand_invocations` / `expand_events`
+    // (per-row stop-and-retry).
 }

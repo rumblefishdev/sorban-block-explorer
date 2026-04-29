@@ -19,6 +19,7 @@ related_adrs:
     '0035',
     '0036',
     '0038',
+    '0039',
   ]
 tags: [database, schema, snapshot, documentation]
 links: []
@@ -38,6 +39,18 @@ history:
       `20260427000000`). Body left untouched pending @fmazur's call
       whether to refresh inline or keep the original snapshot frozen
       with ADR 0038 serving as the official delta.
+  - date: 2026-04-28
+    status: proposed
+    who: stkrolikiewicz
+    note: >
+      Added ADR 0039 to `related_adrs` — thin follow-up adding five
+      read-path indexes (`idx_tx_keyset`, `idx_nfts_collection_trgm`,
+      `idx_pools_created_at_ledger`, `idx_sia_contract_keyset`,
+      `idx_sea_contract_keyset`) under task 0132. Body left untouched
+      pending @fmazur's call on the inline-vs-frozen question raised
+      in the previous entry; matching the 0038 delta-ADR pattern keeps
+      that decision deferrable. ADR 0037 §5/§9/§10/§12/§14 record the
+      pre-0039 index sets; 0039 §Decision lists the five additions.
 ---
 
 # ADR 0037: Current schema snapshot — live DB after `operations_appearances` collapse
