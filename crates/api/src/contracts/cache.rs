@@ -130,14 +130,17 @@ mod tests {
         ContractDetailResponse {
             contract_id: contract_id.to_string(),
             wasm_hash: None,
-            deployer_account: None,
+            wasm_uploaded_at_ledger: None,
+            deployer: None,
             deployed_at_ledger: None,
+            contract_type_name: None,
             contract_type: None,
             is_sac: false,
             metadata: None,
             stats: super::super::dto::ContractStats {
-                invocation_count: 0,
-                event_count: 0,
+                recent_invocations: 0,
+                recent_unique_callers: 0,
+                stats_window: "7 days".to_string(),
             },
         }
     }

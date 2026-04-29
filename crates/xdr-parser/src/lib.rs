@@ -47,11 +47,11 @@ pub use state::{
 };
 pub use transaction::extract_transactions;
 pub use types::{
-    ContractFunction, ExtractedAccountState, ExtractedAsset, ExtractedContractDeployment,
-    ExtractedContractInterface, ExtractedEvent, ExtractedInvocation, ExtractedLedger,
-    ExtractedLedgerEntryChange, ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot,
-    ExtractedLpPosition, ExtractedNft, ExtractedNftEvent, ExtractedOperation, ExtractedTransaction,
-    NftEvent, SacAssetIdentity,
+    ContractFunction, EventSource, ExtractedAccountState, ExtractedAsset,
+    ExtractedContractDeployment, ExtractedContractInterface, ExtractedEvent, ExtractedInvocation,
+    ExtractedLedger, ExtractedLedgerEntryChange, ExtractedLiquidityPool,
+    ExtractedLiquidityPoolSnapshot, ExtractedLpPosition, ExtractedNft, ExtractedNftEvent,
+    ExtractedOperation, ExtractedTransaction, NftEvent, SacAssetIdentity,
 };
 
 use stellar_xdr::curr::{LedgerCloseMetaBatch, ReadXdr};
