@@ -7,6 +7,7 @@ mod contracts;
 mod liquidity_pools;
 mod network;
 mod openapi;
+mod ops;
 mod state;
 #[cfg(test)]
 mod tests_integration;
@@ -17,7 +18,6 @@ mod transactions;
 mod stellar_archive;
 
 use axum::{Json, Router, routing::get};
-use serde_json::{Value, json};
 use utoipa::OpenApi;
 use utoipa::openapi::OpenApi as OpenApiSpec;
 use utoipa_axum::router::OpenApiRouter;
@@ -27,19 +27,6 @@ use crate::config::AppConfig;
 use crate::openapi::ApiDoc;
 use crate::state::AppState;
 use crate::stellar_archive::StellarArchiveFetcher;
-
-/// Liveness probe consumed by AWS Lambda health checks and smoke tests.
-#[utoipa::path(
-    get,
-    path = "/health",
-    tag = "ops",
-    responses(
-        (status = 200, description = "Service is healthy", body = serde_json::Value),
-    ),
-)]
-async fn health() -> Json<Value> {
-    Json(json!({ "status": "ok" }))
-}
 
 /// Build the application router from an explicit [`AppConfig`] and [`AppState`].
 ///
@@ -51,7 +38,7 @@ fn app(config: &AppConfig, state: AppState) -> Router {
     // We then stamp the runtime `servers` block (resolved from
     // AppConfig.base_url) onto the registered spec.
     let (router, mut spec) = OpenApiRouter::with_openapi(ApiDoc::openapi())
-        .routes(routes!(health))
+        .routes(routes!(ops::health))
         .nest("/v1", network::router())
         .nest("/v1", transactions::router())
         .nest("/v1", contracts::router())
@@ -149,6 +136,7 @@ mod tests {
     use super::*;
     use axum::body::{self, Body};
     use axum::http::{Request, StatusCode};
+    use serde_json::Value;
     use tower::ServiceExt;
 
     fn test_config() -> AppConfig {

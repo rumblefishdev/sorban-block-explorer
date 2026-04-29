@@ -1,0 +1,33 @@
+{
+  "name": "@rumblefish/api-types",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/api-types/src",
+  "projectType": "library",
+  "tags": ["type:lib", "scope:domain"],
+  "targets": {
+    "extract-openapi": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo run -p api --bin extract_openapi > libs/api-types/src/openapi.json",
+        "cwd": "."
+      },
+      "outputs": ["{projectRoot}/src/openapi.json"]
+    },
+    "generate": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["extract-openapi"],
+      "options": {
+        "command": "npx openapi-ts -f openapi-ts.config.ts",
+        "cwd": "libs/api-types"
+      },
+      "outputs": ["{projectRoot}/src/generated"]
+    },
+    "check-generated": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["generate"],
+      "options": {
+        "command": "git diff --exit-code -- libs/api-types/src/openapi.json libs/api-types/src/generated"
+      }
+    }
+  }
+}
