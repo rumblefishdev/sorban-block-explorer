@@ -7,8 +7,8 @@ use std::collections::{HashMap, HashSet};
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Response};
-use domain::ContractEventType;
 use stellar_xdr::curr::{LedgerCloseMeta, TransactionMeta};
+use xdr_parser::EventSource;
 
 use crate::common::cursor::{self, TsIdCursor};
 use crate::common::extractors::Pagination;
@@ -430,7 +430,11 @@ fn expand_events(
             if event.contract_id.as_deref() != Some(contract_id) {
                 continue;
             }
-            if event.event_type == ContractEventType::Diagnostic {
+            // Drop the entire diagnostic_events container — its
+            // Contract-typed entries are byte-identical mirrors of the
+            // per-op consensus events (task 0182). Filtering by inner
+            // `event_type` would surface those mirrors as duplicates.
+            if event.source == EventSource::Diagnostic {
                 continue;
             }
             let topics = match event.topics {

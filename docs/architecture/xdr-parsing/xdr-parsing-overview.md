@@ -197,7 +197,9 @@ From `SorobanTransactionMeta.events`, the ingest path extracts one
 
 - `contract_id` surrogate FK (ADR 0030), `transaction_id`, `ledger_sequence`,
   `created_at`
-- `amount` = count of non-diagnostic events in the trio
+- `amount` = count of consensus events in the trio (tx-level + per-op
+  sources only — the entire `*.diagnostic_events` container is dropped
+  at staging by source, see §5.1; task 0182)
 
 Full decoded event detail (`eventType` as `SMALLINT`, `topics` as decoded
 `ScVal[]`, `data` as decoded `ScVal`) is **not** stored. Known NFT-related
@@ -290,6 +292,43 @@ ledger — the canonical symptom is a Soroban tx with exactly two events,
 both XLM-SAC fee events at the tx-level location, while the contract's
 own `transfer` / `mint` / `burn` events (which lived under
 `operations[i].events`) are dropped.
+
+##### Source-container tagging (task 0182)
+
+Every `ExtractedEvent` carries an `EventSource` discriminator —
+`TxLevel`, `PerOp`, or `Diagnostic` — populated by the parser at the
+extraction site. **The diagnostic_events container is dropped at staging
+regardless of inner type**: the staging filter
+(`crates/indexer/src/handler/persist/staging.rs`) routes on
+`source == EventSource::Diagnostic`, not on inner `event_type`.
+
+Why: when diagnostic mode is enabled (the default for archive-bound
+captive-core like Galexie), `v4.diagnostic_events` **holds
+byte-identical Contract-typed copies of every consensus per-op
+Contract event** — the copy carries the same inner `type_ = Contract`
+as the original. CAP-67 explicitly says diagnostic_events are
+auxiliary, "not hashed into the ledger, and therefore are not part of
+the protocol", so they must not contribute to the appearance index.
+A type-based filter (`event_type == Diagnostic`) cannot tell the
+original from the copy and silently double-counts. Container-based
+filtering is the only reliable signal.
+
+The same routing applies at read time: `split_events`
+(`crates/api/src/stellar_archive/extractors.rs`) and the
+`/contracts/:id/events` handler (`crates/api/src/contracts/handlers.rs`)
+both filter on `EventSource::Diagnostic` to suppress the duplicates when
+rendering contract event lists. The host-VM Diagnostic-typed entries
+(`fn_call`, `fn_return`, `core_metrics`, errors) drop out the same way.
+
+Mapping per location (after task 0182):
+
+| Source location                         | `EventSource` | Counts in `amount` |
+| --------------------------------------- | ------------- | ------------------ |
+| `v3.soroban_meta.events`                | `TxLevel`     | yes                |
+| `v3.soroban_meta.diagnostic_events`     | `Diagnostic`  | no                 |
+| `v4.events`                             | `TxLevel`     | yes                |
+| `v4.operations[i].events`               | `PerOp`       | yes                |
+| `v4.diagnostic_events` (any inner type) | `Diagnostic`  | no                 |
 
 ### 5.2 Return Values
 
