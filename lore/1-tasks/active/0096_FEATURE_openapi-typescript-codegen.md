@@ -19,7 +19,7 @@ history:
     note: 'Spawned from 0092 research. Single source of truth for API types: Rust → OpenAPI → TypeScript.'
   - date: 2026-04-29
     status: active
-    who: stkrolikiewicz
+    who: karolkow
     note: 'Activated. Deps 0094 (workspace) archived; ready to wire utoipa → openapi-ts.'
 ---
 

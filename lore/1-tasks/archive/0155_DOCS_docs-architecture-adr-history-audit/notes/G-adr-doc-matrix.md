@@ -8,14 +8,14 @@ tags: [docs, audit, adr, matrix]
 history:
   - date: '2026-04-23'
     status: mature
-    who: Karol Kowalczyk
+    who: karolkow
     note: >
       Step 1 output for task 0155. Built from ADR frontmatter + bodies
       and grounded against `crates/db/migrations/**` as of 2026-04-23
       (post-ADR 0036 rename `tokens → assets` landed via task 0154).
   - date: '2026-04-24'
     status: mature
-    who: Karol Kowalczyk
+    who: karolkow
     note: >
       Scope expanded from ADRs 0022-0031 to full 0001-0036 range per
       stakeholder decision to eliminate "docs partially stale after
@@ -30,7 +30,7 @@ history:
       docs↔migration race risk.
   - date: '2026-04-24'
     status: mature
-    who: Karol Kowalczyk
+    who: karolkow
     note: >
       3rd pass after merging origin/develop. Findings: task 0159
       landed on develop (2026-04-24) dropping `account_balance_history`
