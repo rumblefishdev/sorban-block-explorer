@@ -28,7 +28,7 @@ use super::dto::NetworkStats;
 /// 30-second TTL — within the documented `30-60s` window. Shorter values
 /// defeat the purpose; longer ones let the response drift past the API
 /// Gateway TTL ceiling on consecutive requests.
-pub const TTL: Duration = Duration::from_secs(30);
+const TTL: Duration = Duration::from_secs(30);
 
 /// Single-key cache (the network stats endpoint is a singleton).
 const MAX_ENTRIES: u64 = 1;

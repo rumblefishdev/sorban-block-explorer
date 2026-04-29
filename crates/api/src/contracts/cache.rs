@@ -18,12 +18,12 @@ use crate::cache::{Cache, ttl_cache};
 use super::dto::ContractDetailResponse;
 
 /// Lifetime of a cached contract-detail response.
-pub const CACHE_TTL: Duration = Duration::from_secs(45);
+const CACHE_TTL: Duration = Duration::from_secs(45);
 
 /// Bound on distinct contracts cached at once. 10 000 distinct contract
 /// detail rows × ~1 KB JSON each ≈ 10 MB worst case, well under Lambda's
 /// memory budget and far above realistic working-set size.
-pub const MAX_ENTRIES: u64 = 10_000;
+const MAX_ENTRIES: u64 = 10_000;
 
 /// Process-wide handle to the contract-metadata cache. `Cache` is itself
 /// `Arc`-backed and cheap to clone; share via `AppState`.
