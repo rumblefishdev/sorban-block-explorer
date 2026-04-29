@@ -3,6 +3,7 @@
 //! errors, cursor codec, and StrKey validation (task 0043).
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -129,7 +130,7 @@ pub async fn get_contract(
     }
 
     if let Some(cached) = state.contract_cache.get(&contract_id) {
-        return Json((*cached).clone()).into_response();
+        return Json(cached).into_response();
     }
 
     let contract = match fetch_contract(&state.db, &contract_id).await {
@@ -150,7 +151,7 @@ pub async fn get_contract(
             }
         };
 
-    let response = ContractDetailResponse {
+    let response = Arc::new(ContractDetailResponse {
         contract_id: contract.contract_id,
         wasm_hash: contract.wasm_hash,
         wasm_uploaded_at_ledger: contract.wasm_uploaded_at_ledger,
@@ -165,11 +166,11 @@ pub async fn get_contract(
             recent_unique_callers,
             stats_window,
         },
-    };
+    });
 
     state
         .contract_cache
-        .insert(contract_id, std::sync::Arc::new(response.clone()));
+        .insert(contract_id, Arc::clone(&response));
     Json(response).into_response()
 }
 

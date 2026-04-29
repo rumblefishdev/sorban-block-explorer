@@ -62,7 +62,7 @@ pub async fn get_network_stats(State(state): State<AppState>) -> Response {
         .await;
 
     match result {
-        Ok(stats) => ok_response(&stats),
+        Ok(stats) => ok_response(stats),
         Err(e) => {
             tracing::error!("DB error in get_network_stats: {e}");
             errors::internal_error(errors::DB_ERROR, "Unable to retrieve network statistics.")
@@ -73,8 +73,8 @@ pub async fn get_network_stats(State(state): State<AppState>) -> Response {
 /// Build the 200 response with the canonical `Cache-Control` header.
 /// Centralised so cache-hit and cache-miss paths cannot drift on the
 /// header set.
-fn ok_response(stats: &NetworkStats) -> Response {
-    let mut resp = Json(stats.clone()).into_response();
+fn ok_response(stats: Arc<NetworkStats>) -> Response {
+    let mut resp = Json(stats).into_response();
     resp.headers_mut()
         .insert(header::CACHE_CONTROL, CACHE_CONTROL_VALUE);
     resp
