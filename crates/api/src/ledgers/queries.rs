@@ -6,9 +6,12 @@
 //!   filters apply to ledgers. Cursor predicate is inlined as a row-value
 //!   comparison so the planner walks `idx_ledgers_closed_at` in DESC.
 //! - **Detail header (`fetch_by_sequence`)** computes `prev_sequence` /
-//!   `next_sequence` via two `LATERAL ... LIMIT 1` lookups using
-//!   `sequence < l.sequence` / `sequence > l.sequence` (PK ordering).
-//!   Each costs one index seek; cheaper than a window over the whole table.
+//!   `next_sequence` via two `LATERAL ... LIMIT 1` lookups on the
+//!   `ledgers` PK using `sequence < l.sequence` / `sequence > l.sequence`
+//!   (PK ordering). Each costs one index-only seek; cheaper than a
+//!   window over the whole table, and avoids the heap fetch that the
+//!   secondary `idx_ledgers_closed_at` would require for projecting
+//!   `sequence`.
 //! - **Embedded transactions (`fetch_transactions`)** pulls the seven
 //!   DB-side fields of `TransactionListItem` for a single ledger.
 //!   Partition pruning is total: `created_at = $closed_at` (carried
@@ -122,9 +125,9 @@ pub async fn fetch_list(
 // ---------------------------------------------------------------------------
 
 /// Fetch the ledger header row plus `prev_sequence` / `next_sequence` via
-/// two `LATERAL ... LIMIT 1` lookups using `sequence < l.sequence` /
-/// `sequence > l.sequence` (PK ordering). Returns `Ok(None)` when no
-/// ledger has the requested sequence (handler maps to 404).
+/// LATERAL lookups on the `ledgers` PK (`sequence` ordering — index-only
+/// scan, no heap fetch). Returns `Ok(None)` when no ledger has the
+/// requested sequence (handler maps to 404).
 pub async fn fetch_by_sequence(
     pool: &PgPool,
     sequence: i64,

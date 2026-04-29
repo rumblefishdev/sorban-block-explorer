@@ -29,7 +29,7 @@ use crate::state::AppState;
 use crate::stellar_archive::StellarArchiveFetcher;
 use crate::{liquidity_pools, transactions};
 
-/// Build a test app with the transactions, liquidity-pools, assets and
+/// Build a test app with the transactions, liquidity-pools, assets, and
 /// ledgers routers mounted at /v1.
 ///
 /// Caller supplies the `PgPool`. Validation tests that never touch the DB
@@ -1130,6 +1130,27 @@ async fn ledgers_list_invalid_cursor_returns_envelope_before_db() {
     assert_eq!(json["code"], "invalid_cursor");
 }
 
+/// Detail endpoint shares the standard `?limit=` / `?cursor=` extractor
+/// with the list endpoints — a malformed cursor on `:sequence` must
+/// short-circuit to a 400 `invalid_cursor` envelope before any DB
+/// contact, just like on the list endpoint.
+#[tokio::test]
+async fn ledgers_detail_invalid_cursor_returns_envelope_before_db() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/ledgers/12345?cursor=not!!base64")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_cursor");
+}
+
 /// List endpoint envelope shape — Paginated<LedgerListItem> with the
 /// `page: { cursor, limit, has_more }` block per ADR 0008. Asserts the
 /// short-TTL Cache-Control header that drives API Gateway behaviour.
@@ -1283,9 +1304,11 @@ async fn ledgers_detail_unknown_sequence_returns_404_against_real_db() {
 }
 
 /// Detail endpoint shape against a real DB row + the head-vs-closed
-/// Cache-Control branching. Selects the two most recent ledgers, uses
-/// the second-most-recent sequence for the closed-ledger assertion,
-/// and the most recent sequence for the head assertion.
+/// Cache-Control branching. Selects the two most recent ledgers
+/// (`ORDER BY closed_at DESC LIMIT 2`); uses the most recent as the
+/// head-ledger assertion (`next_sequence is null` → 10s TTL) and the
+/// second-most-recent as the closed-ledger assertion (`next_sequence`
+/// non-null → 300s TTL).
 #[tokio::test]
 async fn ledgers_detail_returns_header_and_cache_control_against_real_db() {
     let Ok(database_url) = std::env::var("DATABASE_URL") else {
@@ -1399,4 +1422,94 @@ async fn ledgers_detail_returns_header_and_cache_control_against_real_db() {
         !closed_json["next_sequence"].is_null(),
         "closed ledger should have non-null next_sequence: {closed_json}"
     );
+}
+
+/// Embedded transactions cursor traversal: page A from `/v1/ledgers/:seq`,
+/// then page B with the returned cursor and the same path. Pages must not
+/// overlap on `hash` and the embedded shape must round-trip cleanly.
+/// Picks the most recent ledger that has at least 2 transactions; skips
+/// when no such ledger exists in the live DB.
+#[tokio::test]
+async fn ledgers_detail_embedded_cursor_traversal_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    let row: Option<(i64,)> = sqlx::query_as(
+        "SELECT sequence FROM ledgers \
+         WHERE transaction_count >= 2 \
+         ORDER BY closed_at DESC LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    let Some((seq,)) = row else {
+        eprintln!(
+            "no ledger with >=2 transactions in DB — skipping embedded cursor traversal test"
+        );
+        return;
+    };
+
+    let app = build_app(pool);
+
+    // Page A — limit=1 to force has_more if the ledger has 2+ txs.
+    let resp_a = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/ledgers/{seq}?limit=1"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status_a, json_a) = body_json(resp_a).await;
+    assert_eq!(status_a, StatusCode::OK, "page A: {json_a}");
+    let txs_a = json_a["transactions"]["data"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(!txs_a.is_empty(), "page A empty: {json_a}");
+    if !json_a["transactions"]["page"]["has_more"]
+        .as_bool()
+        .unwrap_or(false)
+    {
+        eprintln!("ledger {seq} reported <2 retrievable txs — skipping overlap assertion");
+        return;
+    }
+    let cursor = json_a["transactions"]["page"]["cursor"]
+        .as_str()
+        .expect("page A has_more=true must include cursor")
+        .to_owned();
+
+    // Page B — same `:sequence`, with the returned cursor.
+    let resp_b = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/ledgers/{seq}?limit=1&cursor={cursor}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status_b, json_b) = body_json(resp_b).await;
+    assert_eq!(status_b, StatusCode::OK, "page B: {json_b}");
+    let txs_b = json_b["transactions"]["data"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(!txs_b.is_empty(), "page B empty: {json_b}");
+
+    let hashes_a: Vec<&str> = txs_a.iter().filter_map(|r| r["hash"].as_str()).collect();
+    let hashes_b: Vec<&str> = txs_b.iter().filter_map(|r| r["hash"].as_str()).collect();
+    for h in &hashes_b {
+        assert!(
+            !hashes_a.contains(h),
+            "tx hash {h} appears on both embedded pages A={hashes_a:?} B={hashes_b:?}"
+        );
+    }
 }

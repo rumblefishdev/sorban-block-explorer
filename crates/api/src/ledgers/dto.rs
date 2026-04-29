@@ -34,11 +34,12 @@ pub struct LedgerListItem {
 /// Detail response for `GET /v1/ledgers/:sequence`.
 ///
 /// Header columns are the same shape as `LedgerListItem`. `prev_sequence` /
-/// `next_sequence` identify the adjacent ledgers in sequence order and
-/// double as a chain-position signal — when `next_sequence` is null the
-/// ledger is the chain head, which drives the short-TTL Cache-Control
-/// branch in the handler. `transactions` is the embedded paginated list
-/// of `TransactionListItem` rows, served DB-only (memo and other heavy
+/// `next_sequence` identify the adjacent indexed ledgers in `sequence`
+/// order (computed via LATERAL on the `ledgers` PK) and double as a
+/// chain-position signal — when `next_sequence` is null the ledger is the
+/// chain head, which drives the short-TTL Cache-Control branch in the
+/// handler. `transactions` is the embedded paginated list of
+/// `TransactionListItem` rows, served DB-only (memo and other heavy
 /// fields belong to the transaction detail endpoint, not list rows).
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct LedgerDetailResponse {
