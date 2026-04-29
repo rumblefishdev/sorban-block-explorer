@@ -21,7 +21,7 @@
 use serde_json::{Value, json};
 use stellar_xdr::curr::*;
 
-use crate::envelope::InnerTxRef;
+use crate::envelope::{InnerTxRef, muxed_to_g_strkey};
 use crate::scval::scval_to_typed_json;
 use crate::types::ExtractedInvocation;
 
@@ -75,11 +75,13 @@ pub fn extract_invocations(
 
     for op in ops {
         if let OperationBody::InvokeHostFunction(ref invoke_op) = op.body {
-            // Per-op source_account overrides the tx source (same as extract_operations)
+            // Per-op source_account overrides the tx source (same as extract_operations).
+            // Canonicalize muxed → underlying ed25519 G-strkey so callers see the
+            // same 56-char form they'd see for a non-muxed source. See task 0177.
             let caller = op
                 .source_account
                 .as_ref()
-                .map(|a| a.to_string())
+                .map(muxed_to_g_strkey)
                 .unwrap_or_else(|| tx_source_account.to_string());
 
             for auth_entry in invoke_op.auth.iter() {
