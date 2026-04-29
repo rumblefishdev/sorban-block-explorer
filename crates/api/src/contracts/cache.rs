@@ -36,7 +36,6 @@ pub fn new_contract_cache() -> ContractMetadataCache {
 
 #[cfg(test)]
 mod tests {
-    use super::super::dto::ContractStats;
     use super::*;
 
     fn sample(contract_id: &str) -> ContractDetailResponse {
