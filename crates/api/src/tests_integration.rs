@@ -24,6 +24,7 @@ use tower::ServiceExt;
 use utoipa_axum::router::OpenApiRouter;
 
 use crate::assets;
+use crate::ledgers;
 use crate::state::AppState;
 use crate::stellar_archive::StellarArchiveFetcher;
 use crate::{liquidity_pools, transactions};
@@ -61,6 +62,7 @@ fn build_app(db: PgPool) -> Router {
         .nest("/v1", transactions::router())
         .nest("/v1", liquidity_pools::router())
         .nest("/v1", assets::router())
+        .nest("/v1", ledgers::router())
         .with_state(state)
         .split_for_parts();
     router
@@ -1059,4 +1061,340 @@ async fn teardown_lp_e2e_fixture(pool: &PgPool, pool_hex: &str, accounts: &[&str
         .bind(accounts)
         .execute(pool)
         .await;
+}
+
+// ---------------------------------------------------------------------------
+// Ledgers endpoints (task 0047) — list / detail / embedded transactions.
+// ---------------------------------------------------------------------------
+
+/// Negative or non-numeric `:sequence` must short-circuit to a 400
+/// `invalid_id` envelope before any DB contact. Locks the path-param
+/// validator: a future refactor that delegates to `Path<i64>` and drops
+/// our custom envelope would change the body shape and break clients.
+#[tokio::test]
+async fn ledgers_invalid_sequence_returns_400_envelope() {
+    for bad in ["abc", "-1", "12.34"] {
+        let app = lazy_app();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/ledgers/{bad}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let (status, json) = body_json(resp).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "case {bad}: {json}");
+        assert_eq!(json["code"], "invalid_id", "case {bad}: {json}");
+    }
+}
+
+/// `?limit=` validation must fire before any DB contact on the list
+/// endpoint, returning the canonical `invalid_limit` envelope.
+#[tokio::test]
+async fn ledgers_list_invalid_limit_returns_envelope_before_db() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/ledgers?limit=0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_limit");
+}
+
+/// `?cursor=` malformed must fire before any DB contact on the list
+/// endpoint, returning the canonical `invalid_cursor` envelope.
+#[tokio::test]
+async fn ledgers_list_invalid_cursor_returns_envelope_before_db() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/ledgers?cursor=not!!base64")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_cursor");
+}
+
+/// List endpoint envelope shape — Paginated<LedgerListItem> with the
+/// `page: { cursor, limit, has_more }` block per ADR 0008. Asserts the
+/// short-TTL Cache-Control header that drives API Gateway behaviour.
+#[tokio::test]
+async fn ledgers_list_returns_paginated_envelope_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping ledgers list integration test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping");
+            return;
+        }
+    };
+
+    let resp = build_app(pool)
+        .oneshot(
+            Request::builder()
+                .uri("/v1/ledgers?limit=3")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = resp.status();
+    let cc = resp
+        .headers()
+        .get(axum::http::header::CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let bytes = body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&bytes).unwrap();
+
+    assert_eq!(status, StatusCode::OK, "expected 200, got {status}: {json}");
+    assert_eq!(
+        cc.as_deref(),
+        Some("public, max-age=10"),
+        "list Cache-Control: {cc:?}"
+    );
+    assert!(json["data"].is_array(), "data not array: {json}");
+    let page = &json["page"];
+    assert_eq!(page["limit"], 3, "page.limit: {json}");
+    assert!(page["has_more"].is_boolean(), "page.has_more: {json}");
+
+    // Per-row shape — first row, if present.
+    if let Some(row) = json["data"].get(0) {
+        for k in [
+            "sequence",
+            "hash",
+            "closed_at",
+            "protocol_version",
+            "transaction_count",
+            "base_fee",
+        ] {
+            assert!(row.get(k).is_some(), "row missing `{k}`: {row}");
+        }
+    }
+}
+
+/// Cursor traversal: page A and page B (continuation) must not overlap.
+/// Same shape as `cursor_round_trip_no_overlap_against_real_db` for
+/// transactions but with the ledgers ordering key.
+#[tokio::test]
+async fn ledgers_cursor_round_trip_no_overlap_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+    let app = build_app(pool);
+
+    // Page A
+    let resp_a = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/ledgers?limit=2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status_a, json_a) = body_json(resp_a).await;
+    assert_eq!(status_a, StatusCode::OK, "page A: {json_a}");
+    let data_a = json_a["data"].as_array().cloned().unwrap_or_default();
+    if data_a.len() < 2 || !json_a["page"]["has_more"].as_bool().unwrap_or(false) {
+        eprintln!("DB has fewer than 2 ledgers or no more — skipping overlap assertion");
+        return;
+    }
+    let cursor = json_a["page"]["cursor"].as_str().unwrap().to_owned();
+
+    // Page B
+    let resp_b = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/ledgers?limit=2&cursor={cursor}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status_b, json_b) = body_json(resp_b).await;
+    assert_eq!(status_b, StatusCode::OK, "page B: {json_b}");
+
+    let seqs_a: Vec<i64> = data_a
+        .iter()
+        .map(|r| r["sequence"].as_i64().unwrap())
+        .collect();
+    let seqs_b: Vec<i64> = json_b["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["sequence"].as_i64().unwrap())
+        .collect();
+    for s in &seqs_b {
+        assert!(
+            !seqs_a.contains(s),
+            "sequence {s} appears on both pages A={seqs_a:?} B={seqs_b:?}"
+        );
+    }
+}
+
+/// Detail endpoint for a known absent sequence — clearly above any
+/// realistic indexed ledger so the lookup misses cleanly.
+#[tokio::test]
+async fn ledgers_detail_unknown_sequence_returns_404_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    let resp = build_app(pool)
+        .oneshot(
+            Request::builder()
+                // i64::MAX → never indexed in any plausible backfill.
+                .uri("/v1/ledgers/9223372036854775807")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "expected 404: {json}");
+    assert_eq!(json["code"], "not_found");
+}
+
+/// Detail endpoint shape against a real DB row + the head-vs-closed
+/// Cache-Control branching. Picks the lowest indexed sequence (so it is
+/// guaranteed not to be the chain head) for the closed-ledger assertion,
+/// and the highest indexed sequence for the head assertion.
+#[tokio::test]
+async fn ledgers_detail_returns_header_and_cache_control_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    // Pick the head and an older ledger from the live DB. Skip if the
+    // table has fewer than two rows (no way to distinguish head vs
+    // closed under that condition).
+    let rows: Vec<(i64,)> =
+        match sqlx::query_as("SELECT sequence FROM ledgers ORDER BY closed_at DESC LIMIT 2")
+            .fetch_all(&pool)
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+    if rows.len() < 2 {
+        eprintln!("DB has fewer than 2 ledgers — skipping detail Cache-Control test");
+        return;
+    }
+    let head_seq = rows[0].0;
+    let closed_seq = rows[1].0;
+
+    let app = build_app(pool);
+
+    // Head ledger — short TTL.
+    let resp_head = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/ledgers/{head_seq}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let head_cc = resp_head
+        .headers()
+        .get(axum::http::header::CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let (head_status, head_json) = body_json(resp_head).await;
+    assert_eq!(head_status, StatusCode::OK, "head detail: {head_json}");
+    assert_eq!(
+        head_cc.as_deref(),
+        Some("public, max-age=10"),
+        "head Cache-Control: {head_cc:?}"
+    );
+    assert!(
+        head_json["next_sequence"].is_null(),
+        "head ledger should have null next_sequence: {head_json}"
+    );
+
+    // Header field shape.
+    for k in [
+        "sequence",
+        "hash",
+        "closed_at",
+        "protocol_version",
+        "transaction_count",
+        "base_fee",
+        "prev_sequence",
+        "next_sequence",
+        "transactions",
+    ] {
+        assert!(
+            head_json.get(k).is_some(),
+            "detail missing `{k}`: {head_json}"
+        );
+    }
+    assert!(
+        head_json["transactions"]["data"].is_array(),
+        "embedded transactions.data not array: {head_json}"
+    );
+    assert!(
+        head_json["transactions"]["page"]["limit"].is_number(),
+        "embedded page.limit not number: {head_json}"
+    );
+
+    // Closed ledger — long TTL, next_sequence non-null.
+    let resp_closed = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/ledgers/{closed_seq}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let closed_cc = resp_closed
+        .headers()
+        .get(axum::http::header::CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let (closed_status, closed_json) = body_json(resp_closed).await;
+    assert_eq!(
+        closed_status,
+        StatusCode::OK,
+        "closed detail: {closed_json}"
+    );
+    assert_eq!(
+        closed_cc.as_deref(),
+        Some("public, max-age=300"),
+        "closed Cache-Control: {closed_cc:?}"
+    );
+    assert!(
+        !closed_json["next_sequence"].is_null(),
+        "closed ledger should have non-null next_sequence: {closed_json}"
+    );
 }
