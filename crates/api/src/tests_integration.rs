@@ -24,13 +24,14 @@ use tower::ServiceExt;
 use utoipa_axum::router::OpenApiRouter;
 
 use crate::assets;
+use crate::contracts;
 use crate::ledgers;
 use crate::state::AppState;
 use crate::stellar_archive::StellarArchiveFetcher;
 use crate::{liquidity_pools, transactions};
 
-/// Build a test app with the transactions, liquidity-pools, assets, and
-/// ledgers routers mounted at /v1.
+/// Build a test app with the transactions, contracts, liquidity-pools,
+/// assets, and ledgers routers mounted at /v1.
 ///
 /// Caller supplies the `PgPool`. Validation tests that never touch the DB
 /// pass `connect_lazy("...")` (free until first query), DB-gated tests
@@ -62,6 +63,7 @@ fn build_app(db: PgPool) -> Router {
 
     let (router, _spec) = OpenApiRouter::new()
         .nest("/v1", transactions::router())
+        .nest("/v1", contracts::router())
         .nest("/v1", liquidity_pools::router())
         .nest("/v1", assets::router())
         .nest("/v1", ledgers::router())
@@ -1065,17 +1067,111 @@ async fn teardown_lp_e2e_fixture(pool: &PgPool, pool_hex: &str, accounts: &[&str
         .await;
 }
 
+// Contracts E10 detail (task 0172) — canonical shape lock per `11_*.sql`.
+// ---------------------------------------------------------------------------
+
+/// Asserts that `GET /v1/contracts/:id` returns every canonical-aligned
+/// field name (post-task-0172): `wasm_uploaded_at_ledger`, `deployer` (not
+/// `deployer_account`), `contract_type_name` + raw `contract_type` SMALLINT,
+/// and the bounded-window `stats` trio (`recent_invocations`,
+/// `recent_unique_callers`, `stats_window` echoed back).
+///
+/// Skips cleanly if the local DB has no soroban_contracts rows.
+#[tokio::test]
+async fn contracts_detail_returns_canonical_shape_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT contract_id FROM soroban_contracts ORDER BY id LIMIT 1")
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten();
+    let Some((cid,)) = row else {
+        eprintln!("no soroban_contracts rows — skipping contracts E10 shape test");
+        return;
+    };
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/contracts/{cid}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200: {json}");
+
+    // Canonical field names — these would all fail on the pre-0172 shape.
+    assert_eq!(json["contract_id"], cid);
+    assert!(
+        json.get("wasm_uploaded_at_ledger").is_some(),
+        "missing wasm_uploaded_at_ledger: {json}"
+    );
+    assert!(
+        json.get("deployer").is_some(),
+        "missing `deployer` (post-rename from `deployer_account`): {json}"
+    );
+    assert!(
+        json.get("contract_type_name").is_some(),
+        "missing decoded `contract_type_name`: {json}"
+    );
+    assert!(
+        json["contract_type"].is_i64() || json["contract_type"].is_null(),
+        "`contract_type` must be raw SMALLINT (or null), got: {json}"
+    );
+
+    // Bounded-window stats trio. The window MUST be the API-side const
+    // (`7 days`) so the frontend can render the label without guessing.
+    let stats = &json["stats"];
+    assert!(
+        stats["recent_invocations"].is_i64(),
+        "stats.recent_invocations not int: {json}"
+    );
+    assert!(
+        stats["recent_unique_callers"].is_i64(),
+        "stats.recent_unique_callers not int: {json}"
+    );
+    assert_eq!(
+        stats["stats_window"], "7 days",
+        "stats.stats_window must echo the API default: {json}"
+    );
+
+    // The pre-0172 shape would carry these — make sure they're gone.
+    assert!(
+        json.get("deployer_account").is_none(),
+        "stale field deployer_account leaked: {json}"
+    );
+    assert!(
+        stats.get("invocation_count").is_none(),
+        "stale field stats.invocation_count leaked: {json}"
+    );
+    assert!(
+        stats.get("event_count").is_none(),
+        "stale field stats.event_count leaked: {json}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Ledgers endpoints (task 0047) — list / detail / embedded transactions.
 // ---------------------------------------------------------------------------
 
-/// Negative or non-numeric `:sequence` must short-circuit to a 400
-/// `invalid_id` envelope before any DB contact. Locks the path-param
-/// validator: a future refactor that delegates to `Path<i64>` and drops
-/// our custom envelope would change the body shape and break clients.
+/// Non-numeric / negative / zero / >u32::MAX `:sequence` must
+/// short-circuit to a 400 `invalid_sequence` envelope before any DB
+/// contact. Locks the full `common::path::sequence` validator contract:
+/// genesis is sequence 1 (zero rejected), Stellar caps at u32, anything
+/// else is shape-invalid.
 #[tokio::test]
 async fn ledgers_invalid_sequence_returns_400_envelope() {
-    for bad in ["abc", "-1", "12.34"] {
+    for bad in ["abc", "-1", "12.34", "0", "4294967296"] {
         let app = lazy_app();
         let resp = app
             .oneshot(
@@ -1088,7 +1184,7 @@ async fn ledgers_invalid_sequence_returns_400_envelope() {
             .unwrap();
         let (status, json) = body_json(resp).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "case {bad}: {json}");
-        assert_eq!(json["code"], "invalid_id", "case {bad}: {json}");
+        assert_eq!(json["code"], "invalid_sequence", "case {bad}: {json}");
     }
 }
 
@@ -1424,6 +1520,55 @@ async fn ledgers_detail_returns_header_and_cache_control_against_real_db() {
     );
 }
 
+/// Tail-of-chain assertion: the lowest indexed ledger must report
+/// `prev_sequence IS NULL` (no earlier row in DB) and a non-null
+/// `next_sequence` (any later row qualifies). Complements the head test
+/// above which exercises the `next_sequence IS NULL` branch.
+#[tokio::test]
+async fn ledgers_detail_tail_has_null_prev_sequence_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    let row: Option<(i64,)> =
+        sqlx::query_as("SELECT sequence FROM ledgers ORDER BY sequence ASC LIMIT 1")
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten();
+    let Some((tail_seq,)) = row else {
+        eprintln!("DB has no ledgers — skipping tail prev_sequence test");
+        return;
+    };
+
+    let app = build_app(pool);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/ledgers/{tail_seq}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "tail detail: {json}");
+    assert!(
+        json["prev_sequence"].is_null(),
+        "tail ledger should have null prev_sequence: {json}"
+    );
+    // next_sequence is non-null unless the DB has exactly one ledger.
+    // Don't hard-assert that — just sanity-check the shape exists.
+    assert!(
+        json.get("next_sequence").is_some(),
+        "response must carry next_sequence slot: {json}"
+    );
+}
+
 /// Embedded transactions cursor traversal: page A from `/v1/ledgers/:seq`,
 /// then page B with the returned cursor and the same path. Pages must not
 /// overlap on `hash` and the embedded shape must round-trip cleanly.
@@ -1512,4 +1657,309 @@ async fn ledgers_detail_embedded_cursor_traversal_against_real_db() {
             "tx hash {h} appears on both embedded pages A={hashes_a:?} B={hashes_b:?}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Graceful-degradation tests (task 0044 §6).
+//
+// Lock the wire-level invariant that no endpoint returns 5xx purely because
+// ingestion is behind the network tip. Concretely:
+//
+//   * Missing-resource lookups (hash not yet indexed, contract not yet
+//     indexed) must surface as 404 with a `not_found` envelope, never 500.
+//   * Upstream public-archive (S3) outages must degrade XDR-derived fields
+//     to null with the parent response still 200; the endpoint must not
+//     surface the underlying error to the client.
+//   * Malformed input that short-circuits before the DB still maps to 400
+//     with the canonical envelope code (no panic, no 500).
+//
+// These complement the per-record degradation tests in 0046's S3-gated
+// suite (`extract_e3_*`) by exercising the full handler chain end-to-end.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn detail_invalid_hash_format_returns_400_before_db() {
+    // Short / non-hex hash short-circuits before any DB or S3 call. Locks in
+    // the pre-DB validation branch so a future refactor cannot start
+    // forwarding malformed hashes into `lookup_hash_index` and 500-ing on
+    // the SQL bind.
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/transactions/notahash")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_hash");
+}
+
+#[tokio::test]
+async fn detail_unknown_hash_returns_404_not_500() {
+    // The "ledger 60M+1 not yet indexed" scenario — well-formed hash, no row
+    // in `transactions`. The handler must surface this as 404 with the
+    // `not_found` envelope, never 500. This is the literal invariant
+    // documented in ADR 0008 + spec §"Graceful Degradation": missing recent
+    // data is normal, not an error condition.
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping detail-unknown-hash test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping detail-unknown-hash test");
+            return;
+        }
+    };
+
+    // 64 hex chars, all zeros — guaranteed to not match any real ledger.
+    let unknown_hash = "0".repeat(64);
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/transactions/{unknown_hash}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "expected 404, got {status}: {json}"
+    );
+    assert_eq!(json["code"], "not_found");
+    assert!(
+        json.get("error").is_none(),
+        "envelope must be flat (ADR 0008): {json}"
+    );
+}
+
+#[tokio::test]
+async fn list_returns_200_without_s3_contact() {
+    // The fake AWS credentials in `build_app` would fail any archive fetch
+    // — but the list handler is now DB-only (post-task-0047, ADR 0029):
+    // no S3 contact regardless of DB content. This test locks that
+    // invariant: list must return 200 with well-formed rows even though
+    // the AWS client cannot authenticate.
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping list-no-s3-contact test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping list-no-s3-contact test");
+            return;
+        }
+    };
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri("/v1/transactions?limit=5")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "list must stay 200 with DB-only path: {status} {json}"
+    );
+
+    let data = json["data"].as_array().expect("data array").clone();
+    for row in &data {
+        assert!(row["hash"].is_string(), "row missing hash: {row}");
+        assert!(
+            row.get("memo").is_none() && row.get("memo_type").is_none(),
+            "list rows must not carry memo fields (DB-only contract): {row}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Contracts handlers — graceful-degradation regression coverage (task 0044 §6).
+//
+// Mirror the transactions tests for /v1/contracts/:id{,/interface,/invocations,
+// /events}. The contracts module ships its own ListParams parser + S3
+// stop-and-retry expansion; these tests lock that no path returns 5xx for
+// missing-resource or malformed-input scenarios. A future refactor that, e.g.,
+// flips `Ok(None) => not_found` to `internal_error` or starts forwarding bad
+// StrKey paths into the SQL bind will fail one of these tests.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn contract_invalid_id_returns_400_before_db() {
+    // Malformed StrKey (lowercase, wrong length) short-circuits before any DB
+    // hit. Locks the pre-DB validation branch in `get_contract`.
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/contracts/notavalidstrkey")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_contract_id");
+    assert_eq!(json["details"]["param"], "contract_id");
+    assert_eq!(json["details"]["expected_prefix"], "C");
+}
+
+#[tokio::test]
+async fn contract_invocations_invalid_id_returns_400_before_db() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/contracts/notavalidstrkey/invocations")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_contract_id");
+}
+
+#[tokio::test]
+async fn contract_events_invalid_id_returns_400_before_db() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/contracts/notavalidstrkey/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_contract_id");
+}
+
+#[tokio::test]
+async fn contract_unknown_id_returns_404_not_500() {
+    // Well-formed StrKey, no row in `soroban_contracts`. Equivalent of
+    // `detail_unknown_hash_returns_404_not_500` for the contracts route.
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping contract-unknown-id test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping contract-unknown-id test");
+            return;
+        }
+    };
+
+    // Synthetic 56-char StrKey (no CRC) guaranteed not to exist.
+    let unknown_contract = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJ";
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/contracts/{unknown_contract}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "expected 404, got {status}: {json}"
+    );
+    assert_eq!(json["code"], "not_found");
+}
+
+#[tokio::test]
+async fn contract_interface_unknown_returns_404() {
+    // No `wasm_interface_metadata` row for the contract → 404.
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping interface-unknown test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping interface-unknown test");
+            return;
+        }
+    };
+
+    let unknown_contract = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJ";
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/contracts/{unknown_contract}/interface"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "expected 404, got {status}: {json}"
+    );
+    assert_eq!(json["code"], "not_found");
+}
+
+// ---------------------------------------------------------------------------
+// Out-of-u32-range `ledger_sequence` — pure logic test (no fixture row needed).
+//
+// Stellar `LedgerHeader.ledgerSeq` is `uint32` so any DB row with
+// `ledger_sequence > u32::MAX` indicates corrupted ingestion or a
+// hypothetical schema drift. The handler responds by skipping the row
+// from heavy fetch and logging a `warn`, never panicking. Seeding such
+// a row in PG is unrealistic (would require a deliberate out-of-bound
+// BIGINT), so we lock the conversion behaviour at the type boundary
+// instead.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn u32_try_from_invariants_relied_on_by_handlers() {
+    // Inputs the handler converts via `u32::try_from(i64)`:
+    assert!(
+        u32::try_from(i64::MAX).is_err(),
+        "i64::MAX must overflow u32"
+    );
+    assert!(
+        u32::try_from(i64::from(u32::MAX) + 1).is_err(),
+        "u32::MAX + 1 must overflow"
+    );
+    assert!(u32::try_from(-1_i64).is_err(), "negative must fail");
+
+    // Boundary: u32::MAX itself fits.
+    assert_eq!(u32::try_from(i64::from(u32::MAX)).unwrap(), u32::MAX);
+
+    // The handler's pattern: failed conversion → warn + skip / heavy=None,
+    // not panic. Verified by the call sites in
+    // `transactions/handlers.rs::get_transaction` (heavy fetch) and
+    // `contracts/handlers.rs::expand_invocations` / `expand_events`
+    // (per-row stop-and-retry).
 }

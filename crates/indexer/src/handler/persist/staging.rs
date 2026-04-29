@@ -15,15 +15,13 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
-use domain::{
-    AssetType, ContractEventType, ContractType, NftEventType, OperationType, TokenAssetType,
-};
+use domain::{AssetType, ContractType, NftEventType, OperationType, TokenAssetType};
 use serde_json::Value;
 use xdr_parser::types::{
-    ExtractedAccountState, ExtractedAsset, ExtractedContractDeployment, ExtractedContractInterface,
-    ExtractedEvent, ExtractedInvocation, ExtractedLedger, ExtractedLiquidityPool,
-    ExtractedLiquidityPoolSnapshot, ExtractedLpPosition, ExtractedNft, ExtractedNftEvent,
-    ExtractedOperation, ExtractedTransaction,
+    EventSource, ExtractedAccountState, ExtractedAsset, ExtractedContractDeployment,
+    ExtractedContractInterface, ExtractedEvent, ExtractedInvocation, ExtractedLedger,
+    ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot, ExtractedLpPosition, ExtractedNft,
+    ExtractedNftEvent, ExtractedOperation, ExtractedTransaction,
 };
 
 use super::HandlerError;
@@ -313,10 +311,22 @@ impl Staged {
             let participants = participants_per_tx.entry(tx_hash.clone()).or_default();
             for ev in evs {
                 if let Some((from, to)) = xdr_parser::transfer_participants(&ev.topics) {
-                    account_keys_set.insert(from.clone());
-                    account_keys_set.insert(to.clone());
-                    participants.insert(from);
-                    participants.insert(to);
+                    // CAP-67 unification (Protocol 23+) routes classic-op
+                    // SAC `transfer` events through per-operation event
+                    // slots, and those events can carry non-account
+                    // ScAddress variants in their topics — most commonly
+                    // ClaimableBalance (B…, 58 chars) and LiquidityPool
+                    // (L…), neither of which is an account and neither
+                    // fits `accounts.account_id VARCHAR(56)`. Filter to
+                    // the same G/M-account shape the invocations and
+                    // operations paths use; mismatched sides are skipped
+                    // independently so a (B, G) transfer still tracks G.
+                    for participant in [from, to] {
+                        if is_strkey_account(&participant) {
+                            account_keys_set.insert(participant.clone());
+                            participants.insert(participant);
+                        }
+                    }
                 }
             }
         }
@@ -386,7 +396,43 @@ impl Staged {
             account_keys_set.insert(lpp.account_id.clone());
         }
 
-        let account_keys: Vec<String> = account_keys_set.into_iter().collect();
+        // Defense-in-depth shape filter for `accounts.account_id VARCHAR(56)`.
+        // Upstream collectors (events / invocations / ops / participants /
+        // account_states / NFT events / liquidity_pools) each apply their
+        // own filter, but CAP-67 unification (Protocol 23+) surfaces
+        // ScAddress variants whose StrKey rendering exceeds 56 chars in
+        // event topics — most commonly ClaimableBalance (B…, 58 chars) and
+        // MuxedAccount (M…, 69 chars). These are not accounts and must not
+        // reach the column. Drop with an aggregate debug log so a single
+        // ledger with hundreds of leaks doesn't spam the trace. Length is
+        // `<= 56` rather than `== 56` so test fixtures with hand-crafted
+        // shorter G-prefix strkeys still pass; real Stellar G-keys are
+        // always exactly 56 chars and fit either way.
+        //
+        // KNOWN GAP: this filter changes the failure mode for a tx with
+        // muxed source (M…) from PG VARCHAR overflow at accounts insert to
+        // a resolve-id miss at write::insert_transactions. Both fail
+        // loudly. The proper fix is canonicalize M → underlying G at the
+        // parser level so that all downstream stages — accounts upsert,
+        // tx source resolve, op participants resolve — see the same
+        // 56-char G-key. Tracked separately in backlog task 0177 (muxed
+        // transaction source leaks 69-char M-key into accounts.account_id
+        // VARCHAR(56)).
+        let total_keys = account_keys_set.len();
+        let account_keys: Vec<String> = account_keys_set
+            .into_iter()
+            .filter(|k| k.len() <= 56 && k.starts_with('G'))
+            .collect();
+        let dropped_oversize = total_keys - account_keys.len();
+        if dropped_oversize > 0 {
+            tracing::debug!(
+                ledger_sequence = ledger.sequence,
+                dropped_oversize,
+                kept = account_keys.len(),
+                "dropped non-G-prefix or oversize StrKeys from accounts staging \
+                 (CAP-67 non-account ScAddress variants in event topics)"
+            );
+        }
 
         let mut account_state_overrides: HashMap<String, AccountStateOverride> = HashMap::new();
         for st in account_states {
@@ -625,16 +671,25 @@ impl Staged {
 
         // --- events flatten for appearance aggregation ---------------------
         //
-        // Filter out event_type = "diagnostic". Per Stellar docs these are
-        // debug-only traces (fn_call / fn_return / core_metrics / log /
-        // error / host_fn_failed) emitted by the Soroban host VM and by
-        // stellar-core's InvokeHostFunctionOpFrame; they are explicitly
-        // "not hashed into the ledger, and therefore are not part of the
-        // protocol" and "not useful for most users". ADR 0033 routes them
-        // (and all other event detail) to the public archive; the DB
-        // appearance index only counts "contract" and "system" events.
-        // On a mainnet sample diagnostic events are ~85 % of event volume
-        // and previously dominated events_ms in persist_ledger.
+        // Drop the entire `*.diagnostic_events` container — debug-only
+        // traces (fn_call / fn_return / core_metrics / log / error /
+        // host_fn_failed) per Stellar docs, "not hashed into the ledger,
+        // and therefore are not part of the protocol" (CAP-67). ADR 0033
+        // routes diagnostic detail to the public archive; the DB
+        // appearance index only counts consensus events.
+        //
+        // Filter on `EventSource::Diagnostic` — NOT on inner
+        // `event_type == Diagnostic`. When diagnostic mode is enabled
+        // (default for Galexie's captive-core), `v4.diagnostic_events`
+        // holds byte-identical Contract-typed copies of every per-op
+        // consensus Contract event (inner `type_ = Contract`), so a
+        // type-based filter passes the duplicate through and inflates
+        // `amount` by the per-op event count. Container-based filter
+        // drops both the host-VM trace entries and the Contract-typed
+        // duplicates in one step (task 0182).
+        //
+        // On a mainnet sample diagnostic events are ~85 % of event
+        // volume and previously dominated events_ms in persist_ledger.
         let mut event_rows: Vec<EventRow> = Vec::new();
         let mut diagnostic_dropped = 0usize;
         for (tx_hash, evs) in events {
@@ -642,7 +697,7 @@ impl Staged {
                 continue;
             };
             for ev in evs {
-                if ev.event_type == ContractEventType::Diagnostic {
+                if ev.source == EventSource::Diagnostic {
                     diagnostic_dropped += 1;
                     continue;
                 }
@@ -659,7 +714,7 @@ impl Staged {
                 ledger_sequence = ledger.sequence,
                 diagnostic_dropped,
                 staged = event_rows.len(),
-                "staged events for appearance aggregation (diagnostic filtered — S3 lane per ADR 0033)"
+                "staged events for appearance aggregation (diagnostic container dropped — S3 lane per ADR 0033)"
             );
         }
 

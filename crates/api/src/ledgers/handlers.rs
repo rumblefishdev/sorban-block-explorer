@@ -15,6 +15,7 @@ use crate::common::cursor::TsIdCursor;
 use crate::common::errors;
 use crate::common::extractors::Pagination;
 use crate::common::pagination::{finalize_ts_id_page, into_envelope};
+use crate::common::path;
 use crate::openapi::schemas::{ErrorEnvelope, Paginated};
 use crate::state::AppState;
 use crate::transactions::dto::TransactionListItem;
@@ -38,7 +39,12 @@ const CACHE_CONTROL_SHORT: HeaderValue = HeaderValue::from_static("public, max-a
 /// the requested one cannot still be settling. Note: an indexer
 /// reindex of historical rows (e.g. tasks 0168/0169/0170) can change
 /// `transaction_count` on otherwise-immutable ledger rows; cache purge
-/// is the operational mitigation in that case.
+/// is the operational mitigation in that case. Same caveat applies to
+/// **backfill gaps**: `next_sequence` is computed via LATERAL on the
+/// indexed rows, not the chain-actual successor — if ledger N+1 is
+/// missing while N+2 is present, a request for N pins `next_sequence
+/// = N+2` under the long TTL, and a later backfill of N+1 will not
+/// invalidate the cached response. Cache purge is the same mitigation.
 const CACHE_CONTROL_LONG: HeaderValue = HeaderValue::from_static("public, max-age=300");
 
 // ---------------------------------------------------------------------------
@@ -134,17 +140,12 @@ pub async fn get_ledger(
     Path(sequence_raw): Path<String>,
     pagination: Pagination<TsIdCursor>,
 ) -> Response {
-    // Path param shape-validate. Path<i64> would auto-reject non-numeric
-    // input with a 400, but the framework's default body is opaque — we
-    // want our canonical `ErrorEnvelope` with `code = "invalid_id"`.
-    let sequence: i64 = match sequence_raw.parse() {
-        Ok(n) if n >= 0 => n,
-        _ => {
-            return errors::bad_request(
-                errors::INVALID_ID,
-                "sequence must be a non-negative integer",
-            );
-        }
+    // Path param shape-validate via the canonical helper from task 0044
+    // (PR #132). Rejects non-numeric / negative / zero / >u32::MAX inputs
+    // with `code = "invalid_sequence"` and `details.{param,received}`.
+    let sequence: i64 = match path::sequence(&sequence_raw) {
+        Ok(n) => i64::from(n),
+        Err(resp) => return resp,
     };
 
     // Phase 1 — DB header.

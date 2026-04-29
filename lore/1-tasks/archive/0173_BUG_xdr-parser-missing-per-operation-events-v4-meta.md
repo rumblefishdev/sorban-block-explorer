@@ -2,9 +2,9 @@
 id: '0173'
 title: 'BUG: xdr-parser drops per-operation events in V4 meta (CAP-67 / Protocol 23+)'
 type: BUG
-status: active
+status: completed
 related_adr: ['0002', '0033']
-related_tasks: ['0167', '0026']
+related_tasks: ['0167', '0026', '0181', '0182']
 tags: [xdr-parser, cap-67, events, priority-critical, pre-mainnet-backfill]
 links:
   - 'crates/xdr-parser/src/event.rs'
@@ -75,6 +75,26 @@ history:
     status: active
     who: fmazur
     note: 'Promoted to active via /promote-task'
+  - date: '2026-04-29'
+    status: completed
+    who: fmazur
+    note: >
+      Implemented parser fix + emerged staging defense-in-depth filter.
+      4 files modified: crates/xdr-parser/src/event.rs (V4 per-op iteration
+      + 3 unit tests + comprehensive ordering/indexing test),
+      crates/indexer/src/handler/persist/staging.rs (events transfer-
+      participants filter + account_keys_set defense-in-depth filter for
+      VARCHAR(56) overflow regression — see Issues), crates/indexer/tests/
+      persist_integration.rs (end-to-end V4 per-op test through
+      extract_events → persist_ledger), docs/architecture/xdr-parsing/
+      xdr-parsing-overview.md §5.1 (V3↔V4 dispatch + 3-location
+      enumeration). Spawned follow-ups: 0181 (ledger.hash bug found
+      during E02 cross-validation against Horizon), 0182 (diagnostic_events
+      container leak — Contract-typed mirror duplicates overcount amount
+      ~2.5×, found during E02 cross-validation against stellar.expert).
+      173 unit tests + 10 persist_integration tests passing; backfill
+      62016000-62016099 runs clean (228 ms mean, p99 364 ms);
+      SUM(amount) in soroban_events_appearances 55,581 → 92,335 (+66%).
 ---
 
 # BUG: xdr-parser drops per-operation events in V4 meta (CAP-67 / Protocol 23+)
@@ -91,10 +111,12 @@ post-Protocol 23 ledgers, while tx-level fee events (in `v4.events`)
 are present. Fix is local (one branch in one function) but blocks
 data correctness ahead of mainnet backfill.
 
-## Status: Backlog
+## Status: Completed
 
-**Current state:** root cause confirmed in code + ADR + XDR struct
-definitions + empirical reproduction. Awaiting fix + reindex.
+**Current state:** Parser fix + staging defense-in-depth filter shipped.
+Backfill 62016000-62016099 runs clean. Two follow-up bugs spawned and
+documented as separate tasks (0181 ledger.hash, 0182 diagnostic_events
+container leak).
 
 ## Context
 
@@ -327,23 +349,146 @@ is self-contained and does not require it to validate correctness.
 
 ## Acceptance Criteria
 
-- [ ] `extract_events` V4 branch iterates `v4.operations[i].events`,
+- [x] `extract_events` V4 branch iterates `v4.operations[i].events`,
       preserving sequential `event_index` numbering across tx-level →
       per-op → diagnostic.
-- [ ] Unit tests cover the three V4 patterns (single per-op, mixed
+- [x] Unit tests cover the three V4 patterns (single per-op, mixed
       sources, empty per-op).
-- [ ] Integration test on a synthetic V4 fixture asserts the per-op
-      event lands in `soroban_events_appearances` after full ingest.
-- [ ] V3 path (`SorobanTransactionMeta.events`) untouched and existing
-      V3 tests still pass.
-- [ ] **Docs updated** — per ADR 0032: - [ ] `docs/architecture/xdr-parsing/xdr-parsing-overview.md` §5.1
-      (CAP-67 events) — explicit note on V3 vs V4 dispatch and
-      per-op events location. - [ ] N/A for ADR 0033 (schema unchanged — same
-      `soroban_events_appearances` table; only the population
-      path changes). - [ ] N/A for ADR 0002 (already documented; ADR 0002 spec is
-      correct, code was the gap).
+- [x] Integration test on a synthetic V4 fixture asserts the per-op
+      event lands in `soroban_events_appearances` after full ingest
+      (`v4_per_op_events_land_in_appearance_index` in
+      `crates/indexer/tests/persist_integration.rs`).
+- [x] V3 path (`SorobanTransactionMeta.events`) untouched and existing
+      V3 tests still pass (10/10 persist_integration + 173/173 xdr-parser
+      unit tests green).
+- [x] **Docs updated** — per ADR 0032:
+  - [x] `docs/architecture/xdr-parsing/xdr-parsing-overview.md` §5.1
+        (CAP-67 events) — added "V3 vs V4 meta dispatch" subsection
+        with explicit 3-location enumeration for V4 + symptom callout
+        for the "exactly 2 fee events" cohort.
+  - [x] N/A for ADR 0033 (schema unchanged — same
+        `soroban_events_appearances` table; only the population
+        path changes).
+  - [x] N/A for ADR 0002 (already documented; ADR 0002 spec is
+        correct, code was the gap).
 
-## Issues Encountered (during root-cause analysis)
+## Implementation Notes
+
+**Files modified (4):**
+
+1. `crates/xdr-parser/src/event.rs` — V4 branch in `extract_events`
+   gained a per-op iteration step between the existing tx-level and
+   diagnostic loops. Sequential `event_index` numbering preserved via a
+   single `next_idx` counter shared across the three sources. Added
+   3 unit tests pinning each pattern (single per-op, mixed sources with
+   ordering+indexing assertions, empty per-op operations).
+2. `crates/indexer/src/handler/persist/staging.rs` — two filter changes
+   (see Design Decisions ### Emerged): events transfer-participants
+   push gained `is_strkey_account` filter (matching invocations/ops
+   paths); `account_keys_set` finalization gained a defense-in-depth
+   length+prefix filter dropping non-G-56 strkeys with aggregated
+   debug log.
+3. `crates/indexer/tests/persist_integration.rs` — added end-to-end
+   V4 per-op test (`v4_per_op_events_land_in_appearance_index`) that
+   builds a synthetic `TransactionMeta::V4` (1 tx-level Contract event +
+   2 per-op Contract events on a single op + 1 Diagnostic), runs through
+   `extract_events` → `persist_ledger`, asserts 1 appearance row with
+   `amount = 3` (Diagnostic filtered at staging). Pre-fix this would
+   have produced `amount = 1` (only the tx-level event).
+4. `docs/architecture/xdr-parsing/xdr-parsing-overview.md` — §5.1
+   "V3 vs V4 meta dispatch" subsection with explicit 3-location
+   enumeration (tx-level / per-op / diagnostic) and the "silent 2-event
+   cohort" symptom signature.
+
+**Empirical validation:**
+
+- xdr-parser unit tests: 173/173 passing.
+- indexer persist_integration tests: 10/10 passing (DB-gated, run
+  against local Postgres).
+- Backfill 62016000-62016099 (100 ledgers, 36,319 tx total): runs
+  clean, 99 indexed + 1 skipped, no errors. Mean 228 ms/ledger,
+  p99 364 ms.
+- `SUM(soroban_events_appearances.amount)` on the 100-ledger window:
+  pre-fix 55,581 → post-fix 92,335 (+66% / +36,754 events surfaced
+  that were previously dropped at the `OperationMetaV2.events`
+  location).
+- Cross-validation against Horizon API: 5 sample tx (4 successful
+  Soroban with mixed fee-bump shapes + 1 failed) byte-identical on
+  hash / ledger_sequence / source_account / fee_charged / successful /
+  operation_count / inner_tx_hash / created_at / application_order
+  (decoded from Horizon TOID `(paging_token >> 12) & 0xFFFFF`).
+- Cross-validation against stellar.expert API: per-tx event counts
+  match per-op consensus events exactly for the Soroswap swap repro tx
+  (revealed task 0182 — diagnostic-container Contract mirrors leak
+  through current type-based filter and overcount `amount` ~2.5×).
+
+## Design Decisions
+
+### From Plan
+
+1. **V4 iteration order**: tx-level → per-op → diagnostic, with a
+   single `next_idx` counter incremented across all three sources.
+   Preserves the V3 contract that `event_index` is monotonic per-tx
+   so downstream consumers (E03, E14 read-time API; SMALLINT bound
+   in API DTO) keep their invariants.
+
+2. **No V3 changes**: V3 spec keeps events at
+   `soroban_meta.events` with no per-op location. V3 branch in
+   `extract_events` left untouched; existing V3 fixtures and tests
+   continue to pass unchanged.
+
+### Emerged
+
+3. **Staging events transfer-participants filter** (out of plan).
+   The plan was parser-only, but real backfill against ledger
+   62016000 surfaced an immediate regression: per-op SAC events from
+   classic operations on claimable balances carry topic `Address`
+   values rendered as `B…` ClaimableBalance StrKeys (58 chars) which
+   overflow `accounts.account_id VARCHAR(56)`. Diagnostic at
+   `crates/xdr-parser/tests/diag_v4_oversize_strkey.rs` (since moved
+   to `.trash/`) found 86 instances on a single tx in ledger 62016000.
+   Added `is_strkey_account` filter to the events transfer-participants
+   push in `staging.rs:312-322` to match the existing
+   invocations/operations participant filtering — drops B/L addresses
+   independently per side so a `(B, G)` transfer still tracks G.
+
+4. **Defense-in-depth `account_keys_set` finalization filter** (out
+   of plan). Filter (3) addressed the events path, but other paths
+   (ops, tx.source_account, account_states issuers, NFT events) carry
+   the same latent risk for M-muxed (`MuxedAccount::MuxedEd25519`,
+   69 chars). Added a single chokepoint at
+   `staging.rs:401-422` that drops anything not 56-char G-prefix
+   before the accounts insert, with an aggregate `tracing::debug!`
+   per-ledger so a high-leak ledger does not spam the trace. Docs
+   the rationale; non-G addresses still flow through participants_per_tx
+   and harmlessly fall out at write-time when the strkey doesn't
+   resolve in `account_ids` map. M-muxed canonicalization to
+   underlying G is intentionally out of scope — flagged for separate
+   task per backlog 0177 (muxed-account leak into persist).
+
+5. **Comments preserved on parser fix**. Project CLAUDE.md says
+   default to no comments, but V4 per-op events are non-obvious
+   (CAP-67 reorganisation). Kept short comment block on V4 branch
+   matching the existing V3 explanatory comment style; defers to
+   docs §5.1 for the full enumeration.
+
+## Future Work
+
+Spawned as separate backlog tasks during cross-validation:
+
+- **0181** — `BUG: xdr-parser ledger.hash hashes the history entry,
+not the canonical ledger hash`. Pre-existing; surfaced when E04/E05
+  validation showed `ledgers.hash` not matching Horizon. Trivial
+  one-liner fix.
+- **0182** — `BUG: diagnostic_events container leak — Contract-typed
+mirrors overcount soroban_events_appearances.amount ~2-3x`.
+  Direct follow-up: Stellar core mirrors every consensus Contract
+  event from `v4.operations[i].events` into `v4.diagnostic_events`
+  (byte-identical), which our type-based staging filter does not
+  catch. Need to switch from inner-type filter to container-source
+  filter (introduce `EventSource` enum on `ExtractedEvent`).
+
+## Issues Encountered
 
 - **`SorobanTransactionMetaV2` no longer has `events` field** — initially
   I expected V4 to keep events on `soroban_meta` (V3 layout). Verifying
@@ -351,10 +496,35 @@ is self-contained and does not require it to validate correctness.
   the field was removed; events relocated to `OperationMetaV2.events`
   and `TransactionMetaV4.events`. ADR 0002 captured this correctly;
   code did not follow.
+
 - **Partial coverage masked the bug** — XLM SAC fee events appear in
   `v4.events` (tx-level) so `soroban_events_appearances` is non-empty
   for every classic XLM tx. Without a per-op-event reference, it looked
   like the data was complete but limited.
+
+- **VARCHAR(56) regression on first backfill (post-fix)** — running
+  the unmodified pipeline against ledger 62016000 with the new per-op
+  iteration crashed with `ERROR 22001: value too long for character
+varying(56)` on the accounts insert. Diagnostic localized 86
+  oversize StrKeys on a single tx, all `B…` ClaimableBalance addresses
+  (58 chars each) carried in topic `Address` of CAP-67 SAC unification
+  events on classic claimable-balance ops. Root cause: the events
+  transfer-participants push in staging was unfiltered (other paths
+  used `is_strkey_account`), and `is_strkey_account` itself accepts
+  `M…` muxed addresses (69 chars) which would also overflow.
+  Resolved with the two emerged filters under Design Decisions
+  (events-side `is_strkey_account` + finalization defense-in-depth).
+  Not a regression vs pre-task-0173 behavior — pre-fix path didn't
+  surface these events at all, so the latent bug was never hit;
+  surfacing per-op events reveals the chain of accountability that
+  was always supposed to be filtered.
+
+- **Modified test scope clarification** — `extract_events_from_v4_meta`
+  test was already in place pre-task and remains unchanged (it tests
+  V4 with only tx-level events). The 3 new V4 unit tests
+  (`extract_events_v4_per_op_single`, `_mixed_sources_preserve_order_and_indexing`,
+  `_empty_per_op_produces_no_spurious_rows`) are additive — no
+  existing V3 or V4 tests were modified.
 
 ## Notes
 

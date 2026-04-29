@@ -10,7 +10,7 @@
 
 use serde_json::Value;
 
-use crate::types::{ExtractedEvent, NftEvent};
+use crate::types::{EventSource, ExtractedEvent, NftEvent};
 use domain::ContractEventType;
 
 /// Detect NFT-related events from a list of extracted events.
@@ -25,6 +25,14 @@ pub fn detect_nft_events(events: &[ExtractedEvent]) -> Vec<NftEvent> {
 
     for event in events {
         if event.event_type != ContractEventType::Contract {
+            continue;
+        }
+        // Skip diagnostic-container Contract-typed copies — when
+        // diagnostic mode is enabled, every per-op consensus Contract
+        // event is also present byte-identically in `v4.diagnostic_events`;
+        // without this guard NFT detection would double-emit
+        // transfer/mint/burn rows (task 0182).
+        if event.source == EventSource::Diagnostic {
             continue;
         }
         let Some(ref contract_id) = event.contract_id else {
@@ -213,6 +221,7 @@ mod tests {
         ExtractedEvent {
             transaction_hash: "abcd1234".into(),
             event_type: ContractEventType::Contract,
+            source: EventSource::PerOp,
             contract_id: Some(contract_id.into()),
             topics: json!(topics),
             data,

@@ -19,20 +19,17 @@ use super::dto::{E3HeavyFields, E14HeavyEventFields, SignatureDto, XdrEventDto, 
 /// `tx_hash` is the lowercase hex (64 chars) transaction hash — same format
 /// as `ExtractedTransaction.hash` produced by `xdr_parser::extract_transactions`.
 ///
-/// Returns `None` when either:
-/// - the ledger header cannot be extracted (malformed `LedgerCloseMeta`), or
-/// - the ledger does not contain a transaction matching `tx_hash`.
-///
-/// Both failure modes are currently conflated into a single `None`; the
-/// calling handler should treat it as "no heavy fields available" and
-/// fall back to DB-only response with `heavy_fields_status: unavailable`.
+/// Returns `None` when the ledger does not contain a transaction matching
+/// `tx_hash`. The calling handler should treat that as "no heavy fields
+/// available" and fall back to DB-only response with
+/// `heavy_fields_status: unavailable`.
 #[instrument(skip(meta, network_id), fields(tx_hash = %tx_hash))]
 pub fn extract_e3_heavy(
     meta: &LedgerCloseMeta,
     tx_hash: &str,
     network_id: &[u8; 32],
 ) -> Option<E3HeavyFields> {
-    let ledger = xdr_parser::extract_ledger(meta).ok()?;
+    let ledger = xdr_parser::extract_ledger(meta);
     let ledger_seq = ledger.sequence;
     let closed_at = ledger.closed_at;
 
@@ -124,10 +121,7 @@ pub fn extract_e14_heavy(
     contract_id: &str,
     network_id: &[u8; 32],
 ) -> Vec<E14HeavyEventFields> {
-    let ledger = match xdr_parser::extract_ledger(meta) {
-        Ok(l) => l,
-        Err(_) => return Vec::new(),
-    };
+    let ledger = xdr_parser::extract_ledger(meta);
     let ledger_seq = ledger.sequence;
     let closed_at = ledger.closed_at;
 
@@ -234,15 +228,20 @@ fn envelope_fee_bump_source(env: &TransactionEnvelope) -> Option<String> {
 }
 
 fn split_events(events: Vec<xdr_parser::ExtractedEvent>) -> (Vec<XdrEventDto>, Vec<XdrEventDto>) {
-    use domain::ContractEventType;
+    use xdr_parser::EventSource;
 
+    // Route on container source, not inner `event_type` — the
+    // diagnostic_events container holds byte-identical Contract-typed
+    // copies of per-op consensus events (inner `type_ = Contract`) when
+    // diagnostic mode is enabled, so a type-based split would surface
+    // those copies as additional contract events (task 0182).
     let mut contract = Vec::new();
     let mut diagnostic = Vec::new();
     for e in events {
         let Some(event_index) = to_i16_index(e.event_index, "event_index") else {
             continue;
         };
-        let is_diagnostic = e.event_type == ContractEventType::Diagnostic;
+        let is_diagnostic = e.source == EventSource::Diagnostic;
         let topics = topics_to_vec(e.topics);
         let dto = XdrEventDto {
             event_type: e.event_type.to_string(),

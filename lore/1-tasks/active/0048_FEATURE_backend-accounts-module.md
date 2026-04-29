@@ -2,7 +2,7 @@
 id: '0048'
 title: 'Backend: Accounts module (detail + balances + transactions)'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0005']
 related_tasks: ['0023', '0043', '0092']
 tags: [layer-backend, accounts]
@@ -17,6 +17,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
+  - date: 2026-04-29
+    status: active
+    who: FilipDz
+    note: 'Activated — natural continuation of 0049 (tokens) + 0050 (contracts) backend modules.'
 ---
 
 # Backend: Accounts module (detail + balances + transactions)

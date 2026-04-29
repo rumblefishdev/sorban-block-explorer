@@ -349,7 +349,7 @@ Per ADR 0032: every shape-of-system change requires a doc update.
 - [x] `Cache-Control: public, max-age=300` for non-head ledgers; `public, max-age=10` for the head ledger and for the list endpoint.
 - [x] Head detection uses `next_sequence is None` from statement A's LATERAL lookup (no extra query, no cross-module cache).
 - [x] 404 `not_found` (flat ADR 0008 envelope, lowercase `code`) for non-existent ledger sequences.
-- [x] 400 `invalid_id` for invalid sequence format (non-numeric, negative); pagination param failures surface as `invalid_limit` / `invalid_cursor` from the shared extractor.
+- [x] 400 `invalid_sequence` for invalid sequence format — rejects non-numeric, negative, zero (Stellar genesis is sequence 1), and >`u32::MAX` inputs. Implemented via the shared `common::path::sequence` validator (task 0044, PR #132), aligned with the `INVALID_HASH` / `INVALID_CONTRACT_ID` pattern; envelope details carry `param: "sequence"` + `received`. Pagination param failures surface as `invalid_limit` / `invalid_cursor` from the shared extractor.
 - [x] OpenAPI schema generated correctly (utoipa) for all responses.
 - [x] Module layout matches sibling modules (`mod / dto / queries / handlers`).
 - [x] Tests cover cursor traversal (both lists), 404, head vs closed Cache-Control, and prev/next at chain head/tail (NULL handling).

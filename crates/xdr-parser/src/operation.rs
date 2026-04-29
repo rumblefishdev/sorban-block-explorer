@@ -4,7 +4,7 @@
 //! INVOKE_HOST_FUNCTION operations get enriched extraction: contractId,
 //! functionName, functionArgs (ScVal decoded), and returnValue.
 
-use crate::envelope::InnerTxRef;
+use crate::envelope::{InnerTxRef, muxed_to_g_strkey};
 use crate::scval::scval_to_typed_json;
 use crate::types::ExtractedOperation;
 use domain::OperationType;
@@ -38,7 +38,7 @@ pub fn extract_operations(
             // 1-based). Surfaces as user-facing `application_order` in
             // `XdrOperationDto`. See task 0172 / ADR 0028.
             let op_index = i + 1;
-            let source_account = op.source_account.as_ref().map(|a| a.to_string());
+            let source_account = op.source_account.as_ref().map(muxed_to_g_strkey);
             let (op_type, details) = extract_op_details(
                 &op.body,
                 return_value.as_ref(),
@@ -91,7 +91,7 @@ fn extract_op_details(
         OperationBody::Payment(op) => (
             OperationType::Payment,
             json!({
-                "destination": op.destination.to_string(),
+                "destination": muxed_to_g_strkey(&op.destination),
                 "asset": format_asset(&op.asset),
                 "amount": op.amount,
             }),
@@ -101,7 +101,7 @@ fn extract_op_details(
             json!({
                 "sendAsset": format_asset(&op.send_asset),
                 "sendMax": op.send_max,
-                "destination": op.destination.to_string(),
+                "destination": muxed_to_g_strkey(&op.destination),
                 "destAsset": format_asset(&op.dest_asset),
                 "destAmount": op.dest_amount,
                 "path": op.path.iter().map(format_asset).collect::<Vec<_>>(),
@@ -112,7 +112,7 @@ fn extract_op_details(
             json!({
                 "sendAsset": format_asset(&op.send_asset),
                 "sendAmount": op.send_amount,
-                "destination": op.destination.to_string(),
+                "destination": muxed_to_g_strkey(&op.destination),
                 "destAsset": format_asset(&op.dest_asset),
                 "destMin": op.dest_min,
                 "path": op.path.iter().map(format_asset).collect::<Vec<_>>(),
@@ -198,7 +198,7 @@ fn extract_op_details(
         OperationBody::AccountMerge(destination) => (
             OperationType::AccountMerge,
             json!({
-                "destination": destination.to_string(),
+                "destination": muxed_to_g_strkey(destination),
             }),
         ),
         OperationBody::Inflation => (OperationType::Inflation, json!({})),
@@ -262,7 +262,7 @@ fn extract_op_details(
             OperationType::Clawback,
             json!({
                 "asset": format_asset(&op.asset),
-                "from": op.from.to_string(),
+                "from": muxed_to_g_strkey(&op.from),
                 "amount": op.amount,
             }),
         ),
