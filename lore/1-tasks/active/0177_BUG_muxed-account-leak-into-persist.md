@@ -2,7 +2,7 @@
 id: '0177'
 title: 'BUG: muxed transaction source leaks 69-char M-key into accounts.account_id VARCHAR(56)'
 type: BUG
-status: backlog
+status: active
 related_adr: ['0026', '0037']
 related_tasks: ['0044', '0145', '0175']
 tags:
@@ -22,6 +22,12 @@ history:
       instead of the underlying 56-char G-key. Per ADR 0026 +
       task 0044 the persisted account_id must always be the
       ed25519 public key (G-prefix, 56 chars).
+  - date: '2026-04-29'
+    status: active
+    who: stkrolikiewicz
+    note: >
+      Activating to fix muxed M-key leak in parallel with 0175
+      audit harness work.
 ---
 
 # Muxed transaction source leaks 69-char M-key into persist write path
