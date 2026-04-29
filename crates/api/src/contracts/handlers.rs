@@ -296,7 +296,8 @@ pub async fn get_contract(
         },
     };
 
-    let cached = state.contract_cache.put(contract_id, response);
+    let cached = std::sync::Arc::new(response);
+    state.contract_cache.insert(contract_id, cached.clone());
     Json((*cached).clone()).into_response()
 }
 
