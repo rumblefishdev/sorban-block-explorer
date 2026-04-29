@@ -7,7 +7,8 @@ use crate::network::cache::NetworkStatsCache;
 use crate::stellar_archive::StellarArchiveFetcher;
 
 /// Application-wide state. All inner types are cheaply cloneable
-/// (`Arc`-backed; `moka::sync::Cache` clones are refcount bumps).
+/// (`Arc`-backed; both `moka::sync::Cache` and `moka::future::Cache`
+/// clones are refcount bumps).
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,

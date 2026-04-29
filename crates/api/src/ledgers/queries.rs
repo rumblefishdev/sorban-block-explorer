@@ -122,7 +122,8 @@ pub async fn fetch_list(
 // ---------------------------------------------------------------------------
 
 /// Fetch the ledger header row plus `prev_sequence` / `next_sequence` via
-/// LATERAL lookups on `idx_ledgers_closed_at`. Returns `Ok(None)` when no
+/// two `LATERAL ... LIMIT 1` lookups using `sequence < l.sequence` /
+/// `sequence > l.sequence` (PK ordering). Returns `Ok(None)` when no
 /// ledger has the requested sequence (handler maps to 404).
 pub async fn fetch_by_sequence(
     pool: &PgPool,

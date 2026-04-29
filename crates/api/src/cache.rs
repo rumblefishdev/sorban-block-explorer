@@ -1,9 +1,12 @@
 //! Shared cache helpers for the API crate.
 //!
-//! All in-process caches go through `moka::sync::Cache` via the
-//! [`ttl_cache`] builder so every module gets the same defaults
-//! (TTL + bounded `max_capacity`) without copy-pasting the
-//! `Arc<Mutex<HashMap>>` + sweep + poison-recovery boilerplate.
+//! Most in-process caches go through this [`ttl_cache`] builder over
+//! `moka::sync::Cache` so every module gets the same defaults (TTL and
+//! bounded `max_capacity`) without copy-pasting the `Arc<Mutex<HashMap>>`,
+//! sweep heuristic and poison-recovery boilerplate. The one exception
+//! is the `network_cache`, which uses `moka::future::Cache` for
+//! stampede protection on an async initialiser — see the "Sync vs
+//! future" section below.
 //!
 //! See `lore/1-tasks/active/0180_REFACTOR_api-cache-moka-migration.md`
 //! for the rationale (in particular: why `moka` and why no Redis yet).
