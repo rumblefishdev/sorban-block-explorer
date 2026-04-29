@@ -33,14 +33,7 @@ use super::errors;
 /// of the shape check is catching the common typo / wrong-prefix cases
 /// loudly with a 400 envelope instead of silently returning `[]`.
 pub fn strkey(value: &str, prefix: char, filter_key: &str) -> Result<(), Response> {
-    // bytes() instead of chars() — StrKey alphabet is RFC 4648 base32 (ASCII
-    // only), so byte iteration is safe and skips the UTF-8 decode.
-    if value.len() == 56
-        && value.starts_with(prefix)
-        && value
-            .bytes()
-            .all(|b| matches!(b, b'A'..=b'Z' | b'2'..=b'7'))
-    {
+    if super::strkey::is_strkey_shape(value, prefix) {
         Ok(())
     } else {
         Err(errors::bad_request_with_details(

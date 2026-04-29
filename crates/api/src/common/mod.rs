@@ -12,3 +12,5 @@ pub mod errors;
 pub mod extractors;
 pub mod filters;
 pub mod pagination;
+pub mod path;
+pub mod strkey;
