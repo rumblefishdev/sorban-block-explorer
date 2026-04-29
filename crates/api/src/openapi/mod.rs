@@ -17,6 +17,7 @@ use crate::assets::dto::{AssetDetailResponse, AssetItem, AssetTransactionItem};
 use crate::contracts::dto::{
     ContractDetailResponse, ContractStats, EventItem, InterfaceResponse, InvocationItem,
 };
+use crate::ops::HealthResponse;
 use crate::stellar_archive::dto::{
     E3HeavyFields, E3Response, HeavyFieldsStatus, SignatureDto, XdrEventDto, XdrOperationDto,
 };
@@ -41,6 +42,7 @@ use schemas::{ErrorEnvelope, PageInfo, Paginated};
         license(name = "Proprietary"),
     ),
     components(schemas(
+        HealthResponse,
         ErrorEnvelope,
         PageInfo,
         Paginated<TransactionListItem>,
@@ -74,9 +76,10 @@ pub struct ApiDoc;
 /// build-time `extract_openapi` binary so neither can quietly drop a
 /// route from the spec the frontend codegen consumes.
 ///
-/// Returns the router unparameterised by state. Callers stamp state
-/// via `.with_state(...)` (live app) or call `.split_for_parts()`
-/// directly (extractor — the spec does not depend on `AppState`).
+/// Returns a router typed with `AppState` but not yet bound to a state
+/// value. Callers attach state via `.with_state(...)` (live app) or
+/// call `.split_for_parts()` directly (extractor — the spec does not
+/// depend on `AppState`).
 pub fn register_routes() -> OpenApiRouter<crate::state::AppState> {
     OpenApiRouter::with_openapi(ApiDoc::openapi())
         .routes(routes!(crate::ops::health))

@@ -59,6 +59,8 @@ export type {
   GetTransactionResponse,
   GetTransactionResponses,
   HealthData,
+  HealthResponse,
+  HealthResponse2,
   HealthResponses,
   HeavyFieldsStatus,
   InterfaceResponse,
