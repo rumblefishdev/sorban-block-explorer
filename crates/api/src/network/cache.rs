@@ -12,7 +12,7 @@
 //! reintroducing the "lock held across `.await`" footgun the previous
 //! impl had to guard against.
 //!
-//! Per `docs/architecture/backend/backend-overview.md` §8.x backend
+//! Per `docs/architecture/backend/backend-overview.md` §8.1 backend
 //! in-memory caching has a 30–60 s TTL — we settle on 30 s. Two cache
 //! layers stack: the API Gateway sits in front (5–15 s mutable TTL,
 //! disabled today per `infra/envs/*.json`) and this Lambda layer behind
