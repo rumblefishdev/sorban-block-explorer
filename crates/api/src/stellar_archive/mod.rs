@@ -234,7 +234,7 @@ mod tests {
             let Ok(meta) = fetcher.fetch_ledger(seq).await else {
                 continue;
             };
-            let ledger = xdr_parser::extract_ledger(&meta).unwrap();
+            let ledger = xdr_parser::extract_ledger(&meta);
             let net_id = xdr_parser::network_id(xdr_parser::MAINNET_PASSPHRASE);
             let txs =
                 xdr_parser::extract_transactions(&meta, ledger.sequence, ledger.closed_at, &net_id);
@@ -314,7 +314,7 @@ mod tests {
             let Ok(meta) = fetcher.fetch_ledger(seq).await else {
                 continue;
             };
-            let ledger = xdr_parser::extract_ledger(&meta).unwrap();
+            let ledger = xdr_parser::extract_ledger(&meta);
             let net_id = xdr_parser::network_id(xdr_parser::MAINNET_PASSPHRASE);
             let txs =
                 xdr_parser::extract_transactions(&meta, ledger.sequence, ledger.closed_at, &net_id);

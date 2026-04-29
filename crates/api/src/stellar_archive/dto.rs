@@ -97,7 +97,8 @@ pub struct XdrEventDto {
 pub struct XdrOperationDto {
     /// Operation type tag (e.g. `"payment"`, `"invoke_host_function"`).
     pub op_type: String,
-    /// Application order within the transaction (zero-based).
+    /// Application order within the transaction (1-based, matches Horizon
+    /// `paging_token` convention).
     pub application_order: i16,
     /// Full operation details (type-specific JSON).
     pub details: serde_json::Value,

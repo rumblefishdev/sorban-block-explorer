@@ -42,6 +42,17 @@ const TEST_LEDGER_HASH: &str = "222222222222222222222222222222222222222222222222
 const POOL_ID: &str = "3333333333333333333333333333333333333333333333333333333333333333";
 const WASM_HASH: &str = "4444444444444444444444444444444444444444444444444444444444444444";
 
+// --- Task 0173 (CAP-67 V4 per-op events) fixture constants ---------------
+//
+// The V4-per-op test reuses the same DB instance as the rest of this file
+// but a distinct ledger sequence + tx hash so its rows live alongside the
+// canonical fixture without colliding. Hash bytes deliberately differ from
+// the existing constants so cleanup queries scope cleanly.
+const V4_TEST_LEDGER_SEQ: u32 = 90_000_002;
+const V4_TEST_TX_HASH: &str = "abababababababababababababababababababababababababababababababab";
+const V4_TEST_LEDGER_HASH: &str =
+    "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
+
 #[tokio::test]
 async fn synthetic_ledger_insert_and_replay_is_idempotent() {
     let Ok(database_url) = std::env::var("DATABASE_URL") else {
@@ -357,6 +368,212 @@ async fn enum_label_helpers_match_rust_as_str() {
     check_all!(&pool, "contract_type_name", ContractType);
 }
 
+/// Task 0173 — end-to-end coverage for CAP-67 / Protocol 23+ per-operation
+/// events. Builds a synthetic V4 `TransactionMeta` whose
+/// `operations[i].events` carries the bulk of the Soroban event surface,
+/// runs the parser, and asserts the resulting events make it through
+/// staging into `soroban_events_appearances` with the correct `amount`.
+///
+/// Pre-fix this test would persist `amount = 1` (only the tx-level event
+/// the parser saw); post-fix it persists `amount = 3` (tx-level + 2 per-op,
+/// with the diagnostic event correctly filtered at staging per ADR 0033).
+#[tokio::test]
+async fn v4_per_op_events_land_in_appearance_index() {
+    use stellar_xdr::curr::{
+        ContractEvent, ContractEventBody, ContractEventType as XdrEventType, ContractEventV0,
+        ContractId, DiagnosticEvent, ExtensionPoint, Hash, LedgerEntryChanges, OperationMetaV2,
+        ScAddress, ScVal, TransactionEvent, TransactionEventStage, TransactionMeta,
+        TransactionMetaV4, VecM,
+    };
+
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping V4 per-op persist test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping V4 per-op persist test");
+            return;
+        }
+    };
+
+    // Distinct contract from the canonical fixture (different Hash bytes →
+    // different StrKey) so cleanup is scoped.
+    let contract_hash = Hash([0xCC; 32]);
+    let contract_strkey = ScAddress::Contract(ContractId(contract_hash.clone())).to_string();
+
+    ensure_default_partitions(&pool).await;
+    clean_v4_test_ledger(&pool, &contract_strkey).await;
+
+    let make_event = |type_: XdrEventType, val: u32| ContractEvent {
+        ext: ExtensionPoint::V0,
+        contract_id: Some(ContractId(contract_hash.clone())),
+        type_,
+        body: ContractEventBody::V0(ContractEventV0 {
+            topics: VecM::default(),
+            data: ScVal::U32(val),
+        }),
+    };
+
+    // V4 fixture: 1 tx-level fee event, 2 per-op contract events on a
+    // single InvokeHostFunction operation, 1 diagnostic event. Pre-fix
+    // the parser only sees the tx-level event; post-fix it sees all four
+    // and staging filters the diagnostic.
+    let tx_level = TransactionEvent {
+        stage: TransactionEventStage::AfterTx,
+        event: make_event(XdrEventType::Contract, 1),
+    };
+    let op_meta = OperationMetaV2 {
+        ext: ExtensionPoint::V0,
+        changes: LedgerEntryChanges::default(),
+        events: vec![
+            make_event(XdrEventType::Contract, 2),
+            make_event(XdrEventType::Contract, 3),
+        ]
+        .try_into()
+        .unwrap(),
+    };
+    let diagnostic = DiagnosticEvent {
+        in_successful_contract_call: false,
+        event: make_event(XdrEventType::Diagnostic, 99),
+    };
+    let tx_meta = TransactionMeta::V4(TransactionMetaV4 {
+        ext: ExtensionPoint::V0,
+        tx_changes_before: LedgerEntryChanges::default(),
+        operations: vec![op_meta].try_into().unwrap(),
+        tx_changes_after: LedgerEntryChanges::default(),
+        soroban_meta: None,
+        events: vec![tx_level].try_into().unwrap(),
+        diagnostic_events: vec![diagnostic].try_into().unwrap(),
+    });
+
+    let extracted = xdr_parser::extract_events(
+        &tx_meta,
+        V4_TEST_TX_HASH,
+        V4_TEST_LEDGER_SEQ,
+        TEST_CLOSED_AT,
+    );
+    assert_eq!(
+        extracted.len(),
+        4,
+        "parser must surface tx-level + 2 per-op + 1 diagnostic"
+    );
+    assert_eq!(
+        extracted
+            .iter()
+            .filter(|e| e.event_type == ContractEventType::Diagnostic)
+            .count(),
+        1,
+        "exactly one diagnostic in parser output"
+    );
+    assert!(
+        extracted
+            .iter()
+            .all(|e| e.contract_id.as_deref() == Some(contract_strkey.as_str())),
+        "all four events must carry the same contract_id"
+    );
+
+    let ledger = ExtractedLedger {
+        sequence: V4_TEST_LEDGER_SEQ,
+        hash: V4_TEST_LEDGER_HASH.to_string(),
+        closed_at: TEST_CLOSED_AT,
+        protocol_version: 23,
+        transaction_count: 1,
+        base_fee: 100,
+    };
+    let tx = ExtractedTransaction {
+        hash: V4_TEST_TX_HASH.to_string(),
+        inner_tx_hash: None,
+        ledger_sequence: V4_TEST_LEDGER_SEQ,
+        source_account: SRC_STRKEY.to_string(),
+        fee_charged: 1000,
+        successful: true,
+        result_code: "txSuccess".to_string(),
+        envelope_xdr: String::new(),
+        result_xdr: String::new(),
+        result_meta_xdr: None,
+        operation_tree: None,
+        memo_type: None,
+        memo: None,
+        created_at: TEST_CLOSED_AT,
+        parse_error: false,
+    };
+    let events = vec![(V4_TEST_TX_HASH.to_string(), extracted)];
+    let classification_cache = ClassificationCache::new();
+
+    persist_ledger(
+        &pool,
+        &ledger,
+        &[tx],
+        &[],
+        &events,
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &classification_cache,
+    )
+    .await
+    .expect("persist_ledger failed for V4 per-op fixture");
+
+    // Single (contract, tx, ledger) trio with amount = non-diagnostic
+    // events the parser produced (1 tx-level + 2 per-op = 3).
+    let row: (i64, i64) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*)::BIGINT, COALESCE(SUM(ev.amount), 0)::BIGINT
+          FROM soroban_events_appearances ev
+          JOIN transactions tx
+            ON tx.id = ev.transaction_id AND tx.created_at = ev.created_at
+         WHERE tx.hash = decode($1, 'hex')
+        "#,
+    )
+    .bind(V4_TEST_TX_HASH)
+    .fetch_one(&pool)
+    .await
+    .expect("appearance-index query failed");
+
+    assert_eq!(
+        row.0, 1,
+        "exactly one (contract, tx, ledger) appearance row for the V4 fixture"
+    );
+    assert_eq!(
+        row.1, 3,
+        "amount must equal the non-diagnostic event count (1 tx-level + 2 per-op); \
+         pre-fix this would have been 1 — only the tx-level event"
+    );
+}
+
+/// Narrow cleanup for the V4 per-op test. Uses the same cascade-via-FK
+/// trick as `clean_test_ledger` (deleting the parent transaction wipes
+/// `soroban_events_appearances` children) and only touches rows the V4
+/// fixture creates.
+async fn clean_v4_test_ledger(pool: &PgPool, contract_strkey: &str) {
+    let _ = sqlx::query("DELETE FROM transactions WHERE hash = decode($1, 'hex')")
+        .bind(V4_TEST_TX_HASH)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM transaction_hash_index WHERE hash = decode($1, 'hex')")
+        .bind(V4_TEST_TX_HASH)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM ledgers WHERE sequence = $1")
+        .bind(i64::from(V4_TEST_LEDGER_SEQ))
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM soroban_contracts WHERE contract_id = $1")
+        .bind(contract_strkey)
+        .execute(pool)
+        .await;
+}
+
 // ---------------------------------------------------------------------------
 // Fixture builders
 // ---------------------------------------------------------------------------
@@ -395,7 +612,7 @@ fn make_transaction() -> ExtractedTransaction {
 fn make_payment_op() -> ExtractedOperation {
     ExtractedOperation {
         transaction_hash: TEST_TX_HASH.to_string(),
-        operation_index: 0,
+        operation_index: 1,
         op_type: OperationType::Payment,
         source_account: None,
         details: json!({
@@ -409,7 +626,7 @@ fn make_payment_op() -> ExtractedOperation {
 fn make_invoke_op() -> ExtractedOperation {
     ExtractedOperation {
         transaction_hash: TEST_TX_HASH.to_string(),
-        operation_index: 1,
+        operation_index: 2,
         op_type: OperationType::InvokeHostFunction,
         source_account: None,
         details: json!({

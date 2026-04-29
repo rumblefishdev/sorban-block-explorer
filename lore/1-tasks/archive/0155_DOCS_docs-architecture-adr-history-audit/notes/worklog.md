@@ -9,13 +9,13 @@ tags: [docs, audit, worklog]
 history:
   - date: '2026-04-23'
     status: developing
-    who: Karol Kowalczyk
+    who: karolkow
     note: >
       Step 2 output of task 0155. One entry per doc file with verdict
       (no changes / minor sync / rewritten) and a diff summary.
   - date: '2026-04-24'
     status: developing
-    who: Karol Kowalczyk
+    who: karolkow
     note: >
       Scope expanded from ADRs 0022-0031 to full 0001-0036 range.
       Second pass added:
@@ -33,7 +33,7 @@ history:
       ADRs 0033/0034/0036 formalised as in-scope (were collateral).
   - date: '2026-04-24'
     status: developing
-    who: Karol Kowalczyk
+    who: karolkow
     note: >
       3rd pass after merging origin/develop. Task 0159 landed on develop
       the same day — migrations dropped `account_balance_history`, ADR

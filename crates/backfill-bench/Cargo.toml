@@ -12,6 +12,10 @@ path = "src/main.rs"
 indexer = { path = "../indexer" }
 xdr-parser = { path = "../xdr-parser" }
 db = { path = "../db" }
+# Reuses `ensure_default_partition` so the bench's bootstrap matches the
+# Lambda + CLI exactly. Operators get full monthly coverage by running the
+# `db-partition-mgmt-cli` binary separately before invoking the bench.
+db-partition-mgmt = { path = "../db-partition-mgmt" }
 tokio = { workspace = true, features = ["process", "sync"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

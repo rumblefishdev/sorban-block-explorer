@@ -11,8 +11,8 @@ use domain::ContractEventType;
 use stellar_xdr::curr::{LedgerCloseMeta, TransactionMeta};
 
 use crate::common::cursor::{self, TsIdCursor};
-use crate::common::errors;
 use crate::common::extractors::Pagination;
+use crate::common::{errors, path};
 use crate::openapi::schemas::{ErrorEnvelope, PageInfo, Paginated};
 use crate::state::AppState;
 use crate::stellar_archive::extractors::collect_tx_metas;
@@ -27,26 +27,6 @@ use super::queries::{
 
 /// Default time window for `fetch_contract_stats` (canonical 11 Statement B).
 const STATS_WINDOW: &str = "7 days";
-
-/// Validate a `:contract_id` path parameter. Path-param convention shared
-/// with assets — surfaces `INVALID_ID`, not `INVALID_FILTER`.
-#[allow(clippy::result_large_err)]
-fn validate_contract_strkey(value: &str) -> Result<(), Response> {
-    let ok = value.len() == 56
-        && value.starts_with('C')
-        && value
-            .bytes()
-            .all(|b| matches!(b, b'A'..=b'Z' | b'2'..=b'7'));
-    if ok {
-        Ok(())
-    } else {
-        Err(errors::bad_request_with_details(
-            errors::INVALID_ID,
-            "contract_id must be a 56-character Stellar StrKey starting with 'C'",
-            serde_json::json!({ "received": value, "expected_prefix": "C" }),
-        ))
-    }
-}
 
 async fn fetch_unique_ledgers(
     state: &AppState,
@@ -91,13 +71,7 @@ struct ParsedLedger<'a> {
 
 impl<'a> ParsedLedger<'a> {
     fn new(meta: &'a LedgerCloseMeta, network_id: &[u8; 32]) -> Option<Self> {
-        let ledger = match xdr_parser::extract_ledger(meta) {
-            Ok(l) => l,
-            Err(e) => {
-                tracing::warn!("failed to extract ledger header from fetched LedgerCloseMeta: {e}");
-                return None;
-            }
-        };
+        let ledger = xdr_parser::extract_ledger(meta);
         let extracted_txs =
             xdr_parser::extract_transactions(meta, ledger.sequence, ledger.closed_at, network_id);
         let tx_metas = collect_tx_metas(meta);
@@ -150,7 +124,7 @@ pub async fn get_contract(
     State(state): State<AppState>,
     Path(contract_id): Path<String>,
 ) -> Response {
-    if let Err(resp) = validate_contract_strkey(&contract_id) {
+    if let Err(resp) = path::strkey(&contract_id, 'C', "contract_id") {
         return resp;
     }
 
@@ -215,7 +189,7 @@ pub async fn get_interface(
     State(state): State<AppState>,
     Path(contract_id): Path<String>,
 ) -> Response {
-    if let Err(resp) = validate_contract_strkey(&contract_id) {
+    if let Err(resp) = path::strkey(&contract_id, 'C', "contract_id") {
         return resp;
     }
 
@@ -260,7 +234,7 @@ pub async fn list_invocations(
     pagination: Pagination<TsIdCursor>,
     Path(contract_id): Path<String>,
 ) -> Response {
-    if let Err(resp) = validate_contract_strkey(&contract_id) {
+    if let Err(resp) = path::strkey(&contract_id, 'C', "contract_id") {
         return resp;
     }
 
@@ -344,7 +318,7 @@ pub async fn list_events(
     pagination: Pagination<TsIdCursor>,
     Path(contract_id): Path<String>,
 ) -> Response {
-    if let Err(resp) = validate_contract_strkey(&contract_id) {
+    if let Err(resp) = path::strkey(&contract_id, 'C', "contract_id") {
         return resp;
     }
 
