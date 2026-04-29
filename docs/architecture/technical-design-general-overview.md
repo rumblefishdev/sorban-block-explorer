@@ -432,7 +432,10 @@ Caching operates at two levels:
   responses in the initial topology.
 - **Backend in-memory caching** — frequently accessed reference data (contract metadata,
   network stats) is cached in the Lambda execution environment with TTLs of 30–60 seconds
-  to reduce database round-trips.
+  to reduce database round-trips. All in-process caches are built on the
+  `moka` crate via a shared helper (`crates/api/src/cache.rs`); see
+  `docs/architecture/backend/backend-overview.md` §8.1 for the concrete
+  caches and bounds.
 
 ### 2.5 Fault Tolerance
 
