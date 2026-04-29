@@ -131,7 +131,7 @@ Liquidity pools combine current-state reads with historical aggregate reads. The
 | `pool_id`             | string         | Pool ID (64-char primary key)             |
 | `asset_a`             | object (JSONB) | First asset in the pair                   |
 | `asset_b`             | object (JSONB) | Second asset in the pair                  |
-| `fee_bps`             | number or null | Fee in basis points                       |
+| `fee_bps`             | number         | Fee in basis points (NOT NULL in schema)  |
 | `reserves`            | object (JSONB) | Current reserves                          |
 | `total_shares`        | string         | Total pool shares                         |
 | `tvl`                 | string         | Total value locked                        |

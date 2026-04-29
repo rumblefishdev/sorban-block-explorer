@@ -136,7 +136,7 @@ NFTs on Stellar/Soroban are modeled as explorer entities with potentially sparse
 
 **Sparse metadata tolerance:** All fields except `id`, `contract_id`, and `token_id` may be null. The API must handle sparse metadata gracefully without errors.
 
-**Storage note (ADR 0030/0031):** Internally `nfts.contract_id` is `BIGINT FK → soroban_contracts.id` and `nfts.current_owner_id` is `BIGINT FK → accounts.id`. Handlers JOIN to render the external C-strkey (`contract_id`) and G-strkey (`owner_account`) shapes shown above.
+**Storage note (ADR 0030/0031):** Internally `nfts.contract_id` is `BIGINT FK → soroban_contracts.id` and `nfts.current_owner_id` is `BIGINT FK → accounts.id`. Handlers JOIN to render the external C-strkey (`contract_id`) and G-strkey (`owner_account`) shapes shown above. `last_seen_ledger` in the response maps to `nfts.current_owner_ledger` (latest ledger where ownership state changed); the schema does not carry a separate "last seen" column.
 
 ---
 
@@ -180,6 +180,8 @@ NFTs on Stellar/Soroban are modeled as explorer entities with potentially sparse
 ```
 
 **Transfer data source:** `nft_ownership` table (ADR 0027 §13) — partitioned ownership history filtered on `event_type = transfer` (NftEventType, ADR 0031), joined with `transactions` for hash/timestamp. Earlier draft of this task pointed at `soroban_events`; that was superseded once the dedicated `nft_ownership` table landed.
+
+**`from_account` derivation:** `nft_ownership` stores only `owner_id` (the new owner after the event). `to_account` = current row's `owner_id`; `from_account` = previous row's `owner_id` for the same `nft_id`, obtained via `LAG(owner_id) OVER (PARTITION BY nft_id ORDER BY ledger_sequence, event_order)` (NULL on mint).
 
 ### Behavioral Requirements
 
