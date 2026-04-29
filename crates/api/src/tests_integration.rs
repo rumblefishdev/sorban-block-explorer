@@ -1063,6 +1063,99 @@ async fn teardown_lp_e2e_fixture(pool: &PgPool, pool_hex: &str, accounts: &[&str
         .await;
 }
 
+// Contracts E10 detail (task 0172) — canonical shape lock per `11_*.sql`.
+// ---------------------------------------------------------------------------
+
+/// Asserts that `GET /v1/contracts/:id` returns every canonical-aligned
+/// field name (post-task-0172): `wasm_uploaded_at_ledger`, `deployer` (not
+/// `deployer_account`), `contract_type_name` + raw `contract_type` SMALLINT,
+/// and the bounded-window `stats` trio (`recent_invocations`,
+/// `recent_unique_callers`, `stats_window` echoed back).
+///
+/// Skips cleanly if the local DB has no soroban_contracts rows.
+#[tokio::test]
+async fn contracts_detail_returns_canonical_shape_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT contract_id FROM soroban_contracts ORDER BY id LIMIT 1")
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten();
+    let Some((cid,)) = row else {
+        eprintln!("no soroban_contracts rows — skipping contracts E10 shape test");
+        return;
+    };
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/contracts/{cid}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200: {json}");
+
+    // Canonical field names — these would all fail on the pre-0172 shape.
+    assert_eq!(json["contract_id"], cid);
+    assert!(
+        json.get("wasm_uploaded_at_ledger").is_some(),
+        "missing wasm_uploaded_at_ledger: {json}"
+    );
+    assert!(
+        json.get("deployer").is_some(),
+        "missing `deployer` (post-rename from `deployer_account`): {json}"
+    );
+    assert!(
+        json.get("contract_type_name").is_some(),
+        "missing decoded `contract_type_name`: {json}"
+    );
+    assert!(
+        json["contract_type"].is_i64() || json["contract_type"].is_null(),
+        "`contract_type` must be raw SMALLINT (or null), got: {json}"
+    );
+
+    // Bounded-window stats trio. The window MUST be the API-side const
+    // (`7 days`) so the frontend can render the label without guessing.
+    let stats = &json["stats"];
+    assert!(
+        stats["recent_invocations"].is_i64(),
+        "stats.recent_invocations not int: {json}"
+    );
+    assert!(
+        stats["recent_unique_callers"].is_i64(),
+        "stats.recent_unique_callers not int: {json}"
+    );
+    assert_eq!(
+        stats["stats_window"], "7 days",
+        "stats.stats_window must echo the API default: {json}"
+    );
+
+    // The pre-0172 shape would carry these — make sure they're gone.
+    assert!(
+        json.get("deployer_account").is_none(),
+        "stale field deployer_account leaked: {json}"
+    );
+    assert!(
+        stats.get("invocation_count").is_none(),
+        "stale field stats.invocation_count leaked: {json}"
+    );
+    assert!(
+        stats.get("event_count").is_none(),
+        "stale field stats.event_count leaked: {json}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Graceful-degradation tests (task 0044 §6).
 //
