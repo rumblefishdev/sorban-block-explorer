@@ -2,7 +2,7 @@
 id: '0096'
 title: 'OpenAPI → TypeScript codegen: shared types between Rust API and React frontend'
 type: FEATURE
-status: backlog
+status: active
 layer: frontend
 milestone: 2
 related_adr: ['0005']
@@ -17,6 +17,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Spawned from 0092 research. Single source of truth for API types: Rust → OpenAPI → TypeScript.'
+  - date: 2026-04-29
+    status: active
+    who: stkrolikiewicz
+    note: 'Activated. Deps 0094 (workspace) archived; ready to wire utoipa → openapi-ts.'
 ---
 
 # OpenAPI → TypeScript codegen: shared types between Rust API and React frontend
