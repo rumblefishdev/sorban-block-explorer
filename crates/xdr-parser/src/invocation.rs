@@ -824,6 +824,84 @@ mod tests {
         }
     }
 
+    /// Bug 0177 regression: a per-op `source_account` override carrying a
+    /// `MuxedAccount::MuxedEd25519` variant used to surface a 69-char M-strkey
+    /// as `caller_account`, overflowing `accounts.account_id VARCHAR(56)` at
+    /// persist time. The override path must canonicalize to the 56-char
+    /// underlying ed25519 G-strkey, identical to the bare-ed25519 case.
+    #[test]
+    fn per_op_muxed_source_collapses_to_underlying_g_strkey() {
+        let payload = [0x77; 32];
+        let mux_id = 0x0123_4567_89AB_CDEFu64;
+        let muxed_source = MuxedAccount::MuxedEd25519(stellar_xdr::curr::MuxedAccountMed25519 {
+            id: mux_id,
+            ed25519: Uint256(payload),
+        });
+        let expected_g = MuxedAccount::Ed25519(Uint256(payload)).to_string();
+        // Sanity on the test premise: the muxed form alone *would* surface as
+        // a 69-char M-strkey if the parser shipped it through unchanged.
+        assert_eq!(muxed_source.to_string().len(), 69);
+        assert!(muxed_source.to_string().starts_with('M'));
+        assert_eq!(expected_g.len(), 56);
+        assert!(expected_g.starts_with('G'));
+
+        let auth_entry = SorobanAuthorizationEntry {
+            credentials: SorobanCredentials::SourceAccount,
+            root_invocation: SorobanAuthorizedInvocation {
+                function: SorobanAuthorizedFunction::ContractFn(InvokeContractArgs {
+                    contract_address: ScAddress::Contract(ContractId(Hash([0xCC; 32]))),
+                    function_name: ScSymbol::try_from("transfer".as_bytes().to_vec()).unwrap(),
+                    args: VecM::default(),
+                }),
+                sub_invocations: VecM::default(),
+            },
+        };
+        let op = Operation {
+            // The per-op override is the field under test — distinct from the
+            // tx-level source which `tx_source_account` carries below.
+            source_account: Some(muxed_source),
+            body: OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
+                host_function: HostFunction::InvokeContract(InvokeContractArgs {
+                    contract_address: ScAddress::Contract(ContractId(Hash([0xCC; 32]))),
+                    function_name: ScSymbol::try_from("transfer".as_bytes().to_vec()).unwrap(),
+                    args: VecM::default(),
+                }),
+                auth: vec![auth_entry].try_into().unwrap(),
+            }),
+        };
+        let tx = build_v1_tx(vec![op]);
+        let inner = InnerTxRef::V1(&tx);
+        // tx_source_account is intentionally distinct — if the per-op override
+        // logic regresses to "always fall back to tx source", the assertion
+        // below will catch it.
+        let result = extract_invocations(
+            &inner,
+            None,
+            "abcd1234",
+            100,
+            1700000000,
+            source_account_str(),
+            true,
+        );
+
+        assert_eq!(result.invocations.len(), 1);
+        let caller = result.invocations[0]
+            .caller_account
+            .as_deref()
+            .expect("caller_account populated");
+        assert_eq!(caller.len(), 56, "expected 56-char G-strkey, got {caller}");
+        assert!(caller.starts_with('G'), "expected G prefix, got {caller}");
+        assert_eq!(
+            caller, expected_g,
+            "caller_account must canonicalize to the underlying ed25519 G-strkey"
+        );
+        assert_ne!(
+            caller,
+            source_account_str(),
+            "caller must come from per-op override (canonicalized), not from tx source fallback"
+        );
+    }
+
     fn build_v0_tx(operations: Vec<Operation>) -> TransactionV0 {
         TransactionV0 {
             source_account_ed25519: Uint256([0xAA; 32]),
