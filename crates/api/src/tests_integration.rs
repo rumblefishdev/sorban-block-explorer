@@ -30,8 +30,8 @@ use crate::state::AppState;
 use crate::stellar_archive::StellarArchiveFetcher;
 use crate::{liquidity_pools, transactions};
 
-/// Build a test app with the transactions, liquidity-pools, assets, and
-/// ledgers routers mounted at /v1.
+/// Build a test app with the transactions, contracts, liquidity-pools,
+/// assets, and ledgers routers mounted at /v1.
 ///
 /// Caller supplies the `PgPool`. Validation tests that never touch the DB
 /// pass `connect_lazy("...")` (free until first query), DB-gated tests
@@ -1421,6 +1421,55 @@ async fn ledgers_detail_returns_header_and_cache_control_against_real_db() {
     assert!(
         !closed_json["next_sequence"].is_null(),
         "closed ledger should have non-null next_sequence: {closed_json}"
+    );
+}
+
+/// Tail-of-chain assertion: the lowest indexed ledger must report
+/// `prev_sequence IS NULL` (no earlier row in DB) and a non-null
+/// `next_sequence` (any later row qualifies). Complements the head test
+/// above which exercises the `next_sequence IS NULL` branch.
+#[tokio::test]
+async fn ledgers_detail_tail_has_null_prev_sequence_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    let row: Option<(i64,)> =
+        sqlx::query_as("SELECT sequence FROM ledgers ORDER BY sequence ASC LIMIT 1")
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten();
+    let Some((tail_seq,)) = row else {
+        eprintln!("DB has no ledgers — skipping tail prev_sequence test");
+        return;
+    };
+
+    let app = build_app(pool);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/ledgers/{tail_seq}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "tail detail: {json}");
+    assert!(
+        json["prev_sequence"].is_null(),
+        "tail ledger should have null prev_sequence: {json}"
+    );
+    // next_sequence is non-null unless the DB has exactly one ledger.
+    // Don't hard-assert that — just sanity-check the shape exists.
+    assert!(
+        json.get("next_sequence").is_some(),
+        "response must carry next_sequence slot: {json}"
     );
 }
 

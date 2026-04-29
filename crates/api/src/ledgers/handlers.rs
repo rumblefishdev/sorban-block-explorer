@@ -38,7 +38,12 @@ const CACHE_CONTROL_SHORT: HeaderValue = HeaderValue::from_static("public, max-a
 /// the requested one cannot still be settling. Note: an indexer
 /// reindex of historical rows (e.g. tasks 0168/0169/0170) can change
 /// `transaction_count` on otherwise-immutable ledger rows; cache purge
-/// is the operational mitigation in that case.
+/// is the operational mitigation in that case. Same caveat applies to
+/// **backfill gaps**: `next_sequence` is computed via LATERAL on the
+/// indexed rows, not the chain-actual successor — if ledger N+1 is
+/// missing while N+2 is present, a request for N pins `next_sequence
+/// = N+2` under the long TTL, and a later backfill of N+1 will not
+/// invalidate the cached response. Cache purge is the same mitigation.
 const CACHE_CONTROL_LONG: HeaderValue = HeaderValue::from_static("public, max-age=300");
 
 // ---------------------------------------------------------------------------
