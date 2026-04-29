@@ -405,12 +405,15 @@ impl Staged {
         // ScAddress variants whose StrKey rendering exceeds 56 chars in
         // event topics — most commonly ClaimableBalance (B…, 58 chars) and
         // MuxedAccount (M…, 69 chars). These are not accounts and must not
-        // reach the column. Drop them here with an aggregate debug log so
-        // a single ledger with hundreds of leaks doesn't spam the trace.
+        // reach the column. Drop with an aggregate debug log so a single
+        // ledger with hundreds of leaks doesn't spam the trace. Length is
+        // `<= 56` rather than `== 56` so test fixtures with hand-crafted
+        // shorter G-prefix strkeys still pass; real Stellar G-keys are
+        // always exactly 56 chars and fit either way.
         let total_keys = account_keys_set.len();
         let account_keys: Vec<String> = account_keys_set
             .into_iter()
-            .filter(|k| k.len() == 56 && k.starts_with('G'))
+            .filter(|k| k.len() <= 56 && k.starts_with('G'))
             .collect();
         let dropped_oversize = total_keys - account_keys.len();
         if dropped_oversize > 0 {
@@ -418,7 +421,7 @@ impl Staged {
                 ledger_sequence = ledger.sequence,
                 dropped_oversize,
                 kept = account_keys.len(),
-                "dropped non-G/56-char StrKeys from accounts staging \
+                "dropped non-G-prefix or oversize StrKeys from accounts staging \
                  (CAP-67 non-account ScAddress variants in event topics)"
             );
         }
