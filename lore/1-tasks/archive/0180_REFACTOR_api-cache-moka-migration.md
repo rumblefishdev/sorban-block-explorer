@@ -10,11 +10,11 @@ links: []
 history:
   - date: 2026-04-29
     status: active
-    who: karol
+    who: karolkow
     note: 'Task created'
   - date: 2026-04-29
     status: completed
-    who: karol
+    who: karolkow
     note: >
       Migration shipped. contracts/cache.rs 218→69, network/cache.rs
       120→66, new shared cache.rs 49. Net cache LOC 338→184 (−154,
