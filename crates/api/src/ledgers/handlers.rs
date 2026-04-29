@@ -102,7 +102,8 @@ pub async fn list_ledgers(
 /// Two phases, both DB-only:
 ///
 /// 1. **DB header.** Resolve `:sequence` against `ledgers` + LATERAL
-///    prev/next on `idx_ledgers_closed_at`. 404 on miss.
+///    prev/next computed via `sequence` comparisons on the `ledgers`
+///    PK (index-only scan, no heap fetch). 404 on miss.
 /// 2. **DB transactions.** Keyset-paginated read of the `transactions`
 ///    partition with full equality partition prune
 ///    (`created_at = $closed_at`).
