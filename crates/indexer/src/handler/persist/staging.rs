@@ -410,6 +410,16 @@ impl Staged {
         // `<= 56` rather than `== 56` so test fixtures with hand-crafted
         // shorter G-prefix strkeys still pass; real Stellar G-keys are
         // always exactly 56 chars and fit either way.
+        //
+        // KNOWN GAP: this filter changes the failure mode for a tx with
+        // muxed source (M…) from PG VARCHAR overflow at accounts insert to
+        // a resolve-id miss at write::insert_transactions. Both fail
+        // loudly. The proper fix is canonicalize M → underlying G at the
+        // parser level so that all downstream stages — accounts upsert,
+        // tx source resolve, op participants resolve — see the same
+        // 56-char G-key. Tracked separately in backlog task 0177 (muxed
+        // transaction source leaks 69-char M-key into accounts.account_id
+        // VARCHAR(56)).
         let total_keys = account_keys_set.len();
         let account_keys: Vec<String> = account_keys_set
             .into_iter()

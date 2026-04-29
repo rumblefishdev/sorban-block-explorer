@@ -266,11 +266,10 @@ because Protocol 23 (CAP-67) reorganised the on-chain event surface
 
   1. `tx_meta.events` (`VecM<TransactionEvent>`) — transaction-level
      events: fee `BeforeAllTxs` charge, `AfterTx` refund, `AfterAllTxs`.
-  2. `tx_meta.operations[i].events` (`OperationMetaV2.events:
-VecM<ContractEvent>`) — per-operation events: Soroban contract
-     events emitted during `InvokeHostFunction` execution **and** SAC
-     `transfer` / `mint` / `burn` events emitted by classic operations
-     under Protocol 23 unification.
+  2. `tx_meta.operations[i].events` (`OperationMetaV2.events: VecM<ContractEvent>`) —
+     per-operation events: Soroban contract events emitted during
+     `InvokeHostFunction` execution **and** SAC `transfer` / `mint` / `burn`
+     events emitted by classic operations under Protocol 23 unification.
   3. `tx_meta.diagnostic_events` (`VecM<DiagnosticEvent>`) — host-level
      diagnostic / trace events.
 
