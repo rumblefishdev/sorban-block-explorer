@@ -54,7 +54,7 @@ pub struct EventItem {
     pub ledger_sequence: i64,
     pub transaction_id: i64,
     pub successful: bool,
-    pub amount: i32,
+    pub amount: i64,
     pub created_at: DateTime<Utc>,
     pub event_type: String,
     pub topics: Vec<serde_json::Value>,

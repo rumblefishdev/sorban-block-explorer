@@ -362,13 +362,16 @@ pub async fn list_events(
     let has_more = db_had_more || stopped_short;
 
     // Cursor advances only past consecutively-expanded rows so a transient
-    // archive outage never creates a permanent hole.
-    let next_cursor = expanded.last_consecutive_idx.map(|idx| {
-        cursor::encode(&TsIdCursor::new(
+    // archive outage never creates a permanent hole. If no row expanded,
+    // echo the incoming cursor so clients retry the same page instead of
+    // restarting from the top (avoids duplicates / infinite loops).
+    let next_cursor = match expanded.last_consecutive_idx {
+        Some(idx) => Some(cursor::encode(&TsIdCursor::new(
             rows[idx].created_at,
             rows[idx].transaction_id,
-        ))
-    });
+        ))),
+        None => pagination.cursor.as_ref().map(cursor::encode),
+    };
 
     Json(Paginated {
         data: expanded.items,
@@ -434,13 +437,12 @@ fn expand_events(
                 serde_json::Value::Array(a) => a,
                 other => vec![other],
             };
-            let amount = i32::try_from(row.amount).unwrap_or(i32::MAX);
             items.push(EventItem {
                 transaction_hash: row.transaction_hash.clone(),
                 ledger_sequence: row.ledger_sequence,
                 transaction_id: row.transaction_id,
                 successful: row.successful,
-                amount,
+                amount: row.amount,
                 created_at: row.created_at,
                 event_type: event.event_type.to_string(),
                 topics,
