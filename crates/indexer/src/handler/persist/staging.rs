@@ -325,12 +325,13 @@ impl Staged {
                     // SAC `transfer` events through per-operation event
                     // slots, and those events can carry non-account
                     // ScAddress variants in their topics — most commonly
-                    // ClaimableBalance (B…, 58 chars) and LiquidityPool
-                    // (L…), neither of which is an account and neither
-                    // fits `accounts.account_id VARCHAR(56)`. Filter to
-                    // the same G/M-account shape the invocations and
+                    // Contract (C…, 56 chars), ClaimableBalance (B…, 58
+                    // chars), LiquidityPool (L…), and MuxedAccount (M…,
+                    // 69 chars). None of these are accounts and none fit
+                    // `accounts.account_id VARCHAR(56)`. Filter to the
+                    // strict G-only account shape the invocations and
                     // operations paths use; mismatched sides are skipped
-                    // independently so a (B, G) transfer still tracks G.
+                    // independently so a (C, G) transfer still tracks G.
                     for participant in [from, to] {
                         if is_strkey_account(&participant) {
                             account_keys_set.insert(participant.clone());
@@ -410,24 +411,24 @@ impl Staged {
         // Upstream collectors (events / invocations / ops / participants /
         // account_states / NFT events / liquidity_pools) each apply their
         // own filter, but CAP-67 unification (Protocol 23+) surfaces
-        // ScAddress variants whose StrKey rendering exceeds 56 chars in
-        // event topics — most commonly ClaimableBalance (B…, 58 chars) and
-        // MuxedAccount (M…, 69 chars). These are not accounts and must not
-        // reach the column. Drop with an aggregate debug log so a single
-        // ledger with hundreds of leaks doesn't spam the trace. Length is
-        // `<= 56` rather than `== 56` so test fixtures with hand-crafted
+        // ScAddress variants whose StrKey rendering is non-account in
+        // event topics — most commonly Contract (C…, 56 chars), Claimable-
+        // Balance (B…, 58 chars), LiquidityPool (L…), and MuxedAccount
+        // (M…, 69 chars). None are accounts and none must reach the
+        // column. Drop with an aggregate debug log so a single ledger
+        // with hundreds of leaks doesn't spam the trace. Length is `<=
+        // 56` rather than `== 56` so test fixtures with hand-crafted
         // shorter G-prefix strkeys still pass; real Stellar G-keys are
         // always exactly 56 chars and fit either way.
         //
-        // KNOWN GAP: this filter changes the failure mode for a tx with
-        // muxed source (M…) from PG VARCHAR overflow at accounts insert to
-        // a resolve-id miss at write::insert_transactions. Both fail
-        // loudly. The proper fix is canonicalize M → underlying G at the
-        // parser level so that all downstream stages — accounts upsert,
-        // tx source resolve, op participants resolve — see the same
-        // 56-char G-key. Tracked separately in backlog task 0177 (muxed
-        // transaction source leaks 69-char M-key into accounts.account_id
-        // VARCHAR(56)).
+        // Task 0177 canonicalizes muxed source/destination to the
+        // underlying ed25519 G-key at the parser level, so M-prefix
+        // values do not reach this filter on the happy path. Task 0178
+        // tightened the upstream `is_strkey_account` from G|M to strict
+        // G+len56 to align with this final filter; both layers now agree
+        // on the account shape. The filter is retained as defense in
+        // depth against new ScAddress variants surfacing through CAP-67
+        // event topics in future protocol revisions.
         let total_keys = account_keys_set.len();
         let account_keys: Vec<String> = account_keys_set
             .into_iter()
@@ -1368,10 +1369,24 @@ fn format_stroops_str(s: &str) -> String {
     }
 }
 
-/// Quick StrKey-account shape check (G... or M..., length 56/69). Used to
-/// filter out contract addresses (C...) before hitting `accounts` lookup.
+/// Quick StrKey-account shape check: G-prefix and length ≤ 56. Used to
+/// filter out contract addresses (C...), claimable balances (B..., 58
+/// chars), liquidity pools (L...), and other CAP-67 ScAddress variants
+/// surfaced through per-operation event topics before they reach
+/// `accounts` lookup.
+///
+/// Length is `<= 56` rather than `== 56` so test fixtures with hand-crafted
+/// shorter G-prefix strkeys still pass; real Stellar G-keys are always
+/// exactly 56 chars and fit either way.
+///
+/// The M-prefix (muxed account, 69 chars) was previously accepted here as
+/// a transitional measure; task 0177 canonicalizes muxed source/destination
+/// to the underlying ed25519 G-key at the parser level, so M-prefix values
+/// no longer reach this filter on the happy path. Keeping the check
+/// strictly G-only here aligns with the final defensive filter applied to
+/// `account_keys_set` and matches the `accounts.account_id` invariant.
 fn is_strkey_account(s: &str) -> bool {
-    matches!(s.chars().next(), Some('G' | 'M'))
+    s.len() <= 56 && s.starts_with('G')
 }
 
 /// Return every StrKey this op implicitly references (destinations, issuers,
