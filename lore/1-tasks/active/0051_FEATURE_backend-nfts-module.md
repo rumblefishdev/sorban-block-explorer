@@ -2,7 +2,7 @@
 id: '0051'
 title: 'Backend: NFTs module (list + detail + transfers)'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0005']
 related_tasks: ['0023', '0043', '0092']
 tags: [layer-backend, nfts, soroban]
@@ -17,6 +17,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
+  - date: 2026-04-29
+    status: active
+    who: karolkow
+    note: 'Activated — bundled with 0052 (liquidity-pools) on shared branch, parallel module shape to 0048 accounts.'
 ---
 
 # Backend: NFTs module (list + detail + transfers)

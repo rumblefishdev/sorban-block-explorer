@@ -16,6 +16,7 @@ mod assets;
 mod common;
 mod config;
 mod contracts;
+mod ledgers;
 mod liquidity_pools;
 mod network;
 pub mod openapi;

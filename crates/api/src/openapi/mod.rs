@@ -85,4 +85,5 @@ pub fn register_routes() -> OpenApiRouter<crate::state::AppState> {
         .nest("/v1", crate::contracts::router())
         .nest("/v1", crate::liquidity_pools::router())
         .nest("/v1", crate::assets::router())
+        .nest("/v1", crate::ledgers::router())
 }

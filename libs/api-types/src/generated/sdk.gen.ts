@@ -16,6 +16,9 @@ import type {
   GetInterfaceData,
   GetInterfaceErrors,
   GetInterfaceResponses,
+  GetLedgerData,
+  GetLedgerErrors,
+  GetLedgerResponses,
   GetNetworkStatsData,
   GetNetworkStatsErrors,
   GetNetworkStatsResponses,
@@ -36,6 +39,9 @@ import type {
   ListInvocationsData,
   ListInvocationsErrors,
   ListInvocationsResponses,
+  ListLedgersData,
+  ListLedgersErrors,
+  ListLedgersResponses,
   ListParticipantsData,
   ListParticipantsErrors,
   ListParticipantsResponses,
@@ -135,6 +141,46 @@ export const listInvocations = <ThrowOnError extends boolean = false>(
     ListInvocationsErrors,
     ThrowOnError
   >({ url: '/v1/contracts/{contract_id}/invocations', ...options });
+
+/**
+ * List ledgers ordered by `(closed_at DESC, sequence DESC)` with cursor
+ * pagination.
+ */
+export const listLedgers = <ThrowOnError extends boolean = false>(
+  options?: Options<ListLedgersData, ThrowOnError>
+) =>
+  (options?.client ?? client).get<
+    ListLedgersResponses,
+    ListLedgersErrors,
+    ThrowOnError
+  >({ url: '/v1/ledgers', ...options });
+
+/**
+ * Get ledger detail by sequence — header + prev/next navigation +
+ * embedded paginated transactions.
+ *
+ * Two phases, both DB-only:
+ *
+ * 1. **DB header.** Resolve `:sequence` against `ledgers` + LATERAL
+ * prev/next computed via `sequence` comparisons on the `ledgers`
+ * PK (index-only scan, no heap fetch). 404 on miss.
+ * 2. **DB transactions.** Keyset-paginated read of the `transactions`
+ * partition with full equality partition prune
+ * (`created_at = $closed_at`).
+ *
+ * The detail endpoint reuses the standard `?limit=` / `?cursor=` query
+ * parameters to drive embedded transactions pagination. Detail itself
+ * is a single resource, so no naming collision arises — the params
+ * page the embedded list directly.
+ */
+export const getLedger = <ThrowOnError extends boolean = false>(
+  options: Options<GetLedgerData, ThrowOnError>
+) =>
+  (options.client ?? client).get<
+    GetLedgerResponses,
+    GetLedgerErrors,
+    ThrowOnError
+  >({ url: '/v1/ledgers/{sequence}', ...options });
 
 export const listParticipants = <ThrowOnError extends boolean = false>(
   options: Options<ListParticipantsData, ThrowOnError>

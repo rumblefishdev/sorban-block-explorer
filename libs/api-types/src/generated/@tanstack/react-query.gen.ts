@@ -12,6 +12,7 @@ import {
   getAsset,
   getContract,
   getInterface,
+  getLedger,
   getNetworkStats,
   getTransaction,
   health,
@@ -19,6 +20,7 @@ import {
   listAssetTransactions,
   listEvents,
   listInvocations,
+  listLedgers,
   listParticipants,
   listTransactions,
   type Options,
@@ -33,6 +35,9 @@ import type {
   GetInterfaceData,
   GetInterfaceError,
   GetInterfaceResponse,
+  GetLedgerData,
+  GetLedgerError,
+  GetLedgerResponse,
   GetNetworkStatsData,
   GetNetworkStatsError,
   GetNetworkStatsResponse,
@@ -52,6 +57,9 @@ import type {
   ListInvocationsData,
   ListInvocationsError,
   ListInvocationsResponse,
+  ListLedgersData,
+  ListLedgersError,
+  ListLedgersResponse,
   ListParticipantsData,
   ListParticipantsError,
   ListParticipantsResponse,
@@ -498,6 +506,186 @@ export const listInvocationsInfiniteOptions = (
         return data;
       },
       queryKey: listInvocationsInfiniteQueryKey(options),
+    }
+  );
+
+export const listLedgersQueryKey = (options?: Options<ListLedgersData>) =>
+  createQueryKey('listLedgers', options);
+
+/**
+ * List ledgers ordered by `(closed_at DESC, sequence DESC)` with cursor
+ * pagination.
+ */
+export const listLedgersOptions = (options?: Options<ListLedgersData>) =>
+  queryOptions<
+    ListLedgersResponse,
+    ListLedgersError,
+    ListLedgersResponse,
+    ReturnType<typeof listLedgersQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await listLedgers({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: listLedgersQueryKey(options),
+  });
+
+export const listLedgersInfiniteQueryKey = (
+  options?: Options<ListLedgersData>
+): QueryKey<Options<ListLedgersData>> =>
+  createQueryKey('listLedgers', options, true);
+
+/**
+ * List ledgers ordered by `(closed_at DESC, sequence DESC)` with cursor
+ * pagination.
+ */
+export const listLedgersInfiniteOptions = (
+  options?: Options<ListLedgersData>
+) =>
+  infiniteQueryOptions<
+    ListLedgersResponse,
+    ListLedgersError,
+    InfiniteData<ListLedgersResponse>,
+    QueryKey<Options<ListLedgersData>>,
+    | string
+    | Pick<
+        QueryKey<Options<ListLedgersData>>[0],
+        'body' | 'headers' | 'path' | 'query'
+      >
+  >(
+    // @ts-ignore
+    {
+      queryFn: async ({ pageParam, queryKey, signal }) => {
+        // @ts-ignore
+        const page: Pick<
+          QueryKey<Options<ListLedgersData>>[0],
+          'body' | 'headers' | 'path' | 'query'
+        > =
+          typeof pageParam === 'object'
+            ? pageParam
+            : {
+                query: {
+                  cursor: pageParam,
+                },
+              };
+        const params = createInfiniteParams(queryKey, page);
+        const { data } = await listLedgers({
+          ...options,
+          ...params,
+          signal,
+          throwOnError: true,
+        });
+        return data;
+      },
+      queryKey: listLedgersInfiniteQueryKey(options),
+    }
+  );
+
+export const getLedgerQueryKey = (options: Options<GetLedgerData>) =>
+  createQueryKey('getLedger', options);
+
+/**
+ * Get ledger detail by sequence — header + prev/next navigation +
+ * embedded paginated transactions.
+ *
+ * Two phases, both DB-only:
+ *
+ * 1. **DB header.** Resolve `:sequence` against `ledgers` + LATERAL
+ * prev/next computed via `sequence` comparisons on the `ledgers`
+ * PK (index-only scan, no heap fetch). 404 on miss.
+ * 2. **DB transactions.** Keyset-paginated read of the `transactions`
+ * partition with full equality partition prune
+ * (`created_at = $closed_at`).
+ *
+ * The detail endpoint reuses the standard `?limit=` / `?cursor=` query
+ * parameters to drive embedded transactions pagination. Detail itself
+ * is a single resource, so no naming collision arises — the params
+ * page the embedded list directly.
+ */
+export const getLedgerOptions = (options: Options<GetLedgerData>) =>
+  queryOptions<
+    GetLedgerResponse,
+    GetLedgerError,
+    GetLedgerResponse,
+    ReturnType<typeof getLedgerQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getLedger({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: getLedgerQueryKey(options),
+  });
+
+export const getLedgerInfiniteQueryKey = (
+  options: Options<GetLedgerData>
+): QueryKey<Options<GetLedgerData>> =>
+  createQueryKey('getLedger', options, true);
+
+/**
+ * Get ledger detail by sequence — header + prev/next navigation +
+ * embedded paginated transactions.
+ *
+ * Two phases, both DB-only:
+ *
+ * 1. **DB header.** Resolve `:sequence` against `ledgers` + LATERAL
+ * prev/next computed via `sequence` comparisons on the `ledgers`
+ * PK (index-only scan, no heap fetch). 404 on miss.
+ * 2. **DB transactions.** Keyset-paginated read of the `transactions`
+ * partition with full equality partition prune
+ * (`created_at = $closed_at`).
+ *
+ * The detail endpoint reuses the standard `?limit=` / `?cursor=` query
+ * parameters to drive embedded transactions pagination. Detail itself
+ * is a single resource, so no naming collision arises — the params
+ * page the embedded list directly.
+ */
+export const getLedgerInfiniteOptions = (options: Options<GetLedgerData>) =>
+  infiniteQueryOptions<
+    GetLedgerResponse,
+    GetLedgerError,
+    InfiniteData<GetLedgerResponse>,
+    QueryKey<Options<GetLedgerData>>,
+    | string
+    | Pick<
+        QueryKey<Options<GetLedgerData>>[0],
+        'body' | 'headers' | 'path' | 'query'
+      >
+  >(
+    // @ts-ignore
+    {
+      queryFn: async ({ pageParam, queryKey, signal }) => {
+        // @ts-ignore
+        const page: Pick<
+          QueryKey<Options<GetLedgerData>>[0],
+          'body' | 'headers' | 'path' | 'query'
+        > =
+          typeof pageParam === 'object'
+            ? pageParam
+            : {
+                query: {
+                  cursor: pageParam,
+                },
+              };
+        const params = createInfiniteParams(queryKey, page);
+        const { data } = await getLedger({
+          ...options,
+          ...params,
+          signal,
+          throwOnError: true,
+        });
+        return data;
+      },
+      queryKey: getLedgerInfiniteQueryKey(options),
     }
   );
 

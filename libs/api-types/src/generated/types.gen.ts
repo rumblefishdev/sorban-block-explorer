@@ -264,6 +264,63 @@ export type InvocationItem = {
 };
 
 /**
+ * Detail response for `GET /v1/ledgers/:sequence`.
+ *
+ * Header columns are the same shape as `LedgerListItem`. `prev_sequence` /
+ * `next_sequence` identify the adjacent indexed ledgers in `sequence`
+ * order (computed via LATERAL on the `ledgers` PK) and double as a
+ * chain-position signal — when `next_sequence` is null the ledger is the
+ * chain head, which drives the short-TTL Cache-Control branch in the
+ * handler. `transactions` is the embedded paginated list of
+ * `TransactionListItem` rows, served DB-only (memo and other heavy
+ * fields belong to the transaction detail endpoint, not list rows).
+ */
+export type LedgerDetailResponse = {
+  base_fee: number;
+  closed_at: string;
+  /**
+   * Ledger hash (64-char lowercase hex).
+   */
+  hash: string;
+  /**
+   * Sequence number of the ledger that closed immediately after this
+   * one. `null` at the chain head (this is the most recent ledger we
+   * have indexed).
+   */
+  next_sequence?: number | null;
+  /**
+   * Sequence number of the ledger that closed immediately before this
+   * one. `null` at the chain tail (no earlier ledger persisted).
+   */
+  prev_sequence?: number | null;
+  protocol_version: number;
+  sequence: number;
+  transaction_count: number;
+  /**
+   * Paginated linked transactions, DB-only `TransactionListItem` rows.
+   */
+  transactions: PaginatedTransactionListItem;
+};
+
+/**
+ * Slim ledger row returned in the list endpoint and reused inside the
+ * detail response as the header block. Doubles as the `sqlx::FromRow`
+ * target for `fetch_list` — the SQL projection aliases match this
+ * struct's field names so no manual mapping is needed.
+ */
+export type LedgerListItem = {
+  base_fee: number;
+  closed_at: string;
+  /**
+   * Ledger hash (64-char lowercase hex).
+   */
+  hash: string;
+  protocol_version: number;
+  sequence: number;
+  transaction_count: number;
+};
+
+/**
  * Top-level chain overview returned by `GET /v1/network/stats`.
  *
  * Field naming and semantics match canonical SQL in task 0167
@@ -475,6 +532,30 @@ export type PaginatedInvocationItem = {
  * when M2 endpoint modules are wired in. Unused in M1 — kept as
  * infrastructure that M2 endpoints will consume.
  */
+export type PaginatedLedgerListItem = {
+  data: Array<{
+    base_fee: number;
+    closed_at: string;
+    /**
+     * Ledger hash (64-char lowercase hex).
+     */
+    hash: string;
+    protocol_version: number;
+    sequence: number;
+    transaction_count: number;
+  }>;
+  page: PageInfo;
+};
+
+/**
+ * Canonical envelope for paginated list responses.
+ *
+ * Generic over the item type `T` so every endpoint can reuse a single
+ * shape. Concrete instantiations (e.g. `Paginated<Transaction>`) are
+ * picked up automatically by utoipa-axum via the handler return type
+ * when M2 endpoint modules are wired in. Unused in M1 — kept as
+ * infrastructure that M2 endpoints will consume.
+ */
 export type PaginatedParticipantItem = {
   data: Array<{
     /**
@@ -527,15 +608,6 @@ export type PaginatedTransactionListItem = {
      */
     hash: string;
     ledger_sequence: number;
-    /**
-     * Memo value. `null` when no memo or XDR fetch failed.
-     */
-    memo?: string | null;
-    /**
-     * Memo type: `"none"`, `"text"`, `"id"`, `"hash"`, or `"return"`.
-     * `null` when the XDR fetch failed (graceful degradation).
-     */
-    memo_type?: string | null;
     operation_count: number;
     source_account: string;
     successful: boolean;
@@ -636,15 +708,6 @@ export type TransactionListItem = {
    */
   hash: string;
   ledger_sequence: number;
-  /**
-   * Memo value. `null` when no memo or XDR fetch failed.
-   */
-  memo?: string | null;
-  /**
-   * Memo type: `"none"`, `"text"`, `"id"`, `"hash"`, or `"return"`.
-   * `null` when the XDR fetch failed (graceful degradation).
-   */
-  memo_type?: string | null;
   operation_count: number;
   source_account: string;
   successful: boolean;
@@ -1019,6 +1082,92 @@ export type ListInvocationsResponses = {
 
 export type ListInvocationsResponse =
   ListInvocationsResponses[keyof ListInvocationsResponses];
+
+export type ListLedgersData = {
+  body?: never;
+  path?: never;
+  query?: {
+    /**
+     * Items per page (1–100, default 20).
+     */
+    limit?: number;
+    /**
+     * Opaque pagination cursor from a previous response.
+     */
+    cursor?: string;
+  };
+  url: '/v1/ledgers';
+};
+
+export type ListLedgersErrors = {
+  /**
+   * Invalid query parameter
+   */
+  400: ErrorEnvelope;
+  /**
+   * Internal server error
+   */
+  500: ErrorEnvelope;
+};
+
+export type ListLedgersError = ListLedgersErrors[keyof ListLedgersErrors];
+
+export type ListLedgersResponses = {
+  /**
+   * Paginated ledger list
+   */
+  200: PaginatedLedgerListItem;
+};
+
+export type ListLedgersResponse =
+  ListLedgersResponses[keyof ListLedgersResponses];
+
+export type GetLedgerData = {
+  body?: never;
+  path: {
+    /**
+     * Ledger sequence number
+     */
+    sequence: number;
+  };
+  query?: {
+    /**
+     * Embedded transactions page size (1–100, default 20).
+     */
+    limit?: number;
+    /**
+     * Embedded transactions opaque pagination cursor.
+     */
+    cursor?: string;
+  };
+  url: '/v1/ledgers/{sequence}';
+};
+
+export type GetLedgerErrors = {
+  /**
+   * Invalid sequence format or pagination parameter
+   */
+  400: ErrorEnvelope;
+  /**
+   * Ledger not found
+   */
+  404: ErrorEnvelope;
+  /**
+   * Internal server error
+   */
+  500: ErrorEnvelope;
+};
+
+export type GetLedgerError = GetLedgerErrors[keyof GetLedgerErrors];
+
+export type GetLedgerResponses = {
+  /**
+   * Ledger detail with embedded transactions
+   */
+  200: LedgerDetailResponse;
+};
+
+export type GetLedgerResponse = GetLedgerResponses[keyof GetLedgerResponses];
 
 export type ListParticipantsData = {
   body?: never;

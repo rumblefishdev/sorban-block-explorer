@@ -525,6 +525,149 @@
         }
       }
     },
+    "/v1/ledgers": {
+      "get": {
+        "tags": ["ledgers"],
+        "summary": "List ledgers ordered by `(closed_at DESC, sequence DESC)` with cursor\npagination.",
+        "operationId": "list_ledgers",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Items per page (1–100, default 20).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque pagination cursor from a previous response.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated ledger list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Paginated_LedgerListItem"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/ledgers/{sequence}": {
+      "get": {
+        "tags": ["ledgers"],
+        "summary": "Get ledger detail by sequence — header + prev/next navigation +\nembedded paginated transactions.",
+        "description": "Two phases, both DB-only:\n\n1. **DB header.** Resolve `:sequence` against `ledgers` + LATERAL\n   prev/next computed via `sequence` comparisons on the `ledgers`\n   PK (index-only scan, no heap fetch). 404 on miss.\n2. **DB transactions.** Keyset-paginated read of the `transactions`\n   partition with full equality partition prune\n   (`created_at = $closed_at`).\n\nThe detail endpoint reuses the standard `?limit=` / `?cursor=` query\nparameters to drive embedded transactions pagination. Detail itself\nis a single resource, so no naming collision arises — the params\npage the embedded list directly.",
+        "operationId": "get_ledger",
+        "parameters": [
+          {
+            "name": "sequence",
+            "in": "path",
+            "description": "Ledger sequence number",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Embedded transactions page size (1–100, default 20).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Embedded transactions opaque pagination cursor.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ledger detail with embedded transactions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid sequence format or pagination parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Ledger not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/liquidity-pools/{pool_id}/participants": {
       "get": {
         "tags": ["liquidity-pools"],
@@ -1265,6 +1408,97 @@
           }
         }
       },
+      "LedgerDetailResponse": {
+        "type": "object",
+        "description": "Detail response for `GET /v1/ledgers/:sequence`.\n\nHeader columns are the same shape as `LedgerListItem`. `prev_sequence` /\n`next_sequence` identify the adjacent indexed ledgers in `sequence`\norder (computed via LATERAL on the `ledgers` PK) and double as a\nchain-position signal — when `next_sequence` is null the ledger is the\nchain head, which drives the short-TTL Cache-Control branch in the\nhandler. `transactions` is the embedded paginated list of\n`TransactionListItem` rows, served DB-only (memo and other heavy\nfields belong to the transaction detail endpoint, not list rows).",
+        "required": [
+          "sequence",
+          "hash",
+          "closed_at",
+          "protocol_version",
+          "transaction_count",
+          "base_fee",
+          "transactions"
+        ],
+        "properties": {
+          "base_fee": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "closed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "hash": {
+            "type": "string",
+            "description": "Ledger hash (64-char lowercase hex)."
+          },
+          "next_sequence": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Sequence number of the ledger that closed immediately after this\none. `null` at the chain head (this is the most recent ledger we\nhave indexed)."
+          },
+          "prev_sequence": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Sequence number of the ledger that closed immediately before this\none. `null` at the chain tail (no earlier ledger persisted)."
+          },
+          "protocol_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "transaction_count": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "transactions": {
+            "$ref": "#/components/schemas/Paginated_TransactionListItem",
+            "description": "Paginated linked transactions, DB-only `TransactionListItem` rows."
+          }
+        }
+      },
+      "LedgerListItem": {
+        "type": "object",
+        "description": "Slim ledger row returned in the list endpoint and reused inside the\ndetail response as the header block. Doubles as the `sqlx::FromRow`\ntarget for `fetch_list` — the SQL projection aliases match this\nstruct's field names so no manual mapping is needed.",
+        "required": [
+          "sequence",
+          "hash",
+          "closed_at",
+          "protocol_version",
+          "transaction_count",
+          "base_fee"
+        ],
+        "properties": {
+          "base_fee": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "closed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "hash": {
+            "type": "string",
+            "description": "Ledger hash (64-char lowercase hex)."
+          },
+          "protocol_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "transaction_count": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "NetworkStats": {
         "type": "object",
         "description": "Top-level chain overview returned by `GET /v1/network/stats`.\n\nField naming and semantics match canonical SQL in task 0167\none-for-one. `total_accounts` and `total_contracts` are planner\nestimates from `pg_class.reltuples` (refreshed by autovacuum /\nANALYZE), not exact counts. `latest_ledger_closed_at` is `None`\nonly on a cold-bootstrap cluster where no ledger has been indexed\nyet.\n\n`generated_at` is the wall-clock time the underlying SELECT ran on\nthe DB. Cache hits keep the original value, so frontend can derive\ntwo distinct signals without confusing them with cache age:\n\n* indexer-health lag = `generated_at - latest_ledger_closed_at`\n* data staleness (\"info from N seconds ago\") = `Date.now() - generated_at`",
@@ -1573,6 +1807,57 @@
           }
         }
       },
+      "Paginated_LedgerListItem": {
+        "type": "object",
+        "description": "Canonical envelope for paginated list responses.\n\nGeneric over the item type `T` so every endpoint can reuse a single\nshape. Concrete instantiations (e.g. `Paginated<Transaction>`) are\npicked up automatically by utoipa-axum via the handler return type\nwhen M2 endpoint modules are wired in. Unused in M1 — kept as\ninfrastructure that M2 endpoints will consume.",
+        "required": ["data", "page"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Slim ledger row returned in the list endpoint and reused inside the\ndetail response as the header block. Doubles as the `sqlx::FromRow`\ntarget for `fetch_list` — the SQL projection aliases match this\nstruct's field names so no manual mapping is needed.",
+              "required": [
+                "sequence",
+                "hash",
+                "closed_at",
+                "protocol_version",
+                "transaction_count",
+                "base_fee"
+              ],
+              "properties": {
+                "base_fee": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "closed_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "hash": {
+                  "type": "string",
+                  "description": "Ledger hash (64-char lowercase hex)."
+                },
+                "protocol_version": {
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "sequence": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "transaction_count": {
+                  "type": "integer",
+                  "format": "int32"
+                }
+              }
+            }
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        }
+      },
       "Paginated_ParticipantItem": {
         "type": "object",
         "description": "Canonical envelope for paginated list responses.\n\nGeneric over the item type `T` so every endpoint can reuse a single\nshape. Concrete instantiations (e.g. `Paginated<Transaction>`) are\npicked up automatically by utoipa-axum via the handler return type\nwhen M2 endpoint modules are wired in. Unused in M1 — kept as\ninfrastructure that M2 endpoints will consume.",
@@ -1656,14 +1941,6 @@
                 "ledger_sequence": {
                   "type": "integer",
                   "format": "int64"
-                },
-                "memo": {
-                  "type": ["string", "null"],
-                  "description": "Memo value. `null` when no memo or XDR fetch failed."
-                },
-                "memo_type": {
-                  "type": ["string", "null"],
-                  "description": "Memo type: `\"none\"`, `\"text\"`, `\"id\"`, `\"hash\"`, or `\"return\"`.\n`null` when the XDR fetch failed (graceful degradation)."
                 },
                 "operation_count": {
                   "type": "integer",
@@ -1811,14 +2088,6 @@
           "ledger_sequence": {
             "type": "integer",
             "format": "int64"
-          },
-          "memo": {
-            "type": ["string", "null"],
-            "description": "Memo value. `null` when no memo or XDR fetch failed."
-          },
-          "memo_type": {
-            "type": ["string", "null"],
-            "description": "Memo type: `\"none\"`, `\"text\"`, `\"id\"`, `\"hash\"`, or `\"return\"`.\n`null` when the XDR fetch failed (graceful degradation)."
           },
           "operation_count": {
             "type": "integer",
