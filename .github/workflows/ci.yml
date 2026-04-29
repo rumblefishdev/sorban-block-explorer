@@ -16,6 +16,7 @@ jobs:
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
       typescript: ${{ steps.filter.outputs.typescript }}
+      api_types_codegen: ${{ steps.filter.outputs.api_types_codegen }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
@@ -38,6 +39,14 @@ jobs:
               - 'tsconfig*.json'
               - 'nx.json'
               - '.github/workflows/ci.yml'
+            api_types_codegen:
+              - 'crates/api/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'libs/api-types/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.github/workflows/ci.yml'
 
   typescript:
     name: TypeScript (lint, build, typecheck)
@@ -59,6 +68,23 @@ jobs:
       - run: npm ci
       - run: npx nx format:check --all
       - run: npx nx run-many -t lint build typecheck
+
+  api-types-codegen:
+    name: API types freshness
+    needs: changes
+    if: |
+      needs.changes.outputs.api_types_codegen == 'true' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/master')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - run: npx nx run @rumblefish/api-types:check-generated
 
   rust:
     name: Rust (fmt, clippy, test, lambda build)

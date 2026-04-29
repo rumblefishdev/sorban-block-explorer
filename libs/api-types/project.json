@@ -17,10 +17,17 @@
       "executor": "nx:run-commands",
       "dependsOn": ["extract-openapi"],
       "options": {
-        "command": "npx openapi-ts -f openapi-ts.config.ts",
-        "cwd": "libs/api-types"
+        "commands": [
+          "npx openapi-ts -f openapi-ts.config.ts",
+          "npx prettier --write src/openapi.json src/generated"
+        ],
+        "cwd": "libs/api-types",
+        "parallel": false
       },
-      "outputs": ["{projectRoot}/src/generated"]
+      "outputs": [
+        "{projectRoot}/src/openapi.json",
+        "{projectRoot}/src/generated"
+      ]
     },
     "check-generated": {
       "executor": "nx:run-commands",

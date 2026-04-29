@@ -67,7 +67,7 @@
           {
             "name": "filter[code]",
             "in": "query",
-            "description": "Substring match against `asset_code`; matches any occurrence",
+            "description": "Substring match against `asset_code`; SQL wraps in `%...%`.\nCaller MUST NOT pass `%` / `_` literals.",
             "required": false,
             "schema": {
               "type": ["string", "null"]

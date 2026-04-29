@@ -390,7 +390,6 @@ export const listEventsInfiniteOptions = (options: Options<ListEventsData>) =>
     InfiniteData<ListEventsResponse>,
     QueryKey<Options<ListEventsData>>,
     | string
-    | null
     | Pick<
         QueryKey<Options<ListEventsData>>[0],
         'body' | 'headers' | 'path' | 'query'
@@ -505,7 +504,6 @@ export const listInvocationsInfiniteOptions = (
     InfiniteData<ListInvocationsResponse>,
     QueryKey<Options<ListInvocationsData>>,
     | string
-    | null
     | Pick<
         QueryKey<Options<ListInvocationsData>>[0],
         'body' | 'headers' | 'path' | 'query'

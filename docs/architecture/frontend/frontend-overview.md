@@ -38,6 +38,8 @@ The current Nx workspace already reserves the frontend boundary as:
 
 - `web` - application entrypoint for the explorer web app
 - `libs/ui` - reusable presentation components and frontend-only view primitives
+- `libs/api-types` - generated TypeScript types, fetch SDK, and TanStack Query hooks
+  derived from the Rust API's OpenAPI spec (single source of truth for API contracts)
 
 The frontend bootstrap (React 19, Vite, MUI, React Router, TanStack Query) is in place.
 This document describes the intended production architecture for that boundary. Page
@@ -110,6 +112,10 @@ The intended implementation stack is:
 - **MUI** as the base component library, theming foundation, and accessibility-oriented UI
   primitive layer
 - **React Router** for client-side routing
+- **`@rumblefish/api-types`** generated from the backend OpenAPI 3.1 spec
+  (`@hey-api/openapi-ts`); provides the TypeScript types, fetch SDK, and TanStack Query
+  hooks consumed by the rest of the frontend. The frontend never hand-writes API
+  types — see [Section 4.6](#46-api-types-and-codegen) below.
 
 The frontend is a public, anonymous browser client. It must not embed API keys or other
 shared secrets; API protection belongs at the API Gateway/WAF boundary, not in the bundle.
@@ -199,7 +205,29 @@ Expected rendering behavior:
 - polling refreshes should update dynamic regions without causing full-page resets
 - slow or partially unavailable sections should degrade independently where possible
 
-### 4.5 State Strategy
+### 4.5 API Types and Codegen
+
+The frontend imports all API request/response types, the fetch SDK, and TanStack Query
+hooks from `@rumblefish/api-types`. That package is generated end-to-end from the Rust
+API:
+
+1. The `api` crate (Rust) annotates handlers and DTOs with `utoipa` derive macros and
+   exposes them as an OpenAPI 3.1 spec.
+2. A secondary binary `cargo run -p api --bin extract_openapi` prints the spec to
+   stdout; CI / developers redirect it to `libs/api-types/src/openapi.json`.
+3. `@hey-api/openapi-ts` reads that spec and emits types, a typed fetch client, and
+   TanStack Query hooks under `libs/api-types/src/generated/` — committed to the repo
+   so frontend developers do not need a Rust toolchain.
+4. The Nx target `@rumblefish/api-types:check-generated` reruns the pipeline in CI and
+   fails the build if the committed spec or generated files have drifted from the
+   current Rust source. This is the single guard that keeps frontend types in sync
+   with the API.
+
+Authoring rule: changes to API DTOs, request params, or routes must be made in the
+Rust crate; the frontend regenerates and consumes the result. Hand-edited types in
+`libs/api-types/src/generated/` will be overwritten on the next regeneration.
+
+### 4.6 State Strategy
 
 The frontend should keep local state intentionally small:
 

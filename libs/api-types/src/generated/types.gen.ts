@@ -999,11 +999,11 @@ export type ListEventsData = {
      * can expand to multiple per-node items in the response, so the
      * returned `data.len()` may exceed `limit`.
      */
-    limit?: number | null;
+    limit?: number;
     /**
      * Opaque pagination cursor from a previous response.
      */
-    cursor?: string | null;
+    cursor?: string;
   };
   url: '/v1/contracts/{contract_id}/events';
 };
@@ -1088,11 +1088,11 @@ export type ListInvocationsData = {
      * can expand to multiple per-node items in the response, so the
      * returned `data.len()` may exceed `limit`.
      */
-    limit?: number | null;
+    limit?: number;
     /**
      * Opaque pagination cursor from a previous response.
      */
-    cursor?: string | null;
+    cursor?: string;
   };
   url: '/v1/contracts/{contract_id}/invocations';
 };
