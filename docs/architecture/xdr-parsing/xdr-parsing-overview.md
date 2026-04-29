@@ -252,6 +252,41 @@ per [ADR 0033](../../../lore/2-adrs/0033_soroban-events-appearances-read-time-de
   `assets` / `nfts` / `nft_ownership` upserts, but the triggering events
   themselves are not retained as rows
 
+#### V3 vs V4 meta dispatch (Protocol 22 ↔ Protocol 23+)
+
+`xdr_parser::extract_events` dispatches on the `TransactionMeta` variant
+because Protocol 23 (CAP-67) reorganised the on-chain event surface
+([ADR 0002](../../../lore/2-adrs/0002_rust-ledger-processor-lambda.md) §1):
+
+- **V3** (`TransactionMetaV3`, Protocol ≤ 22): all Soroban contract events
+  are at `soroban_meta.events`; diagnostic events at
+  `soroban_meta.diagnostic_events`. The parser reads both.
+- **V4** (`TransactionMetaV4`, Protocol ≥ 23): events live in **three**
+  locations and the parser reads all three in this order:
+
+  1. `tx_meta.events` (`VecM<TransactionEvent>`) — transaction-level
+     events: fee `BeforeAllTxs` charge, `AfterTx` refund, `AfterAllTxs`.
+  2. `tx_meta.operations[i].events` (`OperationMetaV2.events:
+VecM<ContractEvent>`) — per-operation events: Soroban contract
+     events emitted during `InvokeHostFunction` execution **and** SAC
+     `transfer` / `mint` / `burn` events emitted by classic operations
+     under Protocol 23 unification.
+  3. `tx_meta.diagnostic_events` (`VecM<DiagnosticEvent>`) — host-level
+     diagnostic / trace events.
+
+  `SorobanTransactionMetaV2` (the V4 `soroban_meta`) no longer carries an
+  `events` field — that field was removed in CAP-67. `event_index` is
+  numbered sequentially across all three sources within a single
+  transaction so the V3 contract (monotonic per-tx index) is preserved.
+
+The split matters because per-operation events carry the bulk of
+post-Protocol 23 Soroban traffic. Missing them produces a silently
+incomplete `soroban_events_appearances` index for every Protocol ≥ 23
+ledger — the canonical symptom is a Soroban tx with exactly two events,
+both XLM-SAC fee events at the tx-level location, while the contract's
+own `transfer` / `mint` / `burn` events (which lived under
+`operations[i].events`) are dropped.
+
 ### 5.2 Return Values
 
 Return values of `invokeHostFunction` are decoded from XDR `ScVal` into typed

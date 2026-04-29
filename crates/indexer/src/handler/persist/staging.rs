@@ -313,10 +313,22 @@ impl Staged {
             let participants = participants_per_tx.entry(tx_hash.clone()).or_default();
             for ev in evs {
                 if let Some((from, to)) = xdr_parser::transfer_participants(&ev.topics) {
-                    account_keys_set.insert(from.clone());
-                    account_keys_set.insert(to.clone());
-                    participants.insert(from);
-                    participants.insert(to);
+                    // CAP-67 unification (Protocol 23+) routes classic-op
+                    // SAC `transfer` events through per-operation event
+                    // slots, and those events can carry non-account
+                    // ScAddress variants in their topics — most commonly
+                    // ClaimableBalance (B…, 58 chars) and LiquidityPool
+                    // (L…), neither of which is an account and neither
+                    // fits `accounts.account_id VARCHAR(56)`. Filter to
+                    // the same G/M-account shape the invocations and
+                    // operations paths use; mismatched sides are skipped
+                    // independently so a (B, G) transfer still tracks G.
+                    for participant in [from, to] {
+                        if is_strkey_account(&participant) {
+                            account_keys_set.insert(participant.clone());
+                            participants.insert(participant);
+                        }
+                    }
                 }
             }
         }
@@ -386,7 +398,30 @@ impl Staged {
             account_keys_set.insert(lpp.account_id.clone());
         }
 
-        let account_keys: Vec<String> = account_keys_set.into_iter().collect();
+        // Defense-in-depth shape filter for `accounts.account_id VARCHAR(56)`.
+        // Upstream collectors (events / invocations / ops / participants /
+        // account_states / NFT events / liquidity_pools) each apply their
+        // own filter, but CAP-67 unification (Protocol 23+) surfaces
+        // ScAddress variants whose StrKey rendering exceeds 56 chars in
+        // event topics — most commonly ClaimableBalance (B…, 58 chars) and
+        // MuxedAccount (M…, 69 chars). These are not accounts and must not
+        // reach the column. Drop them here with an aggregate debug log so
+        // a single ledger with hundreds of leaks doesn't spam the trace.
+        let total_keys = account_keys_set.len();
+        let account_keys: Vec<String> = account_keys_set
+            .into_iter()
+            .filter(|k| k.len() == 56 && k.starts_with('G'))
+            .collect();
+        let dropped_oversize = total_keys - account_keys.len();
+        if dropped_oversize > 0 {
+            tracing::debug!(
+                ledger_sequence = ledger.sequence,
+                dropped_oversize,
+                kept = account_keys.len(),
+                "dropped non-G/56-char StrKeys from accounts staging \
+                 (CAP-67 non-account ScAddress variants in event topics)"
+            );
+        }
 
         let mut account_state_overrides: HashMap<String, AccountStateOverride> = HashMap::new();
         for st in account_states {
