@@ -185,13 +185,10 @@ pub async fn list_transactions(
     ),
 )]
 pub async fn get_transaction(State(state): State<AppState>, Path(hash): Path<String>) -> Response {
-    if let Err(resp) = path::hash(&hash) {
-        return resp;
-    }
-    // Normalize to lowercase: extract_e3_heavy does case-sensitive matching
-    // against ExtractedTransaction.hash (always lowercase hex), so an
-    // uppercase request would otherwise degrade silently to heavy = None.
-    let hash = hash.to_ascii_lowercase();
+    let hash = match path::parse_hash(&hash) {
+        Ok(h) => h,
+        Err(resp) => return resp,
+    };
     let hash_bytes = hex::decode(&hash).expect("validated above");
 
     let index = match lookup_hash_index(&state.db, &hash_bytes).await {

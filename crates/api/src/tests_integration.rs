@@ -1354,7 +1354,7 @@ async fn contract_interface_unknown_returns_404() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn out_of_u32_range_ledger_sequence_fails_conversion_safely() {
+fn u32_try_from_invariants_relied_on_by_handlers() {
     // Inputs the handler converts via `u32::try_from(i64)`:
     assert!(
         u32::try_from(i64::MAX).is_err(),

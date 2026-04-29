@@ -4,7 +4,7 @@
 //!
 //!   | Resource          | Shape        | Helper                    |
 //!   | ----------------- | ------------ | ------------------------- |
-//!   | `transactions`    | 64-char hex  | [`hash`]                  |
+//!   | `transactions`    | 64-char hex  | [`parse_hash`]            |
 //!   | `contracts`       | StrKey, prefix `C`    | [`strkey`] with `'C'`     |
 //!   | `accounts`        | StrKey, prefix `G`    | [`strkey`] with `'G'`     |
 //!   | `ledgers`         | numeric `u32`         | [`sequence`]              |
@@ -35,16 +35,19 @@ use super::strkey::is_strkey_shape;
 // Hash (transactions)
 // ---------------------------------------------------------------------------
 
-/// Validate a transaction-hash path parameter.
+/// Validate a transaction-hash path parameter and return the lowercase
+/// canonical form for downstream DB / archive lookup.
 ///
 /// Stellar transaction hashes are SHA-256 outputs serialised as 64
-/// lowercase or uppercase hex characters. This helper accepts either
-/// case so clients can use whatever their indexer / explorer surfaced;
-/// the handler is responsible for normalising before DB lookup
-/// (the `transactions::hash` column stores lowercase).
-pub fn hash(value: &str) -> Result<(), Response> {
+/// lowercase or uppercase hex characters. The validator accepts either
+/// case so clients can use whatever their indexer / explorer surfaced,
+/// and returns the lowercase form on success — the `transactions::hash`
+/// column stores lowercase, and downstream archive matching is
+/// case-sensitive, so coupling normalisation with validation keeps a
+/// future caller from silently 404-ing on uppercase input.
+pub fn parse_hash(value: &str) -> Result<String, Response> {
     if value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit()) {
-        Ok(())
+        Ok(value.to_ascii_lowercase())
     } else {
         Err(errors::bad_request_with_details(
             errors::INVALID_HASH,
@@ -145,24 +148,24 @@ mod tests {
     #[test]
     fn hash_valid_lowercase_accepted() {
         let h = "ab".repeat(32); // 64 chars, all hex
-        assert!(hash(&h).is_ok());
+        assert_eq!(parse_hash(&h).unwrap(), h);
     }
 
     #[test]
-    fn hash_valid_uppercase_accepted() {
+    fn hash_valid_uppercase_normalised_to_lowercase() {
         let h = "AB".repeat(32);
-        assert!(hash(&h).is_ok());
+        assert_eq!(parse_hash(&h).unwrap(), "ab".repeat(32));
     }
 
     #[test]
-    fn hash_valid_mixed_case_accepted() {
+    fn hash_valid_mixed_case_normalised_to_lowercase() {
         let h = "aB".repeat(32);
-        assert!(hash(&h).is_ok());
+        assert_eq!(parse_hash(&h).unwrap(), "ab".repeat(32));
     }
 
     #[tokio::test]
     async fn hash_wrong_length_rejected_with_invalid_hash() {
-        let err = hash("abcdef").unwrap_err();
+        let err = parse_hash("abcdef").unwrap_err();
         let (status, json) = body_json(err).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(json["code"], "invalid_hash");
@@ -174,14 +177,14 @@ mod tests {
     async fn hash_non_hex_char_rejected() {
         let mut h = "ab".repeat(31); // 62 chars
         h.push_str("XX"); // 64 total, X not hex
-        let err = hash(&h).unwrap_err();
+        let err = parse_hash(&h).unwrap_err();
         let (_, json) = body_json(err).await;
         assert_eq!(json["code"], "invalid_hash");
     }
 
     #[tokio::test]
     async fn hash_empty_rejected() {
-        let err = hash("").unwrap_err();
+        let err = parse_hash("").unwrap_err();
         let (_, json) = body_json(err).await;
         assert_eq!(json["code"], "invalid_hash");
     }
