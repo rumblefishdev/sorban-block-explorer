@@ -4,6 +4,7 @@ mod assets;
 mod common;
 mod config;
 mod contracts;
+mod ledgers;
 mod liquidity_pools;
 mod network;
 mod openapi;
@@ -57,6 +58,7 @@ fn app(config: &AppConfig, state: AppState) -> Router {
         .nest("/v1", contracts::router())
         .nest("/v1", liquidity_pools::router())
         .nest("/v1", assets::router())
+        .nest("/v1", ledgers::router())
         .with_state(state)
         .split_for_parts();
     spec.servers = Some(vec![utoipa::openapi::server::Server::new(&config.base_url)]);
@@ -304,6 +306,38 @@ mod tests {
                 "spec missing {path} path: {spec}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn api_docs_json_contains_ledgers_paths() {
+        let app = test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api-docs-json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let spec: Value = serde_json::from_slice(&bytes).unwrap();
+        for path in ["/v1/ledgers", "/v1/ledgers/{sequence}"] {
+            assert!(
+                spec["paths"][path].is_object(),
+                "spec missing {path} path: {spec}"
+            );
+        }
+        assert!(
+            spec["components"]["schemas"]["LedgerListItem"].is_object(),
+            "spec missing LedgerListItem component: {spec}"
+        );
+        assert!(
+            spec["components"]["schemas"]["LedgerDetailResponse"].is_object(),
+            "spec missing LedgerDetailResponse component: {spec}"
+        );
     }
 
     #[tokio::test]
