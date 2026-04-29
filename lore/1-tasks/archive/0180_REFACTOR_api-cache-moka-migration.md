@@ -2,9 +2,9 @@
 id: '0180'
 title: 'REFACTOR: migrate API in-memory caches from Arc<Mutex<HashMap>> to moka'
 type: REFACTOR
-status: active
+status: completed
 related_adr: []
-related_tasks: ['0050', '0045']
+related_tasks: ['0050', '0045', '0047']
 tags: [api, cache, refactor, dx]
 links: []
 history:
@@ -12,6 +12,19 @@ history:
     status: active
     who: karol
     note: 'Task created'
+  - date: 2026-04-29
+    status: completed
+    who: karol
+    note: >
+      Migration shipped. contracts/cache.rs 218→69, network/cache.rs
+      120→66, new shared cache.rs 49. Net cache LOC 338→184 (−154,
+      ~45 %). 87 tests pass, 5 ignored. Workspace clippy clean.
+      moka 0.12 (sync + future). network_cache uses
+      moka::future::Cache::try_get_with for stampede protection on
+      /v1/network/stats. Branch 0047 (ledgers) merged into the same
+      branch and ships in one PR. Ledger in-process cache evaluated
+      and dropped — header `Cache-Control: max-age=300` + AGW are
+      sufficient; backlog task can revisit if AGW stays disabled.
 ---
 
 # REFACTOR: migrate API in-memory caches from Arc<Mutex<HashMap>> to moka
@@ -27,9 +40,10 @@ pattern. No ADR — pure refactor; library-choice rationale and the
 "no Redis until X" criteria live in this task's `Notes` section and
 archive with the task.
 
-## Status: Active
+## Status: Completed
 
-**Current state:** Task created. Implementation pending on a fresh branch off `develop`.
+**Current state:** Shipped on `refactor/0180_api-cache-moka-migration`,
+merged with the open ledgers branch (0047). PR opening next.
 
 ## Context
 
@@ -120,6 +134,105 @@ revisiting are in `Notes` below.
       §2.4 both updated to reflect the moka-backed implementation;
       ADR 0032 checklist satisfied (architecture-affecting change
       shipped with matching evergreen-doc edits).
+
+## Implementation Notes
+
+Files touched:
+
+- New: `crates/api/src/cache.rs` (49 lines) — `ttl_cache<K, V>(...)` helper.
+- Rewrite: `crates/api/src/contracts/cache.rs` 218 → 69 (`pub type` +
+  `new_contract_cache()` returning `moka::sync::Cache`).
+- Rewrite: `crates/api/src/network/cache.rs` 120 → 66 (`pub type` +
+  `new_network_cache()` returning `moka::future::Cache<(), Arc<NetworkStats>>`).
+- `crates/api/src/state.rs` — added `network_cache` field. (Per-`AppState`
+  cache; the previous global `OnceLock<Mutex<...>>` static is gone.)
+- `crates/api/src/contracts/handlers.rs` — `cache.put(...)` →
+  `cache.insert(k, Arc::new(v))`. Public type unchanged.
+- `crates/api/src/network/handlers.rs` — single `try_get_with` call with
+  an async DB initialiser; ok_response borrowed by ref to avoid cloning
+  on the hot path. The `TEST_CACHE_MUTEX` global serialisation primitive
+  is gone — each test owns its own cache.
+- `crates/api/Cargo.toml` — `moka = { version = "0.12", features = ["sync", "future"] }`.
+- `crates/api/src/main.rs` and `tests_integration.rs` — call sites use
+  the new `new_*_cache()` builders.
+- `docs/architecture/backend/backend-overview.md` §8.1 and
+  `docs/architecture/technical-design-general-overview.md` §2.4 —
+  describe the moka-backed implementation and the shared helper.
+
+Tests: 87 passed, 5 ignored (network-required). Three TTL/sweep/poison
+unit tests deleted as redundant — those behaviours are now moka's
+responsibility, fuzz-tested upstream.
+
+## Design Decisions
+
+### From Plan
+
+1. **`moka` over alternatives.** Battle-tested in SurrealDB / Materialize /
+   sccache / linkerd. No serious alternative for an idiomatic Rust cache
+   with TTL + bounded capacity + lock-free reads.
+2. **Shared `ttl_cache` helper, not per-module builders.** Forces every
+   future cache to think about `max_capacity` and TTL at the call site;
+   prevents the previous "copy-paste 100 lines" pattern.
+3. **No Redis / ElastiCache.** Captured under "Why moka, not Redis (yet)"
+   below with explicit revisit triggers.
+4. **No ADR.** Pure refactor (per Stanisław's review): library swap is not
+   an architectural decision. Library-choice rationale and Redis triggers
+   live with the task and archive with it.
+
+### Emerged
+
+5. **`moka::future::Cache` for `network_cache`.** Original plan said "use
+   `moka::sync::Cache` everywhere" because the old hand-rolled cache had
+   to fight the "lock held across `.await`" footgun. After re-reading
+   moka's docs the future variant is precisely designed for stampede
+   protection with async initialisers and does **not** reintroduce that
+   footgun. Switched only the network singleton; contracts cache stays
+   sync. Mix is intentional, not legacy.
+6. **Per-`AppState` `network_cache` instead of a global static.** The old
+   impl used `OnceLock<Mutex<...>>` which forced tests to share state and
+   serialise via `TEST_CACHE_MUTEX`. Moving the cache into `AppState`
+   removed both the global and the test-side mutex, cleaning up
+   `network/handlers.rs` tests considerably.
+7. **Ledger detail in-process cache evaluated and dropped.** Initial
+   reading of `docs/architecture/backend/backend-overview.md` §6 ("highly
+   cacheable once closed") suggested adding a third cache. After
+   re-reading task 0047, the cacheability requirement is satisfied by
+   `Cache-Control: max-age=300` + API Gateway response cache; an
+   in-process cache would duplicate semantics and conflict with 0047's
+   "no cross-module coupling" stance. Deferred to a backlog task that
+   triggers if AGW cache stays disabled and DB pressure / stampede
+   shows up in metrics.
+8. **Merge 0047 into this branch.** Branch 0047 (backend ledgers) was
+   open as a PR; merging into the moka branch lets the cache pass
+   include any new module surface in one coherent PR instead of two.
+
+## Issues Encountered
+
+- **Pre-commit hook reset HEAD~1 once.** First commit on the refactor
+  succeeded server-side but the hook's linter modified files and reset
+  the local HEAD; re-committed cleanly. No semantic change.
+- **`moka::future::Cache::try_get_with` error type is `Arc<E>`.** Plan
+  glossed over this. Handler now binds the result as
+  `Result<Arc<NetworkStats>, Arc<sqlx::Error>>` and propagates the
+  inner error verbatim; the cache itself does not memoise failures so
+  the next request retries cleanly.
+- **Linter / pre-commit hooks repeatedly normalised `use` ordering and
+  doc tweaks** under `lore/1-tasks/active/0180_*.md` and a couple of
+  source files. All edits were idempotent and harmless; mentioned here
+  in case future sessions see similar churn after the same hooks fire.
+
+## Future Work
+
+Captured as backlog tasks (spawned chips), not as prose here:
+
+- "Extend caching to immutable read endpoints" — ledgers detail (when
+  AGW cache stays disabled), transactions detail, asset detail, contract
+  interface. Out of scope for 0180; doc text in §6 already promises
+  this for ledgers.
+- "Extract per-module test fixtures into a shared `tests_integration::make_app`."
+  `network/handlers.rs` test module still builds its own `fn app(db)`
+  — a leftover from when network was the only module. Independent of
+  caching; pure test-side cleanup.
 
 ## Notes
 
