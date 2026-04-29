@@ -323,12 +323,6 @@ export const listAssetTransactionsInfiniteOptions = (
 export const getContractQueryKey = (options: Options<GetContractData>) =>
   createQueryKey('getContract', options);
 
-/**
- * Get a single contract's metadata + aggregate stats.
- *
- * Cached for `cache::CACHE_TTL` (45 s) per Lambda warm container so repeated
- * detail-page hits avoid the stats aggregate.
- */
 export const getContractOptions = (options: Options<GetContractData>) =>
   queryOptions<
     GetContractResponse,
@@ -351,10 +345,6 @@ export const getContractOptions = (options: Options<GetContractData>) =>
 export const listEventsQueryKey = (options: Options<ListEventsData>) =>
   createQueryKey('listEvents', options);
 
-/**
- * List non-diagnostic events emitted by a contract, paginated by appearance
- * row. Each appearance expands into the matching events extracted from XDR.
- */
 export const listEventsOptions = (options: Options<ListEventsData>) =>
   queryOptions<
     ListEventsResponse,
@@ -379,10 +369,6 @@ export const listEventsInfiniteQueryKey = (
 ): QueryKey<Options<ListEventsData>> =>
   createQueryKey('listEvents', options, true);
 
-/**
- * List non-diagnostic events emitted by a contract, paginated by appearance
- * row. Each appearance expands into the matching events extracted from XDR.
- */
 export const listEventsInfiniteOptions = (options: Options<ListEventsData>) =>
   infiniteQueryOptions<
     ListEventsResponse,
@@ -426,12 +412,6 @@ export const listEventsInfiniteOptions = (options: Options<ListEventsData>) =>
 export const getInterfaceQueryKey = (options: Options<GetInterfaceData>) =>
   createQueryKey('getInterface', options);
 
-/**
- * Get a contract's public function signatures.
- *
- * Source: `wasm_interface_metadata.metadata` JSONB, written at ingestion
- * from the `contractspecv0` WASM custom section.
- */
 export const getInterfaceOptions = (options: Options<GetInterfaceData>) =>
   queryOptions<
     GetInterfaceResponse,
@@ -455,14 +435,6 @@ export const listInvocationsQueryKey = (
   options: Options<ListInvocationsData>
 ) => createQueryKey('listInvocations', options);
 
-/**
- * List invocation-tree nodes for a contract, paginated by appearance row.
- *
- * Page granularity is one appearance per `limit`; each appearance expands
- * into the per-node items emitted by `xdr_parser::extract_invocations`
- * filtered to nodes targeting the requested `contract_id`. The returned
- * `data.len()` may exceed `limit`.
- */
 export const listInvocationsOptions = (options: Options<ListInvocationsData>) =>
   queryOptions<
     ListInvocationsResponse,
@@ -487,14 +459,6 @@ export const listInvocationsInfiniteQueryKey = (
 ): QueryKey<Options<ListInvocationsData>> =>
   createQueryKey('listInvocations', options, true);
 
-/**
- * List invocation-tree nodes for a contract, paginated by appearance row.
- *
- * Page granularity is one appearance per `limit`; each appearance expands
- * into the per-node items emitted by `xdr_parser::extract_invocations`
- * filtered to nodes targeting the requested `contract_id`. The returned
- * `data.len()` may exceed `limit`.
- */
 export const listInvocationsInfiniteOptions = (
   options: Options<ListInvocationsData>
 ) =>

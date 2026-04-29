@@ -250,8 +250,6 @@
     "/v1/contracts/{contract_id}": {
       "get": {
         "tags": ["contracts"],
-        "summary": "Get a single contract's metadata + aggregate stats.",
-        "description": "Cached for `cache::CACHE_TTL` (45 s) per Lambda warm container so repeated\ndetail-page hits avoid the stats aggregate.",
         "operationId": "get_contract",
         "parameters": [
           {
@@ -311,7 +309,6 @@
     "/v1/contracts/{contract_id}/events": {
       "get": {
         "tags": ["contracts"],
-        "summary": "List non-diagnostic events emitted by a contract, paginated by appearance\nrow. Each appearance expands into the matching events extracted from XDR.",
         "operationId": "list_events",
         "parameters": [
           {
@@ -392,8 +389,6 @@
     "/v1/contracts/{contract_id}/interface": {
       "get": {
         "tags": ["contracts"],
-        "summary": "Get a contract's public function signatures.",
-        "description": "Source: `wasm_interface_metadata.metadata` JSONB, written at ingestion\nfrom the `contractspecv0` WASM custom section.",
         "operationId": "get_interface",
         "parameters": [
           {
@@ -428,7 +423,7 @@
             }
           },
           "404": {
-            "description": "Contract / interface not found",
+            "description": "Contract not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -453,8 +448,6 @@
     "/v1/contracts/{contract_id}/invocations": {
       "get": {
         "tags": ["contracts"],
-        "summary": "List invocation-tree nodes for a contract, paginated by appearance row.",
-        "description": "Page granularity is one appearance per `limit`; each appearance expands\ninto the per-node items emitted by `xdr_parser::extract_invocations`\nfiltered to nodes targeting the requested `contract_id`. The returned\n`data.len()` may exceed `limit`.",
         "operationId": "list_invocations",
         "parameters": [
           {
@@ -490,7 +483,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Paginated invocation history",
+            "description": "Paginated invocation appearance index",
             "content": {
               "application/json": {
                 "schema": {
@@ -956,51 +949,60 @@
       },
       "ContractDetailResponse": {
         "type": "object",
-        "description": "Response for `GET /v1/contracts/:contract_id`.",
         "required": ["contract_id", "is_sac", "stats"],
         "properties": {
           "contract_id": {
             "type": "string"
           },
           "contract_type": {
-            "type": ["string", "null"],
-            "description": "Explorer-synthetic classification (`token`, `other`, `nft`, `fungible`).\n`null` when the deployment metadata has not been observed yet."
+            "type": ["integer", "null"],
+            "format": "int32"
+          },
+          "contract_type_name": {
+            "type": ["string", "null"]
           },
           "deployed_at_ledger": {
             "type": ["integer", "null"],
             "format": "int64"
           },
-          "deployer_account": {
-            "type": ["string", "null"],
-            "description": "Deployer account StrKey (G…). `null` when the deploy event has not\nlanded yet (two-pass upsert in the indexer registers bare references\nbefore deployment metadata is observed)."
+          "deployer": {
+            "type": ["string", "null"]
           },
           "is_sac": {
             "type": "boolean"
           },
-          "metadata": {
-            "description": "Explorer metadata JSON (e.g. `{ \"name\": \"Soroswap DEX\" }`)."
-          },
+          "metadata": {},
           "stats": {
             "$ref": "#/components/schemas/ContractStats"
           },
           "wasm_hash": {
-            "type": ["string", "null"],
-            "description": "WASM hash hex (64 chars). `null` for SAC / pre-upload contracts."
+            "type": ["string", "null"]
+          },
+          "wasm_uploaded_at_ledger": {
+            "type": ["integer", "null"],
+            "format": "int64"
           }
         }
       },
       "ContractStats": {
         "type": "object",
-        "description": "Aggregate counters over the appearance indexes (ADRs 0033 / 0034).\n\n`invocation_count` sums `soroban_invocations_appearances.amount` (one per\ninvocation-tree node). `event_count` sums `soroban_events_appearances.amount`\n(one per non-diagnostic contract event aggregated into the appearance row).",
-        "required": ["invocation_count", "event_count"],
+        "required": [
+          "recent_invocations",
+          "recent_unique_callers",
+          "stats_window"
+        ],
         "properties": {
-          "event_count": {
+          "recent_invocations": {
             "type": "integer",
             "format": "int64"
           },
-          "invocation_count": {
+          "recent_unique_callers": {
             "type": "integer",
             "format": "int64"
+          },
+          "stats_window": {
+            "type": "string",
+            "description": "Echoed window label (e.g. `\"7 days\"`) so the UI can label \"last N days\"."
           }
         }
       },
@@ -1165,39 +1167,48 @@
       },
       "EventItem": {
         "type": "object",
-        "description": "Single event returned by `GET /v1/contracts/:contract_id/events`.\n\nPer ADR 0033 the DB only carries an appearance index; the event payload\n(type, topics, data) is re-extracted at request time from the public\nStellar archive. Diagnostic events are excluded.",
+        "description": "One row per event — an appearance with `amount > 1` expands to that\nmany rows (per-tx fields repeated, per-event fields unique).",
         "required": [
           "transaction_hash",
+          "ledger_sequence",
+          "transaction_id",
+          "successful",
+          "amount",
+          "created_at",
           "event_type",
           "topics",
-          "data",
-          "ledger_sequence",
-          "created_at"
+          "data"
         ],
         "properties": {
+          "amount": {
+            "type": "integer",
+            "format": "int64"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
           },
-          "data": {
-            "description": "Decoded event data payload."
-          },
+          "data": {},
           "event_type": {
-            "type": "string",
-            "description": "`\"contract\"` or `\"system\"`."
+            "type": "string"
           },
           "ledger_sequence": {
             "type": "integer",
             "format": "int64"
           },
+          "successful": {
+            "type": "boolean"
+          },
           "topics": {
             "type": "array",
-            "items": {},
-            "description": "Decoded topic array."
+            "items": {}
           },
           "transaction_hash": {
-            "type": "string",
-            "description": "Parent transaction hash (64-char lowercase hex)."
+            "type": "string"
+          },
+          "transaction_id": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -1206,94 +1217,51 @@
         "description": "Indicates whether the XDR-sourced fields were loaded successfully.",
         "enum": ["ok", "unavailable"]
       },
-      "InterfaceFunction": {
-        "type": "object",
-        "description": "One public function on the contract interface.",
-        "required": ["name", "parameters"],
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "parameters": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/InterfaceParam"
-            }
-          },
-          "return_type": {
-            "type": ["string", "null"],
-            "description": "Return type label. `null` when the spec declares no outputs."
-          }
-        }
-      },
-      "InterfaceParam": {
-        "type": "object",
-        "description": "One input parameter on a contract function signature.",
-        "required": ["name", "type"],
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "description": "Soroban / SDK type label (e.g. `\"Address\"`, `\"i128\"`)."
-          }
-        }
-      },
       "InterfaceResponse": {
         "type": "object",
-        "description": "Response for `GET /v1/contracts/:contract_id/interface`.",
-        "required": ["functions"],
+        "description": "`interface_metadata` is `null` for SAC / pre-upload / stub rows;\nstubs (task 0153) are filtered at the SQL layer so they don't leak.",
+        "required": ["contract_id"],
         "properties": {
-          "functions": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/InterfaceFunction"
-            }
+          "contract_id": {
+            "type": "string"
+          },
+          "interface_metadata": {},
+          "wasm_hash": {
+            "type": ["string", "null"]
           }
         }
       },
       "InvocationItem": {
         "type": "object",
-        "description": "Single invocation node returned by `GET /v1/contracts/:contract_id/invocations`.\n\nPer ADR 0034 the DB only carries an appearance index; this row is\nre-extracted at request time from the public Stellar archive. Depth-first\ntraversal of the auth tree drives the order within a transaction.",
         "required": [
           "transaction_hash",
-          "function_args",
-          "return_value",
-          "successful",
           "ledger_sequence",
-          "created_at"
+          "amount",
+          "created_at",
+          "successful"
         ],
         "properties": {
+          "amount": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Folded invocation-tree node count for this appearance."
+          },
           "caller_account": {
-            "type": ["string", "null"],
-            "description": "Account that initiated this call. For root invocations this is the tx\nsource account; for sub-invocations it is the parent contract's\naddress. `null` when the appearance row predates a caller observation."
+            "type": ["string", "null"]
           },
           "created_at": {
             "type": "string",
             "format": "date-time"
           },
-          "function_args": {
-            "description": "ScVal-decoded function arguments (typically a JSON array)."
-          },
-          "function_name": {
-            "type": ["string", "null"],
-            "description": "Function name. `null` for contract-creation invocations."
-          },
           "ledger_sequence": {
             "type": "integer",
             "format": "int64"
           },
-          "return_value": {
-            "description": "ScVal-decoded return value (root invocations only; `null` for sub-invocations)."
-          },
           "successful": {
-            "type": "boolean",
-            "description": "Whether this invocation succeeded (mirrors the parent transaction)."
+            "type": "boolean"
           },
           "transaction_hash": {
-            "type": "string",
-            "description": "Parent transaction hash (64-char lowercase hex)."
+            "type": "string"
           }
         }
       },
@@ -1507,39 +1475,48 @@
             "type": "array",
             "items": {
               "type": "object",
-              "description": "Single event returned by `GET /v1/contracts/:contract_id/events`.\n\nPer ADR 0033 the DB only carries an appearance index; the event payload\n(type, topics, data) is re-extracted at request time from the public\nStellar archive. Diagnostic events are excluded.",
+              "description": "One row per event — an appearance with `amount > 1` expands to that\nmany rows (per-tx fields repeated, per-event fields unique).",
               "required": [
                 "transaction_hash",
+                "ledger_sequence",
+                "transaction_id",
+                "successful",
+                "amount",
+                "created_at",
                 "event_type",
                 "topics",
-                "data",
-                "ledger_sequence",
-                "created_at"
+                "data"
               ],
               "properties": {
+                "amount": {
+                  "type": "integer",
+                  "format": "int64"
+                },
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
                 },
-                "data": {
-                  "description": "Decoded event data payload."
-                },
+                "data": {},
                 "event_type": {
-                  "type": "string",
-                  "description": "`\"contract\"` or `\"system\"`."
+                  "type": "string"
                 },
                 "ledger_sequence": {
                   "type": "integer",
                   "format": "int64"
                 },
+                "successful": {
+                  "type": "boolean"
+                },
                 "topics": {
                   "type": "array",
-                  "items": {},
-                  "description": "Decoded topic array."
+                  "items": {}
                 },
                 "transaction_hash": {
-                  "type": "string",
-                  "description": "Parent transaction hash (64-char lowercase hex)."
+                  "type": "string"
+                },
+                "transaction_id": {
+                  "type": "integer",
+                  "format": "int64"
                 }
               }
             }
@@ -1558,45 +1535,35 @@
             "type": "array",
             "items": {
               "type": "object",
-              "description": "Single invocation node returned by `GET /v1/contracts/:contract_id/invocations`.\n\nPer ADR 0034 the DB only carries an appearance index; this row is\nre-extracted at request time from the public Stellar archive. Depth-first\ntraversal of the auth tree drives the order within a transaction.",
               "required": [
                 "transaction_hash",
-                "function_args",
-                "return_value",
-                "successful",
                 "ledger_sequence",
-                "created_at"
+                "amount",
+                "created_at",
+                "successful"
               ],
               "properties": {
+                "amount": {
+                  "type": "integer",
+                  "format": "int32",
+                  "description": "Folded invocation-tree node count for this appearance."
+                },
                 "caller_account": {
-                  "type": ["string", "null"],
-                  "description": "Account that initiated this call. For root invocations this is the tx\nsource account; for sub-invocations it is the parent contract's\naddress. `null` when the appearance row predates a caller observation."
+                  "type": ["string", "null"]
                 },
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
                 },
-                "function_args": {
-                  "description": "ScVal-decoded function arguments (typically a JSON array)."
-                },
-                "function_name": {
-                  "type": ["string", "null"],
-                  "description": "Function name. `null` for contract-creation invocations."
-                },
                 "ledger_sequence": {
                   "type": "integer",
                   "format": "int64"
                 },
-                "return_value": {
-                  "description": "ScVal-decoded return value (root invocations only; `null` for sub-invocations)."
-                },
                 "successful": {
-                  "type": "boolean",
-                  "description": "Whether this invocation succeeded (mirrors the parent transaction)."
+                  "type": "boolean"
                 },
                 "transaction_hash": {
-                  "type": "string",
-                  "description": "Parent transaction hash (64-char lowercase hex)."
+                  "type": "string"
                 }
               }
             }

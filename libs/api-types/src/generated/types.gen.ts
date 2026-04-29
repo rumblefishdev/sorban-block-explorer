@@ -83,45 +83,26 @@ export type AssetTransactionItem = {
   successful: boolean;
 };
 
-/**
- * Response for `GET /v1/contracts/:contract_id`.
- */
 export type ContractDetailResponse = {
   contract_id: string;
-  /**
-   * Explorer-synthetic classification (`token`, `other`, `nft`, `fungible`).
-   * `null` when the deployment metadata has not been observed yet.
-   */
-  contract_type?: string | null;
+  contract_type?: number | null;
+  contract_type_name?: string | null;
   deployed_at_ledger?: number | null;
-  /**
-   * Deployer account StrKey (G…). `null` when the deploy event has not
-   * landed yet (two-pass upsert in the indexer registers bare references
-   * before deployment metadata is observed).
-   */
-  deployer_account?: string | null;
+  deployer?: string | null;
   is_sac: boolean;
-  /**
-   * Explorer metadata JSON (e.g. `{ "name": "Soroswap DEX" }`).
-   */
   metadata?: unknown;
   stats: ContractStats;
-  /**
-   * WASM hash hex (64 chars). `null` for SAC / pre-upload contracts.
-   */
   wasm_hash?: string | null;
+  wasm_uploaded_at_ledger?: number | null;
 };
 
-/**
- * Aggregate counters over the appearance indexes (ADRs 0033 / 0034).
- *
- * `invocation_count` sums `soroban_invocations_appearances.amount` (one per
- * invocation-tree node). `event_count` sums `soroban_events_appearances.amount`
- * (one per non-diagnostic contract event aggregated into the appearance row).
- */
 export type ContractStats = {
-  event_count: number;
-  invocation_count: number;
+  recent_invocations: number;
+  recent_unique_callers: number;
+  /**
+   * Echoed window label (e.g. `"7 days"`) so the UI can label "last N days".
+   */
+  stats_window: string;
 };
 
 /**
@@ -240,31 +221,19 @@ export type ErrorEnvelope = {
 };
 
 /**
- * Single event returned by `GET /v1/contracts/:contract_id/events`.
- *
- * Per ADR 0033 the DB only carries an appearance index; the event payload
- * (type, topics, data) is re-extracted at request time from the public
- * Stellar archive. Diagnostic events are excluded.
+ * One row per event — an appearance with `amount > 1` expands to that
+ * many rows (per-tx fields repeated, per-event fields unique).
  */
 export type EventItem = {
+  amount: number;
   created_at: string;
-  /**
-   * Decoded event data payload.
-   */
   data: unknown;
-  /**
-   * `"contract"` or `"system"`.
-   */
   event_type: string;
   ledger_sequence: number;
-  /**
-   * Decoded topic array.
-   */
+  successful: boolean;
   topics: Array<unknown>;
-  /**
-   * Parent transaction hash (64-char lowercase hex).
-   */
   transaction_hash: string;
+  transaction_id: number;
 };
 
 /**
@@ -273,70 +242,24 @@ export type EventItem = {
 export type HeavyFieldsStatus = 'ok' | 'unavailable';
 
 /**
- * One public function on the contract interface.
- */
-export type InterfaceFunction = {
-  name: string;
-  parameters: Array<InterfaceParam>;
-  /**
-   * Return type label. `null` when the spec declares no outputs.
-   */
-  return_type?: string | null;
-};
-
-/**
- * One input parameter on a contract function signature.
- */
-export type InterfaceParam = {
-  name: string;
-  /**
-   * Soroban / SDK type label (e.g. `"Address"`, `"i128"`).
-   */
-  type: string;
-};
-
-/**
- * Response for `GET /v1/contracts/:contract_id/interface`.
+ * `interface_metadata` is `null` for SAC / pre-upload / stub rows;
+ * stubs (task 0153) are filtered at the SQL layer so they don't leak.
  */
 export type InterfaceResponse = {
-  functions: Array<InterfaceFunction>;
+  contract_id: string;
+  interface_metadata?: unknown;
+  wasm_hash?: string | null;
 };
 
-/**
- * Single invocation node returned by `GET /v1/contracts/:contract_id/invocations`.
- *
- * Per ADR 0034 the DB only carries an appearance index; this row is
- * re-extracted at request time from the public Stellar archive. Depth-first
- * traversal of the auth tree drives the order within a transaction.
- */
 export type InvocationItem = {
   /**
-   * Account that initiated this call. For root invocations this is the tx
-   * source account; for sub-invocations it is the parent contract's
-   * address. `null` when the appearance row predates a caller observation.
+   * Folded invocation-tree node count for this appearance.
    */
+  amount: number;
   caller_account?: string | null;
   created_at: string;
-  /**
-   * ScVal-decoded function arguments (typically a JSON array).
-   */
-  function_args: unknown;
-  /**
-   * Function name. `null` for contract-creation invocations.
-   */
-  function_name?: string | null;
   ledger_sequence: number;
-  /**
-   * ScVal-decoded return value (root invocations only; `null` for sub-invocations).
-   */
-  return_value: unknown;
-  /**
-   * Whether this invocation succeeded (mirrors the parent transaction).
-   */
   successful: boolean;
-  /**
-   * Parent transaction hash (64-char lowercase hex).
-   */
   transaction_hash: string;
 };
 
@@ -506,24 +429,15 @@ export type PaginatedAssetTransactionItem = {
  */
 export type PaginatedEventItem = {
   data: Array<{
+    amount: number;
     created_at: string;
-    /**
-     * Decoded event data payload.
-     */
     data: unknown;
-    /**
-     * `"contract"` or `"system"`.
-     */
     event_type: string;
     ledger_sequence: number;
-    /**
-     * Decoded topic array.
-     */
+    successful: boolean;
     topics: Array<unknown>;
-    /**
-     * Parent transaction hash (64-char lowercase hex).
-     */
     transaction_hash: string;
+    transaction_id: number;
   }>;
   page: PageInfo;
 };
@@ -540,32 +454,13 @@ export type PaginatedEventItem = {
 export type PaginatedInvocationItem = {
   data: Array<{
     /**
-     * Account that initiated this call. For root invocations this is the tx
-     * source account; for sub-invocations it is the parent contract's
-     * address. `null` when the appearance row predates a caller observation.
+     * Folded invocation-tree node count for this appearance.
      */
+    amount: number;
     caller_account?: string | null;
     created_at: string;
-    /**
-     * ScVal-decoded function arguments (typically a JSON array).
-     */
-    function_args: unknown;
-    /**
-     * Function name. `null` for contract-creation invocations.
-     */
-    function_name?: string | null;
     ledger_sequence: number;
-    /**
-     * ScVal-decoded return value (root invocations only; `null` for sub-invocations).
-     */
-    return_value: unknown;
-    /**
-     * Whether this invocation succeeded (mirrors the parent transaction).
-     */
     successful: boolean;
-    /**
-     * Parent transaction hash (64-char lowercase hex).
-     */
     transaction_hash: string;
   }>;
   page: PageInfo;
@@ -1052,7 +947,7 @@ export type GetInterfaceErrors = {
    */
   400: ErrorEnvelope;
   /**
-   * Contract / interface not found
+   * Contract not found
    */
   404: ErrorEnvelope;
   /**
@@ -1117,7 +1012,7 @@ export type ListInvocationsError =
 
 export type ListInvocationsResponses = {
   /**
-   * Paginated invocation history
+   * Paginated invocation appearance index
    */
   200: PaginatedInvocationItem;
 };

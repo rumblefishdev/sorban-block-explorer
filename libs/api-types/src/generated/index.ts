@@ -54,8 +54,6 @@ export type {
   HealthData,
   HealthResponses,
   HeavyFieldsStatus,
-  InterfaceFunction,
-  InterfaceParam,
   InterfaceResponse,
   InvocationItem,
   ListAssetsData,

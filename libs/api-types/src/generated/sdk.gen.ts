@@ -100,12 +100,6 @@ export const listAssetTransactions = <ThrowOnError extends boolean = false>(
     ThrowOnError
   >({ url: '/v1/assets/{id}/transactions', ...options });
 
-/**
- * Get a single contract's metadata + aggregate stats.
- *
- * Cached for `cache::CACHE_TTL` (45 s) per Lambda warm container so repeated
- * detail-page hits avoid the stats aggregate.
- */
 export const getContract = <ThrowOnError extends boolean = false>(
   options: Options<GetContractData, ThrowOnError>
 ) =>
@@ -115,10 +109,6 @@ export const getContract = <ThrowOnError extends boolean = false>(
     ThrowOnError
   >({ url: '/v1/contracts/{contract_id}', ...options });
 
-/**
- * List non-diagnostic events emitted by a contract, paginated by appearance
- * row. Each appearance expands into the matching events extracted from XDR.
- */
 export const listEvents = <ThrowOnError extends boolean = false>(
   options: Options<ListEventsData, ThrowOnError>
 ) =>
@@ -128,12 +118,6 @@ export const listEvents = <ThrowOnError extends boolean = false>(
     ThrowOnError
   >({ url: '/v1/contracts/{contract_id}/events', ...options });
 
-/**
- * Get a contract's public function signatures.
- *
- * Source: `wasm_interface_metadata.metadata` JSONB, written at ingestion
- * from the `contractspecv0` WASM custom section.
- */
 export const getInterface = <ThrowOnError extends boolean = false>(
   options: Options<GetInterfaceData, ThrowOnError>
 ) =>
@@ -143,14 +127,6 @@ export const getInterface = <ThrowOnError extends boolean = false>(
     ThrowOnError
   >({ url: '/v1/contracts/{contract_id}/interface', ...options });
 
-/**
- * List invocation-tree nodes for a contract, paginated by appearance row.
- *
- * Page granularity is one appearance per `limit`; each appearance expands
- * into the per-node items emitted by `xdr_parser::extract_invocations`
- * filtered to nodes targeting the requested `contract_id`. The returned
- * `data.len()` may exceed `limit`.
- */
 export const listInvocations = <ThrowOnError extends boolean = false>(
   options: Options<ListInvocationsData, ThrowOnError>
 ) =>
