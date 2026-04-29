@@ -53,7 +53,7 @@ pub async fn process_ledger(
     classification_cache: &ClassificationCache,
 ) -> Result<(), HandlerError> {
     // --- Stage 0024: Ledger + transaction extraction ---
-    let extracted_ledger = xdr_parser::extract_ledger(meta)?;
+    let extracted_ledger = xdr_parser::extract_ledger(meta);
     let ledger_sequence = extracted_ledger.sequence;
     let closed_at = extracted_ledger.closed_at;
 

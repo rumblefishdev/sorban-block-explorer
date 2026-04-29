@@ -42,7 +42,9 @@ pub enum SacAssetIdentity {
 pub struct ExtractedLedger {
     /// Ledger sequence number (PK).
     pub sequence: u32,
-    /// SHA-256 hash of the LedgerHeaderHistoryEntry XDR, hex-encoded (64 chars).
+    /// Canonical Stellar ledger hash from `LedgerHeaderHistoryEntry.hash`,
+    /// hex-encoded (64 chars). Matches Horizon `/ledgers/:N.hash` and every
+    /// other Stellar tool — populated by core, never recomputed.
     pub hash: String,
     /// Ledger close time as Unix timestamp (seconds). `i64` for PostgreSQL BIGINT compatibility.
     pub closed_at: i64,

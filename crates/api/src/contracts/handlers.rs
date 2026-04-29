@@ -134,15 +134,7 @@ struct ParsedLedger<'a> {
 
 impl<'a> ParsedLedger<'a> {
     fn new(meta: &'a LedgerCloseMeta, want_envelopes: bool, network_id: &[u8; 32]) -> Option<Self> {
-        let ledger = match xdr_parser::extract_ledger(meta) {
-            Ok(l) => l,
-            Err(e) => {
-                // Distinct from "S3 fetch failed" so operators can tell the
-                // two failure modes apart in logs.
-                tracing::warn!("failed to extract ledger header from fetched LedgerCloseMeta: {e}");
-                return None;
-            }
-        };
+        let ledger = xdr_parser::extract_ledger(meta);
         let extracted_txs =
             xdr_parser::extract_transactions(meta, ledger.sequence, ledger.closed_at, network_id);
         let tx_metas = collect_tx_metas(meta);
