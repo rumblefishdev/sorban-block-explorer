@@ -8,13 +8,19 @@
 //! See `lore/1-tasks/active/0180_REFACTOR_api-cache-moka-migration.md`
 //! for the rationale (in particular: why `moka` and why no Redis yet).
 //!
-//! ## Why `sync` and not `future`
+//! ## Sync vs future
 //!
-//! Handlers fetch from Postgres via `.await`, but the cache `get`/`insert`
-//! calls themselves are not held across an `.await`. `moka::sync::Cache`
-//! is sharded and lock-free for reads — there is no benefit to the
-//! `future` variant for our handler shape, and the sync variant cannot
-//! accidentally hold a lock across an `.await`.
+//! This helper builds `moka::sync::Cache`. It fits the common case where
+//! the cache fetch is independent of any single async operation (handler
+//! does its `.await`s outside the `get`/`insert` call) — sync is sharded
+//! and lock-free for reads with no risk of holding a lock across `.await`.
+//!
+//! The `network_cache` is the exception: it needs `try_get_with` with an
+//! async initialiser (a Postgres query) to deduplicate concurrent
+//! cold-cache requests on a singleton key. That cache is built ad-hoc
+//! with `moka::future::Cache::builder()` directly — see
+//! `crates/api/src/network/cache.rs`. If a second future-cache callsite
+//! ever appears, lift it into a `ttl_future_cache` companion helper here.
 //!
 //! ## Capacity defaults
 //!

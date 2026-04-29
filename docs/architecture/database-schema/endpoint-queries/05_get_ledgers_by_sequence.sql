@@ -53,8 +53,9 @@
 --     Returning NULL at chain head/tail so the API can render "no next"
 --     / "no prev" navigation controls correctly.
 --   • Statement B uses the standard (created_at DESC, id DESC) keyset
---     pagination from task 0043 (`TsIdCursor`, `push_ts_id_cursor_predicate`).
---     The `created_at = $closed_at` predicate fully prunes to the single
+--     pagination from task 0043 (`TsIdCursor`), using the usual
+--     `(created_at, id)` keyset predicate inline here. The
+--     `created_at = $closed_at` predicate fully prunes to the single
 --     monthly partition that owns this ledger's transactions — no range
 --     scan, no cross-partition work.
 

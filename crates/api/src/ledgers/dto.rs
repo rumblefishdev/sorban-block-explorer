@@ -34,7 +34,7 @@ pub struct LedgerListItem {
 /// Detail response for `GET /v1/ledgers/:sequence`.
 ///
 /// Header columns are the same shape as `LedgerListItem`. `prev_sequence` /
-/// `next_sequence` are computed via LATERAL on `idx_ledgers_closed_at` and
+/// `next_sequence` identify the adjacent ledgers in sequence order and
 /// double as a chain-position signal — when `next_sequence` is null the
 /// ledger is the chain head, which drives the short-TTL Cache-Control
 /// branch in the handler. `transactions` is the embedded paginated list

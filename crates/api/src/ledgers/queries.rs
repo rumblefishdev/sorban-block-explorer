@@ -6,9 +6,9 @@
 //!   filters apply to ledgers. Cursor predicate is inlined as a row-value
 //!   comparison so the planner walks `idx_ledgers_closed_at` in DESC.
 //! - **Detail header (`fetch_by_sequence`)** computes `prev_sequence` /
-//!   `next_sequence` via two `LATERAL ... LIMIT 1` lookups on
-//!   `idx_ledgers_closed_at`. Each costs one index seek; cheaper than a
-//!   window over the whole table.
+//!   `next_sequence` via two `LATERAL ... LIMIT 1` lookups using
+//!   `sequence < l.sequence` / `sequence > l.sequence` (PK ordering).
+//!   Each costs one index seek; cheaper than a window over the whole table.
 //! - **Embedded transactions (`fetch_transactions`)** pulls the seven
 //!   DB-side fields of `TransactionListItem` for a single ledger.
 //!   Partition pruning is total: `created_at = $closed_at` (carried
