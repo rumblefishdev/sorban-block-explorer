@@ -129,11 +129,12 @@ Body must include:
 Existing audit-driven bugs to read for shape: [0167](../1-tasks/archive/0167_FEATURE_endpoint-sql-query-reference-set.md),
 [0168](../1-tasks/archive/0168_BUG_envelope-tx-processing-misalignment.md),
 [0169](../1-tasks/archive/0169_BUG_inner-tx-hash-and-amount-semantics-audit.md),
-[0173](../1-tasks/active/0173_BUG_xdr-parser-missing-per-operation-events-v4-meta.md),
-[0176](../1-tasks/backlog/0176_BUG_ledger-hash-extraction-wrong.md),
-[0177](../1-tasks/backlog/0177_BUG_muxed-account-leak-into-persist.md),
+[0173](../1-tasks/archive/0173_BUG_xdr-parser-missing-per-operation-events-v4-meta.md),
+[0177](../1-tasks/active/0177_BUG_muxed-account-leak-into-persist.md),
 [0178](../1-tasks/backlog/0178_BUG_contract-strkeys-leak-into-accounts-table.md),
-[0179](../1-tasks/backlog/0179_BUG_lp-asset-canonical-order-violated.md).
+[0179](../1-tasks/backlog/0179_BUG_lp-asset-canonical-order-violated.md),
+[0181](../1-tasks/archive/0181_BUG_ledger-hash-hashes-history-entry-not-canonical.md),
+[0182](../1-tasks/active/0182_BUG_diagnostic-events-container-leak-overcounts-amount.md).
 
 ## Tips and traps
 

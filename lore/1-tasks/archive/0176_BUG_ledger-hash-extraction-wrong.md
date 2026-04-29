@@ -2,10 +2,10 @@
 id: '0176'
 title: 'BUG: ledger.hash extracted as SHA256(LedgerHeaderHistoryEntry) instead of canonical ledger hash'
 type: BUG
-status: backlog
+status: superseded
 related_adr: ['0024', '0037']
-related_tasks: ['0175']
-tags: [priority-high, layer-parser, audit-driven, bug]
+related_tasks: ['0175', '0181']
+tags: [priority-high, layer-parser, audit-driven, bug, duplicate]
 links:
   - crates/xdr-parser/src/ledger.rs
 history:
@@ -19,6 +19,19 @@ history:
       previous-ledger hash `028ba5...49e2`. Three completely different
       values — we are not storing prev_hash either, just a fully
       synthetic value derived by hashing the wrong bytes.
+  - date: '2026-04-29'
+    status: superseded
+    who: stkrolikiewicz
+    by: ['0181']
+    note: >
+      Filip merged 0181 to develop (PR #142) covering identical scope
+      with the same root cause + same fix (use `header_entry.hash` from
+      `LedgerHeaderHistoryEntry` directly). Confirmed by manual audit
+      reports E04 (3/3 mismatch) + Phase 2a + Phase 2c (50/50 each).
+      0176 was spawned from the 0175 audit harness without checking
+      develop concurrently — duplicate ID. 0181 owns the canonical
+      task body + history; this file is the audit-driven discovery
+      trail and stays in archive as evidence.
 ---
 
 # Ledger hash extracted from wrong XDR scope

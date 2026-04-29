@@ -11,7 +11,7 @@ Phase 1 SQL invariant run from 2026-04-28 against the 30k ledger smoke.
 
 ## Why save these
 
-1. **Bug spawn evidence** — the 0176/0177/0178/0179 task bodies
+1. **Bug spawn evidence** — the 0177/0178/0179/0181 task bodies
    reference specific violation counts and sample row keys; those
    numbers come from these reports. Lose the report and the task body
    becomes unverifiable.
