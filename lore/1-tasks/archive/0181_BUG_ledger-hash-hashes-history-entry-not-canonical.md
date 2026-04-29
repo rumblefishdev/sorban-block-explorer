@@ -213,4 +213,7 @@ ledgers — owner's call. No schema migration needed.
 
 - Trivial fix (one-liner) but data-correctness wide blast radius —
   affects every `/ledgers` response.
-- No schema change; column is already `BYTEA(32)` / hex-encoded string.
+- No schema change. `ledgers.hash` column is `BYTEA` (32 raw bytes,
+  enforced by `ck_ledgers_hash_len`). The parser still emits a 64-char
+  hex `String` on `ExtractedLedger.hash`; the persistence layer
+  hex-decodes to `BYTEA` at insert time.
