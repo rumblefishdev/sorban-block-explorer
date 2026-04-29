@@ -15,8 +15,7 @@ use utoipa_axum::routes;
 
 use crate::assets::dto::{AssetDetailResponse, AssetItem, AssetTransactionItem};
 use crate::contracts::dto::{
-    ContractDetailResponse, ContractStats, EventItem, InterfaceFunction, InterfaceParam,
-    InterfaceResponse, InvocationItem,
+    ContractDetailResponse, ContractStats, EventItem, InterfaceResponse, InvocationItem,
 };
 use crate::stellar_archive::dto::{
     E3HeavyFields, E3Response, HeavyFieldsStatus, SignatureDto, XdrEventDto, XdrOperationDto,
@@ -57,8 +56,6 @@ use schemas::{ErrorEnvelope, PageInfo, Paginated};
         ContractDetailResponse,
         ContractStats,
         InterfaceResponse,
-        InterfaceFunction,
-        InterfaceParam,
         Paginated<InvocationItem>,
         InvocationItem,
         Paginated<EventItem>,

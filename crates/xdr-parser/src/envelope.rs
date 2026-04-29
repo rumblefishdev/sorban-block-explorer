@@ -24,6 +24,23 @@ use sha2::{Digest, Sha256};
 use stellar_xdr::curr::*;
 use tracing::warn;
 
+/// Canonicalize a `MuxedAccount` to the underlying ed25519 G-strkey (56 chars).
+///
+/// `MuxedAccount` has two variants: `Ed25519` (bare 32-byte key, renders as
+/// `G…`) and `MuxedEd25519` (`{ id, ed25519 }`, renders as 69-char `M…`).
+/// Per ADR 0026 the indexer keys accounts by the underlying ed25519 public
+/// key only — the 8-byte muxing `id` is dropped at the parser boundary so
+/// that `accounts.account_id VARCHAR(56)` always receives a G-strkey, and
+/// downstream stages (staging, persist, account resolution) see a single
+/// canonical form regardless of whether the wire value was muxed.
+pub fn muxed_to_g_strkey(m: &MuxedAccount) -> String {
+    let pk = match m {
+        MuxedAccount::Ed25519(p) => p.clone(),
+        MuxedAccount::MuxedEd25519(med) => med.ed25519.clone(),
+    };
+    MuxedAccount::Ed25519(pk).to_string()
+}
+
 /// Extract envelopes in **apply order**, aligned 1:1 with `tx_processing`.
 ///
 /// Returned `Vec` length equals `tx_processing.len()`. Slot `i` carries the
@@ -257,7 +274,7 @@ impl<'a> InnerTxRef<'a> {
     pub fn source_account(&self) -> String {
         match self {
             InnerTxRef::V0(tx) => MuxedAccount::from(&tx.source_account_ed25519).to_string(),
-            InnerTxRef::V1(tx) => tx.source_account.to_string(),
+            InnerTxRef::V1(tx) => muxed_to_g_strkey(&tx.source_account),
         }
     }
 }
@@ -309,6 +326,18 @@ mod tests {
         })
     }
 
+    fn v1_envelope_muxed(ed25519_payload: [u8; 32], mux_id: u64) -> TransactionEnvelope {
+        let mut tx = empty_v1_tx(ed25519_payload);
+        tx.source_account = MuxedAccount::MuxedEd25519(MuxedAccountMed25519 {
+            id: mux_id,
+            ed25519: Uint256(ed25519_payload),
+        });
+        TransactionEnvelope::Tx(TransactionV1Envelope {
+            tx,
+            signatures: VecM::default(),
+        })
+    }
+
     fn fee_bump_envelope(
         fee_source_payload: [u8; 32],
         inner_source_payload: [u8; 32],
@@ -337,6 +366,34 @@ mod tests {
     fn envelope_source_v1_returns_tx_source_account() {
         let env = v1_envelope([0xBB; 32]);
         assert_eq!(envelope_source(&env), ed25519_strkey(&[0xBB; 32]));
+    }
+
+    #[test]
+    fn envelope_source_v1_unwraps_muxed_to_underlying_g_strkey() {
+        // Bug 0177 regression: a V1 envelope carrying a MuxedEd25519 source
+        // used to surface a 69-char M-strkey, overflowing
+        // `accounts.account_id VARCHAR(56)` at persist time. The source
+        // must always be the underlying ed25519 G-strkey (56 chars).
+        let env = v1_envelope_muxed([0xEE; 32], 0xDEAD_BEEF_DEAD_BEEF);
+        let got = envelope_source(&env);
+        assert_eq!(got.len(), 56);
+        assert!(got.starts_with('G'), "expected G-strkey, got {got}");
+        assert_eq!(got, ed25519_strkey(&[0xEE; 32]));
+    }
+
+    #[test]
+    fn muxed_to_g_strkey_collapses_both_variants_to_same_g_key() {
+        let payload = [0x42; 32];
+        let bare = MuxedAccount::Ed25519(Uint256(payload));
+        let muxed = MuxedAccount::MuxedEd25519(MuxedAccountMed25519 {
+            id: 1234,
+            ed25519: Uint256(payload),
+        });
+        let g_bare = muxed_to_g_strkey(&bare);
+        let g_muxed = muxed_to_g_strkey(&muxed);
+        assert_eq!(g_bare, g_muxed);
+        assert_eq!(g_bare.len(), 56);
+        assert!(g_bare.starts_with('G'));
     }
 
     #[test]

@@ -551,6 +551,212 @@ async fn v4_per_op_events_land_in_appearance_index() {
     );
 }
 
+/// Task 0182 — when diagnostic mode is enabled, `v4.diagnostic_events`
+/// holds byte-identical Contract-typed copies of the per-op consensus
+/// events alongside the host-VM trace entries. Filtering by inner
+/// `event_type` passes those copies through and double-counts `amount`
+/// on the `soroban_events_appearances` index. The fix routes the staging
+/// filter on `EventSource::Diagnostic` instead — this test pins that the
+/// entire diagnostic_events container drops at staging, regardless of
+/// inner type.
+///
+/// Pre-fix this test would assert `amount = 2` (per-op + Contract-typed
+/// duplicate); post-fix it asserts `amount = 1` (per-op only).
+#[tokio::test]
+async fn v4_diag_contract_mirror_does_not_inflate_amount() {
+    use stellar_xdr::curr::{
+        ContractEvent, ContractEventBody, ContractEventType as XdrEventType, ContractEventV0,
+        ContractId, DiagnosticEvent, ExtensionPoint, Hash, LedgerEntryChanges, OperationMetaV2,
+        ScAddress, ScVal, TransactionMeta, TransactionMetaV4, VecM,
+    };
+
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping V4 diag-mirror persist test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping V4 diag-mirror persist test");
+            return;
+        }
+    };
+
+    // Distinct ledger + tx + contract from the other V4 fixture so cleanup
+    // is scoped and the two tests don't stomp each other under
+    // --test-threads=1 sequencing.
+    let mirror_ledger_seq: u32 = 90_000_003;
+    let mirror_ledger_hash =
+        "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef".to_string();
+    let mirror_tx_hash = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+    let contract_hash = Hash([0xEE; 32]);
+    let contract_strkey = ScAddress::Contract(ContractId(contract_hash.clone())).to_string();
+
+    ensure_default_partitions(&pool).await;
+    clean_v4_mirror_ledger(&pool, mirror_tx_hash, mirror_ledger_seq, &contract_strkey).await;
+
+    // Build a per-op Contract event and its byte-identical mirror in
+    // `v4.diagnostic_events`. Both carry inner `type_ = Contract` (matching
+    // what stellar-core actually emits) — only the source container differs.
+    let make_contract_event = |val: u32| ContractEvent {
+        ext: ExtensionPoint::V0,
+        contract_id: Some(ContractId(contract_hash.clone())),
+        type_: XdrEventType::Contract,
+        body: ContractEventBody::V0(ContractEventV0 {
+            topics: VecM::default(),
+            data: ScVal::U32(val),
+        }),
+    };
+
+    let original = make_contract_event(7);
+    let mirror = make_contract_event(7); // byte-identical
+
+    let op_meta = OperationMetaV2 {
+        ext: ExtensionPoint::V0,
+        changes: LedgerEntryChanges::default(),
+        events: vec![original].try_into().unwrap(),
+    };
+    let diag = DiagnosticEvent {
+        in_successful_contract_call: true,
+        event: mirror,
+    };
+    // No tx-level event — keeps the assertion focused on the mirror dedup.
+    let tx_meta = TransactionMeta::V4(TransactionMetaV4 {
+        ext: ExtensionPoint::V0,
+        tx_changes_before: LedgerEntryChanges::default(),
+        operations: vec![op_meta].try_into().unwrap(),
+        tx_changes_after: LedgerEntryChanges::default(),
+        soroban_meta: None,
+        events: VecM::default(),
+        diagnostic_events: vec![diag].try_into().unwrap(),
+    });
+
+    let extracted =
+        xdr_parser::extract_events(&tx_meta, mirror_tx_hash, mirror_ledger_seq, TEST_CLOSED_AT);
+    assert_eq!(
+        extracted.len(),
+        2,
+        "parser surfaces both the per-op event and its diagnostic-container mirror"
+    );
+    assert!(
+        extracted
+            .iter()
+            .all(|e| e.event_type == ContractEventType::Contract),
+        "both events have inner type_ = Contract — only `source` distinguishes them"
+    );
+    let per_op_count = extracted
+        .iter()
+        .filter(|e| e.source == xdr_parser::EventSource::PerOp)
+        .count();
+    let diag_count = extracted
+        .iter()
+        .filter(|e| e.source == xdr_parser::EventSource::Diagnostic)
+        .count();
+    assert_eq!(per_op_count, 1, "exactly one PerOp event in parser output");
+    assert_eq!(
+        diag_count, 1,
+        "exactly one Diagnostic-source event in parser output"
+    );
+
+    let ledger = ExtractedLedger {
+        sequence: mirror_ledger_seq,
+        hash: mirror_ledger_hash,
+        closed_at: TEST_CLOSED_AT,
+        protocol_version: 23,
+        transaction_count: 1,
+        base_fee: 100,
+    };
+    let tx = ExtractedTransaction {
+        hash: mirror_tx_hash.to_string(),
+        inner_tx_hash: None,
+        ledger_sequence: mirror_ledger_seq,
+        source_account: SRC_STRKEY.to_string(),
+        fee_charged: 1000,
+        successful: true,
+        result_code: "txSuccess".to_string(),
+        envelope_xdr: String::new(),
+        result_xdr: String::new(),
+        result_meta_xdr: None,
+        operation_tree: None,
+        memo_type: None,
+        memo: None,
+        created_at: TEST_CLOSED_AT,
+        parse_error: false,
+    };
+    let events = vec![(mirror_tx_hash.to_string(), extracted)];
+    let classification_cache = ClassificationCache::new();
+
+    persist_ledger(
+        &pool,
+        &ledger,
+        &[tx],
+        &[],
+        &events,
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &classification_cache,
+    )
+    .await
+    .expect("persist_ledger failed for V4 diag-mirror fixture");
+
+    let row: (i64, i64) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*)::BIGINT, COALESCE(SUM(ev.amount), 0)::BIGINT
+          FROM soroban_events_appearances ev
+          JOIN transactions tx
+            ON tx.id = ev.transaction_id AND tx.created_at = ev.created_at
+         WHERE tx.hash = decode($1, 'hex')
+        "#,
+    )
+    .bind(mirror_tx_hash)
+    .fetch_one(&pool)
+    .await
+    .expect("appearance-index query failed");
+
+    assert_eq!(
+        row.0, 1,
+        "exactly one (contract, tx, ledger) appearance row from the per-op event"
+    );
+    assert_eq!(
+        row.1, 1,
+        "amount = 1 (per-op only) — the diagnostic-container Contract-typed \
+         mirror MUST be dropped at staging; pre-fix this would have been 2"
+    );
+}
+
+async fn clean_v4_mirror_ledger(
+    pool: &PgPool,
+    tx_hash: &str,
+    ledger_seq: u32,
+    contract_strkey: &str,
+) {
+    let _ = sqlx::query("DELETE FROM transactions WHERE hash = decode($1, 'hex')")
+        .bind(tx_hash)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM transaction_hash_index WHERE hash = decode($1, 'hex')")
+        .bind(tx_hash)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM ledgers WHERE sequence = $1")
+        .bind(i64::from(ledger_seq))
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM soroban_contracts WHERE contract_id = $1")
+        .bind(contract_strkey)
+        .execute(pool)
+        .await;
+}
+
 /// Narrow cleanup for the V4 per-op test. Uses the same cascade-via-FK
 /// trick as `clean_test_ledger` (deleting the parent transaction wipes
 /// `soroban_events_appearances` children) and only touches rows the V4
@@ -643,6 +849,7 @@ fn make_transfer_event() -> ExtractedEvent {
     ExtractedEvent {
         transaction_hash: TEST_TX_HASH.to_string(),
         event_type: ContractEventType::Contract,
+        source: xdr_parser::EventSource::PerOp,
         contract_id: Some(TOKEN_CONTRACT.to_string()),
         topics: json!([
             {"type": "sym", "value": "transfer"},

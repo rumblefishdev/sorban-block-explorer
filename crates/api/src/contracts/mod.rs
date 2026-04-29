@@ -1,12 +1,11 @@
 //! Contracts API module: detail, interface, invocations, events.
 //!
-//! Per ADRs 0033 / 0034 the events and invocations responses are assembled
-//! from a DB appearance index plus read-time XDR fetched from the public
-//! Stellar archive (ADR 0029). Contract metadata is small and gets a 45 s
-//! per-Lambda cache (`cache::ContractMetadataCache`).
+//! Wire shapes mirror canonical SQL `endpoint-queries/{11..14}_*.sql`
+//! (task 0167). Pagination, error envelopes, cursor codec, and StrKey
+//! validation come from `crate::common::*` (task 0043). Contract metadata
+//! is small and gets a 45 s per-Lambda cache (`cache::ContractMetadataCache`).
 
 pub mod cache;
-pub mod cursor;
 pub mod dto;
 mod handlers;
 mod queries;
