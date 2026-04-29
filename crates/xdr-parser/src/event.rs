@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use stellar_xdr::curr::*;
 
 use crate::scval::scval_to_typed_json;
-use crate::types::ExtractedEvent;
+use crate::types::{EventSource, ExtractedEvent};
 use domain::ContractEventType as DomainEventType;
 
 /// Extract all events from a transaction's metadata.
@@ -30,7 +30,14 @@ pub fn extract_events(
                 .iter()
                 .enumerate()
                 .map(|(i, event)| {
-                    extract_single_event(event, transaction_hash, ledger_sequence, created_at, i)
+                    extract_single_event(
+                        event,
+                        transaction_hash,
+                        ledger_sequence,
+                        created_at,
+                        i,
+                        EventSource::TxLevel,
+                    )
                 })
                 .collect();
             // Include diagnostic_events (separate field in SorobanTransactionMeta)
@@ -42,6 +49,7 @@ pub fn extract_events(
                     ledger_sequence,
                     created_at,
                     base + j,
+                    EventSource::Diagnostic,
                 ));
             }
             extracted
@@ -53,7 +61,11 @@ pub fn extract_events(
             // InvokeHostFunction execution + classic-op SAC events under
             // Protocol 23 unification), and diagnostic. `event_index` is
             // numbered sequentially across all three sources so the V3
-            // contract (monotonic per-tx index) is preserved.
+            // contract (monotonic per-tx index) is preserved. Each event
+            // is tagged with its `EventSource` so consumers can drop the
+            // diagnostic container without trusting the inner `type_`
+            // (Stellar core mirrors per-op Contract events into the
+            // diagnostic container byte-identically — task 0182).
             let mut extracted: Vec<ExtractedEvent> = v4
                 .events
                 .iter()
@@ -65,6 +77,7 @@ pub fn extract_events(
                         ledger_sequence,
                         created_at,
                         i,
+                        EventSource::TxLevel,
                     )
                 })
                 .collect();
@@ -78,6 +91,7 @@ pub fn extract_events(
                         ledger_sequence,
                         created_at,
                         next_idx,
+                        EventSource::PerOp,
                     ));
                     next_idx += 1;
                 }
@@ -90,6 +104,7 @@ pub fn extract_events(
                     ledger_sequence,
                     created_at,
                     next_idx,
+                    EventSource::Diagnostic,
                 ));
                 next_idx += 1;
             }
@@ -107,6 +122,7 @@ fn extract_single_event(
     ledger_sequence: u32,
     created_at: i64,
     index: usize,
+    source: EventSource,
 ) -> ExtractedEvent {
     // ADR 0031: emit the typed enum directly; persist binds it as SMALLINT.
     let event_type = match event.type_ {
@@ -131,6 +147,7 @@ fn extract_single_event(
     ExtractedEvent {
         transaction_hash: transaction_hash.to_string(),
         event_type,
+        source,
         contract_id,
         topics,
         data,
@@ -522,5 +539,137 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, DomainEventType::Diagnostic);
         assert_eq!(events[0].data["value"], "error details");
+    }
+
+    // ---- Task 0182: source-container tagging --------------------------------
+    //
+    // The parser must tag every event with the container it came from
+    // (`EventSource::TxLevel | PerOp | Diagnostic`) so downstream consumers
+    // can drop the diagnostic_events container *as a whole* — including
+    // the byte-identical Contract-typed mirrors Stellar core copies into
+    // it — without trusting the inner `event.type_`.
+
+    #[test]
+    fn v3_source_tagging() {
+        let make_event = |type_| ContractEvent {
+            ext: ExtensionPoint::V0,
+            contract_id: None,
+            type_,
+            body: ContractEventBody::V0(ContractEventV0 {
+                topics: VecM::default(),
+                data: ScVal::Void,
+            }),
+        };
+
+        let soroban_meta = SorobanTransactionMeta {
+            ext: SorobanTransactionMetaExt::V0,
+            events: vec![make_event(ContractEventType::Contract)]
+                .try_into()
+                .unwrap(),
+            return_value: ScVal::Void,
+            diagnostic_events: vec![DiagnosticEvent {
+                in_successful_contract_call: false,
+                event: make_event(ContractEventType::Diagnostic),
+            }]
+            .try_into()
+            .unwrap(),
+        };
+
+        let tx_meta = TransactionMeta::V3(TransactionMetaV3 {
+            ext: ExtensionPoint::V0,
+            tx_changes_before: LedgerEntryChanges::default(),
+            operations: VecM::default(),
+            tx_changes_after: LedgerEntryChanges::default(),
+            soroban_meta: Some(soroban_meta),
+        });
+
+        let events = extract_events(&tx_meta, "abcd1234", 100, 1700000000);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].source, EventSource::TxLevel);
+        assert_eq!(events[1].source, EventSource::Diagnostic);
+    }
+
+    #[test]
+    fn v4_source_tagging_three_locations() {
+        // One event in each of v4.events / v4.operations[0].events /
+        // v4.diagnostic_events. Sources must come out TxLevel / PerOp /
+        // Diagnostic respectively.
+        let tx_event = TransactionEvent {
+            stage: TransactionEventStage::default(),
+            event: make_contract_event(0xAA, 1),
+        };
+        let op = OperationMetaV2 {
+            ext: ExtensionPoint::V0,
+            changes: LedgerEntryChanges::default(),
+            events: vec![make_contract_event(0xBB, 2)].try_into().unwrap(),
+        };
+        let diag = DiagnosticEvent {
+            in_successful_contract_call: false,
+            event: make_contract_event(0xCC, 3),
+        };
+        let tx_meta = make_v4_meta(vec![tx_event], vec![op], vec![diag]);
+
+        let events = extract_events(&tx_meta, "abcd1234", 100, 1700000000);
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].source, EventSource::TxLevel);
+        assert_eq!(events[1].source, EventSource::PerOp);
+        assert_eq!(events[2].source, EventSource::Diagnostic);
+    }
+
+    #[test]
+    fn v4_diag_contract_typed_mirror_tagged_diagnostic() {
+        // Reproduces the task-0182 bug surface: Stellar core mirrors a
+        // per-op Contract event into v4.diagnostic_events with the *same*
+        // inner type_ = Contract. Filtering by `event_type` cannot tell
+        // the original from the mirror; only `source` can.
+        let original = make_contract_event(0xAA, 42);
+        let mirror = make_contract_event(0xAA, 42); // byte-identical
+
+        let op = OperationMetaV2 {
+            ext: ExtensionPoint::V0,
+            changes: LedgerEntryChanges::default(),
+            events: vec![original].try_into().unwrap(),
+        };
+        let diag = DiagnosticEvent {
+            in_successful_contract_call: true,
+            event: mirror,
+        };
+        let tx_meta = make_v4_meta(Vec::new(), vec![op], vec![diag]);
+
+        let events = extract_events(&tx_meta, "abcd1234", 100, 1700000000);
+        assert_eq!(events.len(), 2);
+
+        // Both are Contract by inner type.
+        assert_eq!(events[0].event_type, DomainEventType::Contract);
+        assert_eq!(events[1].event_type, DomainEventType::Contract);
+
+        // But sources differ — that's the only signal that lets staging
+        // and read-time API drop the mirror.
+        assert_eq!(events[0].source, EventSource::PerOp);
+        assert_eq!(events[1].source, EventSource::Diagnostic);
+    }
+
+    #[test]
+    fn v4_multi_op_per_op_events_all_tagged_per_op() {
+        let op0 = OperationMetaV2 {
+            ext: ExtensionPoint::V0,
+            changes: LedgerEntryChanges::default(),
+            events: vec![make_contract_event(0xB0, 1), make_contract_event(0xB1, 2)]
+                .try_into()
+                .unwrap(),
+        };
+        let op1 = OperationMetaV2 {
+            ext: ExtensionPoint::V0,
+            changes: LedgerEntryChanges::default(),
+            events: vec![make_contract_event(0xC0, 3)].try_into().unwrap(),
+        };
+        let tx_meta = make_v4_meta(Vec::new(), vec![op0, op1], Vec::new());
+
+        let events = extract_events(&tx_meta, "abcd1234", 100, 1700000000);
+        assert_eq!(events.len(), 3);
+        assert!(
+            events.iter().all(|e| e.source == EventSource::PerOp),
+            "every per-op event across operations must be tagged PerOp"
+        );
     }
 }

@@ -26,8 +26,9 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
-use domain::{ContractEventType, ContractType};
+use domain::ContractType;
 use stellar_xdr::curr::{LedgerCloseMeta, TransactionEnvelope, TransactionMeta};
+use xdr_parser::EventSource;
 
 use crate::common::{errors, path};
 use crate::openapi::schemas::{ErrorEnvelope, PageInfo, Paginated};
@@ -719,7 +720,11 @@ fn expand_events(
             if event.contract_id.as_deref() != Some(contract_id) {
                 continue;
             }
-            if event.event_type == ContractEventType::Diagnostic {
+            // Drop the entire diagnostic_events container — its
+            // Contract-typed entries are byte-identical mirrors of the
+            // per-op consensus events (task 0182). Filtering by inner
+            // `event_type` would surface those mirrors as duplicates.
+            if event.source == EventSource::Diagnostic {
                 continue;
             }
             let topics = match event.topics {

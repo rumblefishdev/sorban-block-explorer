@@ -95,6 +95,31 @@ pub struct ExtractedTransaction {
     pub parse_error: bool,
 }
 
+/// Container an `ExtractedEvent` was sourced from in the on-chain meta.
+///
+/// CAP-67 (Protocol 23+) splits events across three V4 locations:
+/// `v4.events` (tx-level), `v4.operations[i].events` (per-op), and
+/// `v4.diagnostic_events` (host VM trace + a byte-identical mirror of the
+/// per-op consensus events). Filtering by inner `event_type` cannot
+/// distinguish a real consensus Contract event from its diagnostic mirror;
+/// the source container is the only reliable signal. Task 0182.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventSource {
+    /// `v4.events` (Protocol 23+) or `soroban_meta.events` (Protocol 22).
+    /// Hashed into `txSetResultHash` — counts toward consensus.
+    TxLevel,
+    /// `v4.operations[i].events` — CAP-67 per-operation consensus events.
+    /// Hashed; carries the bulk of post-Protocol-23 Soroban traffic.
+    /// Not produced for V3 meta.
+    PerOp,
+    /// `v4.diagnostic_events` or `soroban_meta.diagnostic_events`. NOT
+    /// hashed (CAP-67 spec). Stellar core mirrors every consensus Contract
+    /// event into this container with `type_ = Contract`, byte-identical
+    /// to the per-op original — staging must drop the entire container
+    /// regardless of inner type.
+    Diagnostic,
+}
+
 /// Extracted Soroban event data, produced by `extract_events` from
 /// `SorobanTransactionMeta.events`.
 ///
@@ -107,6 +132,11 @@ pub struct ExtractedEvent {
     pub transaction_hash: String,
     /// Event type (ADR 0031). In-memory classifier only; not persisted to DB.
     pub event_type: ContractEventType,
+    /// Source container this event was extracted from. Used by staging and
+    /// read-time API to drop the entire `diagnostic_events` container,
+    /// including its byte-identical Contract-typed mirrors of per-op
+    /// consensus events (task 0182).
+    pub source: EventSource,
     /// Contract that emitted the event (C... address). `None` for system events without a contract.
     pub contract_id: Option<String>,
     /// ScVal-decoded topic values as JSON array.

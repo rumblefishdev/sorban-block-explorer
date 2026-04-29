@@ -15,15 +15,13 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
-use domain::{
-    AssetType, ContractEventType, ContractType, NftEventType, OperationType, TokenAssetType,
-};
+use domain::{AssetType, ContractType, NftEventType, OperationType, TokenAssetType};
 use serde_json::Value;
 use xdr_parser::types::{
-    ExtractedAccountState, ExtractedAsset, ExtractedContractDeployment, ExtractedContractInterface,
-    ExtractedEvent, ExtractedInvocation, ExtractedLedger, ExtractedLiquidityPool,
-    ExtractedLiquidityPoolSnapshot, ExtractedLpPosition, ExtractedNft, ExtractedNftEvent,
-    ExtractedOperation, ExtractedTransaction,
+    EventSource, ExtractedAccountState, ExtractedAsset, ExtractedContractDeployment,
+    ExtractedContractInterface, ExtractedEvent, ExtractedInvocation, ExtractedLedger,
+    ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot, ExtractedLpPosition, ExtractedNft,
+    ExtractedNftEvent, ExtractedOperation, ExtractedTransaction,
 };
 
 use super::HandlerError;
@@ -673,16 +671,24 @@ impl Staged {
 
         // --- events flatten for appearance aggregation ---------------------
         //
-        // Filter out event_type = "diagnostic". Per Stellar docs these are
-        // debug-only traces (fn_call / fn_return / core_metrics / log /
-        // error / host_fn_failed) emitted by the Soroban host VM and by
-        // stellar-core's InvokeHostFunctionOpFrame; they are explicitly
-        // "not hashed into the ledger, and therefore are not part of the
-        // protocol" and "not useful for most users". ADR 0033 routes them
-        // (and all other event detail) to the public archive; the DB
-        // appearance index only counts "contract" and "system" events.
-        // On a mainnet sample diagnostic events are ~85 % of event volume
-        // and previously dominated events_ms in persist_ledger.
+        // Drop the entire `*.diagnostic_events` container — debug-only
+        // traces (fn_call / fn_return / core_metrics / log / error /
+        // host_fn_failed) per Stellar docs, "not hashed into the ledger,
+        // and therefore are not part of the protocol" (CAP-67). ADR 0033
+        // routes diagnostic detail to the public archive; the DB
+        // appearance index only counts consensus events.
+        //
+        // Filter on `EventSource::Diagnostic` — NOT on inner
+        // `event_type == Diagnostic`. Stellar core mirrors every per-op
+        // consensus Contract event into `v4.diagnostic_events` with
+        // inner `type_ = Contract` (byte-identical), so a type-based
+        // filter passes the duplicate through and inflates `amount` by
+        // the per-op event count. Container-based filter drops both the
+        // host-VM trace entries and the Contract-typed mirrors in one
+        // step (task 0182).
+        //
+        // On a mainnet sample diagnostic events are ~85 % of event
+        // volume and previously dominated events_ms in persist_ledger.
         let mut event_rows: Vec<EventRow> = Vec::new();
         let mut diagnostic_dropped = 0usize;
         for (tx_hash, evs) in events {
@@ -690,7 +696,7 @@ impl Staged {
                 continue;
             };
             for ev in evs {
-                if ev.event_type == ContractEventType::Diagnostic {
+                if ev.source == EventSource::Diagnostic {
                     diagnostic_dropped += 1;
                     continue;
                 }
@@ -707,7 +713,7 @@ impl Staged {
                 ledger_sequence = ledger.sequence,
                 diagnostic_dropped,
                 staged = event_rows.len(),
-                "staged events for appearance aggregation (diagnostic filtered — S3 lane per ADR 0033)"
+                "staged events for appearance aggregation (diagnostic container dropped — S3 lane per ADR 0033)"
             );
         }
 
