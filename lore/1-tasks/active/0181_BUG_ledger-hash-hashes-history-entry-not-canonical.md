@@ -2,7 +2,7 @@
 id: '0181'
 title: 'BUG: xdr-parser ledger.hash hashes the history entry, not the canonical ledger hash'
 type: BUG
-status: backlog
+status: active
 related_adr: []
 related_tasks: ['0173']
 tags: ['xdr-parser', 'ledger', 'data-correctness', 'effort-small']
@@ -16,6 +16,10 @@ history:
       (`docs/architecture/database-schema/endpoint-queries` E02 verification).
       Bug pre-dates 0173 — flagged independently while comparing
       `ledgers.hash` between DB and Horizon.
+  - date: '2026-04-29'
+    status: active
+    who: fmazur
+    note: 'Promoted to active via /promote-task to unblock E04/E05 ledger hash correctness.'
 ---
 
 # BUG: xdr-parser ledger.hash hashes the history entry, not the canonical ledger hash
