@@ -29,8 +29,8 @@ use crate::state::AppState;
 use crate::stellar_archive::StellarArchiveFetcher;
 use crate::{liquidity_pools, transactions};
 
-/// Build a test app with the transactions and liquidity-pools routers
-/// mounted at /v1.
+/// Build a test app with the transactions, liquidity-pools, assets and
+/// ledgers routers mounted at /v1.
 ///
 /// Caller supplies the `PgPool`. Validation tests that never touch the DB
 /// pass `connect_lazy("...")` (free until first query), DB-gated tests
@@ -1283,9 +1283,9 @@ async fn ledgers_detail_unknown_sequence_returns_404_against_real_db() {
 }
 
 /// Detail endpoint shape against a real DB row + the head-vs-closed
-/// Cache-Control branching. Picks the lowest indexed sequence (so it is
-/// guaranteed not to be the chain head) for the closed-ledger assertion,
-/// and the highest indexed sequence for the head assertion.
+/// Cache-Control branching. Selects the two most recent ledgers, uses
+/// the second-most-recent sequence for the closed-ledger assertion,
+/// and the most recent sequence for the head assertion.
 #[tokio::test]
 async fn ledgers_detail_returns_header_and_cache_control_against_real_db() {
     let Ok(database_url) = std::env::var("DATABASE_URL") else {
