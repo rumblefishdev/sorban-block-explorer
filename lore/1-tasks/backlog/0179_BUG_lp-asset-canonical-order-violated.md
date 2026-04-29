@@ -94,7 +94,7 @@ which is also worth a Phase 1 invariant check (currently absent).
 - [ ] Either (a) read assets from the canonical on-chain LedgerEntry
       (post-deposit state), or (b) sort the pair before persisting
 - [ ] Add a Phase 1 invariant: `pool_id` matches `SHA-256(canonical
-asset_a, asset_b, fee_bp)` — verify against
+      asset_a, asset_b, fee_bp)` — verify against
       [task 0175 sql/15_liquidity_pools.sql](../../../crates/audit-harness/sql/15_liquidity_pools.sql)
       I3 sibling. Catches the flipped state directly via the
       protocol-derived hash, not just the comparison rule.
