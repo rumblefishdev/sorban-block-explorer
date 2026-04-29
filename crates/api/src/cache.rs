@@ -8,7 +8,7 @@
 //! stampede protection on an async initialiser — see the "Sync vs
 //! future" section below.
 //!
-//! See `lore/1-tasks/active/0180_REFACTOR_api-cache-moka-migration.md`
+//! See `lore/1-tasks/archive/0180_REFACTOR_api-cache-moka-migration.md`
 //! for the rationale (in particular: why `moka` and why no Redis yet).
 //!
 //! ## Sync vs future
