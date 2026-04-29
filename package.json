@@ -16,7 +16,6 @@
     "lint": "npx nx run-many -t lint",
     "test": "npx nx run-many -t test",
     "typecheck": "npx nx run-many -t typecheck",
-    "format:staged": "npx lint-staged",
     "prepare": "husky",
     "verify:staged": "node tools/scripts/run-affected-checks.mjs staged",
     "verify:push": "node tools/scripts/run-affected-checks.mjs push",

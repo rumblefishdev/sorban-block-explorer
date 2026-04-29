@@ -83,6 +83,10 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: 'api-types-codegen-${{ runner.arch }}'
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
       - run: npm ci
       - run: npx nx run @rumblefish/api-types:check-generated
 

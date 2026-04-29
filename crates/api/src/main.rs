@@ -18,13 +18,9 @@ mod transactions;
 mod stellar_archive;
 
 use axum::{Json, Router, routing::get};
-use utoipa::OpenApi;
 use utoipa::openapi::OpenApi as OpenApiSpec;
-use utoipa_axum::router::OpenApiRouter;
-use utoipa_axum::routes;
 
 use crate::config::AppConfig;
-use crate::openapi::ApiDoc;
 use crate::state::AppState;
 use crate::stellar_archive::StellarArchiveFetcher;
 
@@ -33,17 +29,12 @@ use crate::stellar_archive::StellarArchiveFetcher;
 /// Kept pure (no `std::env` reads) so tests can construct their own
 /// config and state without mutating process state.
 fn app(config: &AppConfig, state: AppState) -> Router {
-    // `routes!(handler)` registers the #[utoipa::path] annotation so
-    // the spec returned by `split_for_parts` carries the live paths.
-    // We then stamp the runtime `servers` block (resolved from
-    // AppConfig.base_url) onto the registered spec.
-    let (router, mut spec) = OpenApiRouter::with_openapi(ApiDoc::openapi())
-        .routes(routes!(ops::health))
-        .nest("/v1", network::router())
-        .nest("/v1", transactions::router())
-        .nest("/v1", contracts::router())
-        .nest("/v1", liquidity_pools::router())
-        .nest("/v1", assets::router())
+    // Shared `openapi::register_routes` builds the same chain that the
+    // `extract_openapi` build-time binary uses, so the codegen spec and
+    // the live router cannot advertise different endpoints. We then stamp
+    // the runtime `servers` block (resolved from AppConfig.base_url) onto
+    // the registered spec.
+    let (router, mut spec) = openapi::register_routes()
         .with_state(state)
         .split_for_parts();
     spec.servers = Some(vec![utoipa::openapi::server::Server::new(&config.base_url)]);

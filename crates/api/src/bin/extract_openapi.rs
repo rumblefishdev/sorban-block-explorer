@@ -2,20 +2,13 @@
 //!
 //! Prints the current API spec to stdout so callers can redirect it to a file:
 //! `cargo run -p api --bin extract_openapi > libs/api-types/src/openapi.json`
-
-use utoipa::OpenApi;
-use utoipa_axum::router::OpenApiRouter;
-use utoipa_axum::routes;
+//!
+//! Reuses [`api::openapi::register_routes`] so the routes advertised here
+//! are exactly the routes mounted by the live Lambda app — no chance for
+//! the bin and the app to diverge on which endpoints they expose.
 
 fn main() {
-    let (_, spec) = OpenApiRouter::with_openapi(api::openapi::ApiDoc::openapi())
-        .routes(routes!(api::ops::health))
-        .nest("/v1", api::network::router())
-        .nest("/v1", api::transactions::router())
-        .nest("/v1", api::contracts::router())
-        .nest("/v1", api::liquidity_pools::router())
-        .nest("/v1", api::assets::router())
-        .split_for_parts();
+    let (_, spec) = api::openapi::register_routes().split_for_parts();
 
     println!(
         "{}",

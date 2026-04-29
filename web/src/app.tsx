@@ -6,23 +6,19 @@ const placeholderNav: NavigationItem[] = [
   { href: '/transactions', label: 'Transactions' },
 ];
 
-const placeholderStats: Pick<
+// Type-only smoke test that `@rumblefish/api-types` is wired into the
+// workspace. Replace with a real `useNetworkStats()` call once the
+// `/v1/network/stats` page lands.
+export type _NetworkStatsImportSmokeTest = Pick<
   NetworkStats,
   'latest_ledger_sequence' | 'tps_60s'
-> = {
-  latest_ledger_sequence: 0,
-  tps_60s: 0,
-};
+>;
 
 export function App() {
   return (
     <div>
       <h1>Soroban Block Explorer</h1>
       <p>Application scaffold ready.</p>
-      <p>
-        Latest ledger: {placeholderStats.latest_ledger_sequence}, TPS (60s):{' '}
-        {placeholderStats.tps_60s}
-      </p>
       <nav>
         {placeholderNav.map((item) => (
           <a key={item.href} href={item.href}>

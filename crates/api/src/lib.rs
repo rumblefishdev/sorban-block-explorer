@@ -1,16 +1,25 @@
 //! Library surface for the `api` crate.
 //!
-//! This allows auxiliary binaries (for example OpenAPI extractors) to reuse
-//! the same route modules and schema declarations as the Lambda entrypoint.
+//! Auxiliary binaries (e.g. `extract_openapi`) consume only
+//! [`openapi::register_routes`]; the rest of the crate's modules are
+//! crate-private to keep the public surface narrow.
+//!
+//! `dead_code` is silenced at crate level because the binary target
+//! (`main.rs`) compiles its own copy of these modules and exercises
+//! the items the lib does not reach (e.g. `AppConfig::from_env`,
+//! `default_timeout_config`). Keeping them in the lib lets
+//! `register_routes` reference shared types without forcing the bin
+//! to import twice.
+#![allow(dead_code)]
 
-pub mod assets;
-pub mod common;
-pub mod config;
-pub mod contracts;
-pub mod liquidity_pools;
-pub mod network;
+mod assets;
+mod common;
+mod config;
+mod contracts;
+mod liquidity_pools;
+mod network;
 pub mod openapi;
-pub mod ops;
-pub mod state;
-pub mod stellar_archive;
-pub mod transactions;
+mod ops;
+mod state;
+mod stellar_archive;
+mod transactions;

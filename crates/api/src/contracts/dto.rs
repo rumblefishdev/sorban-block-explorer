@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use utoipa::{IntoParams, ToSchema};
+use utoipa::ToSchema;
 
 // ---------------------------------------------------------------------------
 // Request types
@@ -10,15 +10,16 @@ use utoipa::{IntoParams, ToSchema};
 
 /// Query parameters shared by `GET /v1/contracts/:contract_id/invocations`
 /// and `GET /v1/contracts/:contract_id/events`.
-#[derive(Debug, Deserialize, IntoParams, ToSchema)]
+///
+/// Note: deliberately *not* `IntoParams`. The `#[utoipa::path]` `params(...)`
+/// blocks in `handlers.rs` declare `limit` / `cursor` inline so the generated
+/// schema matches every other paginated endpoint (`type: integer`,
+/// `type: string`). `IntoParams` would render the `Option<T>` fields as
+/// `["T", "null"]`, leaking the in-Rust optionality into the wire format
+/// only for these two endpoints.
+#[derive(Debug, Deserialize)]
 pub struct ListParams {
-    /// Items per page (1–100, default 20). Page granularity is per
-    /// `(contract, transaction, ledger)` appearance — a single appearance
-    /// can expand to multiple per-node items in the response, so the
-    /// returned `data.len()` may exceed `limit`.
-    #[schema(minimum = 1, maximum = 100)]
     pub limit: Option<u32>,
-    /// Opaque pagination cursor from a previous response.
     pub cursor: Option<String>,
 }
 
