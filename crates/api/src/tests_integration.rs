@@ -1162,13 +1162,14 @@ async fn contracts_detail_returns_canonical_shape_against_real_db() {
 // Ledgers endpoints (task 0047) — list / detail / embedded transactions.
 // ---------------------------------------------------------------------------
 
-/// Negative or non-numeric `:sequence` must short-circuit to a 400
-/// `invalid_id` envelope before any DB contact. Locks the path-param
-/// validator: a future refactor that delegates to `Path<i64>` and drops
-/// our custom envelope would change the body shape and break clients.
+/// Non-numeric / negative / zero / >u32::MAX `:sequence` must
+/// short-circuit to a 400 `invalid_sequence` envelope before any DB
+/// contact. Locks the full `common::path::sequence` validator contract:
+/// genesis is sequence 1 (zero rejected), Stellar caps at u32, anything
+/// else is shape-invalid.
 #[tokio::test]
 async fn ledgers_invalid_sequence_returns_400_envelope() {
-    for bad in ["abc", "-1", "12.34"] {
+    for bad in ["abc", "-1", "12.34", "0", "4294967296"] {
         let app = lazy_app();
         let resp = app
             .oneshot(
@@ -1181,7 +1182,7 @@ async fn ledgers_invalid_sequence_returns_400_envelope() {
             .unwrap();
         let (status, json) = body_json(resp).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "case {bad}: {json}");
-        assert_eq!(json["code"], "invalid_id", "case {bad}: {json}");
+        assert_eq!(json["code"], "invalid_sequence", "case {bad}: {json}");
     }
 }
 
@@ -1741,20 +1742,20 @@ async fn detail_unknown_hash_returns_404_not_500() {
 }
 
 #[tokio::test]
-async fn list_with_unreachable_s3_returns_200_with_degraded_memo() {
-    // The fake AWS credentials in `build_app` mean every public-archive
-    // fetch fails. The list handler must still return 200 with degraded
-    // memo fields (None) for any rows that happen to be in the DB —
-    // never 500. Skips when the DB is empty (cannot prove degradation
-    // without rows to enrich).
+async fn list_returns_200_without_s3_contact() {
+    // The fake AWS credentials in `build_app` would fail any archive fetch
+    // — but the list handler is now DB-only (post-task-0047, ADR 0029):
+    // no S3 contact regardless of DB content. This test locks that
+    // invariant: list must return 200 with well-formed rows even though
+    // the AWS client cannot authenticate.
     let Ok(database_url) = std::env::var("DATABASE_URL") else {
-        eprintln!("DATABASE_URL unset — skipping list-degraded-memo test");
+        eprintln!("DATABASE_URL unset — skipping list-no-s3-contact test");
         return;
     };
     let pool = match PgPool::connect(&database_url).await {
         Ok(p) => p,
         Err(err) => {
-            eprintln!("DATABASE_URL unreachable ({err}) — skipping list-degraded-memo test");
+            eprintln!("DATABASE_URL unreachable ({err}) — skipping list-no-s3-contact test");
             return;
         }
     };
@@ -1773,24 +1774,16 @@ async fn list_with_unreachable_s3_returns_200_with_degraded_memo() {
     assert_eq!(
         status,
         StatusCode::OK,
-        "list must stay 200 even when S3 is unreachable: {status} {json}"
+        "list must stay 200 with DB-only path: {status} {json}"
     );
 
     let data = json["data"].as_array().expect("data array").clone();
-    if data.is_empty() {
-        eprintln!("DB empty — cannot assert per-row memo degradation, skipping");
-        return;
-    }
-
-    // Every row must serialise; memo / memo_type are allowed to be null
-    // (degraded) but the row itself must be present and well-formed.
     for row in &data {
         assert!(row["hash"].is_string(), "row missing hash: {row}");
-        // memo_type / memo are Option<String> with skip_serializing_if on the
-        // None branch — either absent or null is valid for the degraded path.
-        if let Some(mt) = row.get("memo_type") {
-            assert!(mt.is_null() || mt.is_string(), "memo_type bad shape: {row}");
-        }
+        assert!(
+            row.get("memo").is_none() && row.get("memo_type").is_none(),
+            "list rows must not carry memo fields (DB-only contract): {row}"
+        );
     }
 }
 
@@ -1939,11 +1932,11 @@ async fn contract_interface_unknown_returns_404() {
 //
 // Stellar `LedgerHeader.ledgerSeq` is `uint32` so any DB row with
 // `ledger_sequence > u32::MAX` indicates corrupted ingestion or a
-// hypothetical schema drift. The handler responds by skipping the row from
-// memo enrichment / heavy fetch and logging a `warn`, never panicking.
-// Seeding such a row in PG is unrealistic (would require a deliberate
-// out-of-bound BIGINT), so we lock the conversion behaviour at the type
-// boundary instead.
+// hypothetical schema drift. The handler responds by skipping the row
+// from heavy fetch and logging a `warn`, never panicking. Seeding such
+// a row in PG is unrealistic (would require a deliberate out-of-bound
+// BIGINT), so we lock the conversion behaviour at the type boundary
+// instead.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1964,8 +1957,7 @@ fn u32_try_from_invariants_relied_on_by_handlers() {
 
     // The handler's pattern: failed conversion → warn + skip / heavy=None,
     // not panic. Verified by the call sites in
-    // `transactions/handlers.rs::list_transactions` (memo enrichment loop),
-    // `transactions/handlers.rs::get_transaction` (heavy fetch),
-    // and `contracts/handlers.rs::expand_invocations` / `expand_events`
+    // `transactions/handlers.rs::get_transaction` (heavy fetch) and
+    // `contracts/handlers.rs::expand_invocations` / `expand_events`
     // (per-row stop-and-retry).
 }
