@@ -2,6 +2,10 @@
 
 This library was generated with [Nx](https://nx.dev).
 
-## Building
+## Available targets
 
-Run `nx build api-types` to build the library.
+This library does not define a `build` target. Use the available Nx targets instead:
+
+- `nx extract-openapi api-types`
+- `nx generate api-types`
+- `nx check-generated api-types`
