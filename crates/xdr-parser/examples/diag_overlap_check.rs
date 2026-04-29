@@ -22,7 +22,7 @@
 //!
 //! No DB, no network — pure file scan + XDR parse + byte-set diff.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
@@ -267,7 +267,7 @@ fn analyze_v4(
     // diagnostic_events container.
     let orphan_contract: HashSet<&Vec<u8>> = diag_contract_set.difference(&per_op_set).collect();
     let orphan_count = orphan_contract.len();
-    if diag_set.len() > 0 {
+    if !diag_set.is_empty() {
         if successful {
             stats.successful_tx_with_diag += 1;
         } else {
