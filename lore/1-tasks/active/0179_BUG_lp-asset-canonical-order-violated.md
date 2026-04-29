@@ -2,14 +2,20 @@
 id: '0179'
 title: 'BUG: 40 liquidity_pools rows have asset_a > asset_b (Stellar canonical order violated)'
 type: BUG
-status: backlog
-related_adr: ['0037']
+status: active
+related_adr: ['0026', '0030', '0037']
 related_tasks: ['0126', '0162', '0175']
 tags:
-  [priority-medium, layer-parser, layer-persist, audit-driven, liquidity-pools]
+  [
+    priority-medium,
+    layer-audit-harness,
+    audit-driven,
+    liquidity-pools,
+    false-positive,
+  ]
 links:
+  - crates/audit-harness/sql/15_liquidity_pools.sql
   - crates/xdr-parser/src/state.rs
-  - crates/indexer/src/handler/persist/write.rs
   - lore/2-adrs/0037_current-schema-snapshot.md
 history:
   - date: '2026-04-28'
@@ -24,6 +30,24 @@ history:
       `LiquidityPoolDeposit`, so violations indicate the parser is
       either reading the wrong fields or persisting before
       canonicalisation.
+  - date: '2026-04-29'
+    status: active
+    who: stkrolikiewicz
+    note: >
+      Re-classified: NOT a parser/data bug — broken invariant test.
+      I3 in `audit-harness/sql/15_liquidity_pools.sql:23-24` compares
+      `asset_a_issuer_id > asset_b_issuer_id` where issuer_id is the
+      surrogate BIGINT FK to `accounts` (ADR 0026/0030),
+      insertion-order assigned. Stellar canonical order uses ed25519
+      raw bytes of the issuer — uncorrelated with our surrogate IDs.
+      Same-code-different-issuer pools where surrogates land
+      reverse-of-canonical produce false positives (40/N rows).
+      Parser at `state.rs:440-447` reads `cp.params.asset_a/b` from
+      XDR LedgerEntry which Stellar canonicalizes at deposit time,
+      so the persisted pair IS canonical. Fix: replace I3
+      surrogate-ID compare with `pool_id == SHA-256(canonical pair,
+      fee_bps)` protocol-derived hash check (also covers the missing
+      acceptance criterion the original task flagged).
 ---
 
 # `liquidity_pools` asset pair order violations
@@ -94,7 +118,7 @@ which is also worth a Phase 1 invariant check (currently absent).
 - [ ] Either (a) read assets from the canonical on-chain LedgerEntry
       (post-deposit state), or (b) sort the pair before persisting
 - [ ] Add a Phase 1 invariant: `pool_id` matches `SHA-256(canonical
-      asset_a, asset_b, fee_bp)` — verify against
+    asset_a, asset_b, fee_bp)` — verify against
       [task 0175 sql/15_liquidity_pools.sql](../../../crates/audit-harness/sql/15_liquidity_pools.sql)
       I3 sibling. Catches the flipped state directly via the
       protocol-derived hash, not just the comparison rule.
