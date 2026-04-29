@@ -2,9 +2,9 @@
 id: '0178'
 title: 'BUG: 1332 contract StrKeys (C-prefix) leak into `accounts.account_id` instead of `soroban_contracts`'
 type: BUG
-status: backlog
+status: active
 related_adr: ['0026', '0030', '0037']
-related_tasks: ['0044', '0175']
+related_tasks: ['0044', '0173', '0175', '0177']
 tags: [priority-high, layer-parser, layer-persist, audit-driven, taxonomy]
 links:
   - crates/indexer/src/handler/persist/staging.rs
@@ -20,6 +20,19 @@ history:
       and should live in `soroban_contracts`, not `accounts`. Per
       ADR 0026 + ADR 0030 the two registries are kept disjoint
       (account = ed25519 G-key, contract = C-prefix StrKey hash).
+  - date: '2026-04-29'
+    status: active
+    who: stkrolikiewicz
+    note: >
+      Defense-in-depth filter at staging.rs:421-423 (commit 7202209,
+      lore-0173, Apr 29) already drops non-G/oversize strkeys before
+      accounts upsert: `k.starts_with('G') && k.len() <= 56`. 30k
+      smoke was indexed Apr 28, *before* the filter merged, so the
+      1332 baked-in C-prefix entries are stale data from the
+      pre-0173 binary, not an active leak. Re-backfill on develop
+      validates 0 violations. This task lands cosmetic hardening:
+      `is_strkey_account` tightened from G|M to G+len56 (M-path
+      obsolete since 0177 muxed canonicalization at parser).
 ---
 
 # Contract StrKeys leaking into accounts table
