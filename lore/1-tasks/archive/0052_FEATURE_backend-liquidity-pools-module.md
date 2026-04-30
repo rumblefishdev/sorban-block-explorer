@@ -50,9 +50,10 @@ Implement the Liquidity Pools module providing pool listing with asset/TVL filte
 
 > **Stack:** axum 0.8 + utoipa 5.4 + sqlx 0.8 (per ADR 0005). Code in crates/api/.
 
-## Status: Backlog
+## Status: Completed
 
-**Current state:** Not started. Depends on tasks 0023 (bootstrap), 0043 (pagination).
+**Completed:** 2026-04-30 (PR #152, bundled with task 0051). Dependencies on
+0023 (bootstrap) and 0043 (pagination) were resolved before activation.
 
 ## Context
 
@@ -213,13 +214,13 @@ Liquidity pools combine current-state reads with historical aggregate reads. The
 | --------- | ------ | ----------- |
 | `id`      | string | Pool ID     |
 
-**Query Parameters:**
+**Query Parameters:** (all optional with sensible defaults — see _Emerged #5_)
 
-| Parameter  | Type   | Required | Description                     |
-| ---------- | ------ | -------- | ------------------------------- |
-| `interval` | string | yes      | Time interval: `1h`, `1d`, `1w` |
-| `from`     | string | yes      | Start time (ISO 8601 timestamp) |
-| `to`       | string | yes      | End time (ISO 8601 timestamp)   |
+| Parameter  | Type   | Required | Default                                         | Description                     |
+| ---------- | ------ | -------- | ----------------------------------------------- | ------------------------------- |
+| `interval` | string | no       | `1d`                                            | Time interval: `1h`, `1d`, `1w` |
+| `from`     | string | no       | `to` − interval window (1h→7d, 1d→90d, 1w→104w) | Start time (ISO 8601 timestamp) |
+| `to`       | string | no       | `now()`                                         | End time (ISO 8601 timestamp)   |
 
 **Response Shape:**
 

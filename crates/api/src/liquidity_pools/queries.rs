@@ -431,14 +431,13 @@ pub async fn fetch_pool_transactions(
 
 /// `GET /v1/liquidity-pools/:id/chart`. The interval string is validated
 /// by the handler against the `1h | 1d | 1w` allowlist before this is
-/// called — the inline CASE in SQL is a defensive second gate.
+/// called — the `assert!` below is a defensive second gate.
 ///
-/// The CASE has no `ELSE` branch on purpose: if a value bypasses the
-/// handler's allowlist somehow, `kw` is NULL and `date_trunc(NULL, ...)`
-/// returns NULL — every row hashes to the same NULL group, the result
-/// is effectively empty/garbage instead of producing microsecond buckets
-/// from a sub-second string. The `debug_assert!` below catches the same
-/// case in tests so any drift is surfaced before deploy.
+/// `assert!` (not `debug_assert!`) so a release build also panics on
+/// allowlist drift instead of silently producing a NULL `bucket` (which
+/// would then panic at `r.get::<DateTime<Utc>, _>("bucket")` when sqlx
+/// tries to decode NULL into a non-Optional `DateTime`). Cheaper to
+/// fail loud on the SQL parameter than at row decode.
 pub async fn fetch_pool_chart(
     pool: &PgPool,
     pool_id_hex: &str,
@@ -446,7 +445,7 @@ pub async fn fetch_pool_chart(
     from: DateTime<Utc>,
     to: DateTime<Utc>,
 ) -> Result<Vec<ChartDataPoint>, sqlx::Error> {
-    debug_assert!(
+    assert!(
         matches!(interval, "1h" | "1d" | "1w"),
         "fetch_pool_chart called with non-allowlisted interval `{interval}` — \
          handler validation drift; expected 1h | 1d | 1w"

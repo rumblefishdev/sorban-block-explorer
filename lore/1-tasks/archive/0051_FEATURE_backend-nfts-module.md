@@ -42,13 +42,14 @@ history:
 
 ## Summary
 
-Implement the NFTs module providing paginated NFT listing with collection/contract filters, NFT detail with sparse metadata tolerance, and NFT transfer history derived from Soroban events and linked transactions (not a separate table).
+Implement the NFTs module providing paginated NFT listing with collection/contract/name filters, NFT detail with sparse metadata tolerance, and NFT transfer history derived from the dedicated `nft_ownership` partitioned table joined with `transactions` for hash/timestamp.
 
 > **Stack:** axum 0.8 + utoipa 5.4 + sqlx 0.8 (per ADR 0005). Code in crates/api/.
 
-## Status: Backlog
+## Status: Completed
 
-**Current state:** Not started. Depends on tasks 0023 (bootstrap), 0043 (pagination).
+**Completed:** 2026-04-30 (PR #152, bundled with task 0052). Dependencies on
+0023 (bootstrap) and 0043 (pagination) were resolved before activation.
 
 ## Context
 
@@ -287,5 +288,5 @@ Implement `GET /nfts/:id/transfers` reading the full ownership timeline from `nf
 ## Notes
 
 - NFT metadata quality varies significantly across the Soroban ecosystem.
-- Transfer derivation reads from `nft_ownership` (partitioned), filtered on NftEventType = transfer; main complexity is FK joins back to `accounts` and `transactions` to render external strkeys + tx hash.
+- Transfer derivation reads the full ownership timeline from `nft_ownership` (partitioned, **no `event_type` filter** — mint/transfer/burn all surface). Each row carries `event_type_name` so the frontend can label distinctly. The `LEAD(owner_id)` window function reconstructs `from_account` and would break if mint were filtered out (the row immediately following mint would lose its previous-owner reference). Main complexity is FK joins back to `accounts` and `transactions` to render external G-strkeys + tx hash.
 - The contract_id + token_id unique constraint ensures correct NFT identity resolution.

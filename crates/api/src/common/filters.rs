@@ -147,7 +147,7 @@ pub fn parse_iso8601(value: &str, filter_key: &str) -> Result<DateTime<Utc>, Res
             errors::bad_request_with_details(
                 errors::INVALID_FILTER,
                 format!("{filter_key} must be a valid ISO 8601 / RFC 3339 timestamp"),
-                serde_json::json!({ "param": filter_key, "received": value }),
+                serde_json::json!({ "filter": filter_key, "received": value }),
             )
         })
 }
@@ -339,7 +339,7 @@ mod tests {
         let (status, json) = body_json(err).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(json["code"], "invalid_filter");
-        assert_eq!(json["details"]["param"], "from");
+        assert_eq!(json["details"]["filter"], "from");
     }
 
     #[tokio::test]
@@ -347,7 +347,7 @@ mod tests {
         let err = parse_iso8601("not-a-timestamp", "to").unwrap_err();
         let (_, json) = body_json(err).await;
         assert_eq!(json["code"], "invalid_filter");
-        assert_eq!(json["details"]["param"], "to");
+        assert_eq!(json["details"]["filter"], "to");
     }
 
     #[test]
