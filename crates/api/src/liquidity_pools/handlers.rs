@@ -114,6 +114,31 @@ pub async fn list_participants(
 // List / Detail / Transactions / Chart (task 0052)
 // ---------------------------------------------------------------------------
 
+/// Validate `filter[min_tvl]` shape: a non-negative decimal string with
+/// at least one digit and at most one `.`.
+///
+/// `f64::parse` accepted `NaN` / `Infinity` / scientific notation /
+/// negative values that PostgreSQL `NUMERIC` either rejects later or
+/// stores in a way that breaks the `>= $X::numeric` predicate semantics
+/// (`NaN >= anything` is FALSE in PG, including `NaN >= NaN`). It also
+/// silently widened-then-narrowed `NUMERIC(28,7)` precision.
+///
+/// This validator stays at the API boundary so a confused caller gets a
+/// 400 envelope explaining the shape rule, instead of a Postgres parse
+/// error surfacing as 500 mid-query.
+fn is_valid_decimal_string(s: &str) -> bool {
+    let mut digits = 0usize;
+    let mut dots = 0usize;
+    for b in s.bytes() {
+        match b {
+            b'0'..=b'9' => digits += 1,
+            b'.' => dots += 1,
+            _ => return false,
+        }
+    }
+    digits > 0 && dots <= 1
+}
+
 fn map_pool_item(row: PoolRow) -> PoolItem {
     PoolItem {
         pool_id: row.pool_id_hex,
@@ -149,7 +174,8 @@ fn map_pool_item(row: PoolRow) -> PoolItem {
     tag = "liquidity-pools",
     params(
         ("limit" = Option<u32>, Query,
-         description = "Items per page (1–100, default 20)."),
+         description = "Items per page (1–100, default 20).",
+         minimum = 1, maximum = 100),
         ("cursor" = Option<String>, Query,
          description = "Opaque pagination cursor from a previous response."),
         PoolListParams,
@@ -215,11 +241,13 @@ pub async fn list_pools(
     }
 
     if let Some(min) = params.filter_min_tvl.as_deref()
-        && min.parse::<f64>().is_err()
+        && !is_valid_decimal_string(min)
     {
         return errors::bad_request_with_details(
             errors::INVALID_FILTER,
-            "filter[min_tvl] must be a decimal number",
+            "filter[min_tvl] must be a non-negative decimal string \
+             (digits and at most one `.`); NaN, Infinity, exponent forms, \
+             and signed values are rejected",
             serde_json::json!({ "filter": "min_tvl", "received": min }),
         );
     }
@@ -293,7 +321,8 @@ pub async fn get_pool(State(state): State<AppState>, Path(pool_id): Path<String>
         ("pool_id" = String, Path,
          description = "Pool ID — 64-char lowercase hex (BYTEA(32))."),
         ("limit" = Option<u32>, Query,
-         description = "Items per page (1–100, default 20)."),
+         description = "Items per page (1–100, default 20).",
+         minimum = 1, maximum = 100),
         ("cursor" = Option<String>, Query,
          description = "Opaque pagination cursor from a previous response."),
     ),
@@ -461,10 +490,14 @@ pub async fn get_pool_chart(
 
     // Bucket-count guard: reject ranges that would force the aggregation
     // beyond `MAX_CHART_BUCKETS`. `date_trunc` aligns buckets to wall-clock
-    // boundaries so the actual count can be one above this estimate, but
-    // the cap is conservative enough to absorb that off-by-one.
+    // boundaries — a span that crosses a boundary mid-interval produces
+    // one extra bucket. Ceil division covers the "span just under N
+    // intervals" case; `+ 1` covers the wall-clock alignment case.
+    let interval_secs = interval_seconds(&interval);
     let span_seconds = (to - from).num_seconds();
-    let approx_buckets = span_seconds / interval_seconds(&interval);
+    // Manual ceil division (`i64::div_ceil` is still unstable as of stable
+    // Rust 2024). `+ 1` covers the wall-clock alignment edge.
+    let approx_buckets = (span_seconds + interval_secs - 1) / interval_secs + 1;
     if approx_buckets > MAX_CHART_BUCKETS {
         return errors::bad_request_with_details(
             errors::INVALID_FILTER,

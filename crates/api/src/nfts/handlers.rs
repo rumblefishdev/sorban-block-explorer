@@ -39,7 +39,8 @@ fn parse_nft_id(raw: &str) -> Result<i32, axum::response::Response> {
     tag = "nfts",
     params(
         ("limit" = Option<u32>, Query,
-         description = "Items per page (1–100, default 20)."),
+         description = "Items per page (1–100, default 20).",
+         minimum = 1, maximum = 100),
         ("cursor" = Option<String>, Query,
          description = "Opaque pagination cursor from a previous response."),
         ListParams,
@@ -127,7 +128,8 @@ pub async fn get_nft(State(state): State<AppState>, Path(id): Path<String>) -> R
     params(
         ("id" = i32, Path, description = "Internal NFT surrogate id (`nfts.id`)."),
         ("limit" = Option<u32>, Query,
-         description = "Items per page (1–100, default 20)."),
+         description = "Items per page (1–100, default 20).",
+         minimum = 1, maximum = 100),
         ("cursor" = Option<String>, Query,
          description = "Opaque pagination cursor from a previous response."),
     ),
