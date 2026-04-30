@@ -200,6 +200,11 @@ export const listParticipants = <ThrowOnError extends boolean = false>(
  * response for 30s in process memory. See the task 0045 spec and
  * `docs/architecture/database-schema/endpoint-queries/01_get_network_stats.sql`
  * for the full data-source mapping.
+ *
+ * Concurrent cold-cache requests deduplicate via
+ * `moka::future::Cache::try_get_with` — the first task runs the
+ * async DB query and the rest wait on its result instead of fanning
+ * out N Postgres round-trips.
  */
 export const getNetworkStats = <ThrowOnError extends boolean = false>(
   options?: Options<GetNetworkStatsData, ThrowOnError>

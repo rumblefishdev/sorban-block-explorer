@@ -752,7 +752,7 @@
       "get": {
         "tags": ["network"],
         "summary": "Get top-level chain overview stats.",
-        "description": "Reads the canonical single-statement network-stats query (latest\nledger row + `ledgers` 60s aggregate for TPS + `pg_class.reltuples`\nestimates for accounts / contracts) and caches the assembled\nresponse for 30s in process memory. See the task 0045 spec and\n`docs/architecture/database-schema/endpoint-queries/01_get_network_stats.sql`\nfor the full data-source mapping.",
+        "description": "Reads the canonical single-statement network-stats query (latest\nledger row + `ledgers` 60s aggregate for TPS + `pg_class.reltuples`\nestimates for accounts / contracts) and caches the assembled\nresponse for 30s in process memory. See the task 0045 spec and\n`docs/architecture/database-schema/endpoint-queries/01_get_network_stats.sql`\nfor the full data-source mapping.\n\nConcurrent cold-cache requests deduplicate via\n`moka::future::Cache::try_get_with` — the first task runs the\nasync DB query and the rest wait on its result instead of fanning\nout N Postgres round-trips.",
         "operationId": "get_network_stats",
         "responses": {
           "200": {
