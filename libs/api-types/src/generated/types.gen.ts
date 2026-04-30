@@ -170,26 +170,47 @@ export type E3HeavyFields = {
  * the public-archive fetch failed and the caller degraded gracefully.
  */
 export type E3ResponseTransactionDetailLight = {
+  /**
+   * 1-based position of this transaction within its ledger.
+   */
+  application_order: number;
   created_at: string;
   /**
    * Fee charged in stroops.
    */
   fee_charged: number;
+  has_soroban: boolean;
   /**
    * Transaction hash (64-char lowercase hex).
    */
   hash: string;
-  ledger_sequence: number;
   /**
-   * Operations as known to the DB — type tag + contract_id only. XDR-decoded
-   * per-op detail (function name, raw parameters) lives in
-   * `heavy.operations[]`.
+   * Inner-transaction hash (64-char hex) for fee-bump envelopes, `null` otherwise.
    */
+  inner_tx_hash?: string | null;
+  ledger_sequence: number;
+  operation_count: number;
   operations: Array<OperationItem>;
   /**
    * `true` when the XDR parser encountered an error for this transaction.
    */
   parse_error: boolean;
+  /**
+   * Accounts touched by this transaction. Populated only when
+   * `heavy_fields_status = "unavailable"`; otherwise `[]` and consumers
+   * should rely on the heavy block.
+   */
+  participants: Array<string>;
+  /**
+   * Soroban event appearance index rows. Same fallback semantics as
+   * `participants`. Full topics + data live in `heavy.contract_events`.
+   */
+  soroban_events: Array<EventAppearanceItem>;
+  /**
+   * Soroban invocation appearance index rows. Same fallback semantics
+   * as `participants`. Full call hierarchy lives in `heavy.operation_tree`.
+   */
+  soroban_invocations: Array<InvocationAppearanceItem>;
   source_account: string;
   successful: boolean;
 } & {
@@ -218,6 +239,13 @@ export type ErrorEnvelope = {
    * Human-readable error description.
    */
   message: string;
+};
+
+export type EventAppearanceItem = {
+  amount: number;
+  contract_id: string;
+  created_at: string;
+  ledger_sequence: number;
 };
 
 /**
@@ -249,6 +277,17 @@ export type InterfaceResponse = {
   contract_id: string;
   interface_metadata?: unknown;
   wasm_hash?: string | null;
+};
+
+export type InvocationAppearanceItem = {
+  amount: number;
+  /**
+   * Root caller G-StrKey. Per ADR 0034 nested-call hierarchy is XDR-only.
+   */
+  caller_account?: string | null;
+  contract_id: string;
+  created_at: string;
+  ledger_sequence: number;
 };
 
 export type InvocationItem = {
@@ -374,20 +413,35 @@ export type NetworkStats = {
   tps_60s: number;
 };
 
-/**
- * DB-sourced operation row in `TransactionDetailLight`.
- */
 export type OperationItem = {
   /**
-   * Contract StrKey (C…) involved in the operation, if applicable.
+   * Global BIGSERIAL `operations_appearances.id`; result-set order
+   * (`ORDER BY oa.id`) is the operation's within-tx application order.
    */
+  appearance_id: number;
+  /**
+   * Asset code (≤12 chars) for classic asset operations.
+   */
+  asset_code?: string | null;
+  asset_issuer?: string | null;
   contract_id?: string | null;
+  created_at: string;
+  destination_account?: string | null;
+  ledger_sequence: number;
+  /**
+   * Hex-encoded liquidity pool ID.
+   */
+  pool_id?: string | null;
+  source_account?: string | null;
+  /**
+   * Raw `OperationType` SMALLINT (ADR 0031).
+   */
+  type: number;
   /**
    * Operation type tag in canonical SCREAMING_SNAKE_CASE
-   * (e.g. `"INVOKE_HOST_FUNCTION"`, `"PAYMENT"`) — produced by
-   * `domain::OperationType`'s `Display` impl.
+   * (e.g. `"INVOKE_HOST_FUNCTION"`).
    */
-  type: string;
+  type_name: string;
 };
 
 /**
@@ -598,17 +652,39 @@ export type PaginatedParticipantItem = {
  */
 export type PaginatedTransactionListItem = {
   data: Array<{
+    /**
+     * 1-based position of this transaction within its ledger.
+     */
+    application_order: number;
+    /**
+     * All C-StrKeys touched anywhere in the transaction.
+     */
+    contract_ids: Array<string>;
     created_at: string;
     /**
      * Fee charged in stroops.
      */
     fee_charged: number;
     /**
+     * `true` when the transaction touched at least one Soroban contract
+     * (root invocation, nested call, or event emission).
+     */
+    has_soroban: boolean;
+    /**
      * Transaction hash (64-char lowercase hex).
      */
     hash: string;
+    /**
+     * Inner-transaction hash (64-char hex) for fee-bump envelopes, `null` otherwise.
+     */
+    inner_tx_hash?: string | null;
     ledger_sequence: number;
     operation_count: number;
+    /**
+     * All distinct operation type names in the transaction
+     * (e.g. `["INVOKE_HOST_FUNCTION", "PAYMENT"]`).
+     */
+    operation_types: Array<string>;
     source_account: string;
     successful: boolean;
   }>;
@@ -664,32 +740,52 @@ export type SignatureDto = {
 /**
  * DB-sourced light slice for the transaction detail endpoint.
  *
- * Composed with `E3HeavyFields` via `merge_e3_response` (from task 0150)
- * into the wrapped E3 response. All XDR-sourced fields (memo, result_code,
- * signatures, events, operations details, envelope_xdr/result_xdr,
- * operation_tree) live in the `heavy` block — see `E3Response`.
+ * Composed with `E3HeavyFields` via `merge_e3_response` (task 0150). All
+ * XDR-sourced fields (memo, result_code, signatures, events, operation
+ * details, envelope_xdr/result_xdr, operation_tree) live in `heavy`.
  */
 export type TransactionDetailLight = {
+  /**
+   * 1-based position of this transaction within its ledger.
+   */
+  application_order: number;
   created_at: string;
   /**
    * Fee charged in stroops.
    */
   fee_charged: number;
+  has_soroban: boolean;
   /**
    * Transaction hash (64-char lowercase hex).
    */
   hash: string;
-  ledger_sequence: number;
   /**
-   * Operations as known to the DB — type tag + contract_id only. XDR-decoded
-   * per-op detail (function name, raw parameters) lives in
-   * `heavy.operations[]`.
+   * Inner-transaction hash (64-char hex) for fee-bump envelopes, `null` otherwise.
    */
+  inner_tx_hash?: string | null;
+  ledger_sequence: number;
+  operation_count: number;
   operations: Array<OperationItem>;
   /**
    * `true` when the XDR parser encountered an error for this transaction.
    */
   parse_error: boolean;
+  /**
+   * Accounts touched by this transaction. Populated only when
+   * `heavy_fields_status = "unavailable"`; otherwise `[]` and consumers
+   * should rely on the heavy block.
+   */
+  participants: Array<string>;
+  /**
+   * Soroban event appearance index rows. Same fallback semantics as
+   * `participants`. Full topics + data live in `heavy.contract_events`.
+   */
+  soroban_events: Array<EventAppearanceItem>;
+  /**
+   * Soroban invocation appearance index rows. Same fallback semantics
+   * as `participants`. Full call hierarchy lives in `heavy.operation_tree`.
+   */
+  soroban_invocations: Array<InvocationAppearanceItem>;
   source_account: string;
   successful: boolean;
 };
@@ -698,17 +794,39 @@ export type TransactionDetailLight = {
  * Slim transaction row returned in the list endpoint.
  */
 export type TransactionListItem = {
+  /**
+   * 1-based position of this transaction within its ledger.
+   */
+  application_order: number;
+  /**
+   * All C-StrKeys touched anywhere in the transaction.
+   */
+  contract_ids: Array<string>;
   created_at: string;
   /**
    * Fee charged in stroops.
    */
   fee_charged: number;
   /**
+   * `true` when the transaction touched at least one Soroban contract
+   * (root invocation, nested call, or event emission).
+   */
+  has_soroban: boolean;
+  /**
    * Transaction hash (64-char lowercase hex).
    */
   hash: string;
+  /**
+   * Inner-transaction hash (64-char hex) for fee-bump envelopes, `null` otherwise.
+   */
+  inner_tx_hash?: string | null;
   ledger_sequence: number;
   operation_count: number;
+  /**
+   * All distinct operation type names in the transaction
+   * (e.g. `["INVOKE_HOST_FUNCTION", "PAYMENT"]`).
+   */
+  operation_types: Array<string>;
   source_account: string;
   successful: boolean;
 };
@@ -1260,7 +1378,7 @@ export type ListTransactionsData = {
      */
     'filter[source_account]'?: string | null;
     /**
-     * Filter by contract StrKey (C…) that appears in an operation.
+     * Filter by contract StrKey (C…) — matches root op, nested call, or event emission.
      */
     'filter[contract_id]'?: string | null;
     /**
