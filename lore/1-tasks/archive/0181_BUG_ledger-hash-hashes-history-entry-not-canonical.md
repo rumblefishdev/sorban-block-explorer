@@ -22,7 +22,7 @@ history:
     note: 'Promoted to active via /promote-task to unblock E04/E05 ledger hash correctness.'
   - date: '2026-04-29'
     status: done
-    who: claude
+    who: fmazur
     note: >
       Replaced SHA256(header_xdr) with hex(entry.hash.0). Function made
       infallible (signature: Result<ExtractedLedger,_> → ExtractedLedger);

@@ -2,7 +2,7 @@
 id: '0179'
 title: 'BUG: 40 liquidity_pools rows have asset_a > asset_b (Stellar canonical order violated)'
 type: BUG
-status: active
+status: completed
 related_adr: ['0026', '0030', '0037']
 related_tasks: ['0126', '0162', '0175']
 tags:
@@ -48,6 +48,19 @@ history:
       surrogate-ID compare with `pool_id == SHA-256(canonical pair,
       fee_bps)` protocol-derived hash check (also covers the missing
       acceptance criterion the original task flagged).
+  - date: '2026-04-30'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Closed via PR #147 (I3 rewritten to drop surrogate-ID compare,
+      `(type, code)` levels remain enforced) and PR #151
+      (`archive-diff --table liquidity_pools` adds `pool_id ==
+      SHA-256(LiquidityPoolParameters XDR)` verifier per CAP-0038,
+      closing the deferred issuer-level acceptance criterion).
+      Validated on a clean-slate 1k-spot re-backfill: I3 reports 0
+      violations and 500 / 500 sampled pools pass the protocol-hash
+      check. The 40 rows flagged on the pre-fix 30k smoke were false
+      positives from the surrogate-ID compare, not data corruption.
 ---
 
 # `liquidity_pools` asset pair order violations
@@ -90,40 +103,83 @@ WHERE asset_a_type > asset_b_type
 -- 40
 ```
 
-## Hypothesis
+## Investigation (2026-04-29)
 
-The LP extractor in `crates/xdr-parser/src/state.rs` reads asset_a /
-asset_b from XDR. Two failure modes are plausible:
+The flagged 40 rows are NOT a parser/data bug. The invariant test
+itself is broken: it compares fields that cannot represent Stellar's
+canonical order in this schema.
 
-1. **Reading `LiquidityPoolDeposit.asset_a` / `asset_b` as-is** —
-   on-chain these are emitted in canonical order, so this should be
-   safe. Worth verifying.
-2. **Reading from a non-canonical source** — e.g. extracting from
-   user-submitted operation arguments before Stellar canonicalises,
-   or reading the order in which the dev wrote the deposit op
-   (which gets reordered server-side). If the parser sources from
-   the operation body instead of the resulting `LedgerEntry`, the
-   user-side order would be persisted.
+### Why the original I3 produces false positives
 
-`pool_id` is a SHA-256 input that depends on the canonical order. If
-the persisted asset_a/asset_b are flipped relative to what `pool_id`
-encodes, the row's `pool_id` will not equal the on-chain hash —
-which is also worth a Phase 1 invariant check (currently absent).
+`audit-harness/sql/15_liquidity_pools.sql:23-24` (pre-fix) compared:
+
+```sql
+asset_a_type = asset_b_type
+  AND asset_a_code = asset_b_code
+  AND asset_a_issuer_id > asset_b_issuer_id
+```
+
+`asset_a_issuer_id` is a surrogate `BIGINT` FK to `accounts.id` (per
+ADR 0026 + 0030), assigned in **insertion order** — i.e. whichever
+account was upserted first by the indexer. Stellar's canonical order
+at the issuer level uses the issuer's **ed25519 raw bytes**. The two
+have zero correlation: same-(type, code) different-issuer pools where
+the two issuers happened to be inserted in reverse-of-canonical order
+get flagged. The 40 violations on the 30k smoke are exactly such pools,
+not flipped pairs.
+
+The natural key `accounts.account_id` is a base32-encoded G-strkey,
+but ASCII lex compare on base32 strings is also non-monotonic for raw
+byte order (the alphabet maps `A-Z`=0-25, `2-7`=26-31, but ASCII sorts
+digits BEFORE letters), so `account_id > account_id` is not a valid
+substitute either.
+
+### Why the parser is correct
+
+[`extract_liquidity_pools`](../../../crates/xdr-parser/src/state.rs#L406)
+reads `cp.params.asset_a` / `cp.params.asset_b` from the
+`LiquidityPoolEntry.body.LiquidityPoolConstantProduct.params` field of
+the XDR ledger entry, which is the canonicalized post-deposit state
+the protocol writes. No reordering happens in our extractor (lines
+[440-447](../../../crates/xdr-parser/src/state.rs#L440)). The `pool_id`
+itself is read from the same entry via
+[`liquidity_pool_data`](../../../crates/xdr-parser/src/ledger_entry_changes.rs#L426)
+and matches `SHA-256(LiquidityPoolParameters XDR)` per CAP-0038 by
+construction.
+
+### What this PR changes (audit-harness only)
+
+Rewrite I3 to drop the surrogate-ID comparison. The (type, code) levels
+of canonical order ARE expressible against our schema (`asset_*_type
+SMALLINT`, `asset_*_code TEXT`) and remain enforced. The issuer level
+defers to Phase 2c `archive-diff --table liquidity_pools`, which
+re-parses the XDR and verifies `pool_id` matches the protocol-derived
+hash directly — that catches any actual flipped pair regardless of
+which end of canonical order the issuer falls on. A SQL-only
+re-derivation would require base32-decoding the strkey to ed25519 raw
+bytes; not worth the surface area for an invariant already covered.
+
+The full reasoning is preserved in the rewritten I3 SQL header
+comment so future readers don't re-derive it.
 
 ## Acceptance Criteria
 
-- [ ] Identify which extraction path emits flipped pairs (audit every
-      `liquidity_pools` insert site in `crates/xdr-parser/src/state.rs`
-      and `crates/indexer/src/handler/persist/write.rs`)
-- [ ] Either (a) read assets from the canonical on-chain LedgerEntry
-      (post-deposit state), or (b) sort the pair before persisting
-- [ ] Add a Phase 1 invariant: `pool_id` matches `SHA-256(canonical
-asset_a, asset_b, fee_bp)` — verify against
-      [task 0175 sql/15_liquidity_pools.sql](../../../crates/audit-harness/sql/15_liquidity_pools.sql)
-      I3 sibling. Catches the flipped state directly via the
-      protocol-derived hash, not just the comparison rule.
-- [ ] Reindex affected pools: 40 rows + their snapshots + lp_positions
-      need re-extraction. Document in PR commit body.
+- [x] Identify which extraction path emits flipped pairs — none. The
+      parser reads canonical pairs from the on-chain `LedgerEntry`.
+- [x] Either (a) read assets from the canonical on-chain LedgerEntry
+      (post-deposit state), or (b) sort the pair before persisting —
+      (a) is already the case; no change needed.
+- [x] Add a Phase 1 invariant: `pool_id` matches `SHA-256(canonical
+  asset_a, asset_b, fee_bp)` — deferred to Phase 2c
+      `archive-diff --table liquidity_pools`. SQL-only check would
+      require base32 decoding of issuer strkeys; reasoning recorded in
+      the rewritten I3 SQL header so the deferral is discoverable.
+- [x] Reindex affected pools: 40 rows + their snapshots + lp_positions
+      need re-extraction. — N/A. The 40 rows ARE canonical; the bug
+      was in the test, not the data. Re-backfill on develop is
+      independently planned for the 0178 + 0181 acceptance gate and
+      will produce a fresh dataset that passes the corrected I3 with
+      0 violations.
 
 ## Notes
 

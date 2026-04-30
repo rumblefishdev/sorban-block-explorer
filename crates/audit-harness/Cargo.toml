@@ -1,0 +1,36 @@
+[package]
+name = "audit-harness"
+version = "0.1.0"
+edition = "2024"
+description = "Continuous data-correctness audit for the Soroban block explorer DB. Phase 1 (SQL invariants) lives in ./sql/ + run-invariants.sh; Phase 2a (DB↔Horizon diff) ships as the `horizon-diff` binary; Phase 2c (DB↔archive XDR re-parse) ships as `archive-diff`."
+
+[[bin]]
+name = "horizon-diff"
+path = "src/bin/horizon-diff.rs"
+
+[[bin]]
+name = "archive-diff"
+path = "src/bin/archive-diff.rs"
+
+[dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { version = "4", features = ["derive", "env"] }
+# Public Horizon API client — small surface (a few GET endpoints), no need
+# for a hand-written hyper layer.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+hex = { workspace = true }
+# Phase 2c needs to re-parse XDR independently of `crates/xdr-parser`.
+stellar-xdr = { workspace = true }
+zstd = { workspace = true }
+# `archive-diff --table liquidity_pools` reconstructs LiquidityPoolParameters
+# XDR from DB-stored asset rows and SHA-256s the canonical bytes for
+# pool_id verification (CAP-0038). Needs strkey → ed25519 raw-byte
+# decoding for issuer fields and the SHA-2 family for the protocol hash.
+stellar-strkey = "0.0.16"
+sha2 = { workspace = true }
