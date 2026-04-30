@@ -167,12 +167,23 @@ ORDER BY sea.ledger_sequence, sc.contract_id;
 -- @@ split @@
 
 -- ============================================================================
--- F. Soroban invocation appearances (per ADR 0034).
+-- F. Soroban invocation appearances (per ADR 0034 + task 0183).
 --    Inputs: $1 = transaction_id, $2 = created_at.
+--
+--    Coverage note (task 0183, 2026-04-30): rows now reflect the
+--    **execution** call graph reconstructed from `fn_call`/`fn_return`
+--    diagnostic events, not just the auth tree. Auth-less DeFi router
+--    sub-calls (multi-hop swaps where the user signs only the outer
+--    call) are populated; previously these tx had zero rows here.
+--    Caller is split across `caller_id` (G/M account) and
+--    `caller_contract_id` (C-prefix contract) — the latter is set when
+--    the trio has no G/M caller in the depth-first emit order, i.e.
+--    when the contract was reached only as a sub-invocation.
 -- ============================================================================
 SELECT
     sc.contract_id,
-    caller.account_id  AS caller_account,
+    caller.account_id          AS caller_account,
+    caller_contract.contract_id AS caller_contract,
     sia.ledger_sequence,
     sia.amount,
     sia.created_at
@@ -186,8 +197,9 @@ SELECT
     --             hierarchy" requires the API to parse the full tree once and
     --             stitch it back into this row set.
 FROM soroban_invocations_appearances sia
-JOIN soroban_contracts sc      ON sc.id     = sia.contract_id
-LEFT JOIN accounts      caller ON caller.id = sia.caller_id
+JOIN soroban_contracts sc                 ON sc.id     = sia.contract_id
+LEFT JOIN accounts          caller          ON caller.id = sia.caller_id
+LEFT JOIN soroban_contracts caller_contract ON caller_contract.id = sia.caller_contract_id
 WHERE sia.transaction_id = $1
   AND sia.created_at     = $2
 ORDER BY sia.ledger_sequence, sc.contract_id;

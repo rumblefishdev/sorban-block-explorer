@@ -25,9 +25,19 @@
 --   • `created_at` participates in the cursor not for ordering (ledger_sequence
 --     is monotone within a partition) but for partition pruning on the next
 --     page — the planner needs a literal-ish bound on the partition key.
---   • Caller StrKey via final join to accounts; some invocations have
---     caller_id NULL (top-level / non-account caller — that's what the
---     LEFT JOIN handles).
+--   • Caller is split across two columns (task 0183): `caller_id` for
+--     G/M accounts (auth-tree root + diag-tree root, which always trace
+--     back to the tx source), and `caller_contract_id` for contract
+--     callers from the diagnostic-event execution tree (DeFi router →
+--     pool sub-calls). `ck_sia_caller_xor` enforces at-most-one. Both
+--     are LEFT-joined; rows where the trio's first non-NULL caller was
+--     a contract surface as `caller_account = NULL,
+--     caller_contract != NULL`.
+--   • Coverage note: rows now reflect the **execution** call graph
+--     (fn_call/fn_return diagnostic events), not just the auth tree.
+--     Pre-task-0183 ~53 % of Soroban tx had no rows here for popular
+--     auth-less DeFi routers; after the fix every contract touched by
+--     the host VM is represented.
 
 WITH ct AS (
     SELECT id FROM soroban_contracts WHERE contract_id = $1
@@ -35,7 +45,8 @@ WITH ct AS (
 SELECT
     encode(t.hash, 'hex')   AS transaction_hash_hex,
     sia.ledger_sequence,
-    caller.account_id        AS caller_account,
+    caller.account_id          AS caller_account,
+    caller_contract.contract_id AS caller_contract,
     sia.amount,
     sia.created_at,
     t.successful,
@@ -47,7 +58,8 @@ JOIN soroban_invocations_appearances sia
 JOIN transactions t
        ON t.id         = sia.transaction_id
       AND t.created_at = sia.created_at
-LEFT JOIN accounts caller ON caller.id = sia.caller_id
+LEFT JOIN accounts          caller          ON caller.id = sia.caller_id
+LEFT JOIN soroban_contracts caller_contract ON caller_contract.id = sia.caller_contract_id
 WHERE
     ($3::bigint IS NULL OR (sia.ledger_sequence, sia.transaction_id, sia.created_at) < ($3, $4, $5))
 ORDER BY sia.ledger_sequence DESC, sia.transaction_id DESC, sia.created_at DESC
