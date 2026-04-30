@@ -71,7 +71,7 @@
     "*.rs": [
       "rustfmt --edition 2024"
     ],
-    "*": [
+    "!(*.rs)": [
       "npx nx format:write --files"
     ]
   },

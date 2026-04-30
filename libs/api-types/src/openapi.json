@@ -462,7 +462,7 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Items per page (1–100, default 20). Page granularity is per\n`(contract, transaction, ledger)` appearance — a single appearance\ncan expand to multiple per-node items in the response, so the\nreturned `data.len()` may exceed `limit`.",
+            "description": "Items per page (1–100, default 20). One DB appearance row maps to\none `InvocationItem` (no expansion), so `data.len() <= limit`.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -539,7 +539,8 @@
             "schema": {
               "type": "integer",
               "format": "int32",
-              "minimum": 0
+              "maximum": 100,
+              "minimum": 1
             }
           },
           {
@@ -611,7 +612,8 @@
             "schema": {
               "type": "integer",
               "format": "int32",
-              "minimum": 0
+              "maximum": 100,
+              "minimum": 1
             }
           },
           {

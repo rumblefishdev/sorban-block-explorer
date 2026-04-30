@@ -17,6 +17,6 @@ export default [
     },
   },
   {
-    ignores: ['**/out-tsc', 'src/generated/**/*'],
+    ignores: ['**/out-tsc/**', 'src/generated/**/*'],
   },
 ];

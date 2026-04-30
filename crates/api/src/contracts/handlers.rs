@@ -222,7 +222,7 @@ pub async fn get_interface(
     params(
         ("contract_id" = String, Path, description = "Contract StrKey (C…, 56 chars)"),
         ("limit" = Option<u32>, Query,
-         description = "Items per page (1–100, default 20). Page granularity is per\n`(contract, transaction, ledger)` appearance — a single appearance\ncan expand to multiple per-node items in the response, so the\nreturned `data.len()` may exceed `limit`.",
+         description = "Items per page (1–100, default 20). One DB appearance row maps to\none `InvocationItem` (no expansion), so `data.len() <= limit`.",
          minimum = 1, maximum = 100),
         ("cursor" = Option<String>, Query,
          description = "Opaque pagination cursor from a previous response."),

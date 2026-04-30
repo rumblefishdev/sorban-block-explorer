@@ -1041,10 +1041,8 @@ export type ListInvocationsData = {
   };
   query?: {
     /**
-     * Items per page (1–100, default 20). Page granularity is per
-     * `(contract, transaction, ledger)` appearance — a single appearance
-     * can expand to multiple per-node items in the response, so the
-     * returned `data.len()` may exceed `limit`.
+     * Items per page (1–100, default 20). One DB appearance row maps to
+     * one `InvocationItem` (no expansion), so `data.len() <= limit`.
      */
     limit?: number;
     /**
