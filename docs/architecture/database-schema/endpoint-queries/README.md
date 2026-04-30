@@ -68,7 +68,7 @@ blob for E9) and marks the off-DB fields with
 | 02  | [`02_get_transactions_list.sql`](02_get_transactions_list.sql)                       | `GET /transactions`                       | DB-only        |
 | 03  | [`03_get_transactions_by_hash.sql`](03_get_transactions_by_hash.sql)                 | `GET /transactions/:hash`                 | DB + Archive   |
 | 04  | [`04_get_ledgers_list.sql`](04_get_ledgers_list.sql)                                 | `GET /ledgers`                            | DB-only        |
-| 05  | [`05_get_ledgers_by_sequence.sql`](05_get_ledgers_by_sequence.sql)                   | `GET /ledgers/:sequence`                  | DB + S3 ledger |
+| 05  | [`05_get_ledgers_by_sequence.sql`](05_get_ledgers_by_sequence.sql)                   | `GET /ledgers/:sequence`                  | DB-only        |
 | 06  | [`06_get_accounts_by_id.sql`](06_get_accounts_by_id.sql)                             | `GET /accounts/:account_id`               | DB-only        |
 | 07  | [`07_get_accounts_transactions.sql`](07_get_accounts_transactions.sql)               | `GET /accounts/:account_id/transactions`  | DB-only        |
 | 08  | [`08_get_assets_list.sql`](08_get_assets_list.sql)                                   | `GET /assets`                             | DB-only        |
