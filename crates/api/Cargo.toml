@@ -42,6 +42,7 @@ thiserror = { workspace = true }
 futures = "0.3"
 hex = { workspace = true }
 bytes = "1"
+moka = { version = "0.12", features = ["sync", "future"] }
 
 [dev-dependencies]
 tower = "0.5"

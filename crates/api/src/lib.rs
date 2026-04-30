@@ -13,6 +13,7 @@
 #![allow(dead_code)]
 
 mod assets;
+mod cache;
 mod common;
 mod config;
 mod contracts;
@@ -24,3 +25,5 @@ mod ops;
 mod state;
 mod stellar_archive;
 mod transactions;
+
+pub use state::AppState;

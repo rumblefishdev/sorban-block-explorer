@@ -441,10 +441,20 @@ Caching operates at two levels:
   reserved for static frontend/document delivery in the initial topology.
 - **Backend in-memory caching** - frequently accessed reference data (contract metadata,
   network stats) is cached in the Lambda execution environment with TTLs of 30-60 seconds
-  to reduce database round-trips. The contract-detail cache is implemented in
-  `crates/api/src/contracts/cache.rs` (`ContractMetadataCache`, 45 s TTL,
-  lazy eviction); it is keyed by contract StrKey and shared across
-  handler invocations on the same warm Lambda container.
+  to reduce database round-trips. All in-process caches are built on the
+  `moka` crate via the shared `crate::cache::ttl_cache` helper in
+  `crates/api/src/cache.rs`, which fixes the TTL + `max_capacity` bound
+  and yields lock-free reads, TinyLFU eviction and stampede protection
+  out of the box (see task 0180). Concrete caches:
+  - `ContractMetadataCache` (`crates/api/src/contracts/cache.rs`,
+    45 s TTL, 10 000 entries) — keyed by contract StrKey, populated on
+    `GET /v1/contracts/{contract_id}`.
+  - `NetworkStatsCache` (`crates/api/src/network/cache.rs`, 30 s TTL,
+    single-entry; uses `moka::future::Cache::try_get_with` so concurrent
+    cold-cache requests deduplicate down to a single Postgres query).
+    Every cache is a field of `AppState` and shared across handler
+    invocations on the same warm Lambda container; cold starts begin with
+    empty caches and rebuild on demand.
 
 ### 8.2 Performance Expectations
 

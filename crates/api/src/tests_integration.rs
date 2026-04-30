@@ -51,11 +51,13 @@ fn build_app(db: PgPool) -> Router {
         .build();
     let s3 = aws_sdk_s3::Client::from_conf(aws_cfg);
     let fetcher = StellarArchiveFetcher::new(s3);
-    let contract_cache = crate::contracts::cache::ContractMetadataCache::new();
+    let contract_cache = crate::contracts::cache::new_contract_cache();
+    let network_cache = crate::network::cache::new_network_cache();
     let state = AppState {
         db,
         fetcher,
         contract_cache,
+        network_cache,
         network_id: xdr_parser::network_id(xdr_parser::MAINNET_PASSPHRASE),
     };
 

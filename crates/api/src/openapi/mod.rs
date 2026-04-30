@@ -78,7 +78,7 @@ pub struct ApiDoc;
 /// value. Callers attach state via `.with_state(...)` (live app) or
 /// call `.split_for_parts()` directly (extractor — the spec does not
 /// depend on `AppState`).
-pub fn register_routes() -> OpenApiRouter<crate::state::AppState> {
+pub fn register_routes() -> OpenApiRouter<crate::AppState> {
     OpenApiRouter::with_openapi(ApiDoc::openapi())
         .routes(routes!(crate::ops::health))
         .nest("/v1", crate::network::router())

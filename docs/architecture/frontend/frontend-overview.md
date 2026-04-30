@@ -115,7 +115,7 @@ The intended implementation stack is:
 - **`@rumblefish/api-types`** generated from the backend OpenAPI 3.1 spec
   (`@hey-api/openapi-ts`); provides the TypeScript types, fetch SDK, and TanStack Query
   hooks consumed by the rest of the frontend. The frontend never hand-writes API
-  types — see [Section 4.6](#46-api-types-and-codegen) below.
+  types — see [Section 4.5](#45-api-types-and-codegen) below.
 
 The frontend is a public, anonymous browser client. It must not embed API keys or other
 shared secrets; API protection belongs at the API Gateway/WAF boundary, not in the bundle.

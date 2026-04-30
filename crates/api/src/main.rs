@@ -1,6 +1,7 @@
 //! REST API Lambda handler for the Soroban block explorer.
 
 mod assets;
+mod cache;
 mod common;
 mod config;
 mod contracts;
@@ -115,7 +116,8 @@ async fn main() {
     let state = AppState {
         db,
         fetcher,
-        contract_cache: contracts::cache::ContractMetadataCache::new(),
+        contract_cache: contracts::cache::new_contract_cache(),
+        network_cache: network::cache::new_network_cache(),
         network_id,
     };
     let app = app(&config, state);
@@ -154,7 +156,8 @@ mod tests {
             AppState {
                 db,
                 fetcher,
-                contract_cache: contracts::cache::ContractMetadataCache::new(),
+                contract_cache: contracts::cache::new_contract_cache(),
+                network_cache: network::cache::new_network_cache(),
                 network_id: xdr_parser::network_id(xdr_parser::MAINNET_PASSPHRASE),
             },
         )
