@@ -216,6 +216,366 @@ async fn list_endpoint_returns_paginated_envelope_against_real_db() {
     }
 }
 
+/// Locks the JOIN to `operations_appearances` — the no-filter list test
+/// never hits this branch.
+#[tokio::test]
+async fn list_endpoint_filter_op_type_returns_envelope_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri("/v1/transactions?limit=3&filter%5Boperation_type%5D=PAYMENT")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200, got {status}: {json}");
+    assert!(json["data"].is_array(), "data not array: {json}");
+    assert_eq!(json["page"]["limit"], 3, "page.limit not echoed: {json}");
+    assert!(
+        json["page"]["has_more"].is_boolean(),
+        "page.has_more not bool: {json}"
+    );
+}
+
+/// Locks `fetch_operations` against `operations_appearances` with
+/// `ORDER BY o.id` — pre-existing detail tests only cover 404.
+#[tokio::test]
+async fn detail_endpoint_returns_200_for_known_hash_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT encode(hash, 'hex') FROM transaction_hash_index LIMIT 1")
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten();
+    let Some((hash_hex,)) = row else {
+        eprintln!("transaction_hash_index empty — skipping successful-detail test");
+        return;
+    };
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/transactions/{hash_hex}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200, got {status}: {json}");
+    assert!(
+        json["operations"].is_array(),
+        "detail.operations not array: {json}"
+    );
+
+    assert!(
+        json["application_order"].is_number(),
+        "application_order missing/non-number: {json}"
+    );
+    assert!(
+        json["has_soroban"].is_boolean(),
+        "has_soroban missing/non-bool: {json}"
+    );
+    assert!(
+        json["operation_count"].is_number(),
+        "operation_count missing/non-number: {json}"
+    );
+    assert!(
+        json["inner_tx_hash"].is_string() || json["inner_tx_hash"].is_null(),
+        "inner_tx_hash bad type: {json}"
+    );
+
+    if let Some(op) = json["operations"].as_array().and_then(|a| a.first()) {
+        assert!(
+            op["appearance_id"].is_number(),
+            "operations[0].appearance_id missing/non-number: {op}"
+        );
+        assert!(
+            op["type_name"].is_string(),
+            "operations[0].type_name missing/non-string: {op}"
+        );
+        assert!(
+            op["type"].is_number(),
+            "operations[0].type missing/non-number: {op}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn detail_endpoint_projects_full_operation_columns_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT encode(t.hash, 'hex') \
+         FROM transactions t \
+         JOIN operations_appearances oa \
+              ON oa.transaction_id = t.id AND oa.created_at = t.created_at \
+         LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    let Some((hash_hex,)) = row else {
+        eprintln!("no transactions with operations — skipping");
+        return;
+    };
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/transactions/{hash_hex}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200: {json}");
+    let op = json["operations"]
+        .as_array()
+        .and_then(|a| a.first())
+        .expect("at least one op (we joined to operations_appearances)");
+    for field in [
+        "source_account",
+        "destination_account",
+        "contract_id",
+        "asset_code",
+        "asset_issuer",
+        "pool_id",
+    ] {
+        assert!(
+            op.get(field).is_some(),
+            "operations[0] missing key {field}: {op}"
+        );
+        assert!(
+            op[field].is_string() || op[field].is_null(),
+            "operations[0].{field} bad type: {op}"
+        );
+    }
+    assert!(
+        op["ledger_sequence"].is_number(),
+        "operations[0].ledger_sequence not number: {op}"
+    );
+    assert!(
+        op["created_at"].is_string(),
+        "operations[0].created_at not ISO string: {op}"
+    );
+}
+
+/// `build_app` uses fake S3 credentials so the archive fetch fails and
+/// `heavy_fields_status = "unavailable"` exercises the DB fallback path.
+#[tokio::test]
+async fn detail_endpoint_falls_back_to_db_when_heavy_unavailable() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT encode(t.hash, 'hex') \
+         FROM transactions t \
+         JOIN transaction_participants tp \
+              ON tp.transaction_id = t.id AND tp.created_at = t.created_at \
+         LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    let Some((hash_hex,)) = row else {
+        eprintln!("no tx with participants — skipping fallback test");
+        return;
+    };
+
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/transactions/{hash_hex}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200: {json}");
+
+    assert_eq!(
+        json["heavy_fields_status"], "unavailable",
+        "expected heavy unavailable to exercise the fallback path: {json}"
+    );
+    assert!(
+        json["participants"].is_array(),
+        "fallback participants[] missing/non-array: {json}"
+    );
+    assert!(
+        json["soroban_events"].is_array(),
+        "fallback soroban_events[] missing/non-array: {json}"
+    );
+    assert!(
+        json["soroban_invocations"].is_array(),
+        "fallback soroban_invocations[] missing/non-array: {json}"
+    );
+    // Hash discovered via JOIN to transaction_participants, so fallback
+    // must produce ≥1 row — proves the DB query fired.
+    let participants = json["participants"].as_array().unwrap();
+    assert!(
+        !participants.is_empty(),
+        "expected ≥1 participant on a tx joined via transaction_participants: {json}"
+    );
+}
+
+/// Statement B path — broad contract match across the three appearance
+/// tables. Asserts filter ↔ projection consistency on the matched contract.
+#[tokio::test]
+async fn list_endpoint_filter_contract_id_returns_envelope_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT contract_id FROM soroban_contracts ORDER BY id LIMIT 1")
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten();
+    let Some((cid,)) = row else {
+        eprintln!("soroban_contracts empty — skipping contract-filter test");
+        return;
+    };
+
+    let router = build_app(pool);
+    let uri = format!("/v1/transactions?limit=3&filter%5Bcontract_id%5D={cid}");
+    let resp = router
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200, got {status}: {json}");
+    assert!(json["data"].is_array(), "data not array: {json}");
+    if let Some(arr) = json["data"].as_array() {
+        for (i, row) in arr.iter().enumerate() {
+            let ids = row["contract_ids"]
+                .as_array()
+                .unwrap_or_else(|| panic!("row[{i}].contract_ids not array: {row}"));
+            assert!(
+                ids.iter().any(|v| v.as_str() == Some(cid.as_str())),
+                "row[{i}] missing filtered contract_id={cid} in contract_ids: {row}"
+            );
+        }
+    }
+}
+
+/// Statement-B EXISTS post-filter branch (contract + op_type combined).
+#[tokio::test]
+async fn list_endpoint_filter_contract_id_and_op_type_returns_envelope_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT contract_id FROM soroban_contracts ORDER BY id LIMIT 1")
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten();
+    let Some((cid,)) = row else {
+        return;
+    };
+
+    let router = build_app(pool);
+    let uri = format!(
+        "/v1/transactions?limit=3&filter%5Bcontract_id%5D={cid}&filter%5Boperation_type%5D=INVOKE_HOST_FUNCTION"
+    );
+    let resp = router
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200, got {status}: {json}");
+    assert!(json["data"].is_array(), "data not array: {json}");
+}
+
+#[tokio::test]
+async fn list_endpoint_projects_canonical_columns_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+    let router = build_app(pool);
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .uri("/v1/transactions?limit=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200, got {status}: {json}");
+
+    let Some(row) = json["data"].as_array().and_then(|a| a.first()) else {
+        eprintln!("transactions empty — skipping projection-shape assertions");
+        return;
+    };
+
+    assert!(
+        row["application_order"].is_number(),
+        "application_order missing/non-number: {row}"
+    );
+    assert!(
+        row["has_soroban"].is_boolean(),
+        "has_soroban missing/non-bool: {row}"
+    );
+    assert!(
+        row["inner_tx_hash"].is_string() || row["inner_tx_hash"].is_null(),
+        "inner_tx_hash bad type: {row}"
+    );
+    assert!(
+        row["operation_types"].is_array(),
+        "operation_types not array: {row}"
+    );
+    assert!(
+        row["contract_ids"].is_array(),
+        "contract_ids not array: {row}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Assets endpoints (task 0049) — mirror the transactions coverage shape.
 // ---------------------------------------------------------------------------
