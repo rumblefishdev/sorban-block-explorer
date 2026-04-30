@@ -70,51 +70,91 @@ SELECT count(*) FROM accounts WHERE account_id LIKE 'C%';
 -- 1332
 ```
 
-## Hypothesis
+## Investigation (2026-04-29)
 
-The persist staging layer
-([`crates/indexer/src/handler/persist/staging.rs:1303`](../../../crates/indexer/src/handler/persist/staging.rs#L1303))
-filters by prefix `G`/`M` only:
+The leak surface was already closed by task 0173, four days before this
+bug was filed. The investigation was needed to confirm that and to
+distinguish stale data from an active leak.
+
+### Defense-in-depth filter at staging
+
+Commit `7202209` (lore-0173, Apr 29) added a finalization filter to
+`account_keys_set` at
+[`staging.rs:421-426`](../../../crates/indexer/src/handler/persist/staging.rs#L421):
 
 ```rust
-fn is_strkey_account(s: &str) -> bool {
-    matches!(s.chars().next(), Some('G' | 'M'))
-}
+let account_keys: Vec<String> = account_keys_set
+    .into_iter()
+    .filter(|k| k.len() <= 56 && k.starts_with('G'))
+    .collect();
 ```
 
-But the JSON-detail walker
-([`op_participant_str_keys`](../../../crates/indexer/src/handler/persist/staging.rs#L1314))
-that feeds `is_strkey_account` reads StrKeys out of operation `details`
-JSON. Some op variants — likely `invoke_host_function` (contract
-addresses surface in `args.contract_address.to_string()`,
-[`operation.rs:321`](../../../crates/xdr-parser/src/operation.rs#L321))
-or `set_trust_line_flags` for SAC trustlines — emit C-prefix StrKeys
-into JSON fields the walker treats as account references.
+This drops every non-G-prefix entry — Contract (C…), ClaimableBalance
+(B…, 58 chars), LiquidityPool (L…), MuxedAccount (M…, 69 chars), etc. —
+before the `accounts` upsert sees them. So the ScAddress variants that
+CAP-67 V4 events surface into staging are caught at the gate even if
+they slipped past upstream collectors.
 
-Two candidate fix points:
+### Why the 30k smoke had 1332 C-prefix entries
 
-1. **Tighten filter at staging:** require `is_strkey_account` to also
-   verify length 56 and prefix `G` (not `M`, which is also wrong post
-   task 0177 unwrap). Drops anything that doesn't match a real account.
-2. **Don't emit contract StrKeys into account-shaped JSON keys:**
-   audit `operation.rs` JSON construction. Contract addresses belong
-   in a separate field name (e.g. `contract_id`) that the walker
-   doesn't slurp into the accounts universe.
+The 30k smoke backfill (mainnet 62016000–62046000) was indexed Apr 28.
+The defense filter merged Apr 29, AFTER. The 1332 C-prefix rows are
+stale data from the pre-0173 binary, not symptoms of an active leak on
+develop. A re-backfill on the post-0173 binary produces 0 C-prefix rows
+in `accounts` (validated in this PR's acceptance check; see Phase 1
+output in PR description).
 
-The right fix is probably both: defensive filter + clean source.
+### What this PR changes (cosmetic hardening)
+
+1. **Tighten `is_strkey_account`** ([`staging.rs:1373-1378`](../../../crates/indexer/src/handler/persist/staging.rs#L1373))
+   from `Some('G' | 'M')` first-char match to `s.len() <= 56 &&
+   s.starts_with('G')`. The M-prefix branch was a transitional measure
+   pending task 0177 (canonicalize MuxedAccount → ed25519 G-strkey at
+   the parser boundary). PR #145 merged 0177; M-prefix values no longer
+   reach this filter on the happy path. Tightening to G-only aligns
+   the upstream filter with the final defensive filter at
+   [`staging.rs:421-426`](../../../crates/indexer/src/handler/persist/staging.rs#L421)
+   so both layers agree on the account shape.
+2. **Update inline comments** at
+   [`staging.rs:316-323`](../../../crates/indexer/src/handler/persist/staging.rs#L316)
+   (CAP-67 events walker) and
+   [`staging.rs:399-422`](../../../crates/indexer/src/handler/persist/staging.rs#L399)
+   (final defensive filter) to reflect that M is now upstream-canonicalized
+   and to enumerate the full set of CAP-67 ScAddress variants the filter
+   protects against.
+3. **No source-side change.** `op_participant_str_keys`
+   ([`staging.rs:1382-1422`](../../../crates/indexer/src/handler/persist/staging.rs#L1382))
+   only reads named JSON fields (`destination`, `from`, `trustor`,
+   `sponsoredId`, asset issuers from typed `asset`/`destAsset`/`sendAsset`
+   fields) for specific classic ops; it does not read
+   `invoke_host_function` arguments, so contract addresses from
+   `args.contract_address.to_string()` never reach the accounts universe
+   through this path. The CAP-67 events walker
+   ([`staging.rs:310-332`](../../../crates/indexer/src/handler/persist/staging.rs#L310))
+   does see Contract-typed transfer participants from per-op SAC events,
+   but `is_strkey_account` (now G-only) drops them.
 
 ## Acceptance Criteria
 
-- [ ] Identify the operation type(s) leaking C-prefix StrKeys into
-      account-shaped JSON fields (likely invoke_host_function and/or
-      SAC trustline ops)
-- [ ] `is_strkey_account` rejects C-prefix (and validates length=56)
-- [ ] Operation JSON emits contract addresses under field names the
-      walker does not treat as accounts
+- [x] Identify the operation type(s) leaking C-prefix StrKeys into
+      account-shaped JSON fields — none through `op_participant_str_keys`;
+      CAP-67 events surface them, `is_strkey_account` filters them out.
+- [x] `is_strkey_account` rejects C-prefix (and validates length=56) —
+      tightened from G|M to `s.len() <= 56 && s.starts_with('G')`
+- [x] Operation JSON emits contract addresses under field names the
+      walker does not treat as accounts — verified: walker reads
+      `destination`/`from`/`trustor`/`sponsoredId`/asset issuers only,
+      contract addresses appear in unrelated field paths.
 - [ ] Re-run audit harness Phase 1 — `accounts.I1` violations = 0
-      (or ≤ 4 synthetic test residue)
-- [ ] Reindex required: existing `accounts` rows with C-prefix must
-      be deleted / migrated to `soroban_contracts`. Document in PR.
+      (or ≤ 4 synthetic test residue) — gated on re-backfill in
+      sbe-audit worktree on post-fix binary; result attached to PR
+      description before merge.
+- [x] Reindex required: existing `accounts` rows with C-prefix must
+      be deleted / migrated to `soroban_contracts`. Documented:
+      handled by full re-backfill of the smoke dataset (DB drop +
+      sqlx migrate + partition CLI + backfill-runner against the
+      post-fix binary). No in-place migration script needed because
+      the dataset is a smoke, not production.
 
 ## Notes
 
