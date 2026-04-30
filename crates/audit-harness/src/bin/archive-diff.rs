@@ -411,8 +411,7 @@ fn build_asset(
             let issuer_bytes = stellar_strkey::ed25519::PublicKey::from_string(issuer)
                 .map_err(|e| format!("strkey decode failed for {issuer}: {e}"))?
                 .0;
-            let issuer_acc =
-                AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(issuer_bytes)));
+            let issuer_acc = AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(issuer_bytes)));
             // Code is stored NUL-stripped by the parser (see task 0179);
             // re-pad with NULs to the fixed XDR width (4 or 12).
             let code_bytes = code.as_bytes();
@@ -447,7 +446,11 @@ fn build_asset(
 
 /// Compute `SHA-256(LiquidityPoolParameters XDR)` per CAP-0038, returning the
 /// hex-encoded 64-char hash for direct comparison to the DB `pool_id` column.
-fn protocol_pool_id(asset_a: Asset, asset_b: Asset, fee_bps: i32) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+fn protocol_pool_id(
+    asset_a: Asset,
+    asset_b: Asset,
+    fee_bps: i32,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let params = LiquidityPoolParameters::LiquidityPoolConstantProduct(
         LiquidityPoolConstantProductParameters {
             asset_a,
