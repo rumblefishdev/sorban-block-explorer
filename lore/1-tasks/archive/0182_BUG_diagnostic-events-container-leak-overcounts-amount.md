@@ -2,7 +2,7 @@
 id: '0182'
 title: 'BUG: diagnostic_events container leak — Contract-typed mirrors overcount soroban_events_appearances.amount ~2-3x'
 type: BUG
-status: active
+status: completed
 related_adr: ['0033']
 related_tasks: ['0173']
 tags: ['xdr-parser', 'staging', 'data-correctness', 'effort-small', 'cap-67']
@@ -23,6 +23,23 @@ history:
     status: active
     who: fmazur
     note: Promoted from backlog to active.
+  - date: '2026-04-29'
+    status: completed
+    who: fmazur
+    note: >
+      Implementation complete. Added `EventSource` enum (TxLevel/PerOp/Diagnostic)
+      + `source` field on `ExtractedEvent`; parser tags every event at the
+      extraction site for V3 + V4 (× 3 containers). Staging, read-time API
+      (split_events, /contracts/:id/events), and NFT detection now filter
+      on `source == Diagnostic` instead of inner `event_type`. 4 new unit
+      tests + 1 new integration test (v4_diag_contract_mirror_does_not_inflate_amount).
+      Empirical scan over 394 342 V4 txs (1000 ledgers) confirmed: 100%
+      mirror rate for Soroban txs; 0 orphan Contract events from successful
+      txs (3 644 orphans all from FAILED txs — pre-fix bug, drop is correct).
+      Backfill of 100-ledger sample produced canonical counts: swap tx
+      1c61a3b7…2438 → CA6PUJLB=2, CAS3J7GY=3, CCW67TSZ=1 (total 6, was 10).
+      Cross-validated against live stellar-rpc (transactionEventsXdr +
+      contractEventsXdr structure matches our tx-level + per-op indexing).
 ---
 
 # BUG: diagnostic_events container leak — Contract-typed mirrors overcount soroban_events_appearances.amount ~2-3×
@@ -157,27 +174,134 @@ just let it stand for the existing local data — fix is forward-only.
 
 ## Acceptance Criteria
 
-- [ ] `ExtractedEvent.source: EventSource` field added; parser populates
+- [x] `ExtractedEvent.source: EventSource` field added; parser populates
       it on every extraction site (V3 + V4 × 3 containers)
-- [ ] Staging filter switched from `event_type == Diagnostic` to
+- [x] Staging filter switched from `event_type == Diagnostic` to
       `source == Diagnostic`; semantically drops the entire
       `*.diagnostic_events` vec including Contract-typed mirrors
-- [ ] Read-time API call sites unaffected (still receive all events;
-      can route on `source` if needed)
-- [ ] Unit tests cover V3 + V4 source tagging
-- [ ] Integration test asserts diag-Contract mirror does NOT increment
-      `amount`
-- [ ] Sample re-ingest: `amount` for Soroswap swap tx
+- [x] Read-time API call sites updated to filter on `source` (went a step
+      further than "unaffected" — split_events + /contracts/:id/events
+      both routed on EventSource::Diagnostic to avoid the same mirror-leak
+      at read time)
+- [x] Unit tests cover V3 + V4 source tagging (4 new tests in
+      `event.rs::tests`)
+- [x] Integration test asserts diag-Contract mirror does NOT increment
+      `amount` (`v4_diag_contract_mirror_does_not_inflate_amount` in
+      persist_integration.rs)
+- [x] Sample re-ingest: `amount` for Soroswap swap tx
       (`1c61a3b7b21ab48c6f02b72d124b4da86196091558d00c2879969d29a5ce2438`,
       ledger 62016099) drops to consensus-only counts:
-      CCW67TSZ=1, CA6PUJLB=2, CAS3J7GY=3 (was 2/4/4)
-- [ ] **Docs updated** — `docs/architecture/xdr-parsing/xdr-parsing-overview.md`
-      §5.1 V3↔V4 dispatch section: clarify that diagnostic_events
+      CCW67TSZ=1, CA6PUJLB=2, CAS3J7GY=3 (was 2/4/4) — confirmed in DB
+      after backfill of 100-ledger sample.
+- [x] **Docs updated** — `docs/architecture/xdr-parsing/xdr-parsing-overview.md`
+      §5.1 V3↔V4 dispatch section: clarified that diagnostic_events
       container is dropped at staging regardless of inner type, and
       that Stellar core mirrors consensus Contract events into the
       diagnostic container (byte-identical duplicate).
       `N/A — schema unchanged` for ADR 0033/0037 (only filter shifts;
       table shape stays).
+
+## Implementation Notes
+
+Files touched (8 production + 1 example + 1 test + 1 doc):
+
+- `crates/xdr-parser/src/types.rs` — added `EventSource` enum + `source`
+  field on `ExtractedEvent`.
+- `crates/xdr-parser/src/event.rs` — `extract_events` tags every event
+  with its source container; 4 new unit tests for V3/V4 tagging including
+  the byte-identical-mirror reproduction test.
+- `crates/xdr-parser/src/lib.rs` — re-exports `EventSource`.
+- `crates/xdr-parser/src/nft.rs` — NFT detection skips diagnostic-source
+  events (would otherwise double-emit transfer/mint/burn from mirrors).
+- `crates/indexer/src/handler/persist/staging.rs` — filter switched from
+  `event_type == Diagnostic` to `source == EventSource::Diagnostic`;
+  comment updated with task-0182 rationale.
+- `crates/api/src/stellar_archive/extractors.rs` — `split_events` routes
+  on source.
+- `crates/api/src/contracts/handlers.rs` — `/contracts/:id/events`
+  filters on source.
+- `crates/indexer/tests/persist_integration.rs` — 1 new integration test
+  - `make_transfer_event` updated for new field.
+- `docs/architecture/xdr-parsing/xdr-parsing-overview.md` — new §5.1
+  subsection "Source-container tagging (task 0182)" + table mapping
+  source location → EventSource → counts-in-amount.
+- `crates/xdr-parser/examples/diag_overlap_check.rs` — new diagnostic
+  tool used during implementation; kept as long-term verification asset
+  (run on any partition dir to confirm orphan invariants for future
+  Galexie / stellar-core upgrades).
+
+Test counts: xdr-parser **179 unit tests** (+4 new), indexer
+`persist_integration` **11 tests** (+1 new), api **113 tests** — all
+passing.
+
+## Design Decisions
+
+### From Plan
+
+1. **`EventSource` enum, not `Option<bool>`/string flag**: a typed enum
+   gives the compiler exhaustive matching (every parser path must pick
+   one) and makes downstream filters self-documenting
+   (`source == EventSource::Diagnostic` reads obviously).
+2. **Filter at staging, not at parser**: parser still emits all events
+   tagged with their source. Staging is the only consumer that drops by
+   source. Read-time API gets the full set and chooses what to surface
+   per endpoint.
+
+### Emerged
+
+3. **Updated read-time API too** (split_events, /contracts/:id/events,
+   NFT detect). Original task plan said these were "unaffected — can
+   route on source if needed". Empirically the same bug existed there:
+   read-time handlers used `event_type == Diagnostic` filter, which let
+   the byte-identical Contract-typed mirrors leak through. Switching
+   them to `source == Diagnostic` was a one-line change per site and
+   keeps behavior consistent across ingest and read paths.
+4. **NFT detection guard**: `detect_nft_events` already filtered on
+   `event_type != Contract`, but the V4 mirror keeps `type_ = Contract`,
+   so NFT detection would have double-emitted transfer/mint/burn for
+   every soroban tx. Added an explicit `source == Diagnostic` skip.
+5. **Kept `diag_overlap_check.rs` as an example** instead of throwing
+   it away. The 394 342-tx empirical study it ran was the only thing
+   that surfaced the orphan-from-failed-tx pattern (Contract events
+   in diag without a per-op match — all from failed contract calls).
+   Future Galexie or stellar-host changes might reintroduce a leak;
+   this tool re-runs in seconds on any partition dir and pins the
+   invariant "0 orphans from successful tx".
+
+## Issues Encountered
+
+- **Initial root-cause hypothesis was incomplete.** Task description
+  said stellar-core mirrors per-op events into diagnostic_events
+  byte-identically. Two delegated subagents traced stellar-core C++
+  source and concluded no mirror exists. Empirical scan on user's
+  100-ledger sample then confirmed the mirror IS happening — but it's
+  produced by **soroban-host (Rust)**, not by stellar-core (C++).
+  The host emits each contract event into BOTH `output.contract_events`
+  (→ per-op) AND `output.diagnostic_events` (→ diag) when diagnostic
+  mode is on. Stellar-core just routes them to different containers
+  without any copy. The SDK comment "diagnosticEvents MAY include
+  contract events as well" is the canonical Stellar-side acknowledgment.
+  Code comments and docs were written to be accurate without claiming a
+  specific source-of-duplication mechanism (just: "the container can
+  contain Contract-typed entries, drop the whole container by source").
+- **Orphan Contract events in diag from FAILED txs.** 3 644 orphans
+  found in 1000-ledger scan (≈0.9% of V4 txs with diag). Every single
+  one came from a failed transaction (TxFailed / TxFeeBumpInnerFailed)
+  with `inSuccessfulContractCall=false`. These are events soroban-host
+  emitted before the call rolled back; not consensus, not in the per-op
+  vec, not indexed by stellar-rpc/horizon/stellar.expert. Pre-fix our
+  staging counted them as real events on failed tx — that was a latent
+  bug, fix corrects it.
+- **Cross-validation against stellar.expert via WebFetch failed**
+  because their UI is a client-rendered SPA. Worked around by decoding
+  raw XDR meta directly (own parser tool) — same data the validators
+  produced, authoritative.
+- **stellar-rpc retention is ~7 days**, so the swap tx (4 weeks old)
+  could not be queried live. Cross-validated by querying a fresh tx in
+  retention window: confirmed `getTransaction.events` exposes
+  `transactionEventsXdr` (= our tx-level) + `contractEventsXdr` (= our
+  per-op), with `diagnosticEventsXdr` separate (dropped from
+  `getEvents` index). Same matheamatics as our fix.
 
 ## Notes
 

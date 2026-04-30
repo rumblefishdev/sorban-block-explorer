@@ -10,6 +10,8 @@
 pub mod schemas;
 
 use utoipa::OpenApi;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use crate::assets::dto::{AssetDetailResponse, AssetItem, AssetTransactionItem};
 use crate::contracts::dto::{
@@ -71,3 +73,23 @@ use schemas::{ErrorEnvelope, PageInfo, Paginated};
     )),
 )]
 pub struct ApiDoc;
+
+/// Build the `OpenApiRouter` carrying every endpoint advertised by the
+/// API. Shared between the live Lambda app (`main::app`) and the
+/// build-time `extract_openapi` binary so neither can quietly drop a
+/// route from the spec the frontend codegen consumes.
+///
+/// Returns a router typed with `AppState` but not yet bound to a state
+/// value. Callers attach state via `.with_state(...)` (live app) or
+/// call `.split_for_parts()` directly (extractor — the spec does not
+/// depend on `AppState`).
+pub fn register_routes() -> OpenApiRouter<crate::AppState> {
+    OpenApiRouter::with_openapi(ApiDoc::openapi())
+        .routes(routes!(crate::ops::health))
+        .nest("/v1", crate::network::router())
+        .nest("/v1", crate::transactions::router())
+        .nest("/v1", crate::contracts::router())
+        .nest("/v1", crate::liquidity_pools::router())
+        .nest("/v1", crate::assets::router())
+        .nest("/v1", crate::ledgers::router())
+}

@@ -13,7 +13,7 @@ use crate::common::pagination::{finalize_ts_id_page, into_envelope};
 use crate::common::path;
 use crate::openapi::schemas::{ErrorEnvelope, Paginated};
 use crate::state::AppState;
-use crate::stellar_archive::extractors::{extract_e3_heavy, extract_e3_memo};
+use crate::stellar_archive::extractors::extract_e3_heavy;
 use crate::stellar_archive::merge::merge_e3_response;
 
 use super::dto::{
@@ -36,7 +36,8 @@ use super::queries::{
     tag = "transactions",
     params(
         ("limit" = Option<u32>, Query,
-         description = "Items per page (1–100, default 20)."),
+         description = "Items per page (1–100, default 20).",
+         minimum = 1, maximum = 100),
         ("cursor" = Option<String>, Query,
          description = "Opaque pagination cursor from a previous response."),
         ListParams,
@@ -97,66 +98,26 @@ pub async fn list_transactions(
     // Trim limit+1 → limit, derive page info with cursor built from last row.
     let page = finalize_ts_id_page(&mut rows, pagination.limit, |r| r.created_at, |r| r.id);
 
-    // Collect unique ledger sequences and fetch XDR heavy fields concurrently
-    // for memo_type / memo (ADR 0029). Failures degrade gracefully to null memo.
-    // Out-of-range BIGINT → u32 conversions skip the row with a warn rather
-    // than wrapping silently and fetching an unrelated ledger.
-    let unique_seqs: Vec<u32> = {
-        let mut seen = std::collections::HashSet::new();
-        rows.iter()
-            .filter_map(|r| match u32::try_from(r.ledger_sequence) {
-                Ok(seq) => seen.insert(seq).then_some(seq),
-                Err(_) => {
-                    tracing::warn!(
-                        "skipping out-of-u32-range ledger_sequence {} for memo enrichment",
-                        r.ledger_sequence
-                    );
-                    None
-                }
-            })
-            .collect()
-    };
-
-    let ledger_results = state.fetcher.fetch_ledgers(&unique_seqs).await;
-    // Build a map: ledger_sequence → Option<LedgerCloseMeta>
-    let ledger_map: std::collections::HashMap<u32, _> = unique_seqs
-        .into_iter()
-        .zip(ledger_results)
-        .filter_map(|(seq, res)| match res {
-            Ok(meta) => Some((seq, meta)),
-            Err(e) => {
-                tracing::warn!("failed to fetch ledger {seq} for memo extraction: {e}");
-                None
-            }
-        })
-        .collect();
-
-    // Map DB rows → response items, merging XDR memo fields.
+    // Pure DB-only mapping — no archive XDR fetch. Memo / heavy fields
+    // belong on the transaction detail endpoint (E3) inside the E3 heavy
+    // block, not in the list response. Keeping the list path archive-free
+    // matches canonical SQL 02's `Data sources: DB-only` contract and
+    // avoids an N-fan-out fetch per page.
     let data: Vec<TransactionListItem> = rows
         .into_iter()
-        .map(|row| {
-            let (memo_type, memo) = u32::try_from(row.ledger_sequence)
-                .ok()
-                .and_then(|seq| ledger_map.get(&seq))
-                .and_then(|meta| extract_e3_memo(meta, &row.hash, &state.network_id))
-                .unwrap_or((None, None));
-
-            TransactionListItem {
-                hash: row.hash,
-                ledger_sequence: row.ledger_sequence,
-                application_order: row.application_order,
-                source_account: row.source_account,
-                fee_charged: row.fee_charged,
-                inner_tx_hash: row.inner_tx_hash,
-                successful: row.successful,
-                operation_count: row.operation_count,
-                has_soroban: row.has_soroban,
-                operation_types: row.operation_types,
-                contract_ids: row.contract_ids,
-                created_at: row.created_at,
-                memo_type,
-                memo,
-            }
+        .map(|row| TransactionListItem {
+            hash: row.hash,
+            ledger_sequence: row.ledger_sequence,
+            application_order: row.application_order,
+            source_account: row.source_account,
+            fee_charged: row.fee_charged,
+            inner_tx_hash: row.inner_tx_hash,
+            successful: row.successful,
+            operation_count: row.operation_count,
+            has_soroban: row.has_soroban,
+            operation_types: row.operation_types,
+            contract_ids: row.contract_ids,
+            created_at: row.created_at,
         })
         .collect();
 

@@ -3,7 +3,7 @@ id: '0034'
 title: 'soroban_invocations → soroban_invocations_appearances: appearance index with caller_id payload, per-node detail at read time'
 status: accepted
 deciders: [fmazur]
-related_tasks: ['0158']
+related_tasks: ['0158', '0183']
 related_adrs: ['0021', '0027', '0029', '0030', '0033']
 tags: [architecture, schema, read-path, s3, db-size]
 links: []
@@ -28,6 +28,21 @@ history:
       the API crate has no router/state/error infrastructure yet, so
       handler work lands with the API bootstrap that will also pick up
       0157's E3 / E10 / E14 handlers.
+  - date: '2026-04-30'
+    status: accepted
+    who: fmazur
+    note: >
+      Amended (task 0183) — invocation source switches from auth-tree
+      (subset) to the **execution** tree reconstructed from `fn_call`/
+      `fn_return` diagnostic events. ~53 % of Soroban tx (auth-less DeFi
+      router multi-hop swaps) had zero appearance rows under the
+      auth-only path; with the diag-tree walker every contract touched
+      by the host VM is represented. Schema gains
+      `caller_contract_id BIGINT REFERENCES soroban_contracts(id)` gated
+      by `ck_sia_caller_xor` so contract-to-contract sub-call callers
+      surface alongside the existing G/M-account `caller_id`. The
+      "Sub-invocation caller info no longer recoverable from DB" entry
+      under Negative Consequences flips: that signal is now retained.
 ---
 
 # ADR 0034: soroban_invocations → soroban_invocations_appearances (read-time per-node detail)
@@ -145,11 +160,20 @@ shared rationale.
    the contract-scoped scan hits `idx_sia_contract_ledger` and the
    distinct count runs over the already-pruned rows.
 
-   `caller_id` preserves the current staging behaviour: only G-account
-   callers (root-level invocations where `caller = tx source`) are
-   retained; C-contract callers (sub-invocations) collapse to NULL per
-   the existing `is_strkey_account` filter. This matches today's DB
-   shape and avoids introducing a second semantic to the stat.
+   **Amendment (task 0183, 2026-04-30):** the staging-side
+   contract-caller filter is dropped. With the diagnostic-event
+   execution tree as the invocation source, contract-to-contract
+   sub-calls now surface natural callers in C-strkey form. A second
+   payload column `caller_contract_id BIGINT REFERENCES soroban_contracts(id)`
+   carries them, gated by `CHECK ck_sia_caller_xor` so each row holds
+   at most one of `caller_id` / `caller_contract_id`. The aggregation
+   rule (first non-NULL caller wins per trio in depth-first emit
+   order) is preserved unchanged; G/M-account roots still land in
+   `caller_id` for every tx that has a root call from the source
+   account, so `COUNT(DISTINCT caller_id)` for E11 keeps its existing
+   semantic. Trios that have _only_ contract callers (no G/M root row
+   in the trio) populate `caller_contract_id` instead of dropping the
+   signal — pre-task-0183 those rows simply did not exist.
 
 4. **Rewrite migrations in place.** Edit
    `crates/db/migrations/0004_soroban_activity.sql` §10 and drop the
@@ -170,17 +194,32 @@ trio` (see §6 below), and use `ON CONFLICT
 
 6. **Aggregation semantics — root-caller per trio.** Each invocation
    tree has one root caller (the tx source for `InvokeHostFunctionOp`);
-   sub-invocations carry parent-contract addresses which today's staging
-   already filters to NULL. When aggregating tree nodes per
-   `(contract, tx, ledger)` trio, `caller_id` is the root caller
-   observed for that trio. The edge case "one tx with multiple
-   `InvokeHostFunctionOp`s targeting the same contract with different
-   root callers" is vanishingly rare (Stellar Protocol 21 allows at
-   most one Soroban op per tx in practice); when encountered the
-   indexer takes the first-seen root caller and accepts the minor
+   sub-invocations carry parent-contract addresses. When aggregating
+   tree nodes per `(contract, tx, ledger)` trio, the trio's caller is
+   the first non-NULL caller observed in depth-first emit order — for
+   a contract reached as the root call, that's the G/M tx-source row;
+   for a contract reached only as a sub-invocation, that's a C-strkey
+   parent-contract row. The "first-non-NULL of either kind" rule
+   resolves to a single column per trio under the schema's
+   `ck_sia_caller_xor` (task 0183). The edge case "one tx with
+   multiple `InvokeHostFunctionOp`s targeting the same contract with
+   different root callers" is vanishingly rare (Stellar Protocol 21
+   allows at most one Soroban op per tx in practice); when encountered
+   the indexer takes the first-seen root caller and accepts the minor
    semantic drift. This is documented here rather than engineered
    around because the invariant holds in every real-world tx observed
    during task 0157's integration runs.
+
+   **Amendment (task 0183, 2026-04-30):** invocation rows now come
+   from the **execution** call graph reconstructed from `fn_call` /
+   `fn_return` diagnostic events, not the auth tree. The auth tree
+   becomes the fallback path for tx with no diagnostic stream. Galexie
+   captive-core enables diagnostic mode by default, so the diag path
+   is the dominant one in production. The execution tree is a strict
+   superset of the auth tree, so `amount` may grow per trio compared
+   to pre-task-0183 numbers; the appearance count itself only changes
+   for contracts that were reached via auth-less sub-calls (i.e. were
+   missing from the index entirely before).
 
 7. **Route every invocation-bearing endpoint through read-time XDR.**
 
@@ -357,11 +396,12 @@ soroban_invocations_appearances`; the distinct-count semantic stays
   JOIN to accounts, single-digit ms. New path: ledger XDR fetch +
   parse, ms to low seconds depending on archive cache. Matches ADR
   0033's acceptance of this trade-off.
-- **Sub-invocation caller info no longer recoverable from DB.** Today's
-  staging filter already drops contract-callers to NULL, so this is a
-  theoretical loss rather than a regression. The per-node caller chain
-  for sub-invocations is available from XDR at read time when E12 /
-  E13 render the invocation tree.
+- ~~**Sub-invocation caller info no longer recoverable from DB.**~~
+  **Superseded by task 0183 (2026-04-30):** contract-to-contract
+  sub-call callers are now retained on `caller_contract_id`, gated by
+  `ck_sia_caller_xor`. The per-node tree shape (depth, ordering) still
+  comes from read-time XDR via `xdr_parser::extract_invocations`; the
+  DB now carries which contract called which.
 - **ADR 0021 coverage matrix needs a revision.** E11 / E12 / E13 rows
   updated; bundled into task 0158.
 - **Divergence from ADR 0033 pattern.** Retaining `caller_id` as

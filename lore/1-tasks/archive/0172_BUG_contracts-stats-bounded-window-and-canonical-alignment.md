@@ -52,7 +52,7 @@ the LOW ones are bundled in the same PR.
       `contract_type_name()` server-side (paired with raw SMALLINT).
 - [x] Wire field rename `deployer_account` → `deployer` (canonical).
 - [x] E11 response is canonical raw-JSONB `{ contract_id, wasm_hash,
-  interface_metadata }`; LEFT JOIN with `CASE` preserves the
+interface_metadata }`; LEFT JOIN with `CASE` preserves the
       task-0153 stub filter; 200 + null for SAC, 404 only on miss.
 - [x] E13 dropped read-time XDR fetch (canonical 13: out of scope);
       `InvocationItem` is per-appearance with `caller_account`, `amount`,

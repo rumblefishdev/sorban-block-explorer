@@ -31,7 +31,7 @@ pub use envelope::InnerTxRef;
 pub use error::{ParseError, ParseErrorKind};
 pub use event::extract_events;
 pub use event_filters::{Transfer, is_transfer_event, parse_transfer, transfer_participants};
-pub use invocation::{InvocationResult, extract_invocations};
+pub use invocation::{InvocationResult, extract_invocations, extract_invocations_from_diagnostics};
 pub use ledger::extract_ledger;
 pub use ledger_entry_changes::extract_ledger_entry_changes;
 pub use nft::detect_nft_events;
@@ -47,11 +47,11 @@ pub use state::{
 };
 pub use transaction::extract_transactions;
 pub use types::{
-    ContractFunction, ExtractedAccountState, ExtractedAsset, ExtractedContractDeployment,
-    ExtractedContractInterface, ExtractedEvent, ExtractedInvocation, ExtractedLedger,
-    ExtractedLedgerEntryChange, ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot,
-    ExtractedLpPosition, ExtractedNft, ExtractedNftEvent, ExtractedOperation, ExtractedTransaction,
-    NftEvent, SacAssetIdentity,
+    ContractFunction, EventSource, ExtractedAccountState, ExtractedAsset,
+    ExtractedContractDeployment, ExtractedContractInterface, ExtractedEvent, ExtractedInvocation,
+    ExtractedLedger, ExtractedLedgerEntryChange, ExtractedLiquidityPool,
+    ExtractedLiquidityPoolSnapshot, ExtractedLpPosition, ExtractedNft, ExtractedNftEvent,
+    ExtractedOperation, ExtractedTransaction, NftEvent, SacAssetIdentity,
 };
 
 use stellar_xdr::curr::{LedgerCloseMetaBatch, ReadXdr};

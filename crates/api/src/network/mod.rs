@@ -5,7 +5,7 @@
 //! 0045 for the full spec and ADR 0021 §E1 for the source-of-truth
 //! query set.
 
-mod cache;
+pub mod cache;
 pub mod dto;
 mod handlers;
 mod queries;

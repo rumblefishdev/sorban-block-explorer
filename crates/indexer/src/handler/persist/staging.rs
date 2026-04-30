@@ -15,15 +15,13 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
-use domain::{
-    AssetType, ContractEventType, ContractType, NftEventType, OperationType, TokenAssetType,
-};
+use domain::{AssetType, ContractType, NftEventType, OperationType, TokenAssetType};
 use serde_json::Value;
 use xdr_parser::types::{
-    ExtractedAccountState, ExtractedAsset, ExtractedContractDeployment, ExtractedContractInterface,
-    ExtractedEvent, ExtractedInvocation, ExtractedLedger, ExtractedLiquidityPool,
-    ExtractedLiquidityPoolSnapshot, ExtractedLpPosition, ExtractedNft, ExtractedNftEvent,
-    ExtractedOperation, ExtractedTransaction,
+    EventSource, ExtractedAccountState, ExtractedAsset, ExtractedContractDeployment,
+    ExtractedContractInterface, ExtractedEvent, ExtractedInvocation, ExtractedLedger,
+    ExtractedLiquidityPool, ExtractedLiquidityPoolSnapshot, ExtractedLpPosition, ExtractedNft,
+    ExtractedNftEvent, ExtractedOperation, ExtractedTransaction,
 };
 
 use super::HandlerError;
@@ -83,16 +81,26 @@ pub(super) struct EventRow {
 
 /// `soroban_invocations_appearances` row (pre-aggregation, one per
 /// invocation-tree node). ADR 0034: `contract_id` + `tx_hash_hex` +
-/// `ledger_sequence` + `created_at` form the aggregation key;
-/// `caller_str_key` is collapsed to the trio's first non-NULL caller
-/// at write time. Per-node detail (function name, per-node index,
-/// successful, args, return value, depth) is not carried — the API
-/// re-extracts it from XDR at read time via
-/// `xdr_parser::extract_invocations`.
+/// `ledger_sequence` + `created_at` form the aggregation key.
+///
+/// Caller is split across two mutually-exclusive fields gated by the
+/// schema's `ck_sia_caller_xor` (task 0183): `caller_account_str_key`
+/// (G/M) routes to `accounts(id)`, `caller_contract_str_key` (C) routes
+/// to `soroban_contracts(id)`. Contract-to-contract callers surface from
+/// the diagnostic-event execution tree, where DeFi router → pool calls
+/// have no G-prefix caller. At write time the trio's first non-NULL
+/// caller (of either kind) wins; for diag-tree the root row always
+/// carries the tx-source G-account, so the first-wins semantic matches
+/// pre-task-0183 behaviour for the common case.
+///
+/// Per-node detail (function name, per-node index, successful, args,
+/// return value, depth) is not carried — the API re-extracts it from
+/// XDR at read time via `xdr_parser::extract_invocations`.
 pub(super) struct InvRow {
     pub tx_hash_hex: String,
     pub contract_id: Option<String>,
-    pub caller_str_key: Option<String>,
+    pub caller_account_str_key: Option<String>,
+    pub caller_contract_str_key: Option<String>,
     pub ledger_sequence: i64,
     pub created_at: DateTime<Utc>,
 }
@@ -673,16 +681,25 @@ impl Staged {
 
         // --- events flatten for appearance aggregation ---------------------
         //
-        // Filter out event_type = "diagnostic". Per Stellar docs these are
-        // debug-only traces (fn_call / fn_return / core_metrics / log /
-        // error / host_fn_failed) emitted by the Soroban host VM and by
-        // stellar-core's InvokeHostFunctionOpFrame; they are explicitly
-        // "not hashed into the ledger, and therefore are not part of the
-        // protocol" and "not useful for most users". ADR 0033 routes them
-        // (and all other event detail) to the public archive; the DB
-        // appearance index only counts "contract" and "system" events.
-        // On a mainnet sample diagnostic events are ~85 % of event volume
-        // and previously dominated events_ms in persist_ledger.
+        // Drop the entire `*.diagnostic_events` container — debug-only
+        // traces (fn_call / fn_return / core_metrics / log / error /
+        // host_fn_failed) per Stellar docs, "not hashed into the ledger,
+        // and therefore are not part of the protocol" (CAP-67). ADR 0033
+        // routes diagnostic detail to the public archive; the DB
+        // appearance index only counts consensus events.
+        //
+        // Filter on `EventSource::Diagnostic` — NOT on inner
+        // `event_type == Diagnostic`. When diagnostic mode is enabled
+        // (default for Galexie's captive-core), `v4.diagnostic_events`
+        // holds byte-identical Contract-typed copies of every per-op
+        // consensus Contract event (inner `type_ = Contract`), so a
+        // type-based filter passes the duplicate through and inflates
+        // `amount` by the per-op event count. Container-based filter
+        // drops both the host-VM trace entries and the Contract-typed
+        // duplicates in one step (task 0182).
+        //
+        // On a mainnet sample diagnostic events are ~85 % of event
+        // volume and previously dominated events_ms in persist_ledger.
         let mut event_rows: Vec<EventRow> = Vec::new();
         let mut diagnostic_dropped = 0usize;
         for (tx_hash, evs) in events {
@@ -690,7 +707,7 @@ impl Staged {
                 continue;
             };
             for ev in evs {
-                if ev.event_type == ContractEventType::Diagnostic {
+                if ev.source == EventSource::Diagnostic {
                     diagnostic_dropped += 1;
                     continue;
                 }
@@ -707,7 +724,7 @@ impl Staged {
                 ledger_sequence = ledger.sequence,
                 diagnostic_dropped,
                 staged = event_rows.len(),
-                "staged events for appearance aggregation (diagnostic filtered — S3 lane per ADR 0033)"
+                "staged events for appearance aggregation (diagnostic container dropped — S3 lane per ADR 0033)"
             );
         }
 
@@ -723,15 +740,16 @@ impl Staged {
                 continue;
             };
             for inv in invs {
-                let caller = inv
-                    .caller_account
-                    .as_ref()
-                    .filter(|k| is_strkey_account(k))
-                    .cloned();
+                let (caller_account, caller_contract) = match inv.caller_account.as_deref() {
+                    Some(k) if is_strkey_account(k) => (Some(k.to_string()), None),
+                    Some(k) if k.starts_with('C') => (None, Some(k.to_string())),
+                    _ => (None, None),
+                };
                 inv_rows.push(InvRow {
                     tx_hash_hex: tx_hash.clone(),
                     contract_id: inv.contract_id.clone(),
-                    caller_str_key: caller,
+                    caller_account_str_key: caller_account,
+                    caller_contract_str_key: caller_contract,
                     ledger_sequence: ledger_sequence_i64,
                     created_at,
                 });

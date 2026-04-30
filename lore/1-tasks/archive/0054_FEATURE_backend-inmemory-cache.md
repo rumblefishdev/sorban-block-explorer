@@ -2,9 +2,9 @@
 id: '0054'
 title: 'Backend: in-memory caching in Lambda execution environment'
 type: FEATURE
-status: backlog
+status: superseded
 related_adr: ['0005']
-related_tasks: ['0023', '0092']
+related_tasks: ['0023', '0045', '0050', '0092', '0180']
 tags: [layer-backend, caching, lambda, performance]
 milestone: 2
 links: []
@@ -17,6 +17,24 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
+  - date: 2026-04-29
+    status: superseded
+    who: karolkow
+    by: ['0045', '0050', '0180']
+    note: >
+      Scope absorbed by other tasks. Network stats cache shipped via
+      0045 (Network module) and contract metadata cache via 0050
+      (Contracts module) as hand-rolled `Arc<Mutex<HashMap>>` with
+      TTL. 0180 then refactored both to `moka` 0.12 with max_capacity
+      and stampede protection (`try_get_with`). All 0054 acceptance
+      criteria satisfied: in-memory TTL cache for network stats and
+      contract metadata, persists across warm Lambda invocations,
+      lost on cold start, no ElastiCache, no shared cache across
+      instances, fall-through to DB on miss. 0054 was never picked
+      up as a standalone task — its goals were realized inline in
+      the module work. Body of this task still references "Node.js
+      single-threaded" — a leftover from the pre-ADR-0005 NestJS
+      draft, not corrected because the task is being archived.
 ---
 
 # Backend: in-memory caching in Lambda execution environment

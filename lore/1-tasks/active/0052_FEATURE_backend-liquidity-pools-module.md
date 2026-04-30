@@ -2,7 +2,7 @@
 id: '0052'
 title: 'Backend: Liquidity Pools module (list + detail + transactions + chart)'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0005']
 related_tasks: ['0023', '0043', '0092']
 tags: [layer-backend, liquidity-pools, charts]
@@ -17,6 +17,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
+  - date: 2026-04-29
+    status: active
+    who: karolkow
+    note: 'Activated — bundled with 0051 (NFTs) on shared branch, parallel module shape to 0048 accounts.'
 ---
 
 # Backend: Liquidity Pools module (list + detail + transactions + chart)
