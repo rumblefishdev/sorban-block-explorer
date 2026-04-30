@@ -38,13 +38,26 @@ Per task 0167 §"Data Source Boundary":
 
 | Source                                                                                                                            | Used by                                                                                 |
 | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| **DB-only** (Postgres)                                                                                                            | All list endpoints + most detail endpoints                                              |
+| **DB-only** (Postgres)                                                                                                            | All list endpoints + most detail endpoints, including E5 (transactions-in-ledger sublist; see supersession note below) |
 | **DB + Public Stellar ledger archive** ([ADR 0029](../../../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md)) | E3 (envelope/result/result_meta + parsed invocation tree), E14 (full event topics/data) |
-| **DB + S3 per-ledger blob** (`s3://<bucket>/parsed_ledger_{N}.json`)                                                              | E5 (transactions-in-ledger sublist)                                                     |
 | **DB + S3 per-entity blob** (`s3://<bucket>/assets/{id}.json`)                                                                    | E9 (`description`, `home_page`) — task **0164**                                         |
 
-The SQL never reaches into S3 / archive. It surfaces the bridge column the API
-layer uses to fetch the blob and marks the off-DB fields with
+> **SUPERSESSION NOTE (2026-04).** An earlier framing of E5 (per task 0167)
+> sourced the embedded `transactions[]` sublist from a per-ledger
+> `s3://<bucket>/parsed_ledger_{N}.json` artifact. That storage track was
+> abandoned by [ADR 0029](../../../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md)
+> in favour of read-time XDR fetch from the public archive. The replacement
+> for E5 is the same DB-only pattern as `GET /v1/transactions` list:
+> project the structural fields from the `transactions` partition with
+> `created_at = $closed_at` for full single-partition prune. See
+> [`05_get_ledgers_by_sequence.sql`](./05_get_ledgers_by_sequence.sql)
+> SUPERSESSION NOTE for the canonical record. The `ledger_sequence_s3_bridge`
+> alias remains in the SQL for readability of the supersession but no
+> S3 fetch occurs at the API layer.
+
+The SQL never reaches into S3 / archive. It surfaces any bridge column the
+API layer uses to fetch off-DB data (currently only the per-entity asset
+blob for E9) and marks the off-DB fields with
 `-- not in DB: <field> — <source — ADR ref>`.
 
 ## Index
@@ -229,25 +242,37 @@ Using the same parsed envelope as step 2, the API enriches each op row:
 
 ### 05. `GET /ledgers/:sequence`
 
-**Source:** DB header + **S3 per-ledger blob** (`s3://<bucket>/parsed_ledger_{N}.json`). This is the documented exception case where a list-like field on a detail endpoint is fully S3-served.
+**Source:** DB-only (post-supersession). Two-statement pattern: a header from `ledgers` with prev/next navigation, plus an embedded `transactions[]` sublist from the `transactions` partition with `created_at = $closed_at` for full single-partition prune.
 
-**Step 1 — DB header:**
+> An earlier framing of this endpoint (per task 0167) sourced
+> `transactions[]` from a per-ledger `s3://<bucket>/parsed_ledger_{N}.json`
+> artifact. That storage track was abandoned by
+> [ADR 0029](../../../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md);
+> the replacement is the DB-only pattern below. See
+> [`05_get_ledgers_by_sequence.sql`](./05_get_ledgers_by_sequence.sql)
+> SUPERSESSION NOTE (2026-04) and PR #139 (lore-0047) for the
+> implementation.
 
-| Field                                                                                | Source                                                                                                |
-| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `sequence`, `hash`, `closed_at`, `protocol_version`, `transaction_count`, `base_fee` | DB → `ledgers` row                                                                                    |
-| `prev_sequence`, `next_sequence`                                                     | DB → two LATERALs over `idx_ledgers_closed_at`                                                        |
-| `ledger_sequence_s3_bridge`                                                          | DB → equal to `sequence`; explicit alias telling the API which value to plug into the S3 key template |
+**Statement A — DB header:**
 
-**Step 2 — S3 overlay:**
+| Field                                                                                | Source                                                                                                                                                                                                       |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `sequence`, `hash`, `closed_at`, `protocol_version`, `transaction_count`, `base_fee` | DB → `ledgers` row                                                                                                                                                                                           |
+| `prev_sequence`, `next_sequence`                                                     | DB → two LATERALs over `idx_ledgers_closed_at`                                                                                                                                                               |
+| `ledger_sequence_s3_bridge`                                                          | DB → equal to `sequence`; retained as an explicit alias for readability of the supersession (legacy of the pre-ADR-0029 S3 framing). The API does **not** fetch any S3 blob keyed by this value post-0029. |
 
-The API constructs the key `s3://<bucket>/parsed_ledger_{ledger_sequence_s3_bridge}.json` and fetches the blob (per-ledger layout from ADR 0011 / ADR 0037 §11). From that blob, the API extracts:
+**Statement B — embedded transactions sublist:**
 
-| Field            | Source                                                                                                                                                                                                                                                   |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `transactions[]` | S3 → the parsed-ledger JSON's transactions array, each with at minimum `hash`, `application_order`, `source_account`, `fee_charged`, `successful`, `operation_count`, `has_soroban`, plus whatever the parsed-ledger schema carries for embedded display |
+`closed_at` from statement A is fed into a partition-pruned scan of
+`transactions` (`WHERE created_at = $closed_at AND ledger_sequence = $sequence`)
+that touches a single monthly child via `idx_tx_ledger`:
 
-The SQL does **not** query the `transactions` partition for this list. The S3 blob is the single source of truth for the embedded sublist.
+| Field            | Source                                                                                                                                                                                                                                                                                                                  |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `transactions[]` | DB → `transactions` partition, projecting the structural fields of `TransactionListItem` (`hash`, `application_order`, `source_account`, `fee_charged`, `successful`, `operation_count`, `has_soroban`). Memo / heavy fields stay on E3 detail per ADR 0029. |
+
+The SQL queries the `transactions` partition with full partition pruning;
+no off-DB fetch is required.
 
 ### 06. `GET /accounts/:account_id`
 
