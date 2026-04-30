@@ -107,6 +107,26 @@ pub fn extract_invocations(
 
     // Diagnostic-event execution tree (preferred — superset of auth tree).
     // When the meta carries no diagnostic events, fall back to the auth tree.
+    //
+    // Effective root caller honours per-op `source_account` overrides (matching
+    // `flatten_auth_tree`'s task-0177 canonicalisation): muxed M-strkey →
+    // underlying ed25519 G-strkey, op override beats tx source. Protocol 21+
+    // allows at most one InvokeHostFunction op per tx, so the first match
+    // covers every real-world case; if none exists, the tx source is the
+    // legitimate fallback.
+    let root_caller = ops
+        .iter()
+        .find_map(|op| match op.body {
+            OperationBody::InvokeHostFunction(_) => Some(
+                op.source_account
+                    .as_ref()
+                    .map(muxed_to_g_strkey)
+                    .unwrap_or_else(|| tx_source_account.to_string()),
+            ),
+            _ => None,
+        })
+        .unwrap_or_else(|| tx_source_account.to_string());
+
     let diag_invocations = tx_meta
         .map(|tm| {
             extract_invocations_from_diagnostics(
@@ -114,7 +134,7 @@ pub fn extract_invocations(
                 transaction_hash,
                 ledger_sequence,
                 created_at,
-                tx_source_account,
+                &root_caller,
                 successful,
             )
         })
@@ -1484,5 +1504,77 @@ mod tests {
         // the established API contract for transactions.operation_tree).
         let tree = result.operation_tree.expect("operation_tree from auth");
         assert_eq!(tree.as_array().unwrap().len(), 1);
+    }
+
+    /// Regression for PR #148 review: when an `InvokeHostFunction` op carries
+    /// a `source_account` override (and especially a `MuxedAccount::MuxedEd25519`),
+    /// the diag-tree root caller must use the canonicalised G-strkey from
+    /// THAT op, not the bare tx source. Mirrors the auth-tree counterpart
+    /// `per_op_muxed_source_collapses_to_underlying_g_strkey` (task 0177)
+    /// for the diagnostic-event path.
+    #[test]
+    fn diag_root_caller_honours_per_op_source_and_canonicalises_muxed() {
+        let payload = [0x77; 32];
+        let mux_id = 0x0123_4567_89AB_CDEFu64;
+        let muxed_source = MuxedAccount::MuxedEd25519(stellar_xdr::curr::MuxedAccountMed25519 {
+            id: mux_id,
+            ed25519: Uint256(payload),
+        });
+        let expected_g = MuxedAccount::Ed25519(Uint256(payload)).to_string();
+        // Sanity on the test premise — the muxed form alone would surface as
+        // a 69-char M-strkey if anything in the path forgot to canonicalise.
+        assert_eq!(muxed_source.to_string().len(), 69);
+        assert_eq!(expected_g.len(), 56);
+
+        let op = Operation {
+            // Per-op override is the field under test.
+            source_account: Some(muxed_source),
+            body: OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
+                host_function: HostFunction::InvokeContract(InvokeContractArgs {
+                    contract_address: ScAddress::Contract(ContractId(Hash([0xCC; 32]))),
+                    function_name: ScSymbol::try_from("transfer".as_bytes().to_vec()).unwrap(),
+                    args: VecM::default(),
+                }),
+                auth: VecM::default(),
+            }),
+        };
+        let tx = build_v1_tx(vec![op]);
+        let inner = InnerTxRef::V1(&tx);
+
+        let diags = vec![
+            diag_event(fn_call_topics(0xCC, "transfer"), None),
+            diag_event(fn_return_topics("transfer"), Some(0xCC)),
+        ];
+        let meta = meta_v4_with_diags(diags);
+
+        // tx_source_account intentionally distinct from the per-op override —
+        // if the diag walker regresses to using tx source, the assertion
+        // below catches it.
+        let result = extract_invocations(
+            &inner,
+            Some(&meta),
+            "abcd1234",
+            100,
+            1700000000,
+            source_account_str(),
+            true,
+        );
+
+        assert_eq!(result.invocations.len(), 1, "expected single root frame");
+        let caller = result.invocations[0]
+            .caller_account
+            .as_deref()
+            .expect("root caller populated");
+        assert_eq!(caller.len(), 56, "expected 56-char G-strkey, got {caller}");
+        assert!(caller.starts_with('G'));
+        assert_eq!(
+            caller, expected_g,
+            "root caller must canonicalise to underlying ed25519 G-strkey from per-op override"
+        );
+        assert_ne!(
+            caller,
+            source_account_str(),
+            "root caller must come from per-op override, not tx-source fallback"
+        );
     }
 }

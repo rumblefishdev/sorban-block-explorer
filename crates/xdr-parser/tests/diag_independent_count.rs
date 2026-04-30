@@ -194,11 +194,12 @@ fn db_counts_match_independent_xdr_walk() {
     eprintln!("\nAll DB counts match independent XDR-level fn_call walk.");
 }
 
-/// Aggregate sanity: every successful Soroban tx in ledger 62016086,
-/// independent fn_call sum, compared with the DB's `SUM(amount) WHERE
-/// ledger_sequence = 62016086`. Failed tx are excluded because the
-/// parser counts pre-trap traces, which is intentional but hard to
-/// reason about in an aggregate.
+/// Aggregate sanity: every Soroban tx in ledger 62016086 — including
+/// failed ones, whose pre-trap fn_call trace is intentionally counted
+/// (see Cases 2/4 above) — independent fn_call sum compared with the
+/// DB's `SUM(amount) WHERE ledger_sequence = 62016086`. Walks every
+/// `tx_processing` meta with no success filter; the constant name
+/// `DB_TOTAL_INCL_FAILED` reflects that scope.
 ///
 /// Hard-codes the DB number on the audit run (658). Skips when archive
 /// is absent. If you re-index a different window, update the constant.
