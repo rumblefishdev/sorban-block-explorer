@@ -38,6 +38,7 @@ pub struct PageInfo {
     pub cursor: Option<String>,
     /// Page size that produced `data`. Echoes the client's requested
     /// limit (clamped server-side).
+    #[schema(minimum = 1, maximum = 100)]
     pub limit: u32,
     /// `true` when further pages exist, `false` on the final page.
     pub has_more: bool,

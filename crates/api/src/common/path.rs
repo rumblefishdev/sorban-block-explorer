@@ -139,10 +139,9 @@ pub fn pool_id_hex(value: &str, param: &str) -> Result<(), Response> {
 /// stay there for the lifetime of this codebase. Zero / negative /
 /// non-numeric / overflow inputs map to 400 `INVALID_SEQUENCE`.
 ///
-/// Reserved for the `/v1/ledgers/:sequence` endpoint shipped by task 0047;
-/// declared here alongside the other path validators so the canonical
-/// set lives in one module.
-#[allow(dead_code)]
+/// Used by the `/v1/ledgers/:sequence` endpoint (task 0047); declared
+/// here alongside the other path validators so the canonical set lives
+/// in one module.
 pub fn sequence(value: &str) -> Result<u32, Response> {
     let invalid = || {
         errors::bad_request_with_details(

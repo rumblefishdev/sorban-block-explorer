@@ -1,5 +1,7 @@
 //! Axum handler for `GET /v1/network/stats`.
 
+use std::sync::Arc;
+
 use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderValue, header};
@@ -9,7 +11,6 @@ use crate::common::errors;
 use crate::openapi::schemas::ErrorEnvelope;
 use crate::state::AppState;
 
-use super::cache;
 use super::dto::NetworkStats;
 use super::queries;
 
@@ -31,6 +32,11 @@ const CACHE_CONTROL_VALUE: HeaderValue = HeaderValue::from_static("public, max-a
 /// response for 30s in process memory. See the task 0045 spec and
 /// `docs/architecture/database-schema/endpoint-queries/01_get_network_stats.sql`
 /// for the full data-source mapping.
+///
+/// Concurrent cold-cache requests deduplicate via
+/// `moka::future::Cache::try_get_with` — the first task runs the
+/// async DB query and the rest wait on its result instead of fanning
+/// out N Postgres round-trips.
 #[utoipa::path(
     get,
     path = "/network/stats",
@@ -41,15 +47,22 @@ const CACHE_CONTROL_VALUE: HeaderValue = HeaderValue::from_static("public, max-a
     ),
 )]
 pub async fn get_network_stats(State(state): State<AppState>) -> Response {
-    if let Some(stats) = cache::get() {
-        return ok_response(stats);
-    }
+    // `try_get_with` deduplicates concurrent cold-cache requests: only
+    // the first task runs the DB query, every other concurrent task on
+    // the same key waits for that task's result and gets a clone of it
+    // — even though our DB query is async, because we are using
+    // `moka::future::Cache`. Errors are propagated as `Arc<sqlx::Error>`
+    // so a single failed fetch is not cached and the next request
+    // retries cleanly.
+    let result: Result<Arc<NetworkStats>, Arc<sqlx::Error>> = state
+        .network_cache
+        .try_get_with((), async {
+            queries::fetch_stats(&state.db).await.map(Arc::new)
+        })
+        .await;
 
-    match queries::fetch_stats(&state.db).await {
-        Ok(stats) => {
-            cache::put(stats.clone());
-            ok_response(stats)
-        }
+    match result {
+        Ok(stats) => ok_response(stats),
         Err(e) => {
             tracing::error!("DB error in get_network_stats: {e}");
             errors::internal_error(errors::DB_ERROR, "Unable to retrieve network statistics.")
@@ -60,7 +73,7 @@ pub async fn get_network_stats(State(state): State<AppState>) -> Response {
 /// Build the 200 response with the canonical `Cache-Control` header.
 /// Centralised so cache-hit and cache-miss paths cannot drift on the
 /// header set.
-fn ok_response(stats: NetworkStats) -> Response {
+fn ok_response(stats: Arc<NetworkStats>) -> Response {
     let mut resp = Json(stats).into_response();
     resp.headers_mut()
         .insert(header::CACHE_CONTROL, CACHE_CONTROL_VALUE);
@@ -89,12 +102,11 @@ mod tests {
     use tower::ServiceExt;
     use utoipa_axum::router::OpenApiRouter;
 
-    use crate::contracts::cache::ContractMetadataCache;
+    use crate::contracts::cache::new_contract_cache;
     use crate::network;
+    use crate::network::cache::new_network_cache;
     use crate::state::AppState;
     use crate::stellar_archive::StellarArchiveFetcher;
-
-    use super::cache;
 
     fn app(db: PgPool) -> Router {
         let aws_cfg = aws_sdk_s3::config::Builder::new()
@@ -106,7 +118,8 @@ mod tests {
         let state = AppState {
             db,
             fetcher,
-            contract_cache: ContractMetadataCache::new(),
+            contract_cache: new_contract_cache(),
+            network_cache: new_network_cache(),
             network_id: xdr_parser::network_id(xdr_parser::MAINNET_PASSPHRASE),
         };
 
@@ -117,18 +130,11 @@ mod tests {
         router
     }
 
-    // The std `MutexGuard` is held across `.await` deliberately — its
-    // sole purpose is to serialise this test against the unit tests in
-    // `network/cache.rs` that touch the same global static. There is
-    // no real cross-task contention to deadlock on.
+    /// Each test owns its own `AppState` (and therefore its own moka
+    /// cache instance), so global serialisation is no longer required —
+    /// parallel tests cannot trample each other's cache state.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn stats_endpoint_returns_documented_shape_against_real_db() {
-        let _guard = cache::TEST_CACHE_MUTEX
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        cache::clear();
-
         let Ok(database_url) = std::env::var("DATABASE_URL") else {
             eprintln!("DATABASE_URL unset — skipping network stats integration test");
             return;

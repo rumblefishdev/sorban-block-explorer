@@ -44,12 +44,15 @@ pub struct TransactionListItem {
     pub fee_charged: i64,
     pub created_at: DateTime<Utc>,
     pub operation_count: i16,
-    /// Memo type: `"none"`, `"text"`, `"id"`, `"hash"`, or `"return"`.
-    /// `null` when the XDR fetch failed (graceful degradation).
-    pub memo_type: Option<String>,
-    /// Memo value. `null` when no memo or XDR fetch failed.
-    pub memo: Option<String>,
 }
+
+// `memo_type` / `memo` are NOT exposed on the list item by design — list
+// endpoints stay DB-only. Memo lives on the transaction detail endpoint
+// (`GET /v1/transactions/{hash}`) inside the E3 `heavy` block, which
+// already pays for the archive XDR fetch for the full transaction view.
+// Adding memo here would require an archive fetch per ledger touched by
+// the page, which is wasteful for the list use case and inconsistent
+// with the DB-only contract advertised by canonical SQL 02.
 
 /// DB-sourced light slice for the transaction detail endpoint.
 ///

@@ -116,7 +116,16 @@ Partitioned by monthly `created_at` range (7): `transactions`, `operations_appea
 - Balances / reserves / shares (can be i128): `NUMERIC(28,7)`.
 - Enum-style categorical columns: `SMALLINT` with value-range `CHECK` (`0..=15` or `0..=127`), decoded via `*_name(smallint)` SQL helper functions.
 - Partitioning key on every high-volume table: `created_at TIMESTAMPTZ`.
-- `ledger_sequence` stays as a bridge column to S3 `parsed_ledger_{N}.json` — never an FK target.
+- `ledger_sequence` is a denormalised lookup column on every high-volume
+  child table (transactions, operations*appearances, soroban*\*_appearances,
+  account_balances_current, etc.); never an FK target into `ledgers`.
+  Originally framed (this snapshot taken at migration `20260424000000`,
+  pre-supersession) as a "bridge to S3 `parsed_ledger_{N}.json`" per the
+  ADR 0011 storage track; that storage track was abandoned by
+  [ADR 0029](./0029_abandon-parsed-artifacts-read-time-xdr-fetch.md) in
+  favour of read-time XDR fetch from the public archive. The column
+  itself is unchanged — it remains useful as a partition-prune helper
+  and read-side lookup ergonomic — only the off-DB rationale is dead.
 
 ### Enum label helper functions
 
@@ -575,7 +584,7 @@ None. This ADR documents state.
 
 ## Mermaid ERD
 
-Entity-relationship diagram of the 17 business tables. All edges are **declared foreign keys** (from `pg_dump`). `ledger_sequence` columns are bridge fields to S3 and not rendered as edges — `ledgers` is intentionally not a relational hub. `transaction_hash_index` and `wasm_interface_metadata` have no FKs (roots by design), but `wasm_interface_metadata` is referenced by `soroban_contracts.wasm_hash`.
+Entity-relationship diagram of the 17 business tables. All edges are **declared foreign keys** (from `pg_dump`). `ledger_sequence` columns are denormalised lookup fields (originally framed as bridges to the parsed-ledger S3 artifact under ADR 0011, since superseded by [ADR 0029](./0029_abandon-parsed-artifacts-read-time-xdr-fetch.md)) and not rendered as edges — `ledgers` is intentionally not a relational hub. `transaction_hash_index` and `wasm_interface_metadata` have no FKs (roots by design), but `wasm_interface_metadata` is referenced by `soroban_contracts.wasm_hash`.
 
 ```mermaid
 erDiagram
@@ -787,7 +796,7 @@ erDiagram
 **Notes on the diagram:**
 
 - All edges are declared FKs from `pg_dump`. No soft relationships.
-- `ledgers` and `transaction_hash_index` have no FK edges — the former is not a relational hub (ledger→S3 bridge), the latter is a lookup keyed by natural `hash`.
+- `ledgers` and `transaction_hash_index` have no FK edges — the former is not a relational hub (originally framed as a ledger→S3 bridge under ADR 0011, since superseded by [ADR 0029](./0029_abandon-parsed-artifacts-read-time-xdr-fetch.md); the column itself is retained as a denormalised lookup), the latter is a lookup keyed by natural `hash`.
 - Composite FK `(transaction_id, created_at) → transactions(id, created_at)` is used by every child of the partitioned `transactions` table (labeled in edge description).
 - `ON DELETE CASCADE` is explicit on every child→`transactions` edge and on `nft_ownership → nfts`. All other FKs default to `NO ACTION`.
 - Tables without outgoing FKs: `ledgers`, `transaction_hash_index`, `wasm_interface_metadata` (root by design). `wasm_interface_metadata` has one incoming FK from `soroban_contracts.wasm_hash`.

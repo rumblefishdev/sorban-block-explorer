@@ -2,7 +2,7 @@
 id: '0177'
 title: 'BUG: muxed transaction source leaks 69-char M-key into accounts.account_id VARCHAR(56)'
 type: BUG
-status: active
+status: completed
 related_adr: ['0026', '0037']
 related_tasks: ['0044', '0145', '0175']
 tags:
@@ -28,6 +28,22 @@ history:
     note: >
       Activating to fix muxed M-key leak in parallel with 0175
       audit harness work.
+  - date: '2026-04-29'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Merged via PR #145 (squash 947a3ef). `pub fn muxed_to_g_strkey`
+      added to `envelope.rs`, applied at envelope V1 source, op
+      source/destinations (Payment, PathPaymentStrict{Receive,Send},
+      AccountMerge, Clawback.from), and per-op source override in
+      `extract_invocations`. 175+2 unit tests + Copilot-review
+      regression test (17e13bc) for per-op muxed canonicalization.
+      E2E pre-flight: 3000 fresh mainnet ledgers (62046001–62049000)
+      ingested via backfill-runner, 1.087M tx persisted, +46394
+      new accounts, zero M/B/L-prefix accounts, zero 22001 / zero
+      unresolved-StrKey errors. Complementary to 0173 staging-level
+      defense-in-depth filter (`accounts.account_id` non-G-56 drop)
+      which remains in place.
 ---
 
 # Muxed transaction source leaks 69-char M-key into persist write path

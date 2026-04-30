@@ -81,16 +81,26 @@ pub(super) struct EventRow {
 
 /// `soroban_invocations_appearances` row (pre-aggregation, one per
 /// invocation-tree node). ADR 0034: `contract_id` + `tx_hash_hex` +
-/// `ledger_sequence` + `created_at` form the aggregation key;
-/// `caller_str_key` is collapsed to the trio's first non-NULL caller
-/// at write time. Per-node detail (function name, per-node index,
-/// successful, args, return value, depth) is not carried — the API
-/// re-extracts it from XDR at read time via
-/// `xdr_parser::extract_invocations`.
+/// `ledger_sequence` + `created_at` form the aggregation key.
+///
+/// Caller is split across two mutually-exclusive fields gated by the
+/// schema's `ck_sia_caller_xor` (task 0183): `caller_account_str_key`
+/// (G/M) routes to `accounts(id)`, `caller_contract_str_key` (C) routes
+/// to `soroban_contracts(id)`. Contract-to-contract callers surface from
+/// the diagnostic-event execution tree, where DeFi router → pool calls
+/// have no G-prefix caller. At write time the trio's first non-NULL
+/// caller (of either kind) wins; for diag-tree the root row always
+/// carries the tx-source G-account, so the first-wins semantic matches
+/// pre-task-0183 behaviour for the common case.
+///
+/// Per-node detail (function name, per-node index, successful, args,
+/// return value, depth) is not carried — the API re-extracts it from
+/// XDR at read time via `xdr_parser::extract_invocations`.
 pub(super) struct InvRow {
     pub tx_hash_hex: String,
     pub contract_id: Option<String>,
-    pub caller_str_key: Option<String>,
+    pub caller_account_str_key: Option<String>,
+    pub caller_contract_str_key: Option<String>,
     pub ledger_sequence: i64,
     pub created_at: DateTime<Utc>,
 }
@@ -730,15 +740,16 @@ impl Staged {
                 continue;
             };
             for inv in invs {
-                let caller = inv
-                    .caller_account
-                    .as_ref()
-                    .filter(|k| is_strkey_account(k))
-                    .cloned();
+                let (caller_account, caller_contract) = match inv.caller_account.as_deref() {
+                    Some(k) if is_strkey_account(k) => (Some(k.to_string()), None),
+                    Some(k) if k.starts_with('C') => (None, Some(k.to_string())),
+                    _ => (None, None),
+                };
                 inv_rows.push(InvRow {
                     tx_hash_hex: tx_hash.clone(),
                     contract_id: inv.contract_id.clone(),
-                    caller_str_key: caller,
+                    caller_account_str_key: caller_account,
+                    caller_contract_str_key: caller_contract,
                     ledger_sequence: ledger_sequence_i64,
                     created_at,
                 });

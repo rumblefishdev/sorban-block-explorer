@@ -3,6 +3,7 @@
 //! errors, cursor codec, and StrKey validation (task 0043).
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -129,7 +130,7 @@ pub async fn get_contract(
     }
 
     if let Some(cached) = state.contract_cache.get(&contract_id) {
-        return Json((*cached).clone()).into_response();
+        return Json(cached).into_response();
     }
 
     let contract = match fetch_contract(&state.db, &contract_id).await {
@@ -150,7 +151,7 @@ pub async fn get_contract(
             }
         };
 
-    let response = ContractDetailResponse {
+    let response = Arc::new(ContractDetailResponse {
         contract_id: contract.contract_id,
         wasm_hash: contract.wasm_hash,
         wasm_uploaded_at_ledger: contract.wasm_uploaded_at_ledger,
@@ -165,10 +166,12 @@ pub async fn get_contract(
             recent_unique_callers,
             stats_window,
         },
-    };
+    });
 
-    let cached = state.contract_cache.put(contract_id, response);
-    Json((*cached).clone()).into_response()
+    state
+        .contract_cache
+        .insert(contract_id, Arc::clone(&response));
+    Json(response).into_response()
 }
 
 #[utoipa::path(
@@ -218,8 +221,11 @@ pub async fn get_interface(
     tag = "contracts",
     params(
         ("contract_id" = String, Path, description = "Contract StrKey (C…, 56 chars)"),
-        ("limit" = Option<u32>, Query, description = "Items per page (1–100, default 20)."),
-        ("cursor" = Option<String>, Query, description = "Opaque pagination cursor from a previous response."),
+        ("limit" = Option<u32>, Query,
+         description = "Items per page (1–100, default 20). One DB appearance row maps to\none `InvocationItem` (no expansion), so `data.len() <= limit`.",
+         minimum = 1, maximum = 100),
+        ("cursor" = Option<String>, Query,
+         description = "Opaque pagination cursor from a previous response."),
     ),
     responses(
         (status = 200, description = "Paginated invocation appearance index",
@@ -302,8 +308,11 @@ pub async fn list_invocations(
     tag = "contracts",
     params(
         ("contract_id" = String, Path, description = "Contract StrKey (C…, 56 chars)"),
-        ("limit" = Option<u32>, Query, description = "Items per page (1–100, default 20)."),
-        ("cursor" = Option<String>, Query, description = "Opaque pagination cursor from a previous response."),
+        ("limit" = Option<u32>, Query,
+         description = "Items per page (1–100, default 20). Page granularity is per\n`(contract, transaction, ledger)` appearance — a single appearance\ncan expand to multiple per-node items in the response, so the\nreturned `data.len()` may exceed `limit`.",
+         minimum = 1, maximum = 100),
+        ("cursor" = Option<String>, Query,
+         description = "Opaque pagination cursor from a previous response."),
     ),
     responses(
         (status = 200, description = "Paginated event history",
