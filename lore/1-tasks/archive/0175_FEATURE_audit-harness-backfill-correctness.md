@@ -2,7 +2,7 @@
 id: '0175'
 title: 'Continuous data correctness audit harness — SQL invariants + DB↔Horizon + DB↔RPC + DB↔archive XDR diff'
 type: FEATURE
-status: active
+status: completed
 related_adr: ['0008', '0027', '0029', '0037']
 related_tasks: ['0167', '0168', '0169', '0172', '0173']
 tags: [priority-high, layer-db, layer-backend, audit, backfill, correctness]
@@ -23,6 +23,30 @@ history:
       DB↔Horizon / DB↔Soroban RPC / DB↔archive XDR diffs at N=1000+
       vs Filip's N=6 by hand. Findings funnel into the same bug-task
       pipeline.
+  - date: '2026-04-30'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Phase 1 + 2a + 2c (ledgers + liquidity_pools) shipped. PR #138
+      delivered the audit-harness scaffolding (18 SQL invariant files,
+      `run-invariants.sh`, `horizon-diff` over 6 tables, `archive-diff`
+      for ledgers); PR #151 added `archive-diff --table liquidity_pools`
+      with CAP-0038 `pool_id` SHA-256 verifier (closes the issuer-level
+      acceptance criterion deferred from Phase 1 I3). The harness
+      surfaced 5 real parser/persist bugs on the first runs — 0176
+      (superseded by 0181, ledger hash extraction), 0177 (muxed M-key
+      leak), 0178 (C-prefix leak), 0179 (LP I3 false positives), and
+      confirmed 0173 (V4 meta event drop) at scale. Pre-merge
+      validation on a clean-slate 1k-spot backfill (62016000-62016999,
+      develop binary post lore-0173 + lore-0177 + lore-0181 +
+      lore-0182 + lore-0183 + this stack): all 18 invariants 0
+      violations, 500 / 500 LP pool_ids verified, 50 / 50 transactions
+      and 50 / 50 accounts match Horizon. Reports archived under
+      `crates/audit-harness/reports/2026-04-30-*`. Phase 2b (Soroban
+      RPC) and Phase 3 (aggregate sanity) intentionally deferred per
+      task scope; tracked as future work — the harness is ready to
+      regress-lock the entire spawned bug surface, which is the
+      acceptance Filip framed when scoping this task.
 ---
 
 # Continuous data correctness audit harness

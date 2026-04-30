@@ -2,7 +2,7 @@
 id: '0184'
 title: 'DOCS: drop ADR 0037 stale `parsed_ledger_{N}.json` bridge reference (superseded by ADR 0029)'
 type: DOCS
-status: active
+status: completed
 related_adr: ['0029', '0032', '0037']
 related_tasks: ['0047', '0175']
 tags: [docs, adr-drift, evergreen, effort-small, priority-low]
@@ -27,6 +27,18 @@ history:
       readers about the storage topology. Per ADR 0032 evergreen rule,
       ADR drift on the schema-shape surface should be patched in-place
       with a forward link to the superseding ADR.
+  - date: '2026-04-30'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Closed via PR #150. ADR 0037 patched at three sites (line 119
+      Identifier types rationale, line 587 Mermaid ERD intro, line
+      799 `ledgers` no-FK caveat); `docs/architecture/database-schema/
+      endpoint-queries/README.md` rewritten — data-source matrix and
+      E5 section reflect the post-ADR-0029 DB-only pattern with a
+      SUPERSESSION NOTE block mirroring `05_get_ledgers_by_sequence.sql`.
+      Older ADRs 0011/0013/0016/0020/0025 left untouched as
+      historical records per the convention.
 ---
 
 # Drop ADR 0037 stale `parsed_ledger_{N}.json` bridge reference
@@ -46,7 +58,7 @@ SUPERSESSION NOTE 2026-04).
 ADR 0037 was sealed as a frozen snapshot of the schema at migration
 `20260424000000`. Per [ADR 0039](../../2-adrs/0039_delta-adr-pattern.md)
 (if it exists, otherwise the convention) thin follow-up ADRs append
-deltas without rewriting 0037 itself. The "bridge to parsed_ledger blob"
+deltas without rewriting 0037 itself. The "bridge to `parsed_ledger` blob"
 line is not a schema fact — it's a _rationale_ attached to a column —
 and has been falsified by ADR 0029. Updating the rationale in-place is
 preferable to a delta-ADR for a non-shape correction.

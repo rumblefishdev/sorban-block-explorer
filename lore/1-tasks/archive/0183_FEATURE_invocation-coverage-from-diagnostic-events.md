@@ -2,7 +2,7 @@
 id: '0183'
 title: 'Full Soroban invocation coverage via fn_call/fn_return diagnostic events'
 type: FEATURE
-status: active
+status: completed
 related_adr: ['0029', '0033', '0034', '0026', '0030']
 related_tasks: ['0167', '0182', '0173']
 tags:
@@ -31,6 +31,19 @@ history:
     status: active
     who: fmazur
     note: 'Promoted to active via /promote-task'
+  - date: '2026-04-30'
+    status: completed
+    who: fmazur
+    note: >
+      Closed via PR #148. Indexer populates
+      `soroban_invocations_appearances` from the diagnostic-event
+      execution tree (`fn_call` / `fn_return`) in addition to the
+      auth tree, schema migration `20260430000000_invocations_caller_contract`
+      adds the split caller columns (`caller_account_str_key` G/M
+      routes to `accounts(id)`, `caller_contract_str_key` C routes
+      to `soroban_contracts(id)`) gated by `ck_sia_caller_xor`.
+      Closes the 53 % coverage gap that was leaving auth-less
+      DeFi router txs invisible in the §6.4 contract hierarchy view.
 ---
 
 # Full Soroban invocation coverage via fn_call/fn_return diagnostic events
