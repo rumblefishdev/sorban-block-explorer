@@ -83,6 +83,31 @@ export type AssetTransactionItem = {
   successful: boolean;
 };
 
+/**
+ * One row from the chart endpoint. Shape pinned to canonical SQL
+ * `21_get_liquidity_pools_chart.sql`. `tvl` is "TVL at close of bucket"
+ * (last value); `volume` and `fee_revenue` are SUM (cumulative within
+ * the bucket).
+ */
+export type ChartDataPoint = {
+  bucket: string;
+  fee_revenue?: string | null;
+  samples_in_bucket: number;
+  tvl?: string | null;
+  volume?: string | null;
+};
+
+/**
+ * `GET /v1/liquidity-pools/:id/chart` response.
+ */
+export type ChartResponse = {
+  data_points: Array<ChartDataPoint>;
+  from: string;
+  interval: string;
+  pool_id: string;
+  to: string;
+};
+
 export type ContractDetailResponse = {
   contract_id: string;
   contract_type?: number | null;
@@ -375,6 +400,72 @@ export type NetworkStats = {
 };
 
 /**
+ * One NFT row returned by the list endpoint. Shape pinned to canonical
+ * SQL `15_get_nfts_list.sql`.
+ */
+export type NftItem = {
+  collection_name?: string | null;
+  /**
+   * Contract C-StrKey resolved via `soroban_contracts` join.
+   */
+  contract_id: string;
+  id: number;
+  /**
+   * Most recent ledger where ownership state changed
+   * (`nfts.current_owner_ledger`).
+   */
+  last_seen_ledger?: number | null;
+  media_url?: string | null;
+  /**
+   * Verbatim JSONB at mint time. Shape is contract-defined (no canonical
+   * schema yet) — frontend renders defensively.
+   */
+  metadata?: unknown;
+  minted_at_ledger?: number | null;
+  name?: string | null;
+  /**
+   * Current owner G-StrKey, or `null` for burned NFTs (ADR 0037 §13).
+   */
+  owner_account?: string | null;
+  token_id: string;
+};
+
+/**
+ * One row of NFT transfer history. Shape pinned to canonical SQL
+ * `17_get_nfts_transfers.sql`.
+ */
+export type NftTransferItem = {
+  created_at: string;
+  event_order: number;
+  /**
+   * Raw NftEventType discriminant (ADR 0031).
+   */
+  event_type: number;
+  /**
+   * `mint | transfer | burn` — pre-decoded via `nft_event_type_name(...)`.
+   */
+  event_type_name?: string | null;
+  /**
+   * Previous-owner G-StrKey reconstructed via `LEAD(owner_id)` over the
+   * per-NFT ownership timeline (DESC window — older event sits at the
+   * FOLLOWING window position). `null` on the mint row.
+   *
+   * **Pagination caveat:** within a single page LEAD works correctly.
+   * At page boundaries the *last* row's `from_account` is reset to
+   * `null` because the row below it (the next-page first row) isn't in
+   * the current result set; clients can stitch by remembering the next
+   * page's first `to_account`.
+   */
+  from_account?: string | null;
+  ledger_sequence: number;
+  /**
+   * New owner G-StrKey. `null` on burn.
+   */
+  to_account?: string | null;
+  transaction_hash: string;
+};
+
+/**
  * DB-sourced operation row in `TransactionDetailLight`.
  */
 export type OperationItem = {
@@ -556,6 +647,88 @@ export type PaginatedLedgerListItem = {
  * when M2 endpoint modules are wired in. Unused in M1 — kept as
  * infrastructure that M2 endpoints will consume.
  */
+export type PaginatedNftItem = {
+  data: Array<{
+    collection_name?: string | null;
+    /**
+     * Contract C-StrKey resolved via `soroban_contracts` join.
+     */
+    contract_id: string;
+    id: number;
+    /**
+     * Most recent ledger where ownership state changed
+     * (`nfts.current_owner_ledger`).
+     */
+    last_seen_ledger?: number | null;
+    media_url?: string | null;
+    /**
+     * Verbatim JSONB at mint time. Shape is contract-defined (no canonical
+     * schema yet) — frontend renders defensively.
+     */
+    metadata?: unknown;
+    minted_at_ledger?: number | null;
+    name?: string | null;
+    /**
+     * Current owner G-StrKey, or `null` for burned NFTs (ADR 0037 §13).
+     */
+    owner_account?: string | null;
+    token_id: string;
+  }>;
+  page: PageInfo;
+};
+
+/**
+ * Canonical envelope for paginated list responses.
+ *
+ * Generic over the item type `T` so every endpoint can reuse a single
+ * shape. Concrete instantiations (e.g. `Paginated<Transaction>`) are
+ * picked up automatically by utoipa-axum via the handler return type
+ * when M2 endpoint modules are wired in. Unused in M1 — kept as
+ * infrastructure that M2 endpoints will consume.
+ */
+export type PaginatedNftTransferItem = {
+  data: Array<{
+    created_at: string;
+    event_order: number;
+    /**
+     * Raw NftEventType discriminant (ADR 0031).
+     */
+    event_type: number;
+    /**
+     * `mint | transfer | burn` — pre-decoded via `nft_event_type_name(...)`.
+     */
+    event_type_name?: string | null;
+    /**
+     * Previous-owner G-StrKey reconstructed via `LEAD(owner_id)` over the
+     * per-NFT ownership timeline (DESC window — older event sits at the
+     * FOLLOWING window position). `null` on the mint row.
+     *
+     * **Pagination caveat:** within a single page LEAD works correctly.
+     * At page boundaries the *last* row's `from_account` is reset to
+     * `null` because the row below it (the next-page first row) isn't in
+     * the current result set; clients can stitch by remembering the next
+     * page's first `to_account`.
+     */
+    from_account?: string | null;
+    ledger_sequence: number;
+    /**
+     * New owner G-StrKey. `null` on burn.
+     */
+    to_account?: string | null;
+    transaction_hash: string;
+  }>;
+  page: PageInfo;
+};
+
+/**
+ * Canonical envelope for paginated list responses.
+ *
+ * Generic over the item type `T` so every endpoint can reuse a single
+ * shape. Concrete instantiations (e.g. `Paginated<Transaction>`) are
+ * picked up automatically by utoipa-axum via the handler return type
+ * when M2 endpoint modules are wired in. Unused in M1 — kept as
+ * infrastructure that M2 endpoints will consume.
+ */
 export type PaginatedParticipantItem = {
   data: Array<{
     /**
@@ -583,6 +756,71 @@ export type PaginatedParticipantItem = {
      * underlying `NUMERIC(28,7)` precision (no f64 round-trip).
      */
     shares: string;
+  }>;
+  page: PageInfo;
+};
+
+/**
+ * Canonical envelope for paginated list responses.
+ *
+ * Generic over the item type `T` so every endpoint can reuse a single
+ * shape. Concrete instantiations (e.g. `Paginated<Transaction>`) are
+ * picked up automatically by utoipa-axum via the handler return type
+ * when M2 endpoint modules are wired in. Unused in M1 — kept as
+ * infrastructure that M2 endpoints will consume.
+ */
+export type PaginatedPoolItem = {
+  data: Array<{
+    asset_a: PoolAssetLeg;
+    asset_b: PoolAssetLeg;
+    created_at_ledger: number;
+    fee_bps: number;
+    /**
+     * `fee_bps / 100` as decimal string. Conversion done server-side so
+     * the frontend can render directly (frontend §6.13/§6.14).
+     */
+    fee_percent: string;
+    fee_revenue?: string | null;
+    latest_snapshot_at?: string | null;
+    latest_snapshot_ledger?: number | null;
+    /**
+     * 64-char lowercase hex (BYTEA(32) on the wire) per ADR 0024.
+     */
+    pool_id: string;
+    reserve_a?: string | null;
+    reserve_b?: string | null;
+    total_shares?: string | null;
+    tvl?: string | null;
+    volume?: string | null;
+  }>;
+  page: PageInfo;
+};
+
+/**
+ * Canonical envelope for paginated list responses.
+ *
+ * Generic over the item type `T` so every endpoint can reuse a single
+ * shape. Concrete instantiations (e.g. `Paginated<Transaction>`) are
+ * picked up automatically by utoipa-axum via the handler return type
+ * when M2 endpoint modules are wired in. Unused in M1 — kept as
+ * infrastructure that M2 endpoints will consume.
+ */
+export type PaginatedPoolTransactionItem = {
+  data: Array<{
+    created_at: string;
+    fee_charged: number;
+    has_soroban: boolean;
+    hash: string;
+    ledger_sequence: number;
+    operation_count: number;
+    /**
+     * Distinct `op_type_name(...)` labels for every op in the tx, sorted
+     * asc. Frontend §6.14 categorises trade vs LP-mgmt activity from this
+     * list (policy lives client-side, not in SQL).
+     */
+    operation_types: Array<string>;
+    source_account: string;
+    successful: boolean;
   }>;
   page: PageInfo;
 };
@@ -645,6 +883,76 @@ export type ParticipantItem = {
    * underlying `NUMERIC(28,7)` precision (no f64 round-trip).
    */
   shares: string;
+};
+
+/**
+ * One leg of an LP's asset pair. Surfaces both the decoded
+ * `asset_type_name` (SQL `asset_type_name()`) and the raw `asset_type`
+ * SMALLINT — same contract as `assets/dto::AssetItem`.
+ */
+export type PoolAssetLeg = {
+  asset_code?: string | null;
+  /**
+   * Raw SMALLINT (0=native, 1=classic_credit, 2=sac, 3=soroban).
+   */
+  asset_type: number;
+  /**
+   * `native | classic_credit | sac | soroban`. `null` only on schema drift.
+   */
+  asset_type_name?: string | null;
+  issuer?: string | null;
+};
+
+/**
+ * One pool row returned by the list endpoint. Shape pinned to canonical
+ * SQL `18_get_liquidity_pools_list.sql`. Pools without a fresh snapshot
+ * in the freshness window come back with `null` for every dynamic field
+ * (`reserve_a`, `reserve_b`, `total_shares`, `tvl`, `volume`,
+ * `fee_revenue`, `latest_snapshot_*`); frontend renders these as "stale".
+ */
+export type PoolItem = {
+  asset_a: PoolAssetLeg;
+  asset_b: PoolAssetLeg;
+  created_at_ledger: number;
+  fee_bps: number;
+  /**
+   * `fee_bps / 100` as decimal string. Conversion done server-side so
+   * the frontend can render directly (frontend §6.13/§6.14).
+   */
+  fee_percent: string;
+  fee_revenue?: string | null;
+  latest_snapshot_at?: string | null;
+  latest_snapshot_ledger?: number | null;
+  /**
+   * 64-char lowercase hex (BYTEA(32) on the wire) per ADR 0024.
+   */
+  pool_id: string;
+  reserve_a?: string | null;
+  reserve_b?: string | null;
+  total_shares?: string | null;
+  tvl?: string | null;
+  volume?: string | null;
+};
+
+/**
+ * One row from `/liquidity-pools/:id/transactions`. Shape pinned to
+ * canonical SQL `20_get_liquidity_pools_transactions.sql`.
+ */
+export type PoolTransactionItem = {
+  created_at: string;
+  fee_charged: number;
+  has_soroban: boolean;
+  hash: string;
+  ledger_sequence: number;
+  operation_count: number;
+  /**
+   * Distinct `op_type_name(...)` labels for every op in the tx, sorted
+   * asc. Frontend §6.14 categorises trade vs LP-mgmt activity from this
+   * list (policy lives client-side, not in SQL).
+   */
+  operation_types: Array<string>;
+  source_account: string;
+  successful: boolean;
 };
 
 /**
@@ -1167,6 +1475,146 @@ export type GetLedgerResponses = {
 
 export type GetLedgerResponse = GetLedgerResponses[keyof GetLedgerResponses];
 
+export type ListPoolsData = {
+  body?: never;
+  path?: never;
+  query?: {
+    /**
+     * Items per page (1–100, default 20).
+     */
+    limit?: number;
+    /**
+     * Opaque pagination cursor from a previous response.
+     */
+    cursor?: string;
+    'filter[asset_a_code]'?: string | null;
+    'filter[asset_a_issuer]'?: string | null;
+    'filter[asset_b_code]'?: string | null;
+    'filter[asset_b_issuer]'?: string | null;
+    /**
+     * Minimum TVL threshold as a decimal string (matches the underlying
+     * `NUMERIC(28,7)` column without an f64 round-trip).
+     */
+    'filter[min_tvl]'?: string | null;
+  };
+  url: '/v1/liquidity-pools';
+};
+
+export type ListPoolsErrors = {
+  /**
+   * Invalid query parameter
+   */
+  400: ErrorEnvelope;
+  /**
+   * Internal server error
+   */
+  500: ErrorEnvelope;
+};
+
+export type ListPoolsError = ListPoolsErrors[keyof ListPoolsErrors];
+
+export type ListPoolsResponses = {
+  /**
+   * Paginated liquidity-pool list
+   */
+  200: PaginatedPoolItem;
+};
+
+export type ListPoolsResponse = ListPoolsResponses[keyof ListPoolsResponses];
+
+export type GetPoolData = {
+  body?: never;
+  path: {
+    /**
+     * Pool ID — 64-char lowercase hex (BYTEA(32)) per ADR 0024.
+     */
+    pool_id: string;
+  };
+  query?: never;
+  url: '/v1/liquidity-pools/{pool_id}';
+};
+
+export type GetPoolErrors = {
+  /**
+   * Invalid pool_id
+   */
+  400: ErrorEnvelope;
+  /**
+   * Pool not found
+   */
+  404: ErrorEnvelope;
+  /**
+   * Internal server error
+   */
+  500: ErrorEnvelope;
+};
+
+export type GetPoolError = GetPoolErrors[keyof GetPoolErrors];
+
+export type GetPoolResponses = {
+  /**
+   * Pool detail
+   */
+  200: PoolItem;
+};
+
+export type GetPoolResponse = GetPoolResponses[keyof GetPoolResponses];
+
+export type GetPoolChartData = {
+  body?: never;
+  path: {
+    /**
+     * Pool ID — 64-char lowercase hex (BYTEA(32)).
+     */
+    pool_id: string;
+  };
+  query?: {
+    /**
+     * Bucket width: `1h` | `1d` | `1w`. Validated against an allowlist.
+     * Default: `1d`.
+     */
+    interval?: string | null;
+    /**
+     * Inclusive lower bound, ISO 8601 / RFC 3339 timestamp.
+     * Default: `to` minus the interval-appropriate window (see struct doc).
+     */
+    from?: string | null;
+    /**
+     * Exclusive upper bound, ISO 8601 / RFC 3339 timestamp.
+     * Default: `now()`.
+     */
+    to?: string | null;
+  };
+  url: '/v1/liquidity-pools/{pool_id}/chart';
+};
+
+export type GetPoolChartErrors = {
+  /**
+   * Invalid pool_id / interval / from / to
+   */
+  400: ErrorEnvelope;
+  /**
+   * Pool not found
+   */
+  404: ErrorEnvelope;
+  /**
+   * Database error
+   */
+  500: ErrorEnvelope;
+};
+
+export type GetPoolChartError = GetPoolChartErrors[keyof GetPoolChartErrors];
+
+export type GetPoolChartResponses = {
+  /**
+   * Time-bucketed pool chart series
+   */
+  200: ChartResponse;
+};
+
+export type GetPoolChartResponse =
+  GetPoolChartResponses[keyof GetPoolChartResponses];
+
 export type ListParticipantsData = {
   body?: never;
   path: {
@@ -1216,6 +1664,55 @@ export type ListParticipantsResponses = {
 export type ListParticipantsResponse =
   ListParticipantsResponses[keyof ListParticipantsResponses];
 
+export type ListPoolTransactionsData = {
+  body?: never;
+  path: {
+    /**
+     * Pool ID — 64-char lowercase hex (BYTEA(32)).
+     */
+    pool_id: string;
+  };
+  query?: {
+    /**
+     * Items per page (1–100, default 20).
+     */
+    limit?: number;
+    /**
+     * Opaque pagination cursor from a previous response.
+     */
+    cursor?: string;
+  };
+  url: '/v1/liquidity-pools/{pool_id}/transactions';
+};
+
+export type ListPoolTransactionsErrors = {
+  /**
+   * Invalid pool_id, limit, or cursor
+   */
+  400: ErrorEnvelope;
+  /**
+   * Pool not found
+   */
+  404: ErrorEnvelope;
+  /**
+   * Database error
+   */
+  500: ErrorEnvelope;
+};
+
+export type ListPoolTransactionsError =
+  ListPoolTransactionsErrors[keyof ListPoolTransactionsErrors];
+
+export type ListPoolTransactionsResponses = {
+  /**
+   * Paginated pool transactions
+   */
+  200: PaginatedPoolTransactionItem;
+};
+
+export type ListPoolTransactionsResponse =
+  ListPoolTransactionsResponses[keyof ListPoolTransactionsResponses];
+
 export type GetNetworkStatsData = {
   body?: never;
   path?: never;
@@ -1242,6 +1739,146 @@ export type GetNetworkStatsResponses = {
 
 export type GetNetworkStatsResponse =
   GetNetworkStatsResponses[keyof GetNetworkStatsResponses];
+
+export type ListNftsData = {
+  body?: never;
+  path?: never;
+  query?: {
+    /**
+     * Items per page (1–100, default 20).
+     */
+    limit?: number;
+    /**
+     * Opaque pagination cursor from a previous response.
+     */
+    cursor?: string;
+    /**
+     * Exact match against `nfts.collection_name` (btree
+     * `idx_nfts_collection`). Trigram support is task 0132.
+     */
+    'filter[collection]'?: string | null;
+    /**
+     * Contract C-StrKey; resolved to `soroban_contracts.id` server-side.
+     */
+    'filter[contract_id]'?: string | null;
+    /**
+     * Substring match against `nfts.name` via the `idx_nfts_name_trgm`
+     * GIN index. SQL wraps the value in `%...%`; caller MUST NOT pass
+     * `%` / `_` literals.
+     */
+    'filter[name]'?: string | null;
+  };
+  url: '/v1/nfts';
+};
+
+export type ListNftsErrors = {
+  /**
+   * Invalid query parameter
+   */
+  400: ErrorEnvelope;
+  /**
+   * Internal server error
+   */
+  500: ErrorEnvelope;
+};
+
+export type ListNftsError = ListNftsErrors[keyof ListNftsErrors];
+
+export type ListNftsResponses = {
+  /**
+   * Paginated NFT list
+   */
+  200: PaginatedNftItem;
+};
+
+export type ListNftsResponse = ListNftsResponses[keyof ListNftsResponses];
+
+export type GetNftData = {
+  body?: never;
+  path: {
+    /**
+     * Internal NFT surrogate id (`nfts.id`).
+     */
+    id: number;
+  };
+  query?: never;
+  url: '/v1/nfts/{id}';
+};
+
+export type GetNftErrors = {
+  /**
+   * Invalid id format
+   */
+  400: ErrorEnvelope;
+  /**
+   * NFT not found
+   */
+  404: ErrorEnvelope;
+  /**
+   * Internal server error
+   */
+  500: ErrorEnvelope;
+};
+
+export type GetNftError = GetNftErrors[keyof GetNftErrors];
+
+export type GetNftResponses = {
+  /**
+   * NFT detail
+   */
+  200: NftItem;
+};
+
+export type GetNftResponse = GetNftResponses[keyof GetNftResponses];
+
+export type ListNftTransfersData = {
+  body?: never;
+  path: {
+    /**
+     * Internal NFT surrogate id (`nfts.id`).
+     */
+    id: number;
+  };
+  query?: {
+    /**
+     * Items per page (1–100, default 20).
+     */
+    limit?: number;
+    /**
+     * Opaque pagination cursor from a previous response.
+     */
+    cursor?: string;
+  };
+  url: '/v1/nfts/{id}/transfers';
+};
+
+export type ListNftTransfersErrors = {
+  /**
+   * Invalid id / pagination
+   */
+  400: ErrorEnvelope;
+  /**
+   * NFT not found
+   */
+  404: ErrorEnvelope;
+  /**
+   * Internal server error
+   */
+  500: ErrorEnvelope;
+};
+
+export type ListNftTransfersError =
+  ListNftTransfersErrors[keyof ListNftTransfersErrors];
+
+export type ListNftTransfersResponses = {
+  /**
+   * Paginated NFT transfer history
+   */
+  200: PaginatedNftTransferItem;
+};
+
+export type ListNftTransfersResponse =
+  ListNftTransfersResponses[keyof ListNftTransfersResponses];
 
 export type ListTransactionsData = {
   body?: never;

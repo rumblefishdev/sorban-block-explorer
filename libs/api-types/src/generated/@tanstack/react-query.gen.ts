@@ -14,6 +14,9 @@ import {
   getInterface,
   getLedger,
   getNetworkStats,
+  getNft,
+  getPool,
+  getPoolChart,
   getTransaction,
   health,
   listAssets,
@@ -21,7 +24,11 @@ import {
   listEvents,
   listInvocations,
   listLedgers,
+  listNfts,
+  listNftTransfers,
   listParticipants,
+  listPools,
+  listPoolTransactions,
   listTransactions,
   type Options,
 } from '../sdk.gen.js';
@@ -41,6 +48,15 @@ import type {
   GetNetworkStatsData,
   GetNetworkStatsError,
   GetNetworkStatsResponse,
+  GetNftData,
+  GetNftError,
+  GetNftResponse,
+  GetPoolChartData,
+  GetPoolChartError,
+  GetPoolChartResponse,
+  GetPoolData,
+  GetPoolError,
+  GetPoolResponse,
   GetTransactionData,
   GetTransactionError,
   GetTransactionResponse,
@@ -60,9 +76,21 @@ import type {
   ListLedgersData,
   ListLedgersError,
   ListLedgersResponse,
+  ListNftsData,
+  ListNftsError,
+  ListNftsResponse,
+  ListNftTransfersData,
+  ListNftTransfersError,
+  ListNftTransfersResponse,
   ListParticipantsData,
   ListParticipantsError,
   ListParticipantsResponse,
+  ListPoolsData,
+  ListPoolsError,
+  ListPoolsResponse,
+  ListPoolTransactionsData,
+  ListPoolTransactionsError,
+  ListPoolTransactionsResponse,
   ListTransactionsData,
   ListTransactionsError,
   ListTransactionsResponse,
@@ -689,6 +717,117 @@ export const getLedgerInfiniteOptions = (options: Options<GetLedgerData>) =>
     }
   );
 
+export const listPoolsQueryKey = (options?: Options<ListPoolsData>) =>
+  createQueryKey('listPools', options);
+
+export const listPoolsOptions = (options?: Options<ListPoolsData>) =>
+  queryOptions<
+    ListPoolsResponse,
+    ListPoolsError,
+    ListPoolsResponse,
+    ReturnType<typeof listPoolsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await listPools({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: listPoolsQueryKey(options),
+  });
+
+export const listPoolsInfiniteQueryKey = (
+  options?: Options<ListPoolsData>
+): QueryKey<Options<ListPoolsData>> =>
+  createQueryKey('listPools', options, true);
+
+export const listPoolsInfiniteOptions = (options?: Options<ListPoolsData>) =>
+  infiniteQueryOptions<
+    ListPoolsResponse,
+    ListPoolsError,
+    InfiniteData<ListPoolsResponse>,
+    QueryKey<Options<ListPoolsData>>,
+    | string
+    | Pick<
+        QueryKey<Options<ListPoolsData>>[0],
+        'body' | 'headers' | 'path' | 'query'
+      >
+  >(
+    // @ts-ignore
+    {
+      queryFn: async ({ pageParam, queryKey, signal }) => {
+        // @ts-ignore
+        const page: Pick<
+          QueryKey<Options<ListPoolsData>>[0],
+          'body' | 'headers' | 'path' | 'query'
+        > =
+          typeof pageParam === 'object'
+            ? pageParam
+            : {
+                query: {
+                  cursor: pageParam,
+                },
+              };
+        const params = createInfiniteParams(queryKey, page);
+        const { data } = await listPools({
+          ...options,
+          ...params,
+          signal,
+          throwOnError: true,
+        });
+        return data;
+      },
+      queryKey: listPoolsInfiniteQueryKey(options),
+    }
+  );
+
+export const getPoolQueryKey = (options: Options<GetPoolData>) =>
+  createQueryKey('getPool', options);
+
+export const getPoolOptions = (options: Options<GetPoolData>) =>
+  queryOptions<
+    GetPoolResponse,
+    GetPoolError,
+    GetPoolResponse,
+    ReturnType<typeof getPoolQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getPool({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: getPoolQueryKey(options),
+  });
+
+export const getPoolChartQueryKey = (options: Options<GetPoolChartData>) =>
+  createQueryKey('getPoolChart', options);
+
+export const getPoolChartOptions = (options: Options<GetPoolChartData>) =>
+  queryOptions<
+    GetPoolChartResponse,
+    GetPoolChartError,
+    GetPoolChartResponse,
+    ReturnType<typeof getPoolChartQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getPoolChart({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: getPoolChartQueryKey(options),
+  });
+
 export const listParticipantsQueryKey = (
   options: Options<ListParticipantsData>
 ) => createQueryKey('listParticipants', options);
@@ -761,6 +900,78 @@ export const listParticipantsInfiniteOptions = (
     }
   );
 
+export const listPoolTransactionsQueryKey = (
+  options: Options<ListPoolTransactionsData>
+) => createQueryKey('listPoolTransactions', options);
+
+export const listPoolTransactionsOptions = (
+  options: Options<ListPoolTransactionsData>
+) =>
+  queryOptions<
+    ListPoolTransactionsResponse,
+    ListPoolTransactionsError,
+    ListPoolTransactionsResponse,
+    ReturnType<typeof listPoolTransactionsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await listPoolTransactions({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: listPoolTransactionsQueryKey(options),
+  });
+
+export const listPoolTransactionsInfiniteQueryKey = (
+  options: Options<ListPoolTransactionsData>
+): QueryKey<Options<ListPoolTransactionsData>> =>
+  createQueryKey('listPoolTransactions', options, true);
+
+export const listPoolTransactionsInfiniteOptions = (
+  options: Options<ListPoolTransactionsData>
+) =>
+  infiniteQueryOptions<
+    ListPoolTransactionsResponse,
+    ListPoolTransactionsError,
+    InfiniteData<ListPoolTransactionsResponse>,
+    QueryKey<Options<ListPoolTransactionsData>>,
+    | string
+    | Pick<
+        QueryKey<Options<ListPoolTransactionsData>>[0],
+        'body' | 'headers' | 'path' | 'query'
+      >
+  >(
+    // @ts-ignore
+    {
+      queryFn: async ({ pageParam, queryKey, signal }) => {
+        // @ts-ignore
+        const page: Pick<
+          QueryKey<Options<ListPoolTransactionsData>>[0],
+          'body' | 'headers' | 'path' | 'query'
+        > =
+          typeof pageParam === 'object'
+            ? pageParam
+            : {
+                query: {
+                  cursor: pageParam,
+                },
+              };
+        const params = createInfiniteParams(queryKey, page);
+        const { data } = await listPoolTransactions({
+          ...options,
+          ...params,
+          signal,
+          throwOnError: true,
+        });
+        return data;
+      },
+      queryKey: listPoolTransactionsInfiniteQueryKey(options),
+    }
+  );
+
 export const getNetworkStatsQueryKey = (
   options?: Options<GetNetworkStatsData>
 ) => createQueryKey('getNetworkStats', options);
@@ -800,6 +1011,166 @@ export const getNetworkStatsOptions = (
     },
     queryKey: getNetworkStatsQueryKey(options),
   });
+
+export const listNftsQueryKey = (options?: Options<ListNftsData>) =>
+  createQueryKey('listNfts', options);
+
+export const listNftsOptions = (options?: Options<ListNftsData>) =>
+  queryOptions<
+    ListNftsResponse,
+    ListNftsError,
+    ListNftsResponse,
+    ReturnType<typeof listNftsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await listNfts({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: listNftsQueryKey(options),
+  });
+
+export const listNftsInfiniteQueryKey = (
+  options?: Options<ListNftsData>
+): QueryKey<Options<ListNftsData>> => createQueryKey('listNfts', options, true);
+
+export const listNftsInfiniteOptions = (options?: Options<ListNftsData>) =>
+  infiniteQueryOptions<
+    ListNftsResponse,
+    ListNftsError,
+    InfiniteData<ListNftsResponse>,
+    QueryKey<Options<ListNftsData>>,
+    | string
+    | Pick<
+        QueryKey<Options<ListNftsData>>[0],
+        'body' | 'headers' | 'path' | 'query'
+      >
+  >(
+    // @ts-ignore
+    {
+      queryFn: async ({ pageParam, queryKey, signal }) => {
+        // @ts-ignore
+        const page: Pick<
+          QueryKey<Options<ListNftsData>>[0],
+          'body' | 'headers' | 'path' | 'query'
+        > =
+          typeof pageParam === 'object'
+            ? pageParam
+            : {
+                query: {
+                  cursor: pageParam,
+                },
+              };
+        const params = createInfiniteParams(queryKey, page);
+        const { data } = await listNfts({
+          ...options,
+          ...params,
+          signal,
+          throwOnError: true,
+        });
+        return data;
+      },
+      queryKey: listNftsInfiniteQueryKey(options),
+    }
+  );
+
+export const getNftQueryKey = (options: Options<GetNftData>) =>
+  createQueryKey('getNft', options);
+
+export const getNftOptions = (options: Options<GetNftData>) =>
+  queryOptions<
+    GetNftResponse,
+    GetNftError,
+    GetNftResponse,
+    ReturnType<typeof getNftQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getNft({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: getNftQueryKey(options),
+  });
+
+export const listNftTransfersQueryKey = (
+  options: Options<ListNftTransfersData>
+) => createQueryKey('listNftTransfers', options);
+
+export const listNftTransfersOptions = (
+  options: Options<ListNftTransfersData>
+) =>
+  queryOptions<
+    ListNftTransfersResponse,
+    ListNftTransfersError,
+    ListNftTransfersResponse,
+    ReturnType<typeof listNftTransfersQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await listNftTransfers({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: listNftTransfersQueryKey(options),
+  });
+
+export const listNftTransfersInfiniteQueryKey = (
+  options: Options<ListNftTransfersData>
+): QueryKey<Options<ListNftTransfersData>> =>
+  createQueryKey('listNftTransfers', options, true);
+
+export const listNftTransfersInfiniteOptions = (
+  options: Options<ListNftTransfersData>
+) =>
+  infiniteQueryOptions<
+    ListNftTransfersResponse,
+    ListNftTransfersError,
+    InfiniteData<ListNftTransfersResponse>,
+    QueryKey<Options<ListNftTransfersData>>,
+    | string
+    | Pick<
+        QueryKey<Options<ListNftTransfersData>>[0],
+        'body' | 'headers' | 'path' | 'query'
+      >
+  >(
+    // @ts-ignore
+    {
+      queryFn: async ({ pageParam, queryKey, signal }) => {
+        // @ts-ignore
+        const page: Pick<
+          QueryKey<Options<ListNftTransfersData>>[0],
+          'body' | 'headers' | 'path' | 'query'
+        > =
+          typeof pageParam === 'object'
+            ? pageParam
+            : {
+                query: {
+                  cursor: pageParam,
+                },
+              };
+        const params = createInfiniteParams(queryKey, page);
+        const { data } = await listNftTransfers({
+          ...options,
+          ...params,
+          signal,
+          throwOnError: true,
+        });
+        return data;
+      },
+      queryKey: listNftTransfersInfiniteQueryKey(options),
+    }
+  );
 
 export const listTransactionsQueryKey = (
   options?: Options<ListTransactionsData>
