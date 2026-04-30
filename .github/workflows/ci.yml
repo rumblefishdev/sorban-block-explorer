@@ -83,10 +83,6 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: 'api-types-codegen-${{ runner.arch }}'
-          save-if: ${{ github.ref == 'refs/heads/develop' }}
       - run: npm ci
       - run: npx nx run @rumblefish/api-types:check-generated
 
@@ -105,11 +101,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: 'ci-${{ runner.arch }}'
-          save-if: ${{ github.ref == 'refs/heads/develop' }}
 
       - name: Install cargo-lambda
         run: pip3 install cargo-lambda

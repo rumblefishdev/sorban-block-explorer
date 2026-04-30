@@ -5,6 +5,14 @@ for the backend REST API. The Rust API crate is the source of truth;
 artifacts under `src/openapi.json` and `src/generated/**` are
 regenerated from it.
 
+## Prerequisites
+
+`extract-openapi` shells out to `cargo run -p api --bin extract_openapi`,
+so `cargo` must be on `PATH` for `extract-openapi`, `generate`, and
+`check-generated`. Frontend-only contributors who don't have the Rust
+toolchain installed should pull regenerated artifacts from `develop`
+rather than running these targets locally.
+
 ## Targets
 
 - `nx run @rumblefish/api-types:extract-openapi` — dump the OpenAPI

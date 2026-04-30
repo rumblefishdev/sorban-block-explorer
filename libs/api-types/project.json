@@ -24,10 +24,7 @@
         "cwd": "libs/api-types",
         "parallel": false
       },
-      "outputs": [
-        "{projectRoot}/src/openapi.json",
-        "{projectRoot}/src/generated"
-      ]
+      "outputs": ["{projectRoot}/src/generated"]
     },
     "check-generated": {
       "executor": "nx:run-commands",
