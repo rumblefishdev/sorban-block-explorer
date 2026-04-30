@@ -53,15 +53,22 @@ preferable to a delta-ADR for a non-shape correction.
 
 ## Acceptance Criteria
 
-- [ ] ADR 0037 line 119 rewritten to drop the `parsed_ledger_{N}.json`
+- [x] ADR 0037 line 119 rewritten to drop the `parsed_ledger_{N}.json`
       claim and forward-link to ADR 0029 for the read-time XDR fetch
       replacement
-- [ ] No other references to `parsed_ledger_{N}.json` exist anywhere in
-      `lore/2-adrs/` or `docs/architecture/` (audit before merging)
-- [ ] PR description records this as an evergreen-doc patch under
-      ADR 0032 (the "shape of the system" rule does not require docs
-      updates for pure descriptive corrections, but the ADR-drift
-      class is exactly what 0032 is meant to prevent over time)
+- [x] All other ADR 0037 stale "S3 bridge" rationale lines patched
+      (lines 587 ERD intro, 799 `ledgers` no-FK rationale)
+- [x] `docs/architecture/database-schema/endpoint-queries/README.md`
+      data-source matrix and E5 section rewritten to reflect the
+      DB-only (post-ADR-0029) replacement; the supersession note
+      mirrors the wording in `05_get_ledgers_by_sequence.sql`
+- [x] No `parsed_ledger_{N}.json` references remain in
+      `lore/2-adrs/0037_*.md` or `docs/architecture/**` outside of
+      explicit supersession notes that name the abandoned artifact for
+      traceability (older ADRs 0011/0013/0016/0020/0025 are
+      historical records, intentionally untouched)
+- [x] PR description records this as an evergreen-doc patch under
+      ADR 0032
 
 ## Notes
 
