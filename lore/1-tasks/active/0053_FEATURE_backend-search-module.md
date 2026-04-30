@@ -2,7 +2,7 @@
 id: '0053'
 title: 'Backend: Search module (unified search with query classification)'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0005']
 related_tasks: ['0023', '0043', '0092']
 tags: [layer-backend, search, full-text]
@@ -17,6 +17,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
+  - date: 2026-04-30
+    status: active
+    who: karolkow
+    note: 'Promoted to active'
 ---
 
 # Backend: Search module (unified search with query classification)
