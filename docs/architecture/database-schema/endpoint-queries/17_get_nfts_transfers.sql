@@ -33,15 +33,15 @@
 --     LEAD has no following row, which renders as "(mint)" on the frontend.
 --     Earlier drafts of this query used LAG; that was incorrect — LAG on a
 --     DESC window pulls the NEWER row's owner, which is the next-owner not
---     the previous-owner. Pagination remark: across page boundaries, LEAD
---     also yields NULL on the new page's last row — that row's from-owner
---     is the next page's first to-owner. The API MUST stitch this in by
---     passing the previous page's last `owner` back (or by treating the
---     next page's first row's `owner` as the current page's last
---     from-owner). We do NOT compute this in SQL because the row below the
---     current page is not in the result set; doing it server-side would
---     require a second index probe per page (cheap, but the API stitch is
---     cleaner).
+--     the previous-owner. Pagination boundary: the API caller fetches
+--     `LIMIT = page_size + 1` (peek-for-has-more pattern). The +1 peek row
+--     is included in the window-function input, so LEAD on the LAST KEPT
+--     row (index `page_size - 1`) reads the peek row's owner — i.e. the
+--     correct previous-owner across the page cut. The peek row itself is
+--     dropped client-of-SQL by `finalize_page`. The only NULL `from_owner`
+--     remaining is the actual mint event (oldest row, no row below it in
+--     either the page or the table), which is exactly the intended
+--     "(mint)" rendering. No API-side stitching required.
 
 SELECT
     no.created_at,

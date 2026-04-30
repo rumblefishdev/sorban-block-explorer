@@ -178,6 +178,14 @@ pub async fn fetch_transfers(
             -- want — frontend renders NULL as "(mint)". Canonical SQL
             -- `17_get_nfts_transfers.sql` historically used LAG and was
             -- corrected together with this site.
+            --
+            -- Pagination boundary: caller fetches `limit + 1` (peek-for-
+            -- has-more). The peek row is included in the window input, so
+            -- LEAD on the last KEPT row reads the peek row's owner — the
+            -- correct previous-owner across the cut. `finalize_page` then
+            -- drops the peek. The only remaining NULL `from_account` is the
+            -- mint event (oldest, no row below in table or page), which is
+            -- the intended "(mint)" sentinel.
             LEAD(own.account_id) OVER (
                 PARTITION BY no.nft_id
                 ORDER BY no.created_at DESC,

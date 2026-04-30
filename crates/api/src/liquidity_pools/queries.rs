@@ -56,8 +56,9 @@ pub async fn pool_exists(db: &PgPool, pool_id_hex: &str) -> Result<bool, sqlx::E
 /// future planners weigh it.
 ///
 /// `share_percentage` is computed against the latest snapshot for the
-/// pool (within a 7-day freshness window) via a CTE evaluated once per
-/// page, joined LATERAL-style to every position row.
+/// pool (within a 7-day freshness window) via a scalar CTE
+/// (`latest_snap`) evaluated once per page and broadcast to every
+/// position row through `LEFT JOIN ... ON TRUE`.
 pub(super) async fn fetch_participants(
     db: &PgPool,
     pool_id_hex: &str,
@@ -366,6 +367,16 @@ pub async fn fetch_pool_transactions(
 
     let rows = sqlx::query(
         r#"
+        -- `matched_ops` deduplicates multi-op-touching-same-pool
+        -- transactions to one row per (created_at, transaction_id) via
+        -- DISTINCT ON. Pre-LIMIT to `$2 * 4` is the canonical pattern
+        -- shared with `02_get_transactions_list.sql` (Statement B/C) and
+        -- `10_get_assets_transactions.sql`: gives the planner headroom on
+        -- high-traffic pools where a small LIMIT can flip the plan to a
+        -- worse shape (bitmap vs index scan). Outer SELECT then sees a
+        -- small de-duplicated set instead of asking DISTINCT to dedupe
+        -- after the join. See `assets/queries.rs::fetch_transactions`
+        -- module doc + lore-0049 archive note.
         WITH matched_ops AS (
             SELECT DISTINCT ON (oa.created_at, oa.transaction_id)
                 oa.transaction_id,

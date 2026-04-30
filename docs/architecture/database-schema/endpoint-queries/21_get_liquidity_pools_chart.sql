@@ -42,9 +42,12 @@ WITH bucket_keyword AS (
         -- allowlist, `kw` becomes NULL and `date_trunc(NULL, ts)` returns
         -- NULL — every row groups into a single NULL bucket. That is silent
         -- garbage, NOT a loud parse error (the previous comment claimed
-        -- "fail loudly" — that was incorrect). The Rust caller adds a
-        -- `debug_assert!` on the interval string to catch allowlist drift
-        -- in tests; the handler-side allowlist remains the authoritative
+        -- "fail loudly" — that was incorrect). The Rust caller adds an
+        -- `assert!` (release-active, not `debug_assert!`) on the interval
+        -- string to catch allowlist drift in both test and production —
+        -- chosen so the failure mode in prod is a panicking task → 500
+        -- envelope rather than the silent-NULL-bucket the SQL would
+        -- produce. The handler-side allowlist remains the authoritative
         -- validator at runtime.
     END AS kw
 )

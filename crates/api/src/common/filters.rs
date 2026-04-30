@@ -152,16 +152,6 @@ pub fn parse_iso8601(value: &str, filter_key: &str) -> Result<DateTime<Utc>, Res
         })
 }
 
-/// Parse an ISO 8601 timestamp only when present. See [`strkey_opt`] for
-/// the rationale — symmetric helper for the timestamp case.
-#[allow(dead_code)]
-pub fn parse_iso8601_opt(
-    value: Option<&str>,
-    filter_key: &str,
-) -> Result<Option<DateTime<Utc>>, Response> {
-    value.map(|v| parse_iso8601(v, filter_key)).transpose()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,19 +338,5 @@ mod tests {
         let (_, json) = body_json(err).await;
         assert_eq!(json["code"], "invalid_filter");
         assert_eq!(json["details"]["filter"], "to");
-    }
-
-    #[test]
-    fn iso8601_opt_none_passes() {
-        assert!(parse_iso8601_opt(None, "from").unwrap().is_none());
-    }
-
-    #[test]
-    fn iso8601_opt_some_validates() {
-        assert!(
-            parse_iso8601_opt(Some("2026-04-30T12:00:00Z"), "from")
-                .unwrap()
-                .is_some()
-        );
     }
 }
