@@ -10,7 +10,7 @@ mod liquidity_pools;
 mod network;
 mod openapi;
 mod ops;
-mod state;
+pub mod state;
 #[cfg(test)]
 mod tests_integration;
 mod transactions;
