@@ -114,7 +114,11 @@ The backend implementation direction implied by the current design is:
 - **axum** for modular API composition and transport-layer structure (per ADR 0005)
 - **Rust** for typed application code with compile-time safety
 - **sqlx** for compile-time checked database queries (per ADR 0005)
-- **utoipa** for OpenAPI spec generation (per ADR 0005)
+- **utoipa** for OpenAPI spec generation (per ADR 0005). The spec is the single
+  source of truth for API contracts and is consumed by the frontend via the
+  `libs/api-types` codegen pipeline (task 0096). A secondary `extract_openapi`
+  binary in the `api` crate dumps the spec at build time, so codegen does not
+  require booting the Lambda.
 - **AWS Lambda** for serverless compute and on-demand scaling (via cargo-lambda)
 - **API Gateway** for public HTTP ingress, throttling, request validation, and response
   caching

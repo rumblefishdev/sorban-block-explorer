@@ -11,6 +11,9 @@
     },
     {
       "path": "./libs/ui"
+    },
+    {
+      "path": "./libs/api-types"
     }
   ]
 }

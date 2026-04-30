@@ -58,7 +58,8 @@ const CACHE_CONTROL_LONG: HeaderValue = HeaderValue::from_static("public, max-ag
     path = "/ledgers",
     tag = "ledgers",
     params(
-        ("limit"  = Option<u32>,    Query, description = "Items per page (1–100, default 20)."),
+        ("limit"  = Option<u32>,    Query, description = "Items per page (1–100, default 20).",
+         minimum = 1, maximum = 100),
         ("cursor" = Option<String>, Query, description = "Opaque pagination cursor from a previous response."),
     ),
     responses(
@@ -124,7 +125,8 @@ pub async fn list_ledgers(
     tag = "ledgers",
     params(
         ("sequence" = i64,            Path,  description = "Ledger sequence number"),
-        ("limit"    = Option<u32>,    Query, description = "Embedded transactions page size (1–100, default 20)."),
+        ("limit"    = Option<u32>,    Query, description = "Embedded transactions page size (1–100, default 20).",
+         minimum = 1, maximum = 100),
         ("cursor"   = Option<String>, Query, description = "Embedded transactions opaque pagination cursor."),
     ),
     responses(

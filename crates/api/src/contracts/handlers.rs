@@ -221,8 +221,11 @@ pub async fn get_interface(
     tag = "contracts",
     params(
         ("contract_id" = String, Path, description = "Contract StrKey (C…, 56 chars)"),
-        ("limit" = Option<u32>, Query, description = "Items per page (1–100, default 20)."),
-        ("cursor" = Option<String>, Query, description = "Opaque pagination cursor from a previous response."),
+        ("limit" = Option<u32>, Query,
+         description = "Items per page (1–100, default 20). One DB appearance row maps to\none `InvocationItem` (no expansion), so `data.len() <= limit`.",
+         minimum = 1, maximum = 100),
+        ("cursor" = Option<String>, Query,
+         description = "Opaque pagination cursor from a previous response."),
     ),
     responses(
         (status = 200, description = "Paginated invocation appearance index",
@@ -305,8 +308,11 @@ pub async fn list_invocations(
     tag = "contracts",
     params(
         ("contract_id" = String, Path, description = "Contract StrKey (C…, 56 chars)"),
-        ("limit" = Option<u32>, Query, description = "Items per page (1–100, default 20)."),
-        ("cursor" = Option<String>, Query, description = "Opaque pagination cursor from a previous response."),
+        ("limit" = Option<u32>, Query,
+         description = "Items per page (1–100, default 20). Page granularity is per\n`(contract, transaction, ledger)` appearance — a single appearance\ncan expand to multiple per-node items in the response, so the\nreturned `data.len()` may exceed `limit`.",
+         minimum = 1, maximum = 100),
+        ("cursor" = Option<String>, Query,
+         description = "Opaque pagination cursor from a previous response."),
     ),
     responses(
         (status = 200, description = "Paginated event history",
