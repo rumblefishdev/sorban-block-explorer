@@ -28,3 +28,9 @@ hex = { workspace = true }
 # Phase 2c needs to re-parse XDR independently of `crates/xdr-parser`.
 stellar-xdr = { workspace = true }
 zstd = { workspace = true }
+# `archive-diff --table liquidity_pools` reconstructs LiquidityPoolParameters
+# XDR from DB-stored asset rows and SHA-256s the canonical bytes for
+# pool_id verification (CAP-0038). Needs strkey → ed25519 raw-byte
+# decoding for issuer fields and the SHA-2 family for the protocol hash.
+stellar-strkey = "0.0.16"
+sha2 = { workspace = true }
