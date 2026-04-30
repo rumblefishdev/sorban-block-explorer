@@ -17,8 +17,13 @@ FROM (SELECT pool_id FROM liquidity_pools GROUP BY pool_id HAVING COUNT(*) > 1) 
 -- Stellar canonical order is: type asc (native(0) < alphanum4(1) < alphanum12(2)),
 -- then code asc, then issuer ed25519-raw-byte asc. The first two levels are
 -- expressible in SQL on our schema (asset_*_type SMALLINT, asset_*_code TEXT
--- with codes already left-padded by the parser to a fixed width). The third
--- level — issuer order — is *not* SQL-expressible against this schema:
+-- with trailing NUL padding stripped by the parser, i.e. variable-length text
+-- as stored in the schema; PG's lex compare on those trimmed strings still
+-- preserves canonical raw-byte order because the byte slot a stripped NUL
+-- would have occupied is "less than anything else" under both PG's
+-- "shorter-prefix-is-less" rule and Stellar's NUL-padded raw-byte compare —
+-- the two orderings coincide). The third level — issuer order — is *not*
+-- SQL-expressible against this schema:
 --
 --   • `asset_*_issuer_id` is a surrogate BIGINT FK to `accounts.id`, assigned
 --     in insertion order; it has zero correlation with the issuer's ed25519
