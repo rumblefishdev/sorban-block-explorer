@@ -2,7 +2,7 @@
 id: '0178'
 title: 'BUG: 1332 contract StrKeys (C-prefix) leak into `accounts.account_id` instead of `soroban_contracts`'
 type: BUG
-status: active
+status: completed
 related_adr: ['0026', '0030', '0037']
 related_tasks: ['0044', '0173', '0175', '0177']
 tags: [priority-high, layer-parser, layer-persist, audit-driven, taxonomy]
@@ -33,6 +33,20 @@ history:
       validates 0 violations. This task lands cosmetic hardening:
       `is_strkey_account` tightened from G|M to G+len56 (M-path
       obsolete since 0177 muxed canonicalization at parser).
+  - date: '2026-04-30'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Closed via PR #147. `is_strkey_account` tightened from
+      `Some('G' | 'M')` first-char match to `s.len() <= 56 &&
+      s.starts_with('G')`, aligning the upstream walker filter with
+      the final defensive filter at staging.rs:421-426. Validated on
+      a clean-slate 1k-spot re-backfill (62016000-62016999, develop
+      binary post lore-0173 + lore-0177 + lore-0181 + lore-0182 +
+      lore-0183 + this PR + PR #151): `accounts.I1` (StrKey shape)
+      reports 0 violations. The 1332 C-prefix entries flagged on the
+      pre-0173 30k smoke were stale data from the pre-defense-filter
+      binary, not symptoms of an active leak.
 ---
 
 # Contract StrKeys leaking into accounts table
