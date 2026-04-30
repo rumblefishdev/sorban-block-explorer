@@ -2,7 +2,7 @@
 id: '0179'
 title: 'BUG: 40 liquidity_pools rows have asset_a > asset_b (Stellar canonical order violated)'
 type: BUG
-status: active
+status: completed
 related_adr: ['0026', '0030', '0037']
 related_tasks: ['0126', '0162', '0175']
 tags:
@@ -48,6 +48,19 @@ history:
       surrogate-ID compare with `pool_id == SHA-256(canonical pair,
       fee_bps)` protocol-derived hash check (also covers the missing
       acceptance criterion the original task flagged).
+  - date: '2026-04-30'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Closed via PR #147 (I3 rewritten to drop surrogate-ID compare,
+      `(type, code)` levels remain enforced) and PR #151
+      (`archive-diff --table liquidity_pools` adds `pool_id ==
+      SHA-256(LiquidityPoolParameters XDR)` verifier per CAP-0038,
+      closing the deferred issuer-level acceptance criterion).
+      Validated on a clean-slate 1k-spot re-backfill: I3 reports 0
+      violations and 500 / 500 sampled pools pass the protocol-hash
+      check. The 40 rows flagged on the pre-fix 30k smoke were false
+      positives from the surrogate-ID compare, not data corruption.
 ---
 
 # `liquidity_pools` asset pair order violations
