@@ -103,7 +103,7 @@ pub struct InvocationAppearanceItem {
     /// Root caller G-StrKey. Per ADR 0034 nested-call hierarchy is XDR-only.
     pub caller_account: Option<String>,
     pub ledger_sequence: i64,
-    pub amount: i64,
+    pub amount: i32,
     pub created_at: DateTime<Utc>,
 }
 

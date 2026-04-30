@@ -73,7 +73,7 @@ pub struct InvocationAppearanceRow {
     pub contract_id: String,
     pub caller_account: Option<String>,
     pub ledger_sequence: i64,
-    pub amount: i64,
+    pub amount: i32,
     pub created_at: DateTime<Utc>,
 }
 
@@ -275,16 +275,16 @@ pub async fn fetch_list(
     Ok(raw.iter().map(map_list_row).collect())
 }
 
-fn push_contract_union_arm(
-    qb: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>,
+fn push_contract_union_arm<'q>(
+    qb: &mut sqlx::QueryBuilder<'q, sqlx::Postgres>,
     table: &'static str,
-    cid_strkey: &str,
+    cid_strkey: &'q str,
     cursor: &Option<TsIdCursor>,
 ) {
     qb.push("SELECT created_at, transaction_id FROM ");
     qb.push(table);
     qb.push(" WHERE contract_id = (SELECT id FROM soroban_contracts WHERE contract_id = ");
-    qb.push_bind(cid_strkey.to_owned());
+    qb.push_bind(cid_strkey);
     qb.push(")");
     if let Some(c) = cursor {
         qb.push(" AND (created_at, transaction_id) < (");
@@ -295,9 +295,12 @@ fn push_contract_union_arm(
     }
 }
 
-fn push_source_predicate(qb: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>, acct_strkey: &str) {
+fn push_source_predicate<'q>(
+    qb: &mut sqlx::QueryBuilder<'q, sqlx::Postgres>,
+    acct_strkey: &'q str,
+) {
     qb.push(" t.source_id = (SELECT id FROM accounts WHERE account_id = ");
-    qb.push_bind(acct_strkey.to_owned());
+    qb.push_bind(acct_strkey);
     qb.push(")");
 }
 
