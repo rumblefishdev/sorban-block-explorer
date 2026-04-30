@@ -1,22 +1,29 @@
-//! Invocation tree extraction from Soroban transaction auth entries.
+//! Invocation tree extraction from Soroban transaction metadata.
 //!
-//! Decodes `SorobanAuthorizedInvocation` trees from `InvokeHostFunctionOp.auth`
-//! into both flat `ExtractedInvocation` rows and a nested JSON hierarchy
-//! (`operation_tree`) for the transaction detail page.
+//! Two complementary sources feed `ExtractedInvocation`:
 //!
-//! ## Design note: auth entries as invocation source
+//! 1. **Auth entries** (`SorobanAuthorizationEntry.root_invocation` in the
+//!    transaction envelope) — the authorization call graph. Always available
+//!    on Soroban transactions, structured (depth + nested args + per-node
+//!    function name), but a *subset* of execution: invocations that do not
+//!    require caller authorization (read-only sub-calls, contract-authority
+//!    sub-calls in DeFi routers) are missing. Used to build the JSON
+//!    `operation_tree` returned to the API for the transaction detail page,
+//!    where rich per-node detail matters.
 //!
-//! The invocation tree is extracted from **auth entries** (`SorobanAuthorizationEntry.
-//! root_invocation` in the transaction envelope), not from diagnostic events in
-//! `result_meta_xdr`. Auth entries represent the authorization call graph and are the
-//! only reliably available **structured** tree in Soroban transactions.
+//! 2. **Diagnostic events** (`fn_call` / `fn_return` host-VM trace entries
+//!    in `*.diagnostic_events`) — the *execution* call graph. Galexie
+//!    captive-core emits diagnostic mode by default, so this stream is
+//!    reliably present in our ingest. Walked by
+//!    [`extract_invocations_from_diagnostics`] and merged into the flat
+//!    `ExtractedInvocation` rows that feed the
+//!    `soroban_invocations_appearances` appearance index. Closes the
+//!    auth-tree coverage gap (~53 % of Soroban tx had zero rows on a local
+//!    100-ledger sample — task 0183).
 //!
-//! **Limitation:** Invocations that do not require caller authorization (e.g. read-only
-//! sub-calls, internal helper contracts) will not appear in the auth tree. For complex
-//! DeFi transactions with internal-only sub-calls, the tree may be incomplete. A future
-//! enhancement could supplement the auth tree with diagnostic events (`fn_call` /
-//! `fn_return`) when available, but diagnostic events depend on protocol configuration
-//! and are not guaranteed in production.
+//! Per-row detail (function name, args, return value) for the diagnostic
+//! tree is intentionally not persisted — ADR 0029 routes detail to the
+//! public archive; the appearance index is goal-of-coverage only.
 
 use serde_json::{Value, json};
 use stellar_xdr::curr::*;
@@ -35,15 +42,27 @@ pub struct InvocationResult {
     pub operation_tree: Option<Value>,
 }
 
-/// Extract the invocation tree from a transaction envelope's auth entries.
+/// Extract the invocation tree from a transaction envelope's auth entries
+/// and execution diagnostics.
 ///
-/// Scans operations for `InvokeHostFunction` and extracts invocation trees
-/// from each auth entry's `root_invocation`. Produces flat rows (depth-first)
-/// and a nested JSON tree.
+/// Produces:
+/// * `invocations` — flat depth-first rows. When the meta carries diagnostic
+///   `fn_call` / `fn_return` events, the **execution** tree (full coverage,
+///   contract-to-contract callers included) is the source. Otherwise falls
+///   back to the auth-entry tree (subset of execution, but always
+///   available). This is what feeds the appearance index.
+/// * `operation_tree` — nested JSON hierarchy for `transactions.operation_tree`,
+///   built from auth entries only. Per-node function args and return values
+///   come straight from XDR, which the host-VM trace does not preserve in a
+///   recoverable form for the API consumer. Auth-tree shape is the
+///   established read-time contract for the transaction detail page; coverage
+///   gaps for that surface are out of scope (ADR 0029 keeps detail in the
+///   public archive).
 ///
 /// `successful` is derived from the parent transaction's success status.
-/// `tx_meta` is used to populate the root invocation's `return_value` from
-/// `SorobanTransactionMeta`; pass `None` if not available.
+/// `tx_meta` is used both to populate the root invocation's `return_value`
+/// from `SorobanTransactionMeta` and to surface diagnostic events; pass
+/// `None` if not available (auth-tree-only path).
 pub fn extract_invocations(
     envelope: &InnerTxRef<'_>,
     tx_meta: Option<&TransactionMeta>,
@@ -63,6 +82,98 @@ pub fn extract_invocations(
         .map(|v| scval_to_typed_json(&v))
         .unwrap_or(Value::Null);
 
+    // Always build the JSON `operation_tree` from auth entries. The diagnostic
+    // execution tree carries fewer per-node fields (no nested args object the
+    // way auth entries do), and the operation_tree shape is already the
+    // contract for `transactions.operation_tree`.
+    let mut trees = Vec::new();
+    for op in ops {
+        if let OperationBody::InvokeHostFunction(ref invoke_op) = op.body {
+            for auth_entry in invoke_op.auth.iter() {
+                let tree_json = invocation_to_json(
+                    &auth_entry.root_invocation,
+                    root_return_value.clone(),
+                    successful,
+                );
+                trees.push(tree_json);
+            }
+        }
+    }
+    let operation_tree = if trees.is_empty() {
+        None
+    } else {
+        Some(json!(trees))
+    };
+
+    // Diagnostic-event execution tree (preferred — superset of auth tree).
+    // When the meta carries no diagnostic events, fall back to the auth tree.
+    //
+    // Effective root caller honours per-op `source_account` overrides (matching
+    // `flatten_auth_tree`'s task-0177 canonicalisation): muxed M-strkey →
+    // underlying ed25519 G-strkey, op override beats tx source. Protocol 21+
+    // allows at most one InvokeHostFunction op per tx, so the first match
+    // covers every real-world case; if none exists, the tx source is the
+    // legitimate fallback.
+    let root_caller = ops
+        .iter()
+        .find_map(|op| match op.body {
+            OperationBody::InvokeHostFunction(_) => Some(
+                op.source_account
+                    .as_ref()
+                    .map(muxed_to_g_strkey)
+                    .unwrap_or_else(|| tx_source_account.to_string()),
+            ),
+            _ => None,
+        })
+        .unwrap_or_else(|| tx_source_account.to_string());
+
+    let diag_invocations = tx_meta
+        .map(|tm| {
+            extract_invocations_from_diagnostics(
+                tm,
+                transaction_hash,
+                ledger_sequence,
+                created_at,
+                &root_caller,
+                successful,
+            )
+        })
+        .unwrap_or_default();
+
+    let invocations = if diag_invocations.is_empty() {
+        flatten_auth_tree(
+            ops,
+            tx_source_account,
+            transaction_hash,
+            ledger_sequence,
+            created_at,
+            successful,
+            root_return_value,
+        )
+    } else {
+        diag_invocations
+    };
+
+    InvocationResult {
+        invocations,
+        operation_tree,
+    }
+}
+
+/// Auth-tree fallback path. Same shape as the original pre-task-0183
+/// `extract_invocations` body — preserved as-is for transactions that have
+/// no diagnostic events at all (degenerate/Protocol-22 cases). Auth-tree
+/// coverage matches its long-standing semantic: subset of execution, root
+/// caller is the per-op source account.
+fn flatten_auth_tree(
+    ops: &[Operation],
+    tx_source_account: &str,
+    transaction_hash: &str,
+    ledger_sequence: u32,
+    created_at: i64,
+    successful: bool,
+    root_return_value: Value,
+) -> Vec<ExtractedInvocation> {
     let mut ctx = FlattenCtx {
         transaction_hash,
         ledger_sequence,
@@ -70,9 +181,7 @@ pub fn extract_invocations(
         successful,
         index: 0,
     };
-    let mut all_invocations = Vec::new();
-    let mut trees = Vec::new();
-
+    let mut out = Vec::new();
     for op in ops {
         if let OperationBody::InvokeHostFunction(ref invoke_op) = op.body {
             // Per-op source_account overrides the tx source (same as extract_operations).
@@ -85,30 +194,17 @@ pub fn extract_invocations(
                 .unwrap_or_else(|| tx_source_account.to_string());
 
             for auth_entry in invoke_op.auth.iter() {
-                let root = &auth_entry.root_invocation;
-                let tree_json = invocation_to_json(root, root_return_value.clone(), successful);
-                trees.push(tree_json);
                 flatten_invocation(
                     &mut ctx,
-                    root,
+                    &auth_entry.root_invocation,
                     Some(caller.clone()),
                     root_return_value.clone(),
-                    &mut all_invocations,
+                    &mut out,
                 );
             }
         }
     }
-
-    let operation_tree = if trees.is_empty() {
-        None
-    } else {
-        Some(json!(trees))
-    };
-
-    InvocationResult {
-        invocations: all_invocations,
-        operation_tree,
-    }
+    out
 }
 
 /// Shared context for invocation flattening.
@@ -174,6 +270,173 @@ fn flatten_invocation(
                 return_value: Value::Null,
             });
         }
+    }
+}
+
+/// Extract the **execution** invocation tree from `fn_call` / `fn_return`
+/// host-VM diagnostic events.
+///
+/// The host emits a depth-first stream around every contract entry/exit:
+///
+/// * `fn_call`  — `topics = [Symbol("fn_call"), Address(contract_to_call),
+///                Symbol(function_name)]`, `data = Vec(args)`. The event's
+///   `contract_id` field is `None` (host event); the called contract lives
+///   in `topics[1]`.
+/// * `fn_return` — `topics = [Symbol("fn_return"), Symbol(function_name)]`,
+///   `data = ScVal(return_value)`. The event's `contract_id` field carries
+///   the contract that's returning; we use it to validate the stack pop
+///   but never depend on it for correctness.
+///
+/// Walking the stream:
+///
+/// 1. On `fn_call`, push a frame and emit an `ExtractedInvocation` whose
+///    `caller` is the contract on top of the active stack (the caller is
+///    "the frame currently executing"). When the stack is empty — the
+///    very first call of the tx, or the tx-source-account-rooted root —
+///    the caller is `tx_source_account`.
+/// 2. On `fn_return`, pop the topmost frame.
+/// 3. On execution traps that leave residual unmatched calls, the
+///    remaining frames are silently dropped at end-of-stream — they were
+///    already emitted on their `fn_call`.
+///
+/// Returns an empty Vec when the meta has no diagnostic events
+/// (signalling the auth-tree fallback path in the caller).
+///
+/// The caller chain is the contract `C…` StrKey, not an account `G…` —
+/// the indexer staging layer routes contract callers to
+/// `caller_contract_id` (task 0183 schema) while keeping account callers
+/// on the existing `caller_id` column.
+pub fn extract_invocations_from_diagnostics(
+    tx_meta: &TransactionMeta,
+    transaction_hash: &str,
+    ledger_sequence: u32,
+    created_at: i64,
+    tx_source_account: &str,
+    successful: bool,
+) -> Vec<ExtractedInvocation> {
+    let diags = collect_diagnostic_events(tx_meta);
+    if diags.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    let mut stack: Vec<DiagFrame> = Vec::new();
+    let mut index: u32 = 0;
+
+    for diag in diags {
+        // Diagnostic-typed only — host-VM trace entries. Contract-typed
+        // copies of consensus events live alongside in v4.diagnostic_events
+        // (Galexie diagnostic mode) and must not be misread as fn_call /
+        // fn_return.
+        if !matches!(diag.event.type_, ContractEventType::Diagnostic) {
+            continue;
+        }
+        let ContractEventBody::V0(ref v0) = diag.event.body;
+
+        let Some(kind) = classify_diag_topic(&v0.topics) else {
+            continue;
+        };
+
+        match kind {
+            DiagKind::FnCall { contract_id } => {
+                let caller = match stack.last() {
+                    Some(frame) => frame.contract_id.clone(),
+                    None => tx_source_account.to_string(),
+                };
+                out.push(ExtractedInvocation {
+                    transaction_hash: transaction_hash.to_string(),
+                    contract_id: Some(contract_id.clone()),
+                    caller_account: Some(caller),
+                    function_name: None,
+                    function_args: Value::Null,
+                    return_value: Value::Null,
+                    successful,
+                    invocation_index: index,
+                    depth: stack.len() as u32,
+                    ledger_sequence,
+                    created_at,
+                });
+                index += 1;
+                stack.push(DiagFrame { contract_id });
+            }
+            DiagKind::FnReturn => {
+                stack.pop();
+            }
+        }
+    }
+
+    out
+}
+
+struct DiagFrame {
+    contract_id: String,
+}
+
+enum DiagKind {
+    FnCall { contract_id: String },
+    FnReturn,
+}
+
+fn classify_diag_topic(topics: &VecM<ScVal>) -> Option<DiagKind> {
+    // Topic 0 distinguishes the kind. Anything other than fn_call/fn_return
+    // is a different host trace (core_metrics, log, error, host_fn_failed)
+    // — not part of the call graph.
+    let head_sym = match topics.first()? {
+        ScVal::Symbol(sym) => std::str::from_utf8(sym.as_vec()).ok()?,
+        _ => return None,
+    };
+
+    match head_sym {
+        "fn_call" => Some(DiagKind::FnCall {
+            contract_id: decode_call_target(topics.get(1)?)?,
+        }),
+        "fn_return" => Some(DiagKind::FnReturn),
+        _ => None,
+    }
+}
+
+/// Decode the called-contract identity from a `fn_call` event's
+/// `topics[1]`. The host historically encodes this two ways:
+///
+/// * `ScVal::Bytes` carrying the raw 32-byte contract hash — this is
+///   what mainnet captive-core actually emits today (verified against
+///   ledger 62016086 on 2026-04-30).
+/// * `ScVal::Address(ScAddress::Contract(_))` — the structured form some
+///   newer host revisions use. Accepted for forward compatibility so
+///   the walker keeps working through future upgrades.
+///
+/// Returns `None` for any other shape (incl. account `Address` variants
+/// — fn_call always targets a contract; an account topic indicates
+/// either a malformed event or an unrelated diagnostic kind).
+fn decode_call_target(topic: &ScVal) -> Option<String> {
+    match topic {
+        ScVal::Bytes(bytes) => {
+            let raw = bytes.as_slice();
+            if raw.len() != 32 {
+                return None;
+            }
+            let mut buf = [0u8; 32];
+            buf.copy_from_slice(raw);
+            Some(ScAddress::Contract(ContractId(Hash(buf))).to_string())
+        }
+        ScVal::Address(addr @ ScAddress::Contract(_)) => Some(addr.to_string()),
+        _ => None,
+    }
+}
+
+/// Pull `diagnostic_events` from V3 (`soroban_meta.diagnostic_events`) or
+/// V4 (`v4.diagnostic_events`) meta. Galexie's captive-core enables
+/// diagnostic mode by default, so the V4 stream is reliably populated;
+/// the V3 path is kept for parity with `extract_events`.
+fn collect_diagnostic_events(meta: &TransactionMeta) -> Vec<&DiagnosticEvent> {
+    match meta {
+        TransactionMeta::V3(v3) => v3
+            .soroban_meta
+            .as_ref()
+            .map(|m| m.diagnostic_events.iter().collect())
+            .unwrap_or_default(),
+        TransactionMeta::V4(v4) => v4.diagnostic_events.iter().collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -912,5 +1175,406 @@ mod tests {
             operations: operations.try_into().unwrap(),
             ext: TransactionV0Ext::V0,
         }
+    }
+
+    // -------------------------------------------------------------------
+    // Diagnostic-event execution-tree walker (task 0183)
+    // -------------------------------------------------------------------
+
+    fn diag_event(topics: Vec<ScVal>, returning_contract: Option<u8>) -> DiagnosticEvent {
+        // Host emits the trace as a Diagnostic-typed ContractEvent. fn_call
+        // events have contract_id=None (host event); fn_return carries the
+        // returning contract on `event.contract_id`. The walker doesn't
+        // depend on the latter — kept here just so fixtures match the
+        // shape the host produces.
+        DiagnosticEvent {
+            in_successful_contract_call: true,
+            event: ContractEvent {
+                ext: ExtensionPoint::V0,
+                contract_id: returning_contract.map(|b| ContractId(Hash([b; 32]))),
+                type_: ContractEventType::Diagnostic,
+                body: ContractEventBody::V0(ContractEventV0 {
+                    topics: topics.try_into().unwrap(),
+                    data: ScVal::Void,
+                }),
+            },
+        }
+    }
+
+    fn fn_call_topics(contract_byte: u8, fn_name: &str) -> Vec<ScVal> {
+        vec![
+            ScVal::Symbol(ScSymbol::try_from("fn_call".as_bytes().to_vec()).unwrap()),
+            ScVal::Address(ScAddress::Contract(ContractId(Hash([contract_byte; 32])))),
+            ScVal::Symbol(ScSymbol::try_from(fn_name.as_bytes().to_vec()).unwrap()),
+        ]
+    }
+
+    /// Mainnet captive-core emits the called contract as raw 32-byte
+    /// `ScVal::Bytes`, not as a structured `ScVal::Address`. This shape
+    /// must round-trip too.
+    fn fn_call_topics_bytes_form(contract_byte: u8, fn_name: &str) -> Vec<ScVal> {
+        vec![
+            ScVal::Symbol(ScSymbol::try_from("fn_call".as_bytes().to_vec()).unwrap()),
+            ScVal::Bytes(ScBytes(vec![contract_byte; 32].try_into().unwrap())),
+            ScVal::Symbol(ScSymbol::try_from(fn_name.as_bytes().to_vec()).unwrap()),
+        ]
+    }
+
+    fn fn_return_topics(fn_name: &str) -> Vec<ScVal> {
+        vec![
+            ScVal::Symbol(ScSymbol::try_from("fn_return".as_bytes().to_vec()).unwrap()),
+            ScVal::Symbol(ScSymbol::try_from(fn_name.as_bytes().to_vec()).unwrap()),
+        ]
+    }
+
+    fn meta_v4_with_diags(diags: Vec<DiagnosticEvent>) -> TransactionMeta {
+        TransactionMeta::V4(TransactionMetaV4 {
+            ext: ExtensionPoint::V0,
+            tx_changes_before: LedgerEntryChanges::default(),
+            operations: VecM::default(),
+            tx_changes_after: LedgerEntryChanges::default(),
+            soroban_meta: None,
+            events: VecM::default(),
+            diagnostic_events: diags.try_into().unwrap(),
+        })
+    }
+
+    /// Empty diagnostic stream → walker returns empty Vec → caller falls
+    /// back to the auth tree. Smoke test guarding the fallback contract.
+    #[test]
+    fn diag_walker_empty_meta_returns_empty() {
+        let meta = meta_v4_with_diags(Vec::new());
+        let invs = extract_invocations_from_diagnostics(
+            &meta,
+            "abcd1234",
+            100,
+            1700000000,
+            source_account_str(),
+            true,
+        );
+        assert!(invs.is_empty());
+    }
+
+    /// Single fn_call/fn_return pair: one row, caller = tx source, depth 0.
+    #[test]
+    fn diag_walker_single_call_returns_one_row() {
+        let diags = vec![
+            diag_event(fn_call_topics(0xCC, "transfer"), None),
+            diag_event(fn_return_topics("transfer"), Some(0xCC)),
+        ];
+        let meta = meta_v4_with_diags(diags);
+        let invs = extract_invocations_from_diagnostics(
+            &meta,
+            "abcd1234",
+            100,
+            1700000000,
+            source_account_str(),
+            true,
+        );
+
+        assert_eq!(invs.len(), 1);
+        let inv = &invs[0];
+        assert_eq!(inv.depth, 0);
+        assert_eq!(inv.invocation_index, 0);
+        assert!(inv.contract_id.as_deref().unwrap().starts_with('C'));
+        assert_eq!(inv.caller_account.as_deref(), Some(source_account_str()));
+    }
+
+    /// Nested router → pool sub-call: 2 rows, second row's caller is the
+    /// router contract (C-prefix), proving the contract-to-contract
+    /// caller chain that the auth tree cannot represent.
+    #[test]
+    fn diag_walker_nested_call_chains_contract_caller() {
+        let router = 0xAA;
+        let pool = 0xBB;
+        let diags = vec![
+            diag_event(fn_call_topics(router, "swap"), None),
+            diag_event(fn_call_topics(pool, "swap_exact_in"), None),
+            diag_event(fn_return_topics("swap_exact_in"), Some(pool)),
+            diag_event(fn_return_topics("swap"), Some(router)),
+        ];
+        let meta = meta_v4_with_diags(diags);
+        let invs = extract_invocations_from_diagnostics(
+            &meta,
+            "abcd1234",
+            100,
+            1700000000,
+            source_account_str(),
+            true,
+        );
+
+        assert_eq!(invs.len(), 2);
+
+        // Root: router, called by tx source (G-account).
+        assert_eq!(invs[0].depth, 0);
+        assert_eq!(
+            invs[0].caller_account.as_deref(),
+            Some(source_account_str())
+        );
+        let router_id = invs[0].contract_id.clone().expect("router contract id");
+        assert!(router_id.starts_with('C'));
+
+        // Child: pool, called by the router (C-prefix). This is the row
+        // that the auth tree would never produce for an auth-less router.
+        assert_eq!(invs[1].depth, 1);
+        assert_eq!(invs[1].caller_account.as_deref(), Some(router_id.as_str()));
+        let pool_id = invs[1].contract_id.clone().expect("pool contract id");
+        assert!(pool_id.starts_with('C'));
+        assert_ne!(pool_id, router_id, "pool and router must be distinct");
+    }
+
+    /// Trap mid-call: extra `fn_call` with no matching `fn_return`. Walker
+    /// must still emit a row for the trapping frame and not panic on the
+    /// residual stack at end-of-stream.
+    #[test]
+    fn diag_walker_unbalanced_call_does_not_panic() {
+        let diags = vec![
+            diag_event(fn_call_topics(0xAA, "outer"), None),
+            diag_event(fn_call_topics(0xBB, "inner"), None),
+            // No fn_return — trap.
+        ];
+        let meta = meta_v4_with_diags(diags);
+        let invs = extract_invocations_from_diagnostics(
+            &meta,
+            "abcd1234",
+            100,
+            1700000000,
+            source_account_str(),
+            true,
+        );
+        assert_eq!(invs.len(), 2, "every fn_call emits a row, even on trap");
+    }
+
+    /// Non-Diagnostic-typed events in `diagnostic_events` (Contract-typed
+    /// copies of consensus events under Galexie diagnostic mode — task
+    /// 0182) must not be misread as fn_call / fn_return frames.
+    #[test]
+    fn diag_walker_skips_non_diagnostic_typed_events() {
+        let consensus_copy = DiagnosticEvent {
+            in_successful_contract_call: true,
+            event: ContractEvent {
+                ext: ExtensionPoint::V0,
+                contract_id: Some(ContractId(Hash([0xCC; 32]))),
+                type_: ContractEventType::Contract,
+                body: ContractEventBody::V0(ContractEventV0 {
+                    topics: vec![ScVal::Symbol(
+                        ScSymbol::try_from("transfer".as_bytes().to_vec()).unwrap(),
+                    )]
+                    .try_into()
+                    .unwrap(),
+                    data: ScVal::Void,
+                }),
+            },
+        };
+        let real_call = diag_event(fn_call_topics(0xCC, "transfer"), None);
+        let real_return = diag_event(fn_return_topics("transfer"), Some(0xCC));
+        let meta = meta_v4_with_diags(vec![consensus_copy, real_call, real_return]);
+
+        let invs = extract_invocations_from_diagnostics(
+            &meta,
+            "abcd1234",
+            100,
+            1700000000,
+            source_account_str(),
+            true,
+        );
+        assert_eq!(invs.len(), 1, "only the real fn_call should produce a row");
+    }
+
+    /// Mainnet captive-core encodes the called contract in `topics[1]` as
+    /// `ScVal::Bytes` (32-byte hash), not as a structured `ScVal::Address`.
+    /// Verified against ledger 62016086 (tx b7b510…3235) on 2026-04-30.
+    /// A regression here means real production diag streams stop yielding
+    /// invocations entirely, while the synthetic Address-form tests above
+    /// would keep passing — pin both shapes explicitly.
+    #[test]
+    fn diag_walker_decodes_bytes_form_call_target() {
+        let diags = vec![
+            diag_event(fn_call_topics_bytes_form(0xCC, "transfer"), None),
+            diag_event(fn_return_topics("transfer"), Some(0xCC)),
+        ];
+        let meta = meta_v4_with_diags(diags);
+        let invs = extract_invocations_from_diagnostics(
+            &meta,
+            "abcd1234",
+            100,
+            1700000000,
+            source_account_str(),
+            true,
+        );
+
+        assert_eq!(invs.len(), 1);
+        let cid = invs[0]
+            .contract_id
+            .as_deref()
+            .expect("contract id resolved from Bytes form");
+        assert!(cid.starts_with('C'));
+        assert_eq!(cid.len(), 56);
+        // Same bytes via Address form must produce the same StrKey.
+        let addr_form_cid = ScAddress::Contract(ContractId(Hash([0xCC; 32]))).to_string();
+        assert_eq!(cid, addr_form_cid);
+    }
+
+    /// Other Diagnostic-typed traces (`core_metrics`, `log`, `error`,
+    /// `host_fn_failed`) sit alongside fn_call / fn_return in the same
+    /// container. They have neither shape and must be ignored.
+    #[test]
+    fn diag_walker_skips_other_diagnostic_topics() {
+        let core_metrics = diag_event(
+            vec![
+                ScVal::Symbol(ScSymbol::try_from("core_metrics".as_bytes().to_vec()).unwrap()),
+                ScVal::Symbol(ScSymbol::try_from("cpu_insn".as_bytes().to_vec()).unwrap()),
+            ],
+            None,
+        );
+        let real_call = diag_event(fn_call_topics(0xCC, "transfer"), None);
+        let real_return = diag_event(fn_return_topics("transfer"), Some(0xCC));
+        let meta = meta_v4_with_diags(vec![core_metrics, real_call, real_return]);
+
+        let invs = extract_invocations_from_diagnostics(
+            &meta,
+            "abcd1234",
+            100,
+            1700000000,
+            source_account_str(),
+            true,
+        );
+        assert_eq!(invs.len(), 1);
+    }
+
+    /// Top-level `extract_invocations` must prefer the diag-tree when
+    /// present. Without diag, the auth tree is used. With diag, the auth
+    /// tree's callers do NOT appear in `invocations` — only the execution
+    /// rows. Guards against accidental double-counting from merging both.
+    #[test]
+    fn extract_invocations_prefers_diag_tree_over_auth() {
+        let contract_addr = ScAddress::Contract(ContractId(Hash([0xCC; 32])));
+
+        let auth = SorobanAuthorizationEntry {
+            credentials: SorobanCredentials::SourceAccount,
+            root_invocation: SorobanAuthorizedInvocation {
+                function: SorobanAuthorizedFunction::ContractFn(InvokeContractArgs {
+                    contract_address: contract_addr.clone(),
+                    function_name: ScSymbol::try_from("transfer".as_bytes().to_vec()).unwrap(),
+                    args: VecM::default(),
+                }),
+                sub_invocations: VecM::default(),
+            },
+        };
+        let op = Operation {
+            source_account: None,
+            body: OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
+                host_function: HostFunction::InvokeContract(InvokeContractArgs {
+                    contract_address: contract_addr,
+                    function_name: ScSymbol::try_from("transfer".as_bytes().to_vec()).unwrap(),
+                    args: VecM::default(),
+                }),
+                auth: vec![auth].try_into().unwrap(),
+            }),
+        };
+        let tx = build_v1_tx(vec![op]);
+        let inner = InnerTxRef::V1(&tx);
+
+        // Diag stream: TWO frames (router + pool) — coverage that auth
+        // tree alone would miss. Asserting len == 2 (not 3 = auth + diag)
+        // proves the diag path replaces, not augments.
+        let diags = vec![
+            diag_event(fn_call_topics(0xAA, "swap"), None),
+            diag_event(fn_call_topics(0xBB, "pool_swap"), None),
+            diag_event(fn_return_topics("pool_swap"), Some(0xBB)),
+            diag_event(fn_return_topics("swap"), Some(0xAA)),
+        ];
+        let meta = meta_v4_with_diags(diags);
+
+        let result = extract_invocations(
+            &inner,
+            Some(&meta),
+            "abcd1234",
+            100,
+            1700000000,
+            source_account_str(),
+            true,
+        );
+        assert_eq!(
+            result.invocations.len(),
+            2,
+            "diag tree replaces auth tree — no double-count"
+        );
+        // operation_tree still comes from auth entries (auth-tree shape is
+        // the established API contract for transactions.operation_tree).
+        let tree = result.operation_tree.expect("operation_tree from auth");
+        assert_eq!(tree.as_array().unwrap().len(), 1);
+    }
+
+    /// Regression for PR #148 review: when an `InvokeHostFunction` op carries
+    /// a `source_account` override (and especially a `MuxedAccount::MuxedEd25519`),
+    /// the diag-tree root caller must use the canonicalised G-strkey from
+    /// THAT op, not the bare tx source. Mirrors the auth-tree counterpart
+    /// `per_op_muxed_source_collapses_to_underlying_g_strkey` (task 0177)
+    /// for the diagnostic-event path.
+    #[test]
+    fn diag_root_caller_honours_per_op_source_and_canonicalises_muxed() {
+        let payload = [0x77; 32];
+        let mux_id = 0x0123_4567_89AB_CDEFu64;
+        let muxed_source = MuxedAccount::MuxedEd25519(stellar_xdr::curr::MuxedAccountMed25519 {
+            id: mux_id,
+            ed25519: Uint256(payload),
+        });
+        let expected_g = MuxedAccount::Ed25519(Uint256(payload)).to_string();
+        // Sanity on the test premise — the muxed form alone would surface as
+        // a 69-char M-strkey if anything in the path forgot to canonicalise.
+        assert_eq!(muxed_source.to_string().len(), 69);
+        assert_eq!(expected_g.len(), 56);
+
+        let op = Operation {
+            // Per-op override is the field under test.
+            source_account: Some(muxed_source),
+            body: OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
+                host_function: HostFunction::InvokeContract(InvokeContractArgs {
+                    contract_address: ScAddress::Contract(ContractId(Hash([0xCC; 32]))),
+                    function_name: ScSymbol::try_from("transfer".as_bytes().to_vec()).unwrap(),
+                    args: VecM::default(),
+                }),
+                auth: VecM::default(),
+            }),
+        };
+        let tx = build_v1_tx(vec![op]);
+        let inner = InnerTxRef::V1(&tx);
+
+        let diags = vec![
+            diag_event(fn_call_topics(0xCC, "transfer"), None),
+            diag_event(fn_return_topics("transfer"), Some(0xCC)),
+        ];
+        let meta = meta_v4_with_diags(diags);
+
+        // tx_source_account intentionally distinct from the per-op override —
+        // if the diag walker regresses to using tx source, the assertion
+        // below catches it.
+        let result = extract_invocations(
+            &inner,
+            Some(&meta),
+            "abcd1234",
+            100,
+            1700000000,
+            source_account_str(),
+            true,
+        );
+
+        assert_eq!(result.invocations.len(), 1, "expected single root frame");
+        let caller = result.invocations[0]
+            .caller_account
+            .as_deref()
+            .expect("root caller populated");
+        assert_eq!(caller.len(), 56, "expected 56-char G-strkey, got {caller}");
+        assert!(caller.starts_with('G'));
+        assert_eq!(
+            caller, expected_g,
+            "root caller must canonicalise to underlying ed25519 G-strkey from per-op override"
+        );
+        assert_ne!(
+            caller,
+            source_account_str(),
+            "root caller must come from per-op override, not tx-source fallback"
+        );
     }
 }

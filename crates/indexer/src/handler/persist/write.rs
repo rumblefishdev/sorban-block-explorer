@@ -425,6 +425,11 @@ pub(super) async fn upsert_contracts_returning_id(
     }
     for row in &staged.inv_rows {
         consider(row.contract_id.as_ref());
+        // Diagnostic-event invocation rows can name a *contract* caller
+        // (DeFi router → pool sub-calls). Those StrKeys must be in the
+        // `soroban_contracts` universe before `insert_invocations` resolves
+        // them, even when the contract isn't deployed in this ledger.
+        consider(row.caller_contract_str_key.as_ref());
     }
     for row in &staged.asset_rows {
         consider(row.contract_id.as_ref());
@@ -882,13 +887,19 @@ pub(super) async fn insert_events(
 /// value, depth) is re-materialised at read time from the public Stellar
 /// archive via `xdr_parser::extract_invocations`.
 ///
-/// `caller_id` is carried as a payload column (ADR 0034 §3): for each trio
-/// the first non-NULL caller observed wins. Staging emits tree nodes in
-/// depth-first order (root before sub-invocations) and already filters
-/// contract-address callers to NULL via `is_strkey_account`, so the
-/// first-seen non-NULL caller is the root-level G-account — matching the
-/// pre-refactor `COUNT(DISTINCT caller_id)` semantics the E11
-/// `unique_callers` stat relies on.
+/// Caller is split across two payload columns (ADR 0034 §3 + task 0183):
+/// `caller_id` for G/M accounts (auth-tree root + diag-tree root, which
+/// always trace back to the tx source), `caller_contract_id` for contract
+/// callers from the diagnostic-event execution tree (DeFi router → pool
+/// sub-calls). The schema's `ck_sia_caller_xor` keeps them mutually
+/// exclusive at most one per row. Aggregation rule: first non-NULL caller
+/// of either kind wins. Staging emits tree nodes in depth-first order
+/// (root before sub-invocations), so the root row's caller — almost
+/// always the G/M tx source — wins for a typical trio. The
+/// pre-refactor `COUNT(DISTINCT caller_id)` semantic that E11's
+/// `unique_callers` stat relies on still holds; rows where only a
+/// contract caller is available now populate `caller_contract_id`
+/// instead of dropping the signal.
 ///
 /// Invocations without a resolved `contract_id` (create-contract roots and
 /// other non-contract nodes) are skipped — the appearance index is
@@ -908,16 +919,18 @@ pub(super) async fn insert_invocations(
     }
 
     // Key: (contract_id, transaction_id, ledger_sequence, created_at).
-    // Value: (amount = tree-node count, caller_id = first non-NULL caller).
+    // Value: (amount, caller_id, caller_contract_id) — both caller slots
+    // populated lazily; first non-NULL of either kind wins.
     //
     // `upsert_contracts_returning_id` seeds `contract_ids` from every
     // contract key referenced in `staged.inv_rows` via staging's contract
-    // registration path, so a present contract key MUST resolve — a miss
-    // is an invariant violation (hard error, not silent skip). Rows with
-    // no contract (create-contract roots) are skipped silently; a missing
-    // `tx_id` also skips silently per repo convention.
+    // registration path (incl. caller_contract_str_key), so a present
+    // contract key MUST resolve — a miss is an invariant violation
+    // (hard error, not silent skip). Rows with no contract (create-contract
+    // roots) are skipped silently; a missing `tx_id` also skips silently
+    // per repo convention.
     type InvAggKey = (i64, i64, i64, DateTime<Utc>);
-    type InvAggValue = (i64, Option<i64>);
+    type InvAggValue = (i64, Option<i64>, Option<i64>);
     let mut agg: HashMap<InvAggKey, InvAggValue> = HashMap::new();
     for r in &staged.inv_rows {
         let Some(contract_key) = r.contract_id.as_deref() else {
@@ -929,15 +942,39 @@ pub(super) async fn insert_invocations(
         };
         let caller_id_opt = resolve_opt_id(
             account_ids,
-            r.caller_str_key.as_deref(),
+            r.caller_account_str_key.as_deref(),
             "invocation.caller",
+        )?;
+        let caller_contract_id_opt = resolve_contract_opt_id(
+            contract_ids,
+            r.caller_contract_str_key.as_deref(),
+            "invocation.caller_contract",
         )?;
         let entry = agg
             .entry((contract_id, tx_id, r.ledger_sequence, r.created_at))
-            .or_insert((0, None));
+            .or_insert((0, None, None));
         entry.0 += 1;
-        if entry.1.is_none() {
+        // First-non-NULL-caller-wins, but constrained by the XOR CHECK:
+        // only fill the contract slot if no account caller has been seen,
+        // and only fill the account slot if no contract caller has been
+        // seen. In practice the depth-first emit order means the root row
+        // (G/M caller) lands first for any trio that has a root, so the
+        // contract slot is reached only when *every* row in a trio is a
+        // sub-invocation (a contract → contract-only path). Defensive:
+        // if both kinds appear in the same trio, account wins.
+        if entry.1.is_none() && entry.2.is_none() {
+            if caller_id_opt.is_some() {
+                entry.1 = caller_id_opt;
+            } else if caller_contract_id_opt.is_some() {
+                entry.2 = caller_contract_id_opt;
+            }
+        } else if entry.1.is_none() && entry.2.is_some() && caller_id_opt.is_some() {
+            // Promote: an account caller seen later in depth-first order
+            // (extremely unusual but possible if the diagnostic stream's
+            // first frame doesn't carry the G-source) takes the slot from
+            // the contract caller — matches "G/M caller wins" preference.
             entry.1 = caller_id_opt;
+            entry.2 = None;
         }
     }
 
@@ -951,14 +988,20 @@ pub(super) async fn insert_invocations(
         let mut tx_id_vec: Vec<i64> = Vec::with_capacity(chunk.len());
         let mut ls_vec: Vec<i64> = Vec::with_capacity(chunk.len());
         let mut caller_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
+        let mut caller_contract_vec: Vec<Option<i64>> = Vec::with_capacity(chunk.len());
         let mut amount_vec: Vec<i32> = Vec::with_capacity(chunk.len());
         let mut ca_vec: Vec<DateTime<Utc>> = Vec::with_capacity(chunk.len());
 
-        for &((contract_id, tx_id, ledger_sequence, created_at), (amount, caller_id)) in chunk {
+        for &(
+            (contract_id, tx_id, ledger_sequence, created_at),
+            (amount, caller_id, caller_contract_id),
+        ) in chunk
+        {
             contract_vec.push(contract_id);
             tx_id_vec.push(tx_id);
             ls_vec.push(ledger_sequence);
             caller_vec.push(caller_id);
+            caller_contract_vec.push(caller_contract_id);
             amount_vec.push(i32::try_from(amount).map_err(|_| {
                 HandlerError::Staging(format!(
                     "invocation appearance amount overflow: contract_id={contract_id}, tx_id={tx_id}, amount={amount}"
@@ -970,10 +1013,12 @@ pub(super) async fn insert_invocations(
         sqlx::query(
             r#"
             INSERT INTO soroban_invocations_appearances (
-                contract_id, transaction_id, ledger_sequence, caller_id, amount, created_at
+                contract_id, transaction_id, ledger_sequence,
+                caller_id, caller_contract_id, amount, created_at
             )
             SELECT * FROM UNNEST(
-                $1::BIGINT[], $2::BIGINT[], $3::BIGINT[], $4::BIGINT[], $5::INTEGER[], $6::TIMESTAMPTZ[]
+                $1::BIGINT[], $2::BIGINT[], $3::BIGINT[],
+                $4::BIGINT[], $5::BIGINT[], $6::INTEGER[], $7::TIMESTAMPTZ[]
             )
             ON CONFLICT (contract_id, transaction_id, ledger_sequence, created_at) DO NOTHING
             "#,
@@ -982,6 +1027,7 @@ pub(super) async fn insert_invocations(
         .bind(&tx_id_vec)
         .bind(&ls_vec)
         .bind(&caller_vec)
+        .bind(&caller_contract_vec)
         .bind(&amount_vec)
         .bind(&ca_vec)
         .execute(&mut **db_tx)

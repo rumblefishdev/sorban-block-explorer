@@ -206,21 +206,42 @@ include caller. Decide during implementation.
 
 ## Acceptance Criteria
 
-- [ ] `extract_invocations_from_diagnostics` implemented + unit tests
-- [ ] `soroban_invocations_appearances` migration adds
+- [x] `extract_invocations_from_diagnostics` implemented + unit tests
+      (`crates/xdr-parser/src/invocation.rs`; 8 new unit tests covering
+      Bytes-form / Address-form call targets, nested C→C caller chain,
+      trap mid-call, non-Diagnostic-typed event skipping, other
+      Diagnostic topics like `core_metrics`, and the
+      `extract_invocations` diag-vs-auth preference)
+- [x] `soroban_invocations_appearances` migration adds
       `caller_contract_id` + CHECK constraint
-- [ ] Persist layer writes the new column for both auth-tree and
-      diag-tree origins
+      (`crates/db/migrations/20260430000000_invocations_caller_contract.up.sql` + matching `.down.sql`; constraint name `ck_sia_caller_xor`)
+- [x] Persist layer writes the new column for both auth-tree and
+      diag-tree origins (`InvRow` carries `caller_account_str_key` and
+      `caller_contract_str_key`; staging classifies by StrKey prefix;
+      `insert_invocations` folds first-non-NULL-of-either-kind with
+      account-preferred semantics under the XOR CHECK)
 - [ ] On a fresh local index of the 100-ledger test set, the count of
       Soroban tx with zero invocation rows drops from ~7078 to near zero
-      (target: only tx with no diagnostic events at all)
-- [ ] Test tx `b7b510…3235` produces ~12 invocation rows touching all
-      4 contracts seen in events
-- [ ] Task 0182's Contract-event-leak fix is preserved
-      (diagnostic events still dropped from `soroban_events_appearances`)
-- [ ] **Docs updated** — files E03 / E13 SQL headers updated; ADR 0034
-      either superseded or amended; `backend-overview.md` if it
-      enumerates the limitation
+      (target: only tx with no diagnostic events at all) — owner-run
+      check, requires reindex against local DB
+- [x] Test tx `b7b510…3235` produces ~12 invocation rows touching all
+      4 contracts seen in events — fixture-backed test
+      `crates/xdr-parser/tests/diag_invocation_coverage.rs` measures 16
+      rows (≥ 8 lower-bound assertion), 15 contract→contract callers,
+      6 distinct contracts in the call graph (router + 2 pools + 3
+      tokens — strictly more than the "4 contracts seen in events"
+      acceptance bar; tx is multi-hop Phoenix→Aquarius)
+- [x] Task 0182's Contract-event-leak fix is preserved (the diag walker
+      filters on `event.type_ == Diagnostic` before classifying; the
+      Contract-typed copies of consensus events that 0182 dropped from
+      `soroban_events_appearances` are also ignored by the invocation
+      walker — covered by `diag_walker_skips_non_diagnostic_typed_events`)
+- [x] **Docs updated** — E03 / E13 SQL headers reflect execution-tree
+      coverage and the new `caller_contract_id` LEFT JOIN; ADR 0034
+      amended in place with a 2026-04-30 history entry, §3 / §6 updated,
+      and the "Sub-invocation caller info no longer recoverable from
+      DB" Negative Consequence struck. `backend-overview.md` does not
+      enumerate the auth-only limitation — no edit needed.
 
 ## Notes
 
