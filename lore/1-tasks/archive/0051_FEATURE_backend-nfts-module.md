@@ -53,7 +53,7 @@ Implement the NFTs module providing paginated NFT listing with collection/contra
 
 ## Context
 
-NFTs on Stellar/Soroban are modeled as explorer entities with potentially sparse metadata. The ecosystem and metadata quality vary significantly, so responses must tolerate missing fields. Transfer history is derived from stored events and linked transactions rather than a dedicated NFT transfer table.
+NFTs on Stellar/Soroban are modeled as explorer entities with potentially sparse metadata. The ecosystem and metadata quality vary significantly, so responses must tolerate missing fields. Transfer/ownership history is read from the dedicated `nft_ownership` partitioned table (ADR 0027 §13) — earlier drafts of this task pointed at `soroban_events`; that was superseded once `nft_ownership` landed. Each row carries `event_type_name` (`mint` / `transfer` / `burn`) so the endpoint surfaces the full ownership timeline, not just transfer events.
 
 ### API Specification
 
@@ -69,12 +69,13 @@ NFTs on Stellar/Soroban are modeled as explorer entities with potentially sparse
 
 **Query Parameters:**
 
-| Parameter             | Type   | Default | Description               |
-| --------------------- | ------ | ------- | ------------------------- |
-| `limit`               | number | 20      | Items per page (max 100)  |
-| `cursor`              | string | null    | Opaque pagination cursor  |
-| `filter[collection]`  | string | null    | Filter by collection name |
-| `filter[contract_id]` | string | null    | Filter by NFT contract ID |
+| Parameter             | Type   | Default | Description                                                                 |
+| --------------------- | ------ | ------- | --------------------------------------------------------------------------- |
+| `limit`               | number | 20      | Items per page (max 100)                                                    |
+| `cursor`              | string | null    | Opaque pagination cursor                                                    |
+| `filter[collection]`  | string | null    | Filter by collection name (exact match, btree `idx_nfts_collection`)        |
+| `filter[contract_id]` | string | null    | Filter by NFT contract C-StrKey                                             |
+| `filter[name]`        | string | null    | Substring trigram match on NFT name (rejects literal `%` / `_` from caller) |
 
 **Response Shape (list):**
 
@@ -226,7 +227,7 @@ Create `crates/api/src/nfts/` with module, controller, service, and request/resp
 
 ### Step 2: List Endpoint
 
-Implement `GET /nfts` with cursor pagination and filter[collection]/filter[contract_id] support.
+Implement `GET /nfts` with cursor pagination and `filter[collection]` / `filter[contract_id]` / `filter[name]` support (canonical SQL `15_*.sql` inputs).
 
 ### Step 3: Detail Endpoint
 

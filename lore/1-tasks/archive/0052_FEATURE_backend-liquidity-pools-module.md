@@ -73,12 +73,15 @@ Liquidity pools combine current-state reads with historical aggregate reads. The
 
 **Query Parameters:**
 
-| Parameter         | Type   | Default | Description              |
-| ----------------- | ------ | ------- | ------------------------ |
-| `limit`           | number | 20      | Items per page (max 100) |
-| `cursor`          | string | null    | Opaque pagination cursor |
-| `filter[assets]`  | string | null    | Filter by asset pair     |
-| `filter[min_tvl]` | number | null    | Minimum TVL threshold    |
+| Parameter                | Type   | Default | Description                                                                         |
+| ------------------------ | ------ | ------- | ----------------------------------------------------------------------------------- |
+| `limit`                  | number | 20      | Items per page (max 100)                                                            |
+| `cursor`                 | string | null    | Opaque pagination cursor                                                            |
+| `filter[asset_a_code]`   | string | null    | Asset-A code (paired with `filter[asset_a_issuer]`; both or neither — _Emerged #4_) |
+| `filter[asset_a_issuer]` | string | null    | Asset-A issuer G-StrKey (paired with `filter[asset_a_code]`)                        |
+| `filter[asset_b_code]`   | string | null    | Asset-B code (paired with `filter[asset_b_issuer]`)                                 |
+| `filter[asset_b_issuer]` | string | null    | Asset-B issuer G-StrKey (paired with `filter[asset_b_code]`)                        |
+| `filter[min_tvl]`        | string | null    | Minimum TVL threshold (decimal string, NUMERIC(28,7) precision)                     |
 
 **Response Shape (list):**
 
@@ -303,7 +306,7 @@ Module already exists at `crates/api/src/liquidity_pools/` (participants from ta
 
 ### Step 2: List Endpoint
 
-Implement `GET /liquidity-pools` with cursor pagination and filter[assets]/filter[min_tvl] support. List rows JOIN latest snapshot for `reserves`/`total_shares`/`tvl`; hex-encode `pool_id`; assemble asset JSONB from flat columns.
+Implement `GET /liquidity-pools` with cursor pagination and per-leg asset filters (`filter[asset_a_code]` / `filter[asset_a_issuer]` / `filter[asset_b_code]` / `filter[asset_b_issuer]`, paired or omitted) plus `filter[min_tvl]`. List rows JOIN latest snapshot for `reserves`/`total_shares`/`tvl`; hex-encode `pool_id`; assemble asset JSONB from flat columns.
 
 ### Step 3: Detail Endpoint
 
