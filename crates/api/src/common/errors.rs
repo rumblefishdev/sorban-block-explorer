@@ -59,6 +59,11 @@ pub const INVALID_CONTRACT_ID: &str = "invalid_contract_id";
 /// (not 56 chars / wrong prefix `G` / wrong base32 alphabet).
 pub const INVALID_ACCOUNT_ID: &str = "invalid_account_id";
 
+/// Path parameter `:pool_id` failed shape validation (not 64 lowercase
+/// hex chars). LP `pool_id` is `BYTEA(32)` on the wire per ADR 0024;
+/// the API surfaces it as 64-char lowercase hex.
+pub const INVALID_POOL_ID: &str = "invalid_pool_id";
+
 /// Path parameter `:sequence` failed numeric / range validation
 /// (not a positive integer fitting in `u32`).
 ///

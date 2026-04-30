@@ -15,6 +15,10 @@ use crate::assets::dto::{AssetDetailResponse, AssetItem, AssetTransactionItem};
 use crate::contracts::dto::{
     ContractDetailResponse, ContractStats, EventItem, InterfaceResponse, InvocationItem,
 };
+use crate::liquidity_pools::dto::{
+    ChartDataPoint, ChartResponse, PoolAssetLeg, PoolItem, PoolTransactionItem,
+};
+use crate::nfts::dto::{NftItem, NftTransferItem};
 use crate::stellar_archive::dto::{
     E3HeavyFields, E3Response, HeavyFieldsStatus, SignatureDto, XdrEventDto, XdrOperationDto,
 };
@@ -63,6 +67,17 @@ use schemas::{ErrorEnvelope, PageInfo, Paginated};
         AssetDetailResponse,
         Paginated<AssetTransactionItem>,
         AssetTransactionItem,
+        Paginated<NftItem>,
+        NftItem,
+        Paginated<NftTransferItem>,
+        NftTransferItem,
+        Paginated<PoolItem>,
+        PoolItem,
+        PoolAssetLeg,
+        Paginated<PoolTransactionItem>,
+        PoolTransactionItem,
+        ChartResponse,
+        ChartDataPoint,
     )),
 )]
 pub struct ApiDoc;

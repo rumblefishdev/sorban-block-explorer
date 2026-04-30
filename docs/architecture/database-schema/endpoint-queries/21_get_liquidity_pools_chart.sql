@@ -37,9 +37,15 @@ WITH bucket_keyword AS (
         WHEN '1h' THEN 'hour'
         WHEN '1d' THEN 'day'
         WHEN '1w' THEN 'week'
-        -- Defensive: the API allowlist already gates this; if a bad value
-        -- slips through, fail loudly at query parse rather than producing
-        -- microsecond buckets.
+        -- No ELSE branch on purpose: the API-side allowlist (`1h | 1d | 1w`)
+        -- gates $2 before this SQL runs. If a bad value somehow bypasses the
+        -- allowlist, `kw` becomes NULL and `date_trunc(NULL, ts)` returns
+        -- NULL — every row groups into a single NULL bucket. That is silent
+        -- garbage, NOT a loud parse error (the previous comment claimed
+        -- "fail loudly" — that was incorrect). The Rust caller adds a
+        -- `debug_assert!` on the interval string to catch allowlist drift
+        -- in tests; the handler-side allowlist remains the authoritative
+        -- validator at runtime.
     END AS kw
 )
 SELECT

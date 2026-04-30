@@ -2,18 +2,19 @@
 //!
 //! The `:id` placeholder takes different shapes per resource:
 //!
-//!   | Resource          | Shape        | Helper                    |
-//!   | ----------------- | ------------ | ------------------------- |
-//!   | `transactions`    | 64-char hex  | [`parse_hash`]            |
-//!   | `contracts`       | StrKey, prefix `C`    | [`strkey`] with `'C'`     |
-//!   | `accounts`        | StrKey, prefix `G`    | [`strkey`] with `'G'`     |
-//!   | `ledgers`         | numeric `u32`         | [`sequence`]              |
+//!   | Resource          | Shape                          | Helper                  |
+//!   | ----------------- | ------------------------------ | ----------------------- |
+//!   | `transactions`    | 64-char hex                    | [`parse_hash`]          |
+//!   | `contracts`       | StrKey, prefix `C`             | [`strkey`] with `'C'`   |
+//!   | `accounts`        | StrKey, prefix `G`             | [`strkey`] with `'G'`   |
+//!   | `liquidity-pools` | 64-char lowercase hex (BYTEA32)| [`pool_id_hex`]         |
+//!   | `ledgers`         | numeric `u32`                  | [`sequence`]            |
 //!
 //! Each helper short-circuits the handler before any DB / S3 call —
 //! malformed input maps to a flat ADR 0008 `ErrorEnvelope` with one of
 //! the canonical `INVALID_HASH` / `INVALID_CONTRACT_ID` /
-//! `INVALID_ACCOUNT_ID` / `INVALID_SEQUENCE` codes (see
-//! [`crate::common::errors`]).
+//! `INVALID_ACCOUNT_ID` / `INVALID_POOL_ID` / `INVALID_SEQUENCE` codes
+//! (see [`crate::common::errors`]).
 //!
 //! Why not just reuse [`crate::common::filters::strkey`]? `filters::*`
 //! emits `invalid_filter` and assumes the value came from a `filter[key]=`
@@ -96,6 +97,31 @@ pub fn strkey(value: &str, prefix: char, param: &str) -> Result<(), Response> {
                 "{param} must be a 56-character Stellar StrKey starting with '{prefix}' (RFC 4648 base32)"
             ),
             serde_json::json!({ "param": param, "received": value, "expected_prefix": prefix.to_string() }),
+        ))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BYTEA(32) hex (liquidity pools)
+// ---------------------------------------------------------------------------
+
+/// Validate a `pool_id`-shaped path parameter.
+///
+/// LP `pool_id` is `BYTEA(32)` per ADR 0024; the API surfaces it as 64
+/// lowercase hex characters. Failure envelope carries `INVALID_POOL_ID`
+/// and a `param` field in `details` mirroring the other path validators.
+pub fn pool_id_hex(value: &str, param: &str) -> Result<(), Response> {
+    if value.len() == 64
+        && value
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        Ok(())
+    } else {
+        Err(errors::bad_request_with_details(
+            errors::INVALID_POOL_ID,
+            "pool_id must be a 64-character lowercase hex string",
+            serde_json::json!({ "param": param, "received": value }),
         ))
     }
 }
@@ -244,6 +270,53 @@ mod tests {
         let err = strkey(&bad, 'C', "contract_id").unwrap_err();
         let (_, json) = body_json(err).await;
         assert_eq!(json["code"], "invalid_contract_id");
+    }
+
+    // -----------------------------------------------------------------------
+    // pool_id_hex
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn pool_id_hex_valid_lowercase_accepted() {
+        let hex = "ab".repeat(32); // 64 chars all lowercase hex
+        assert!(pool_id_hex(&hex, "pool_id").is_ok());
+        assert!(pool_id_hex(&"0".repeat(64), "pool_id").is_ok());
+    }
+
+    #[tokio::test]
+    async fn pool_id_hex_uppercase_rejected() {
+        // BYTEA(32) hex on the wire is canonically lowercase; uppercase
+        // would round-trip differently through `encode(... 'hex')`.
+        let bad = "AB".repeat(32);
+        let err = pool_id_hex(&bad, "pool_id").unwrap_err();
+        let (status, json) = body_json(err).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(json["code"], "invalid_pool_id");
+        assert_eq!(json["details"]["param"], "pool_id");
+    }
+
+    #[tokio::test]
+    async fn pool_id_hex_wrong_length_rejected() {
+        let err = pool_id_hex("abcdef", "pool_id").unwrap_err();
+        let (_, json) = body_json(err).await;
+        assert_eq!(json["code"], "invalid_pool_id");
+    }
+
+    #[tokio::test]
+    async fn pool_id_hex_non_hex_char_rejected() {
+        // Length 64, lowercase, but contains `g` which is outside hex.
+        let mut bad = "a".repeat(63);
+        bad.push('g');
+        let err = pool_id_hex(&bad, "pool_id").unwrap_err();
+        let (_, json) = body_json(err).await;
+        assert_eq!(json["code"], "invalid_pool_id");
+    }
+
+    #[tokio::test]
+    async fn pool_id_hex_empty_rejected() {
+        let err = pool_id_hex("", "pool_id").unwrap_err();
+        let (_, json) = body_json(err).await;
+        assert_eq!(json["code"], "invalid_pool_id");
     }
 
     // -----------------------------------------------------------------------

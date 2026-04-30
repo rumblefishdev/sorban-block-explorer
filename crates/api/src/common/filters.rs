@@ -17,6 +17,7 @@
 use std::str::FromStr;
 
 use axum::response::Response;
+use chrono::{DateTime, Utc};
 
 use super::errors;
 
@@ -96,6 +97,69 @@ where
     value
         .map(|s| parse_enum::<T>(s, filter_key, kind_hint))
         .transpose()
+}
+
+/// Reject literal SQL wildcard characters (`%`, `_`) in a `filter[key]`
+/// value used for trigram / `ILIKE` substring search.
+///
+/// The handler-side wraps such filters as `'%' || $N || '%'` server-side
+/// so the client passes a plain substring. A literal `%` or `_` from the
+/// caller would silently change `LIKE` semantics — `%` matches "anything",
+/// `_` matches "any one char" — and the resulting result set is
+/// over-broad without explanation. Not an injection risk (values are
+/// always bound, never concatenated), purely a UX guard against silent
+/// over-match. The 400 envelope tells the caller exactly which characters
+/// are reserved instead of returning an unexplained large result set.
+pub fn reject_sql_wildcards(value: &str, filter_key: &str) -> Result<(), Response> {
+    if value.bytes().any(|b| b == b'%' || b == b'_') {
+        Err(errors::bad_request_with_details(
+            errors::INVALID_FILTER,
+            format!("filter[{filter_key}] must not contain `%` or `_` (SQL wildcard literals)"),
+            serde_json::json!({ "filter": filter_key, "received": value }),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+/// Reject literal SQL wildcards only when present. See [`strkey_opt`] for
+/// the rationale — symmetric helper for the wildcard-reject case.
+pub fn reject_sql_wildcards_opt(value: Option<&str>, filter_key: &str) -> Result<(), Response> {
+    match value {
+        Some(v) => reject_sql_wildcards(v, filter_key),
+        None => Ok(()),
+    }
+}
+
+/// Parse a `filter[key]` (or any query-string param) value as an ISO 8601
+/// / RFC 3339 timestamp into `DateTime<Utc>`.
+///
+/// `chrono::DateTime::parse_from_rfc3339` accepts the strict subset of
+/// ISO 8601 the explorer API documents (`2026-04-30T12:00:00Z`,
+/// `2026-04-30T12:00:00+02:00`, etc.). Naive timestamps without a
+/// timezone are rejected — the snapshot streams are TIMESTAMPTZ so the
+/// API stays unambiguous. Failure surfaces as `INVALID_FILTER` with the
+/// param name in `details`, matching the rest of `filters::*`.
+pub fn parse_iso8601(value: &str, filter_key: &str) -> Result<DateTime<Utc>, Response> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|d| d.with_timezone(&Utc))
+        .map_err(|_| {
+            errors::bad_request_with_details(
+                errors::INVALID_FILTER,
+                format!("{filter_key} must be a valid ISO 8601 / RFC 3339 timestamp"),
+                serde_json::json!({ "param": filter_key, "received": value }),
+            )
+        })
+}
+
+/// Parse an ISO 8601 timestamp only when present. See [`strkey_opt`] for
+/// the rationale — symmetric helper for the timestamp case.
+#[allow(dead_code)]
+pub fn parse_iso8601_opt(
+    value: Option<&str>,
+    filter_key: &str,
+) -> Result<Option<DateTime<Utc>>, Response> {
+    value.map(|v| parse_iso8601(v, filter_key)).transpose()
 }
 
 #[cfg(test)]
@@ -204,6 +268,99 @@ mod tests {
         assert_eq!(
             json["message"],
             "filter[kind] is not a recognized kind name"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // reject_sql_wildcards
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn wildcards_clean_value_accepted() {
+        assert!(reject_sql_wildcards("punk", "name").is_ok());
+        assert!(reject_sql_wildcards("Stellar Punks", "collection").is_ok());
+        // Empty also OK — caller's Option-handling decides whether absent
+        // is allowed; the helper itself only checks character content.
+        assert!(reject_sql_wildcards("", "name").is_ok());
+    }
+
+    #[tokio::test]
+    async fn wildcards_percent_rejected() {
+        let err = reject_sql_wildcards("100%real", "name").unwrap_err();
+        let (status, json) = body_json(err).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(json["code"], "invalid_filter");
+        assert_eq!(json["details"]["filter"], "name");
+        assert_eq!(json["details"]["received"], "100%real");
+    }
+
+    #[tokio::test]
+    async fn wildcards_underscore_rejected() {
+        let err = reject_sql_wildcards("foo_bar", "code").unwrap_err();
+        let (_, json) = body_json(err).await;
+        assert_eq!(json["code"], "invalid_filter");
+        assert_eq!(json["details"]["filter"], "code");
+    }
+
+    #[test]
+    fn wildcards_opt_none_passes() {
+        assert!(reject_sql_wildcards_opt(None, "name").is_ok());
+    }
+
+    #[tokio::test]
+    async fn wildcards_opt_some_validates() {
+        assert!(reject_sql_wildcards_opt(Some("punk"), "name").is_ok());
+        let err = reject_sql_wildcards_opt(Some("%"), "name").unwrap_err();
+        let (_, json) = body_json(err).await;
+        assert_eq!(json["code"], "invalid_filter");
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_iso8601
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn iso8601_z_suffix_accepted() {
+        let parsed = parse_iso8601("2026-04-30T12:00:00Z", "from").unwrap();
+        assert_eq!(parsed.to_rfc3339(), "2026-04-30T12:00:00+00:00");
+    }
+
+    #[test]
+    fn iso8601_offset_accepted_and_normalised_to_utc() {
+        let parsed = parse_iso8601("2026-04-30T14:00:00+02:00", "from").unwrap();
+        // +02:00 → 14:00 local = 12:00 UTC
+        assert_eq!(parsed.to_rfc3339(), "2026-04-30T12:00:00+00:00");
+    }
+
+    #[tokio::test]
+    async fn iso8601_naive_without_timezone_rejected() {
+        // Naive timestamp (no Z, no offset) — explorer API stays in UTC.
+        let err = parse_iso8601("2026-04-30T12:00:00", "from").unwrap_err();
+        let (status, json) = body_json(err).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(json["code"], "invalid_filter");
+        assert_eq!(json["details"]["param"], "from");
+    }
+
+    #[tokio::test]
+    async fn iso8601_garbage_rejected() {
+        let err = parse_iso8601("not-a-timestamp", "to").unwrap_err();
+        let (_, json) = body_json(err).await;
+        assert_eq!(json["code"], "invalid_filter");
+        assert_eq!(json["details"]["param"], "to");
+    }
+
+    #[test]
+    fn iso8601_opt_none_passes() {
+        assert!(parse_iso8601_opt(None, "from").unwrap().is_none());
+    }
+
+    #[test]
+    fn iso8601_opt_some_validates() {
+        assert!(
+            parse_iso8601_opt(Some("2026-04-30T12:00:00Z"), "from")
+                .unwrap()
+                .is_some()
         );
     }
 }

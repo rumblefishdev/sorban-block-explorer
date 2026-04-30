@@ -25,6 +25,7 @@ use utoipa_axum::router::OpenApiRouter;
 
 use crate::assets;
 use crate::contracts;
+use crate::nfts;
 use crate::state::AppState;
 use crate::stellar_archive::StellarArchiveFetcher;
 use crate::{liquidity_pools, transactions};
@@ -62,6 +63,7 @@ fn build_app(db: PgPool) -> Router {
         .nest("/v1", transactions::router())
         .nest("/v1", contracts::router())
         .nest("/v1", liquidity_pools::router())
+        .nest("/v1", nfts::router())
         .nest("/v1", assets::router())
         .with_state(state)
         .split_for_parts();
@@ -1468,4 +1470,287 @@ fn u32_try_from_invariants_relied_on_by_handlers() {
     // `transactions/handlers.rs::get_transaction` (heavy fetch),
     // and `contracts/handlers.rs::expand_invocations` / `expand_events`
     // (per-row stop-and-retry).
+}
+
+// ---------------------------------------------------------------------------
+// Task 0051 — NFT endpoints (validation tests; no DB contact)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn nfts_invalid_id_returns_400_envelope() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/nfts/not-a-number")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_id");
+}
+
+#[tokio::test]
+async fn nfts_invalid_contract_filter_returns_400_envelope() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/nfts?filter%5Bcontract_id%5D=BAD")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_filter");
+    assert_eq!(json["details"]["filter"], "contract_id");
+}
+
+#[tokio::test]
+async fn nfts_filter_name_rejects_wildcard_literals() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/nfts?filter%5Bname%5D=foo%25bar")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_filter");
+    assert_eq!(json["details"]["filter"], "name");
+}
+
+#[tokio::test]
+async fn nfts_transfers_invalid_id_returns_400_envelope() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/nfts/0/transfers")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_id");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0052 — Liquidity-pool list / detail / transactions / chart (validation)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn lp_detail_invalid_pool_id_returns_400_envelope() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/liquidity-pools/not-hex")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_pool_id");
+}
+
+#[tokio::test]
+async fn lp_list_invalid_issuer_filter_returns_400_envelope() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/liquidity-pools?filter%5Basset_a_issuer%5D=BAD")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_filter");
+    assert_eq!(json["details"]["filter"], "asset_a_issuer");
+}
+
+#[tokio::test]
+async fn lp_list_mixed_asset_a_filter_rejected() {
+    let app = lazy_app();
+    // asset_a_code without asset_a_issuer is ambiguous (could match wrong issuer's
+    // USDC); canonical SQL 18 §46-49 says API validates upstream.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/liquidity-pools?filter%5Basset_a_code%5D=USDC")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_filter");
+}
+
+#[tokio::test]
+async fn lp_list_invalid_min_tvl_returns_400_envelope() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/liquidity-pools?filter%5Bmin_tvl%5D=not-a-number")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_filter");
+    assert_eq!(json["details"]["filter"], "min_tvl");
+}
+
+#[tokio::test]
+async fn lp_chart_invalid_pool_id_returns_400_envelope() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/liquidity-pools/not-hex/chart?interval=1h&from=2026-01-01T00:00:00Z&to=2026-01-02T00:00:00Z")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_pool_id");
+}
+
+#[tokio::test]
+async fn lp_chart_invalid_interval_returns_400_envelope() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(
+                    "/v1/liquidity-pools/\
+                     0000000000000000000000000000000000000000000000000000000000000000/\
+                     chart?interval=1m&from=2026-01-01T00:00:00Z&to=2026-01-02T00:00:00Z",
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_filter");
+    assert_eq!(json["details"]["param"], "interval");
+}
+
+#[tokio::test]
+async fn lp_chart_omitted_params_use_defaults_then_404_for_missing_pool() {
+    // All three params are optional now. Bare `?` request defaults to
+    // `interval=1d` + `to=now()` + `from=to-30d`. The pool below does not
+    // exist (lazy_app uses connect_lazy), so we expect 404 path through —
+    // not a 400 from missing params.
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping chart-defaults 404 test");
+        return;
+    };
+    let pool = match PgPool::connect(&database_url).await {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let app = build_app(pool);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(
+                    "/v1/liquidity-pools/\
+                     0000000000000000000000000000000000000000000000000000000000000000/\
+                     chart",
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(json["code"], "not_found");
+}
+
+#[tokio::test]
+async fn lp_chart_range_exceeds_bucket_cap_returns_400_envelope() {
+    let app = lazy_app();
+    // 100 years at 1h interval ~876 000 buckets, well above 1 000 cap.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(
+                    "/v1/liquidity-pools/\
+                     0000000000000000000000000000000000000000000000000000000000000000/\
+                     chart?interval=1h&from=1926-01-01T00:00:00Z&to=2026-01-01T00:00:00Z",
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_filter");
+    assert_eq!(json["details"]["max_buckets"], 1000);
+}
+
+#[tokio::test]
+async fn lp_chart_from_after_to_returns_400_envelope() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(
+                    "/v1/liquidity-pools/\
+                     0000000000000000000000000000000000000000000000000000000000000000/\
+                     chart?interval=1h&from=2026-02-01T00:00:00Z&to=2026-01-01T00:00:00Z",
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_filter");
+}
+
+#[tokio::test]
+async fn lp_transactions_invalid_pool_id_returns_400_envelope() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/liquidity-pools/not-hex/transactions")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_pool_id");
 }

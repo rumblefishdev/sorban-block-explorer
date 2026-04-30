@@ -2,7 +2,7 @@
 id: '0052'
 title: 'Backend: Liquidity Pools module (list + detail + transactions + chart)'
 type: FEATURE
-status: active
+status: completed
 related_adr: ['0005', '0024', '0027', '0031']
 related_tasks: ['0023', '0043', '0092']
 tags: [layer-backend, liquidity-pools, charts]
@@ -25,6 +25,21 @@ history:
     status: active
     who: karolkow
     note: 'Spec refresh vs current schema (ADR 0024/0027/0031): pool_id is BYTEA(32) hex-encoded externally; assets stored as flat columns (asset_X_type/code/issuer_id) and assembled into JSONB shape in handler; reserves/total_shares/tvl/last_updated_ledger live in liquidity_pool_snapshots, not on liquidity_pools — detail joins latest snapshot. Module already exists with participants endpoint (task 0126); list/detail/transactions/chart still TODO.'
+  - date: 2026-04-30
+    status: completed
+    who: karolkow
+    note: >
+      Implemented 4 endpoints (list/detail/transactions/chart) bundled with
+      task 0051 on shared branch. Extended crates/api/src/liquidity_pools/
+      module (~430 LOC handlers + ~390 LOC queries). Wire shapes pinned to
+      canonical SQL 18/19/20/21. New common helpers: path::pool_id_hex,
+      filters::parse_iso8601[_opt], filters::reject_sql_wildcards[_opt].
+      Dropped snapshot freshness windows after auditing ingestion (snapshots
+      are state-change-driven so latest IS current). Chart params all
+      optional with interval-tuned defaults (1h→7d / 1d→90d / 1w→104w).
+      MAX_CHART_BUCKETS=1000 DoS guard. Mixed asset filter pairing
+      validator added (canonical 18 said "API validates upstream").
+      143 tests passing (+12 LP integration tests).
 ---
 
 # Backend: Liquidity Pools module (list + detail + transactions + chart)
@@ -303,20 +318,72 @@ Implement `GET /liquidity-pools/:id/chart` querying `liquidity_pool_snapshots` w
 
 ## Acceptance Criteria
 
-- [ ] `GET /v1/liquidity-pools` returns paginated pool list
-- [ ] `GET /v1/liquidity-pools/:id` returns pool detail (static fields from `liquidity_pools` + dynamic fields from latest `liquidity_pool_snapshots` row)
-- [ ] `GET /v1/liquidity-pools/:id/transactions` returns paginated pool transactions
-- [ ] `GET /v1/liquidity-pools/:id/chart` returns time-series data points
-- [ ] Chart data sourced from liquidity_pool_snapshots, not computed at query time
-- [ ] Interval validated: only 1h, 1d, 1w accepted
-- [ ] from/to validated as ISO timestamps, from must be before to
-- [ ] filter[assets] and filter[min_tvl] work correctly
-- [ ] Pool transactions derived from transactions + operations + events
-- [ ] Pool current state separate from chart queries
-- [ ] `pool_id` accepted/rendered as 64-char lowercase hex; rejected with 400 otherwise (BYTEA(32) on the wire)
-- [ ] Asset JSONB shapes assembled in handler from flat schema columns + `accounts`/`assets` joins
-- [ ] Standard pagination and error envelopes
-- [ ] 404 for non-existent pools
+- [x] `GET /v1/liquidity-pools` returns paginated pool list
+- [x] `GET /v1/liquidity-pools/:id` returns pool detail (static fields from `liquidity_pools` + dynamic fields from latest `liquidity_pool_snapshots` row)
+- [x] `GET /v1/liquidity-pools/:id/transactions` returns paginated pool transactions
+- [x] `GET /v1/liquidity-pools/:id/chart` returns time-series data points
+- [x] Chart data sourced from liquidity_pool_snapshots, not computed at query time
+- [x] Interval validated: only 1h, 1d, 1w accepted
+- [x] from/to validated as ISO timestamps, from must be before to
+- [x] filter[assets] and filter[min_tvl] work correctly — `filter[assets]` shipped as four per-leg keys (`asset_a_code` / `asset_a_issuer` / `asset_b_code` / `asset_b_issuer`) mirroring canonical SQL `18_*.sql` four-input shape; pairing rule `(code, issuer)` enforced. `filter[min_tvl]` accepted as decimal string against latest-snapshot TVL (currently NULL until TVL ingestion lands)
+- [x] Pool transactions derived from transactions + operations + events
+- [x] Pool current state separate from chart queries
+- [x] `pool_id` is accepted from clients as a 64-character lowercase hex string in request paths/cursors, validated and decoded to `BYTEA(32)` for internal SQL queries, and re-encoded to a 64-character lowercase hex string in responses; malformed values (wrong length, uppercase, non-hex chars) are rejected at the API boundary with `400 ErrorEnvelope { code: "invalid_pool_id" }`. The DB column is `BYTEA(32)`; only the wire surface is hex.
+- [x] Asset JSONB shapes assembled in handler from flat schema columns + `accounts`/`assets` joins
+- [x] Standard pagination and error envelopes
+- [x] 404 for non-existent pools
+
+## Implementation Notes
+
+- Extended existing module `crates/api/src/liquidity_pools/` (was scaffolded by task 0126 for participants endpoint). Added `list_pools`, `get_pool`, `list_pool_transactions`, `get_pool_chart` (~430 LOC handler + ~390 LOC queries).
+- Wire shapes pinned to canonical SQL `18/19/20/21_*.sql`.
+- Cursors: `PoolListCursor { created_at_ledger, pool_id_hex }` (list) + `TsIdCursor` (transactions).
+- New `path::pool_id_hex` helper extracted to `common::path` (used 4× in LP handlers + cursor sanity).
+- New const `INVALID_POOL_ID` in `common::errors`.
+- Chart endpoint: all params optional with sensible defaults (`interval=1d`, `to=now()`, `from=to - {7d|90d|104w}` per interval). Bucket cap `MAX_CHART_BUCKETS=1000` to bound `GROUP BY + ARRAY_AGG`.
+- Mixed asset filter pairing rejected with 400 (canonical 18 §46-49 says "API validates upstream").
+
+## Issues Encountered
+
+- **Snapshot freshness windows turned out to be non-essential**: canonical SQL 18/19 had `:snapshot_window` parameter as `e.g. '1 day' / '7 days'` examples. After auditing snapshot ingestion (`xdr_parser::extract_liquidity_pools`), confirmed snapshots are state-change-driven (only on `created`/`updated`/`restored` ledger entry changes) — so the LATEST snapshot row IS the actual current on-chain reserves regardless of age. Plus `tvl`/`volume`/`fee_revenue` are always NULL today (TVL ingestion not implemented). Window filter would NULL out otherwise-accurate reserves. Dropped windows entirely; clients read `latest_snapshot_at` if they care about freshness. Updated canonical SQL 18 + 19 + README to reflect.
+
+- **`filter[min_tvl]` is dead today**: spec requires it, implementation has it, but TVL is NULL on every snapshot until TVL-ingestion task lands. Filter currently excludes all pools when active. Documented in canonical 18 + AC text. Forward-compat surface ready.
+
+- **Chart bucket cap (`MAX_CHART_BUCKETS = 1000`) is a senior judgment call**: not in original spec, added as DoS guard. Without it, `?interval=1h&from=2016-01-01&to=2026-01-01` → ~87,600 buckets → expensive `GROUP BY + ARRAY_AGG`.
+
+- **Canonical SQL 21 chart `WITH bucket_keyword` had a misleading comment**: claimed CASE-without-ELSE _"fail loudly"_ on bad interval, but `date_trunc(NULL, ts) → NULL` (silent garbage, not error). Corrected canonical SQL comment + added `debug_assert!` in Rust to catch allowlist drift in tests.
+
+- **Mixed asset filter input**: canonical 18 §46-49 said "API validates upstream" but the validator was missing. Added handler-side check enforcing `(code, issuer)` paired or both omitted (classic identity).
+
+## Design Decisions
+
+### From Plan
+
+1. **Pool detail = static fields from `liquidity_pools` + dynamic fields from latest `liquidity_pool_snapshots` row** (per ADR 0024/0027/0031). Static = pool_id/asset legs/fee/created_at_ledger; Dynamic = reserves/total_shares/tvl/volume/fee_revenue/latest_snapshot_at.
+
+2. **`pool_id` = `BYTEA(32)` in DB, 64-char lowercase hex on wire** (ADR 0024). Validation + `decode($N::varchar, 'hex')` at the API/SQL boundary; `encode(... , 'hex')` on response.
+
+3. **Chart from `liquidity_pool_snapshots`** with `date_trunc + ARRAY_AGG[1] + SUM` aggregation, NOT computed from raw transactions.
+
+### Emerged
+
+4. **Per-leg filter keys instead of `filter[assets]` composite**: spec used `filter[assets]` shorthand. Canonical SQL `18_*.sql` accepts 4 separate inputs (`asset_a_code`/`asset_a_issuer`/`asset_b_code`/`asset_b_issuer`). Implementing canonical = 4 keys; composite would need server-side parser. Backend-overview updated to reflect.
+
+5. **All chart params optional with sensible defaults**: original spec required `interval`/`from`/`to`. Made all optional — bare `?` request returns useful chart (last 90 days at 1d granularity). Defaults are interval-tuned: `1h→7d`, `1d→90d`, `1w→104w` (all under 1000-bucket cap).
+
+6. **`MAX_CHART_BUCKETS = 1000`**: DoS guard. Subjective threshold — covers all realistic UI ranges (41 days @1h, 2.7 years @1d, 19 years @1w).
+
+7. **Dropped snapshot freshness windows entirely**: canonical 18/19 had `:snapshot_window` parameter (`e.g. '1 day' / '7 days'` examples). After verifying snapshot ingestion is state-change-driven (latest = current accurate state), windows added complexity without benefit. Clients use `latest_snapshot_at` to judge freshness. Participants endpoint (task 0126) keeps its hardcoded 7-day window — out of scope for this task.
+
+8. **Mixed asset filter pairing validator**: canonical 18 §46-49 said "API validates upstream" but no implementation existed. Added — without it `?filter[asset_a_code]=USDC` (alone) would match all USDC-coded pools regardless of issuer (incl. fake/scam USDC).
+
+9. **`NUMERIC ::text` casting in SQL projections** (`reserve_a::text` etc.): preserves `NUMERIC(28,7)` precision over the wire. Without it, sqlx → serde_json round-trip via f64 loses precision on the 7th decimal. Pattern from `participants` endpoint (task 0126).
+
+10. **`COALESCE(ops.operation_types, ARRAY[]::text[])` in transactions LATERAL**: defensive against NULL when LATERAL returns no row. Canonical 20 didn't have it; pattern from `assets/queries.rs:258`.
+
+11. **Promoted `filters::parse_iso8601` + `parse_iso8601_opt` to `common::filters`**: chart endpoint only consumer today, but pattern symmetric to `strkey_opt` / `parse_enum_opt`. Future timestamp filters (e.g. transactions list `?from=&to=`) reuse.
+
+12. **Extracted `path::pool_id_hex` to `common::path`**: 4 path validators in LP handlers used identical inline shape check. Promoted matching `parse_hash` / `strkey` / `sequence` precedent. Doc table at top of `path.rs` updated.
 
 ## Notes
 
