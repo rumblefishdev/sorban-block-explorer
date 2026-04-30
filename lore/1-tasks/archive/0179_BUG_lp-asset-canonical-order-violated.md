@@ -170,7 +170,7 @@ comment so future readers don't re-derive it.
       (post-deposit state), or (b) sort the pair before persisting —
       (a) is already the case; no change needed.
 - [x] Add a Phase 1 invariant: `pool_id` matches `SHA-256(canonical
-  asset_a, asset_b, fee_bp)` — deferred to Phase 2c
+asset_a, asset_b, fee_bp)` — deferred to Phase 2c
       `archive-diff --table liquidity_pools`. SQL-only check would
       require base32 decoding of issuer strkeys; reasoning recorded in
       the rewritten I3 SQL header so the deferral is discoverable.
