@@ -445,23 +445,65 @@ impl Staged {
             );
         }
 
+        // Merge per-account state overrides across all `account_states`
+        // emitted for this ledger. Each entry in `account_states` is one
+        // (account, ledger-state-change) row from the parser; multiple
+        // rows for the same account are common when one account is the
+        // source of several transactions in the same ledger or when its
+        // trustlines change in addition to the account-entry itself.
+        //
+        // Three fields each merge under different rules:
+        //
+        // * `sequence_number`: the parser emits the sentinel `-1` for
+        //   trustline-only state changes (no AccountEntry was modified
+        //   in that change set, so no real seq is available). The merge
+        //   here MUST keep the real value when one was already seen for
+        //   this account in this ledger — overwriting a real seq with
+        //   `-1` (or coercing `-1` to `0` and writing it through) would
+        //   lose ground-truth state on the persist path. The pass-
+        //   through `-1` is then handled by the SQL upsert: new rows
+        //   coalesce `-1 → 0`, existing rows preserve the prior value
+        //   when the override is `-1`. See lore-0185 for the audit-driven
+        //   regression that prompted this rewrite (bug class: sentinel
+        //   coercion + unconditional `HashMap.insert`).
+        // * `first_seen_ledger`: take the earliest non-NULL value across
+        //   merged entries. SQL's UPSERT also applies `LEAST` on the
+        //   server side, so per-ledger minimisation here is defensive.
+        // * `home_domain`: latest non-NULL wins per the SQL UPSERT shape
+        //   (`EXCLUDED.home_domain IS NOT NULL ⇒ overwrite`).
         let mut account_state_overrides: HashMap<String, AccountStateOverride> = HashMap::new();
         for st in account_states {
-            // sequence_number = -1 is the sentinel for "trustline-only change" —
-            // we must not overwrite the existing seq_num with it.
-            let seq = if st.sequence_number >= 0 {
-                st.sequence_number
-            } else {
-                0
-            };
-            account_state_overrides.insert(
-                st.account_id.clone(),
-                AccountStateOverride {
-                    first_seen_ledger: st.first_seen_ledger.map(i64::from),
-                    sequence_number: seq,
-                    home_domain: st.home_domain.clone(),
-                },
-            );
+            use std::collections::hash_map::Entry;
+            let incoming_first_seen = st.first_seen_ledger.map(i64::from);
+            match account_state_overrides.entry(st.account_id.clone()) {
+                Entry::Occupied(mut occ) => {
+                    let existing = occ.get_mut();
+                    // sequence_number: only overwrite with a real (≥ 0)
+                    // value; keep an existing real value when the
+                    // incoming row is the trustline-only sentinel.
+                    if st.sequence_number >= 0 {
+                        existing.sequence_number = st.sequence_number;
+                    }
+                    // first_seen_ledger: earliest wins.
+                    existing.first_seen_ledger =
+                        match (existing.first_seen_ledger, incoming_first_seen) {
+                            (Some(a), Some(b)) => Some(a.min(b)),
+                            (Some(a), None) => Some(a),
+                            (None, b) => b,
+                        };
+                    // home_domain: latest non-NULL wins.
+                    if let Some(hd) = st.home_domain.clone() {
+                        existing.home_domain = Some(hd);
+                    }
+                }
+                Entry::Vacant(vac) => {
+                    vac.insert(AccountStateOverride {
+                        first_seen_ledger: incoming_first_seen,
+                        sequence_number: st.sequence_number,
+                        home_domain: st.home_domain.clone(),
+                    });
+                }
+            }
         }
 
         // --- wasm_interface_metadata rows (deduped by wasm_hash) ------------
