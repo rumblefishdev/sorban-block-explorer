@@ -2,7 +2,7 @@
 id: '0185'
 title: 'BUG: `accounts.sequence_number` stays `0` for accounts that are tx sources within a ledger (sentinel coercion + unconditional overwrite)'
 type: BUG
-status: backlog
+status: active
 related_adr: ['0026', '0037']
 related_tasks: ['0175', '0177', '0178', '0179']
 tags:
@@ -39,6 +39,19 @@ history:
       because Horizon shows current state and the harness skips
       `sequence_number` to avoid normal snapshot drift; bug slips
       between the two surfaces.
+  - date: '2026-05-01'
+    status: active
+    who: stkrolikiewicz
+    note: >
+      Promoted to active. Plan: entry-based merge in
+      `staging.rs:448-465` so trustline-only state changes (sentinel
+      `-1`) never clobber a real `sequence_number` set by a tx-source
+      state earlier in the same ledger. Add Phase 1 invariant
+      `accounts.I5` (`every account that is tx-source in the dataset
+      ⇒ sequence_number > 0`) to lock the regression. Validate by
+      re-running staging unit tests + a 1k spot re-backfill on
+      62016000–62016999 against the post-fix binary, expecting
+      GDFAOY / GCEETSI to surface `sequence_number > 0`.
 ---
 
 # `accounts.sequence_number = 0` for tx-source accounts
