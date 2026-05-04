@@ -2,7 +2,7 @@
 id: '0185'
 title: 'BUG: `accounts.sequence_number` stays `0` for accounts that are tx sources within a ledger (sentinel coercion + unconditional overwrite)'
 type: BUG
-status: active
+status: completed
 related_adr: ['0026', '0037']
 related_tasks: ['0175', '0177', '0178', '0179']
 tags:
@@ -46,6 +46,30 @@ history:
       re-running staging unit tests + a 1k spot re-backfill on
       62016000–62016999 against the post-fix binary, expecting
       GDFAOY / GCEETSI to surface `sequence_number > 0`.
+  - date: '2026-05-04'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Closed via PR #154. Two-layer fix shipped: (1) staging-side
+      `Entry::Occupied/Vacant` merge in
+      `crates/indexer/src/handler/persist/staging.rs::merge_account_state_overrides`
+      so sentinel `-1` never clobbers a real seq within one ledger,
+      and (2) write-side split-CTE UPSERT in
+      `crates/indexer/src/handler/persist/write.rs::upsert_accounts`
+      so the `<> -1` predicate sees the raw input value (not the
+      `COALESCE`'d 0). Phase 1 invariant `accounts.I5` added to
+      `crates/audit-harness/sql/11_accounts.sql`. 7 unit tests cover
+      the merge contract on both orderings + 4 edge cases. Empirical
+      validation on a clean-slate 30k re-backfill (62016000-62046000):
+      `accounts.I5 = 0` violations (was 6796 pre-fix), all 5
+      audit-driven violators report real `sequence_number` matching
+      protocol-expected ranges, full Phase 1 invariants suite green
+      (89/89), Phase 2c `archive-diff --table liquidity-pools
+      --sample 1000` 1000/1000 match, Phase 2a `horizon-diff --table
+      transactions --sample 100` 100/100 match. Two Copilot review
+      comments addressed (stale `EXCLUDED.*` references in merge
+      docstring + inline comment updated to reflect the split-CTE
+      shape). PR #154 merged at commit 5bf0804.
 ---
 
 # `accounts.sequence_number = 0` for tx-source accounts
