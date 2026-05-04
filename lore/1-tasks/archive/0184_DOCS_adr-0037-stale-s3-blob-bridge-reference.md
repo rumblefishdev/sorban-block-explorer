@@ -58,8 +58,8 @@ SUPERSESSION NOTE 2026-04).
 ADR 0037 was sealed as a frozen snapshot of the schema at migration
 `20260424000000`. Per [ADR 0039](../../2-adrs/0039_delta-adr-pattern.md)
 (if it exists, otherwise the convention) thin follow-up ADRs append
-deltas without rewriting 0037 itself. The "bridge to parsed_ledger blob"
-line is not a schema fact — it's a *rationale* attached to a column —
+deltas without rewriting 0037 itself. The "bridge to parsed*ledger blob"
+line is not a schema fact — it's a \_rationale* attached to a column —
 and has been falsified by ADR 0029. Updating the rationale in-place is
 preferable to a delta-ADR for a non-shape correction.
 
