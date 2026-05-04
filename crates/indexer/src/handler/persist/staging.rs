@@ -471,40 +471,7 @@ impl Staged {
         //   server side, so per-ledger minimisation here is defensive.
         // * `home_domain`: latest non-NULL wins per the SQL UPSERT shape
         //   (`EXCLUDED.home_domain IS NOT NULL ⇒ overwrite`).
-        let mut account_state_overrides: HashMap<String, AccountStateOverride> = HashMap::new();
-        for st in account_states {
-            use std::collections::hash_map::Entry;
-            let incoming_first_seen = st.first_seen_ledger.map(i64::from);
-            match account_state_overrides.entry(st.account_id.clone()) {
-                Entry::Occupied(mut occ) => {
-                    let existing = occ.get_mut();
-                    // sequence_number: only overwrite with a real (≥ 0)
-                    // value; keep an existing real value when the
-                    // incoming row is the trustline-only sentinel.
-                    if st.sequence_number >= 0 {
-                        existing.sequence_number = st.sequence_number;
-                    }
-                    // first_seen_ledger: earliest wins.
-                    existing.first_seen_ledger =
-                        match (existing.first_seen_ledger, incoming_first_seen) {
-                            (Some(a), Some(b)) => Some(a.min(b)),
-                            (Some(a), None) => Some(a),
-                            (None, b) => b,
-                        };
-                    // home_domain: latest non-NULL wins.
-                    if let Some(hd) = st.home_domain.clone() {
-                        existing.home_domain = Some(hd);
-                    }
-                }
-                Entry::Vacant(vac) => {
-                    vac.insert(AccountStateOverride {
-                        first_seen_ledger: incoming_first_seen,
-                        sequence_number: st.sequence_number,
-                        home_domain: st.home_domain.clone(),
-                    });
-                }
-            }
-        }
+        let account_state_overrides = merge_account_state_overrides(account_states);
 
         // --- wasm_interface_metadata rows (deduped by wasm_hash) ------------
         let mut wasm_seen: HashSet<[u8; 32]> = HashSet::new();
@@ -1474,4 +1441,192 @@ fn op_participant_str_keys(op_type: OperationType, details: &Value) -> Vec<Strin
     }
 
     out
+}
+
+/// Merge per-account state overrides across all `account_states` emitted
+/// for one ledger. Each entry in `account_states` is one
+/// `(account, ledger-state-change)` row from the parser; multiple entries
+/// for the same account are common when the account is the source of
+/// several transactions in the same ledger or when its trustlines change
+/// in addition to the account-entry itself.
+///
+/// Three fields each merge under different rules:
+///
+/// * `sequence_number`: the parser emits the sentinel `-1` for trustline-
+///   only state changes (no AccountEntry was modified in that change set,
+///   so no real seq is available). The merge MUST keep the real value
+///   when one was already seen for this account in this ledger —
+///   overwriting a real seq with `-1` (or coercing `-1` to `0` and writing
+///   it through) would lose ground-truth state on the persist path.
+/// * `first_seen_ledger`: take the earliest non-NULL value. SQL's UPSERT
+///   also applies `LEAST` server-side; the per-ledger minimisation here
+///   is defensive.
+/// * `home_domain`: latest non-NULL wins per the SQL UPSERT shape
+///   (`EXCLUDED.home_domain IS NOT NULL ⇒ overwrite`).
+///
+/// See [task 0185](../../../../lore/1-tasks/active/0185_BUG_account-sequence-number-zero-for-tx-sources.md)
+/// for the audit-driven regression that prompted this rewrite (bug class:
+/// sentinel coercion + unconditional `HashMap.insert` in the previous
+/// inline loop).
+pub(super) fn merge_account_state_overrides(
+    account_states: &[ExtractedAccountState],
+) -> HashMap<String, AccountStateOverride> {
+    let mut overrides: HashMap<String, AccountStateOverride> = HashMap::new();
+    for st in account_states {
+        use std::collections::hash_map::Entry;
+        let incoming_first_seen = st.first_seen_ledger.map(i64::from);
+        match overrides.entry(st.account_id.clone()) {
+            Entry::Occupied(mut occ) => {
+                let existing = occ.get_mut();
+                if st.sequence_number >= 0 {
+                    existing.sequence_number = st.sequence_number;
+                }
+                existing.first_seen_ledger =
+                    match (existing.first_seen_ledger, incoming_first_seen) {
+                        (Some(a), Some(b)) => Some(a.min(b)),
+                        (Some(a), None) => Some(a),
+                        (None, b) => b,
+                    };
+                if let Some(hd) = st.home_domain.clone() {
+                    existing.home_domain = Some(hd);
+                }
+            }
+            Entry::Vacant(vac) => {
+                vac.insert(AccountStateOverride {
+                    first_seen_ledger: incoming_first_seen,
+                    sequence_number: st.sequence_number,
+                    home_domain: st.home_domain.clone(),
+                });
+            }
+        }
+    }
+    overrides
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture_state(
+        account_id: &str,
+        sequence_number: i64,
+        first_seen_ledger: Option<u32>,
+        home_domain: Option<&str>,
+    ) -> ExtractedAccountState {
+        ExtractedAccountState {
+            account_id: account_id.to_string(),
+            first_seen_ledger,
+            last_seen_ledger: 62016000,
+            sequence_number,
+            balances: serde_json::json!([]),
+            removed_trustlines: vec![],
+            home_domain: home_domain.map(|s| s.to_string()),
+            created_at: 0,
+        }
+    }
+
+    /// Real seq first, then trustline-only sentinel — real value must
+    /// survive. This is the exact scenario lore-0185 surfaced on the
+    /// 30k smoke (account is tx source in tx_1, only-trustline-change in
+    /// tx_2, both within one ledger).
+    #[test]
+    fn merge_real_then_sentinel_keeps_real() {
+        let states = vec![
+            fixture_state("G1", 12345, None, None),
+            fixture_state("G1", -1, None, None),
+        ];
+        let map = merge_account_state_overrides(&states);
+        assert_eq!(map["G1"].sequence_number, 12345);
+    }
+
+    /// Sentinel first, then real seq — sentinel slot must be promoted
+    /// to the real value (Vacant insert seeds with -1, Occupied path
+    /// overwrites with the later real value).
+    #[test]
+    fn merge_sentinel_then_real_promotes_to_real() {
+        let states = vec![
+            fixture_state("G1", -1, None, None),
+            fixture_state("G1", 12345, None, None),
+        ];
+        let map = merge_account_state_overrides(&states);
+        assert_eq!(map["G1"].sequence_number, 12345);
+    }
+
+    /// Two real seqs in apply order — latest wins (matches SQL UPSERT
+    /// semantic of "highest seq for the ledger").
+    #[test]
+    fn merge_two_real_seqs_latest_wins() {
+        let states = vec![
+            fixture_state("G1", 100, None, None),
+            fixture_state("G1", 200, None, None),
+        ];
+        let map = merge_account_state_overrides(&states);
+        assert_eq!(map["G1"].sequence_number, 200);
+    }
+
+    /// Two sentinels — final value stays sentinel; SQL upsert layer
+    /// then preserves the prior real value via the `<> -1` predicate.
+    #[test]
+    fn merge_two_sentinels_remains_sentinel() {
+        let states = vec![
+            fixture_state("G1", -1, None, None),
+            fixture_state("G1", -1, None, None),
+        ];
+        let map = merge_account_state_overrides(&states);
+        assert_eq!(map["G1"].sequence_number, -1);
+    }
+
+    /// Distinct accounts merge independently.
+    #[test]
+    fn merge_distinct_accounts_independent() {
+        let states = vec![
+            fixture_state("G1", 100, None, None),
+            fixture_state("G2", -1, None, None),
+            fixture_state("G1", -1, None, None),
+            fixture_state("G2", 200, None, None),
+        ];
+        let map = merge_account_state_overrides(&states);
+        assert_eq!(map["G1"].sequence_number, 100);
+        assert_eq!(map["G2"].sequence_number, 200);
+    }
+
+    /// `first_seen_ledger`: earliest non-NULL wins regardless of order.
+    #[test]
+    fn merge_first_seen_takes_earliest() {
+        let states = vec![
+            fixture_state("G1", 100, Some(62020000), None),
+            fixture_state("G1", 200, Some(62015000), None),
+        ];
+        let map = merge_account_state_overrides(&states);
+        assert_eq!(map["G1"].first_seen_ledger, Some(62015000));
+
+        let states_reverse = vec![
+            fixture_state("G1", 100, Some(62015000), None),
+            fixture_state("G1", 200, Some(62020000), None),
+        ];
+        let map = merge_account_state_overrides(&states_reverse);
+        assert_eq!(map["G1"].first_seen_ledger, Some(62015000));
+    }
+
+    /// `home_domain`: latest non-NULL wins; existing non-NULL is not
+    /// clobbered by an incoming NULL.
+    #[test]
+    fn merge_home_domain_latest_non_null_wins() {
+        let states = vec![
+            fixture_state("G1", 100, None, Some("first.example.com")),
+            fixture_state("G1", 200, None, Some("second.example.com")),
+        ];
+        let map = merge_account_state_overrides(&states);
+        assert_eq!(
+            map["G1"].home_domain.as_deref(),
+            Some("second.example.com")
+        );
+
+        let states_with_null = vec![
+            fixture_state("G1", 100, None, Some("set.example.com")),
+            fixture_state("G1", 200, None, None),
+        ];
+        let map = merge_account_state_overrides(&states_with_null);
+        assert_eq!(map["G1"].home_domain.as_deref(), Some("set.example.com"));
+    }
 }
