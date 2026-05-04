@@ -4,7 +4,7 @@ use sqlx::PgPool;
 
 use crate::contracts::cache::ContractMetadataCache;
 use crate::network::cache::NetworkStatsCache;
-use crate::stellar_archive::StellarArchiveFetcher;
+use crate::runtime_enrichment::stellar_archive::StellarArchiveFetcher;
 
 /// Application-wide state. All inner types are cheaply cloneable
 /// (`Arc`-backed; both `moka::sync::Cache` and `moka::future::Cache`

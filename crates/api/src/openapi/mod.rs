@@ -17,7 +17,7 @@ use crate::assets::dto::{AssetDetailResponse, AssetItem, AssetTransactionItem};
 use crate::contracts::dto::{
     ContractDetailResponse, ContractStats, EventItem, InterfaceResponse, InvocationItem,
 };
-use crate::stellar_archive::dto::{
+use crate::runtime_enrichment::stellar_archive::dto::{
     E3HeavyFields, E3Response, HeavyFieldsStatus, SignatureDto, XdrEventDto, XdrOperationDto,
 };
 use crate::transactions::dto::{OperationItem, TransactionDetailLight, TransactionListItem};

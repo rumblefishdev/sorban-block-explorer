@@ -26,8 +26,8 @@ use utoipa_axum::router::OpenApiRouter;
 use crate::assets;
 use crate::contracts;
 use crate::ledgers;
+use crate::runtime_enrichment::stellar_archive::StellarArchiveFetcher;
 use crate::state::AppState;
-use crate::stellar_archive::StellarArchiveFetcher;
 use crate::{liquidity_pools, transactions};
 
 /// Build a test app with the transactions, contracts, liquidity-pools,
@@ -47,7 +47,7 @@ fn build_app(db: PgPool) -> Router {
             None,
             "tests_integration",
         ))
-        .timeout_config(crate::stellar_archive::default_timeout_config())
+        .timeout_config(crate::runtime_enrichment::stellar_archive::default_timeout_config())
         .build();
     let s3 = aws_sdk_s3::Client::from_conf(aws_cfg);
     let fetcher = StellarArchiveFetcher::new(s3);

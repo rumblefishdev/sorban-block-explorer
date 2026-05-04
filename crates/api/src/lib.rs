@@ -22,8 +22,8 @@ mod liquidity_pools;
 mod network;
 pub mod openapi;
 mod ops;
+mod runtime_enrichment;
 mod state;
-mod stellar_archive;
 mod transactions;
 
 pub use state::AppState;

@@ -184,8 +184,8 @@ fn to_i16_index(value: u32, kind: &'static str) -> Option<i16> {
 /// `crates/indexer/src/handler/process.rs::collect_tx_metas`.
 ///
 /// `pub` (rather than `pub(super)`) so per-endpoint modules outside
-/// `stellar_archive` (E13/E14 in `contracts/`) can re-extract per-tx
-/// metadata without a parallel implementation.
+/// `runtime_enrichment::stellar_archive` (E13/E14 in `contracts/`) can
+/// re-extract per-tx metadata without a parallel implementation.
 pub fn collect_tx_metas(meta: &LedgerCloseMeta) -> Vec<&TransactionMeta> {
     match meta {
         LedgerCloseMeta::V0(v) => v

@@ -1017,7 +1017,7 @@ CREATE TABLE operations_appearances (
 `transfer_amount` and `application_order` are no longer stored; per-operation
 JSONB `details` was never stored. The typed summary columns above support
 filtered list endpoints; full decoded payloads come from the archive via
-`stellar_archive` extractors at request time (ADR 0029).
+`runtime_enrichment::stellar_archive` extractors at request time (ADR 0029).
 
 ### 6.4 Soroban Contracts
 
