@@ -12,9 +12,9 @@ use crate::common::filters;
 use crate::common::pagination::{finalize_ts_id_page, into_envelope};
 use crate::common::path;
 use crate::openapi::schemas::{ErrorEnvelope, Paginated};
+use crate::runtime_enrichment::stellar_archive::extractors::extract_e3_heavy;
+use crate::runtime_enrichment::stellar_archive::merge::merge_e3_response;
 use crate::state::AppState;
-use crate::stellar_archive::extractors::extract_e3_heavy;
-use crate::stellar_archive::merge::merge_e3_response;
 
 use super::dto::{ListParams, OperationItem, TransactionDetailLight, TransactionListItem};
 use super::queries::{
@@ -139,7 +139,7 @@ pub async fn list_transactions(
     ),
     responses(
         (status = 200, description = "Transaction detail (light + heavy block)",
-         body = crate::stellar_archive::dto::E3Response<TransactionDetailLight>),
+         body = crate::runtime_enrichment::stellar_archive::dto::E3Response<TransactionDetailLight>),
         (status = 400, description = "Invalid hash",          body = ErrorEnvelope),
         (status = 404, description = "Transaction not found", body = ErrorEnvelope),
         (status = 500, description = "Internal server error", body = ErrorEnvelope),

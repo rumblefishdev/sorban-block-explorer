@@ -314,7 +314,7 @@ original from the copy and silently double-counts. Container-based
 filtering is the only reliable signal.
 
 The same routing applies at read time: `split_events`
-(`crates/api/src/stellar_archive/extractors.rs`) and the
+(`crates/api/src/runtime_enrichment/stellar_archive/extractors.rs`) and the
 `/contracts/:id/events` handler (`crates/api/src/contracts/handlers.rs`)
 both filter on `EventSource::Diagnostic` to suppress the duplicates when
 rendering contract event lists. The host-VM Diagnostic-typed entries

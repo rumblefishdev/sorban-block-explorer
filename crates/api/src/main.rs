@@ -14,17 +14,17 @@ pub mod state;
 #[cfg(test)]
 mod tests_integration;
 mod transactions;
-// Public-archive XDR fetch helper. Used by E3, E13 and E14 endpoint handlers.
-// Exposed as module so future handlers can call the extractors without
-// further wiring.
-mod stellar_archive;
+// Runtime details enrichment — S3 archive reread + (future) HTTP stellar.toml.
+// Used by E3, E13 and E14 endpoint handlers. Exposed as module so future
+// handlers can call the extractors without further wiring.
+mod runtime_enrichment;
 
 use axum::{Json, Router, routing::get};
 use utoipa::openapi::OpenApi as OpenApiSpec;
 
 use crate::config::AppConfig;
+use crate::runtime_enrichment::stellar_archive::StellarArchiveFetcher;
 use crate::state::AppState;
-use crate::stellar_archive::StellarArchiveFetcher;
 
 /// Build the application router from an explicit [`AppConfig`] and [`AppState`].
 ///
@@ -97,7 +97,7 @@ async fn main() {
     let aws_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
         .no_credentials()
         .region(aws_sdk_s3::config::Region::new("us-east-2"))
-        .timeout_config(stellar_archive::default_timeout_config())
+        .timeout_config(runtime_enrichment::stellar_archive::default_timeout_config())
         .load()
         .await;
     let s3_client = aws_sdk_s3::Client::new(&aws_config);
