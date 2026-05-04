@@ -1481,12 +1481,12 @@ pub(super) fn merge_account_state_overrides(
                 if st.sequence_number >= 0 {
                     existing.sequence_number = st.sequence_number;
                 }
-                existing.first_seen_ledger =
-                    match (existing.first_seen_ledger, incoming_first_seen) {
-                        (Some(a), Some(b)) => Some(a.min(b)),
-                        (Some(a), None) => Some(a),
-                        (None, b) => b,
-                    };
+                existing.first_seen_ledger = match (existing.first_seen_ledger, incoming_first_seen)
+                {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (Some(a), None) => Some(a),
+                    (None, b) => b,
+                };
                 if let Some(hd) = st.home_domain.clone() {
                     existing.home_domain = Some(hd);
                 }
@@ -1617,10 +1617,7 @@ mod tests {
             fixture_state("G1", 200, None, Some("second.example.com")),
         ];
         let map = merge_account_state_overrides(&states);
-        assert_eq!(
-            map["G1"].home_domain.as_deref(),
-            Some("second.example.com")
-        );
+        assert_eq!(map["G1"].home_domain.as_deref(), Some("second.example.com"));
 
         let states_with_null = vec![
             fixture_state("G1", 100, None, Some("set.example.com")),
