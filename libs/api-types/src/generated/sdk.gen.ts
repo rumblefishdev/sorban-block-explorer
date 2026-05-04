@@ -31,6 +31,9 @@ import type {
   GetPoolData,
   GetPoolErrors,
   GetPoolResponses,
+  GetSearchData,
+  GetSearchErrors,
+  GetSearchResponses,
   GetTransactionData,
   GetTransactionErrors,
   GetTransactionResponses,
@@ -295,6 +298,37 @@ export const listNftTransfers = <ThrowOnError extends boolean = false>(
     ListNftTransfersErrors,
     ThrowOnError
   >({ url: '/v1/nfts/{id}/transfers', ...options });
+
+/**
+ * Unified search across all entity types.
+ *
+ * `?q=` is required. `?type=` (CSV) restricts the result to specific
+ * entity types — values must be in the closed allowlist
+ * (`transaction`, `contract`, `asset`, `account`, `nft`, `pool`).
+ * `?limit=` caps each entity bucket independently (default 10,
+ * ceiling 50).
+ *
+ * Behaviour:
+ * * If `q` is a fully-typed entity id (64-hex hash, full G-StrKey,
+ * full C-StrKey) and the corresponding entity exists, the response
+ * is `{ "type": "redirect", "entity_type", "entity_id" }` — frontend
+ * navigates directly.
+ * * Otherwise the response is `{ "type": "results", "groups": {...} }`
+ * with up to `limit` rows per entity bucket. Rows carry the same
+ * four columns regardless of bucket: `entity_type`, `identifier`,
+ * `label`, `surrogate_id` (BIGINT FK or `null`).
+ *
+ * Authoritative SQL:
+ * `docs/architecture/database-schema/endpoint-queries/22_get_search.sql`.
+ */
+export const getSearch = <ThrowOnError extends boolean = false>(
+  options: Options<GetSearchData, ThrowOnError>
+) =>
+  (options.client ?? client).get<
+    GetSearchResponses,
+    GetSearchErrors,
+    ThrowOnError
+  >({ url: '/v1/search', ...options });
 
 /**
  * List transactions with optional filters and cursor-based pagination.

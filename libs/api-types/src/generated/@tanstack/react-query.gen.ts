@@ -17,6 +17,7 @@ import {
   getNft,
   getPool,
   getPoolChart,
+  getSearch,
   getTransaction,
   health,
   listAssets,
@@ -57,6 +58,9 @@ import type {
   GetPoolData,
   GetPoolError,
   GetPoolResponse,
+  GetSearchData,
+  GetSearchError,
+  GetSearchResponse,
   GetTransactionData,
   GetTransactionError,
   GetTransactionResponse,
@@ -1171,6 +1175,50 @@ export const listNftTransfersInfiniteOptions = (
       queryKey: listNftTransfersInfiniteQueryKey(options),
     }
   );
+
+export const getSearchQueryKey = (options: Options<GetSearchData>) =>
+  createQueryKey('getSearch', options);
+
+/**
+ * Unified search across all entity types.
+ *
+ * `?q=` is required. `?type=` (CSV) restricts the result to specific
+ * entity types — values must be in the closed allowlist
+ * (`transaction`, `contract`, `asset`, `account`, `nft`, `pool`).
+ * `?limit=` caps each entity bucket independently (default 10,
+ * ceiling 50).
+ *
+ * Behaviour:
+ * * If `q` is a fully-typed entity id (64-hex hash, full G-StrKey,
+ * full C-StrKey) and the corresponding entity exists, the response
+ * is `{ "type": "redirect", "entity_type", "entity_id" }` — frontend
+ * navigates directly.
+ * * Otherwise the response is `{ "type": "results", "groups": {...} }`
+ * with up to `limit` rows per entity bucket. Rows carry the same
+ * four columns regardless of bucket: `entity_type`, `identifier`,
+ * `label`, `surrogate_id` (BIGINT FK or `null`).
+ *
+ * Authoritative SQL:
+ * `docs/architecture/database-schema/endpoint-queries/22_get_search.sql`.
+ */
+export const getSearchOptions = (options: Options<GetSearchData>) =>
+  queryOptions<
+    GetSearchResponse,
+    GetSearchError,
+    GetSearchResponse,
+    ReturnType<typeof getSearchQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getSearch({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: getSearchQueryKey(options),
+  });
 
 export const listTransactionsQueryKey = (
   options?: Options<ListTransactionsData>

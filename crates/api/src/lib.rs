@@ -23,8 +23,9 @@ mod network;
 mod nfts;
 pub mod openapi;
 mod ops;
+mod runtime_enrichment;
+mod search;
 mod state;
-mod stellar_archive;
 mod transactions;
 
 pub use state::AppState;

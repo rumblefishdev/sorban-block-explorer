@@ -186,10 +186,10 @@ mod tests {
     /// End-to-end fetch of a known Soroban-era ledger from the public archive.
     ///
     /// Ignored by default — requires network access + writes no state. Run with:
-    ///   `cargo test --package api -- --ignored stellar_archive::tests::fetch_single_ledger_from_stellar_archive`
+    ///   `cargo test --package api -- --ignored runtime_enrichment::stellar_archive::tests::fetch_single_ledger_from_archive`
     #[tokio::test]
     #[ignore = "requires network access to aws-public-blockchain"]
-    async fn fetch_single_ledger_from_stellar_archive() {
+    async fn fetch_single_ledger_from_archive() {
         use stellar_xdr::curr::LedgerCloseMeta;
 
         let fetcher = StellarArchiveFetcher::new(unsigned_client().await);

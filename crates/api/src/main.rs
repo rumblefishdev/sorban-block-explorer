@@ -11,21 +11,22 @@ mod network;
 mod nfts;
 mod openapi;
 mod ops;
+mod search;
 pub mod state;
 #[cfg(test)]
 mod tests_integration;
 mod transactions;
-// Public-archive XDR fetch helper. Used by E3, E13 and E14 endpoint handlers.
-// Exposed as module so future handlers can call the extractors without
-// further wiring.
-mod stellar_archive;
+// Runtime details enrichment — S3 archive reread + (future) HTTP stellar.toml.
+// Used by E3, E13 and E14 endpoint handlers. Exposed as module so future
+// handlers can call the extractors without further wiring.
+mod runtime_enrichment;
 
 use axum::{Json, Router, routing::get};
 use utoipa::openapi::OpenApi as OpenApiSpec;
 
 use crate::config::AppConfig;
+use crate::runtime_enrichment::stellar_archive::StellarArchiveFetcher;
 use crate::state::AppState;
-use crate::stellar_archive::StellarArchiveFetcher;
 
 /// Build the application router from an explicit [`AppConfig`] and [`AppState`].
 ///
@@ -98,7 +99,7 @@ async fn main() {
     let aws_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
         .no_credentials()
         .region(aws_sdk_s3::config::Region::new("us-east-2"))
-        .timeout_config(stellar_archive::default_timeout_config())
+        .timeout_config(runtime_enrichment::stellar_archive::default_timeout_config())
         .load()
         .await;
     let s3_client = aws_sdk_s3::Client::new(&aws_config);
@@ -426,6 +427,41 @@ mod tests {
             spec["components"]["schemas"]["NetworkStats"].is_object(),
             "spec missing NetworkStats component: {spec}"
         );
+    }
+
+    #[tokio::test]
+    async fn api_docs_json_contains_search_path() {
+        let app = test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api-docs-json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let spec: Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            spec["paths"]["/v1/search"].is_object(),
+            "spec missing /v1/search path: {spec}"
+        );
+        for component in [
+            "SearchResponse",
+            "SearchRedirect",
+            "SearchResults",
+            "SearchGroups",
+            "SearchHit",
+            "EntityType",
+        ] {
+            assert!(
+                spec["components"]["schemas"][component].is_object(),
+                "spec missing {component} component: {spec}"
+            );
+        }
     }
 
     #[cfg(feature = "swagger-ui")]

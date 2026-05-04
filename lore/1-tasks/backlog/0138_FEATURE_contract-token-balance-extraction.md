@@ -4,8 +4,7 @@ title: 'Indexer: extract contract token balances from contract_data entries'
 type: FEATURE
 status: backlog
 related_adr: []
-related_tasks: ['0119', '0120', '0135']
-blocked_by: ['0120']
+related_tasks: ['0119', '0120', '0135', '0156']
 tags: [priority-high, effort-large, layer-indexer, layer-db, audit-F7]
 milestone: 1
 links:
@@ -15,6 +14,14 @@ history:
     status: backlog
     who: FilipDz
     note: 'Spawned from 0119 out-of-scope. Audit finding F7 covers both trustline and contract token balances; 0119 handled trustlines, this handles Soroban tokens.'
+  - date: '2026-05-04'
+    status: backlog
+    who: stkrolikiewicz
+    note: >
+      Unblocked: 0120 (Soroban-native token detection) archived 2026-04-24
+      via PR #113. `blocked_by` cleared. Recommended ordering before pickup:
+      run 0156 first (populates Symbol("decimals") so balance values can be
+      scaled correctly during contract_data extraction).
 ---
 
 # Indexer: extract contract token balances from contract_data entries
