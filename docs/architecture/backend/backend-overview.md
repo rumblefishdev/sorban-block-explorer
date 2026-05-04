@@ -340,7 +340,8 @@ place where indexed contract metadata and decoded usage history are exposed.
 #### NFTs
 
 **`GET /nfts`** - Paginated list of NFTs. Query params: `limit`, `cursor`,
-`filter[collection]`, `filter[contract_id]`.
+`filter[collection]` (exact match), `filter[contract_id]` (C-StrKey), `filter[name]`
+(substring; rejects `%`/`_` literals — canonical SQL `15_get_nfts_list.sql`).
 
 **`GET /nfts/:id`** - NFT detail: name, token ID, collection, contract, owner, metadata,
 media URL.
@@ -353,15 +354,25 @@ quality may vary significantly.
 #### Liquidity Pools
 
 **`GET /liquidity-pools`** - Paginated list of pools. Query params: `limit`, `cursor`,
-`filter[assets]`, `filter[min_tvl]`.
+`filter[asset_a_code]`, `filter[asset_a_issuer]` (G-StrKey), `filter[asset_b_code]`,
+`filter[asset_b_issuer]` (G-StrKey), `filter[min_tvl]` (decimal). Per-leg
+`(code, issuer)` must be supplied paired or both omitted (classic identity).
+Filter semantics in canonical SQL `18_get_liquidity_pools_list.sql`.
 
 **`GET /liquidity-pools/:id`** - Pool detail: asset pair, fee, reserves, total shares, TVL.
+Dynamic fields come from the latest snapshot row; clients that care about
+freshness read `latest_snapshot_at` in the response.
 
 **`GET /liquidity-pools/:id/transactions`** - Deposits, withdrawals, and trades for this
 pool.
 
 **`GET /liquidity-pools/:id/chart`** - Time-series data for TVL, volume, and fee revenue.
-Query params: `interval` (1h/1d/1w), `from`, `to`.
+Query params (all optional, sensible defaults): `interval` (`1h`/`1d`/`1w`,
+default `1d`), `from` (ISO 8601, default `to` minus interval-appropriate
+window — `1h→7d`, `1d→90d`, `1w→104w`), `to` (ISO 8601, default `now()`,
+exclusive upper bound). `from < to` enforced; bucket count capped to keep
+aggregation bounded. Bucket aggregation policy in canonical SQL
+`21_get_liquidity_pools_chart.sql`.
 
 **`GET /liquidity-pools/:id/participants`** - Paginated list of liquidity providers
 with their share size, share percentage of the pool, first deposit ledger, and last

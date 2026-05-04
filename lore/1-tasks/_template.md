@@ -46,6 +46,11 @@ Description of what to do.
       files under `docs/architecture/**` are updated in the same PR per
       [ADR 0032](../2-adrs/0032_docs-architecture-evergreen-maintenance.md).
       Mark `N/A — reason` if the task does not change the shape of the system.
+- [ ] **API types regenerated** — if this task changes anything under
+      `crates/api/**`, `Cargo.{toml,lock}`, or `libs/api-types/**`, run
+      `npx nx run @rumblefish/api-types:generate` and commit the resulting
+      `libs/api-types/src/{openapi.json,generated/}` diff in the same PR.
+      Mark `N/A — reason` otherwise. CI gate: `API types freshness`.
 
 ## Notes
 

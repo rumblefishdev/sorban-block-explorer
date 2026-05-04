@@ -8,6 +8,7 @@ mod contracts;
 mod ledgers;
 mod liquidity_pools;
 mod network;
+mod nfts;
 mod openapi;
 mod ops;
 mod search;
@@ -346,6 +347,60 @@ mod tests {
             spec["paths"]["/v1/transactions/{hash}"].is_object(),
             "spec missing /v1/transactions/{{hash}} path: {spec}"
         );
+    }
+
+    #[tokio::test]
+    async fn api_docs_json_contains_nfts_paths() {
+        let app = test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api-docs-json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let spec: Value = serde_json::from_slice(&bytes).unwrap();
+        for path in ["/v1/nfts", "/v1/nfts/{id}", "/v1/nfts/{id}/transfers"] {
+            assert!(
+                spec["paths"][path].is_object(),
+                "spec missing {path} path: {spec}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn api_docs_json_contains_liquidity_pools_paths() {
+        let app = test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api-docs-json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let spec: Value = serde_json::from_slice(&bytes).unwrap();
+        for path in [
+            "/v1/liquidity-pools",
+            "/v1/liquidity-pools/{pool_id}",
+            "/v1/liquidity-pools/{pool_id}/transactions",
+            "/v1/liquidity-pools/{pool_id}/chart",
+            "/v1/liquidity-pools/{pool_id}/participants",
+        ] {
+            assert!(
+                spec["paths"][path].is_object(),
+                "spec missing {path} path: {spec}"
+            );
+        }
     }
 
     #[tokio::test]

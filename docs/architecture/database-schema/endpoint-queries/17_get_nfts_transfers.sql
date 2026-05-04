@@ -26,17 +26,22 @@
 --   • `from_owner` synthesis: `nft_ownership.owner_id` stores ONLY the new
 --     owner after each event — there is no `from_owner_id` column. Frontend
 --     §6.12 requires "Alice → Bob" in the transfer-history table, so we
---     reconstruct from-owner via `LAG(owner) OVER (...)` walking the same
---     order as the result set. The first row of an NFT's history (the mint)
---     correctly returns `from_owner = NULL`, which renders as "(mint)" on
---     the frontend. Pagination remark: across page boundaries, the LAG
---     starts NULL again on the new page's first row — that row's
---     from-owner is the previous page's last to-owner. The API MUST stitch
---     this in by passing the previous page's last `owner` back as a
---     `prev_owner_strkey` and overlaying it onto the new page's first row.
---     We do NOT compute this in SQL because the row above the new page is
---     not in the result set; doing it server-side would require a second
---     index probe per page (cheap, but the API stitch is cleaner).
+--     reconstruct from-owner with a window function. With the result set
+--     ordered DESC (newest first), the OLDER event sits at the FOLLOWING
+--     window position, so the previous owner is `LEAD(owner)` (not LAG).
+--     The mint row (oldest event, last in DESC window) yields NULL because
+--     LEAD has no following row, which renders as "(mint)" on the frontend.
+--     Earlier drafts of this query used LAG; that was incorrect — LAG on a
+--     DESC window pulls the NEWER row's owner, which is the next-owner not
+--     the previous-owner. Pagination boundary: the API caller fetches
+--     `LIMIT = page_size + 1` (peek-for-has-more pattern). The +1 peek row
+--     is included in the window-function input, so LEAD on the LAST KEPT
+--     row (index `page_size - 1`) reads the peek row's owner — i.e. the
+--     correct previous-owner across the page cut. The peek row itself is
+--     dropped client-of-SQL by `finalize_page`. The only NULL `from_owner`
+--     remaining is the actual mint event (oldest row, no row below it in
+--     either the page or the table), which is exactly the intended
+--     "(mint)" rendering. No API-side stitching required.
 
 SELECT
     no.created_at,
@@ -44,7 +49,7 @@ SELECT
     no.event_order,
     nft_event_type_name(no.event_type)  AS event_type_name,
     no.event_type                       AS event_type,
-    LAG(own.account_id) OVER (
+    LEAD(own.account_id) OVER (
         PARTITION BY no.nft_id
         ORDER BY no.created_at DESC,
                  no.ledger_sequence DESC,

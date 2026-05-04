@@ -22,6 +22,15 @@ import type {
   GetNetworkStatsData,
   GetNetworkStatsErrors,
   GetNetworkStatsResponses,
+  GetNftData,
+  GetNftErrors,
+  GetNftResponses,
+  GetPoolChartData,
+  GetPoolChartErrors,
+  GetPoolChartResponses,
+  GetPoolData,
+  GetPoolErrors,
+  GetPoolResponses,
   GetSearchData,
   GetSearchErrors,
   GetSearchResponses,
@@ -45,9 +54,21 @@ import type {
   ListLedgersData,
   ListLedgersErrors,
   ListLedgersResponses,
+  ListNftsData,
+  ListNftsErrors,
+  ListNftsResponses,
+  ListNftTransfersData,
+  ListNftTransfersErrors,
+  ListNftTransfersResponses,
   ListParticipantsData,
   ListParticipantsErrors,
   ListParticipantsResponses,
+  ListPoolsData,
+  ListPoolsErrors,
+  ListPoolsResponses,
+  ListPoolTransactionsData,
+  ListPoolTransactionsErrors,
+  ListPoolTransactionsResponses,
   ListTransactionsData,
   ListTransactionsErrors,
   ListTransactionsResponses,
@@ -185,6 +206,31 @@ export const getLedger = <ThrowOnError extends boolean = false>(
     ThrowOnError
   >({ url: '/v1/ledgers/{sequence}', ...options });
 
+export const listPools = <ThrowOnError extends boolean = false>(
+  options?: Options<ListPoolsData, ThrowOnError>
+) =>
+  (options?.client ?? client).get<
+    ListPoolsResponses,
+    ListPoolsErrors,
+    ThrowOnError
+  >({ url: '/v1/liquidity-pools', ...options });
+
+export const getPool = <ThrowOnError extends boolean = false>(
+  options: Options<GetPoolData, ThrowOnError>
+) =>
+  (options.client ?? client).get<GetPoolResponses, GetPoolErrors, ThrowOnError>(
+    { url: '/v1/liquidity-pools/{pool_id}', ...options }
+  );
+
+export const getPoolChart = <ThrowOnError extends boolean = false>(
+  options: Options<GetPoolChartData, ThrowOnError>
+) =>
+  (options.client ?? client).get<
+    GetPoolChartResponses,
+    GetPoolChartErrors,
+    ThrowOnError
+  >({ url: '/v1/liquidity-pools/{pool_id}/chart', ...options });
+
 export const listParticipants = <ThrowOnError extends boolean = false>(
   options: Options<ListParticipantsData, ThrowOnError>
 ) =>
@@ -193,6 +239,15 @@ export const listParticipants = <ThrowOnError extends boolean = false>(
     ListParticipantsErrors,
     ThrowOnError
   >({ url: '/v1/liquidity-pools/{pool_id}/participants', ...options });
+
+export const listPoolTransactions = <ThrowOnError extends boolean = false>(
+  options: Options<ListPoolTransactionsData, ThrowOnError>
+) =>
+  (options.client ?? client).get<
+    ListPoolTransactionsResponses,
+    ListPoolTransactionsErrors,
+    ThrowOnError
+  >({ url: '/v1/liquidity-pools/{pool_id}/transactions', ...options });
 
 /**
  * Get top-level chain overview stats.
@@ -217,6 +272,32 @@ export const getNetworkStats = <ThrowOnError extends boolean = false>(
     GetNetworkStatsErrors,
     ThrowOnError
   >({ url: '/v1/network/stats', ...options });
+
+export const listNfts = <ThrowOnError extends boolean = false>(
+  options?: Options<ListNftsData, ThrowOnError>
+) =>
+  (options?.client ?? client).get<
+    ListNftsResponses,
+    ListNftsErrors,
+    ThrowOnError
+  >({ url: '/v1/nfts', ...options });
+
+export const getNft = <ThrowOnError extends boolean = false>(
+  options: Options<GetNftData, ThrowOnError>
+) =>
+  (options.client ?? client).get<GetNftResponses, GetNftErrors, ThrowOnError>({
+    url: '/v1/nfts/{id}',
+    ...options,
+  });
+
+export const listNftTransfers = <ThrowOnError extends boolean = false>(
+  options: Options<ListNftTransfersData, ThrowOnError>
+) =>
+  (options.client ?? client).get<
+    ListNftTransfersResponses,
+    ListNftTransfersErrors,
+    ThrowOnError
+  >({ url: '/v1/nfts/{id}/transfers', ...options });
 
 /**
  * Unified search across all entity types.

@@ -14,35 +14,28 @@
 --   $6  :asset_b_code             VARCHAR        NULL = no filter
 --   $7  :asset_b_issuer_strkey    VARCHAR(56)    NULL = no filter
 --   $8  :min_tvl                  NUMERIC(28,7)  NULL = no filter
---   $9  :snapshot_window          INTERVAL       freshness window for the
---                                                latest-snapshot pivot
---                                                (e.g. '1 day'::interval)
 -- Indexes:      idx_pools_asset_a / idx_pools_asset_b (asset filters),
---               liquidity_pools PK (pool_id) + the implicit btree on
---                  (created_at_ledger, pool_id) — see INDEX GAP note,
+--               idx_pools_created_at_ledger ON (created_at_ledger DESC, pool_id DESC)
+--                  — exact keyset walk; added in task 0132 migration
+--                  `20260428000100_add_endpoint_query_indexes`,
 --               idx_lps_pool ON (pool_id, created_at DESC) — for the
 --                  latest-snapshot lateral lookup.
--- INDEX GAP: ADR 0037 has no btree on `liquidity_pools.created_at_ledger`.
---            With the chosen ordering `(created_at_ledger DESC, pool_id DESC)`
---            the planner falls back to a heap scan + sort. Pool counts are
---            small relative to operations / transactions tables, so this is
---            tolerable for the explorer's lifetime, but
---            `idx_pools_created_at_ledger ON (created_at_ledger DESC, pool_id DESC)`
---            should be added in task **0132** before the table grows past
---            the "small enough to sort" threshold.
 -- Notes:
 --   • Default ordering is `(created_at_ledger DESC, pool_id DESC)`: newest
 --     pools first, deterministic on tie. We deliberately do NOT order by
---     latest-snapshot TVL — that ordering depends on a freshness-window
---     subquery and produces NULL TVLs for stale pools, which forces an
---     awkward NULLS-LAST cursor (the previous draft of this query had it
---     and it was hard to keep keyset-stable). TVL is still surfaced and
---     filterable; the caller can sort client-side within a page or the
---     endpoint can be expanded with an explicit `?sort=tvl` later.
---   • Latest snapshot per pool is fetched via a LATERAL with
---     LIMIT 1 + recent-window predicate. Pools with no snapshot in the
---     window come back with NULL reserves / TVL — the API surfaces them
---     as "stale". The list is unaffected by snapshot staleness.
+--     latest-snapshot TVL — that field can be NULL (TVL ingestion is a
+--     future task) and would force a NULLS-LAST cursor that is hard to
+--     keep keyset-stable. TVL is still surfaced and filterable; the caller
+--     can sort client-side within a page or the endpoint can be expanded
+--     with an explicit `?sort=tvl` once TVL is populated.
+--   • Latest snapshot per pool is fetched via a LATERAL with `LIMIT 1`,
+--     no time-bound predicate. Pool reserves/total_shares only change on
+--     deposit/withdraw/swap events (snapshot triggers are state-change
+--     driven — see `xdr_parser::extract_liquidity_pools`), so the latest
+--     snapshot is always the actual current on-chain state regardless of
+--     age. Clients that care about staleness can read `latest_snapshot_at`
+--     in the response. (`tvl`/`volume`/`fee_revenue` are populated by a
+--     future TVL-ingestion task; today they are NULL on every snapshot.)
 --   • Asset-leg filter accepts native (`code IS NULL` / `issuer IS NULL`)
 --     by leaving both code and issuer params NULL, OR explicit classic
 --     identity (both non-NULL). Mixed (one NULL one not) is undefined —
@@ -93,8 +86,7 @@ LEFT JOIN LATERAL (
         lps.fee_revenue,
         lps.created_at
     FROM liquidity_pool_snapshots lps
-    WHERE lps.pool_id    = lp.pool_id
-      AND lps.created_at >= NOW() - $9::interval
+    WHERE lps.pool_id = lp.pool_id
     ORDER BY lps.created_at DESC, lps.ledger_sequence DESC
     LIMIT 1
 ) s ON TRUE

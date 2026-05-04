@@ -6,16 +6,18 @@
 -- Data sources: DB-only.
 -- Inputs:
 --   $1  :pool_id            BYTEA(32)  raw 32-byte pool id
---   $2  :snapshot_window    INTERVAL   freshness window for latest snapshot
---                                       (e.g. '7 days'::interval — wider than
---                                        the list endpoint because a single
---                                        detail miss is more user-visible)
 -- Indexes:      liquidity_pools PK (pool_id),
 --               idx_lps_pool ON (pool_id, created_at DESC).
 -- Notes:
---   • Single statement. The latest-snapshot subquery is bounded by the
---     freshness window AND limited to one row, so it costs one index
---     seek on idx_lps_pool.
+--   • Single statement. The latest-snapshot subquery is `LIMIT 1` on
+--     `idx_lps_pool` — one index seek.
+--   • No freshness-window predicate. Pool reserves/total_shares only
+--     change on deposit/withdraw/swap events (snapshot triggers are
+--     state-change driven — see `xdr_parser::extract_liquidity_pools`),
+--     so the latest snapshot is always the actual current on-chain state
+--     regardless of its age. Clients that care about freshness can read
+--     `latest_snapshot_at` in the response. `tvl`/`volume`/`fee_revenue`
+--     are NULL today (populated by a future TVL-ingestion task).
 --   • Issuer StrKeys via final joins. Native legs (asset_*_type = 0) have
 --     NULL issuer_id; LEFT JOIN yields NULL.
 
@@ -55,8 +57,7 @@ LEFT JOIN LATERAL (
         lps.fee_revenue,
         lps.created_at
     FROM liquidity_pool_snapshots lps
-    WHERE lps.pool_id    = lp.pool_id
-      AND lps.created_at >= NOW() - $2::interval
+    WHERE lps.pool_id = lp.pool_id
     ORDER BY lps.created_at DESC, lps.ledger_sequence DESC
     LIMIT 1
 ) s ON TRUE

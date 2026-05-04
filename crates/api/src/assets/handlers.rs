@@ -103,18 +103,8 @@ pub async fn list_assets(
         Err(resp) => return resp,
     };
 
-    // The query builder wraps `filter[code]` in `'%' || $1 || '%'` for the
-    // trigram match — bare `%` / `_` from the caller would silently change
-    // match semantics. Reject explicitly so a confused caller gets a 400
-    // instead of an unexplained over-broad result set.
-    if let Some(code) = params.filter_code.as_deref()
-        && code.bytes().any(|b| b == b'%' || b == b'_')
-    {
-        return errors::bad_request_with_details(
-            errors::INVALID_FILTER,
-            "filter[code] must not contain `%` or `_` (SQL wildcard literals)",
-            serde_json::json!({ "filter": "code", "received": code }),
-        );
+    if let Err(resp) = filters::reject_sql_wildcards_opt(params.filter_code.as_deref(), "code") {
+        return resp;
     }
 
     let resolved = ResolvedListParams {
