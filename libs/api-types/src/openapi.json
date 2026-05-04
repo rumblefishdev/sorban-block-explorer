@@ -2224,7 +2224,7 @@
           },
           "from_account": {
             "type": ["string", "null"],
-            "description": "Previous-owner G-StrKey reconstructed via `LEAD(owner_id)` over the\nper-NFT ownership timeline (DESC window — older event sits at the\nFOLLOWING window position). `null` on the mint row.\n\n**Pagination caveat:** within a single page LEAD works correctly.\nAt page boundaries the *last* row's `from_account` is reset to\n`null` because the row below it (the next-page first row) isn't in\nthe current result set; clients can stitch by remembering the next\npage's first `to_account`."
+            "description": "Previous-owner G-StrKey reconstructed via `LEAD(owner_id)` over the\nper-NFT ownership timeline (DESC window — older event sits at the\nFOLLOWING window position). `null` on the mint row only.\n\nPage boundaries are handled implicitly by the `limit + 1` peek\nfetch: the peek row participates in the window-function input, so\nthe last *kept* row's `from_account` reads the peek's owner before\n`finalize_page` drops the peek. No client-side stitching needed."
           },
           "ledger_sequence": {
             "type": "integer",
@@ -2648,7 +2648,7 @@
                 },
                 "from_account": {
                   "type": ["string", "null"],
-                  "description": "Previous-owner G-StrKey reconstructed via `LEAD(owner_id)` over the\nper-NFT ownership timeline (DESC window — older event sits at the\nFOLLOWING window position). `null` on the mint row.\n\n**Pagination caveat:** within a single page LEAD works correctly.\nAt page boundaries the *last* row's `from_account` is reset to\n`null` because the row below it (the next-page first row) isn't in\nthe current result set; clients can stitch by remembering the next\npage's first `to_account`."
+                  "description": "Previous-owner G-StrKey reconstructed via `LEAD(owner_id)` over the\nper-NFT ownership timeline (DESC window — older event sits at the\nFOLLOWING window position). `null` on the mint row only.\n\nPage boundaries are handled implicitly by the `limit + 1` peek\nfetch: the peek row participates in the window-function input, so\nthe last *kept* row's `from_account` reads the peek's owner before\n`finalize_page` drops the peek. No client-side stitching needed."
                 },
                 "ledger_sequence": {
                   "type": "integer",

@@ -448,13 +448,12 @@ export type NftTransferItem = {
   /**
    * Previous-owner G-StrKey reconstructed via `LEAD(owner_id)` over the
    * per-NFT ownership timeline (DESC window — older event sits at the
-   * FOLLOWING window position). `null` on the mint row.
+   * FOLLOWING window position). `null` on the mint row only.
    *
-   * **Pagination caveat:** within a single page LEAD works correctly.
-   * At page boundaries the *last* row's `from_account` is reset to
-   * `null` because the row below it (the next-page first row) isn't in
-   * the current result set; clients can stitch by remembering the next
-   * page's first `to_account`.
+   * Page boundaries are handled implicitly by the `limit + 1` peek
+   * fetch: the peek row participates in the window-function input, so
+   * the last *kept* row's `from_account` reads the peek's owner before
+   * `finalize_page` drops the peek. No client-side stitching needed.
    */
   from_account?: string | null;
   ledger_sequence: number;
@@ -701,13 +700,12 @@ export type PaginatedNftTransferItem = {
     /**
      * Previous-owner G-StrKey reconstructed via `LEAD(owner_id)` over the
      * per-NFT ownership timeline (DESC window — older event sits at the
-     * FOLLOWING window position). `null` on the mint row.
+     * FOLLOWING window position). `null` on the mint row only.
      *
-     * **Pagination caveat:** within a single page LEAD works correctly.
-     * At page boundaries the *last* row's `from_account` is reset to
-     * `null` because the row below it (the next-page first row) isn't in
-     * the current result set; clients can stitch by remembering the next
-     * page's first `to_account`.
+     * Page boundaries are handled implicitly by the `limit + 1` peek
+     * fetch: the peek row participates in the window-function input, so
+     * the last *kept* row's `from_account` reads the peek's owner before
+     * `finalize_page` drops the peek. No client-side stitching needed.
      */
     from_account?: string | null;
     ledger_sequence: number;
