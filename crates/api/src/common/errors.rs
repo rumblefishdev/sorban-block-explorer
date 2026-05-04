@@ -72,6 +72,19 @@ pub const INVALID_SEQUENCE: &str = "invalid_sequence";
 /// cause is logged server-side and never returned to the client.
 pub const DB_ERROR: &str = "db_error";
 
+/// `q` query parameter on `/v1/search` was missing or empty after trim.
+/// Distinct from `INVALID_QUERY` (malformed query string at HTTP layer)
+/// and `INVALID_FILTER` (bad value in `filter[...]`) — search's `q` is a
+/// required top-level parameter with its own dedicated UX on the
+/// frontend search bar.
+pub const INVALID_SEARCH_QUERY: &str = "invalid_search_query";
+
+/// `type=...` filter on `/v1/search` carried a value outside the closed
+/// allowlist (`transaction`, `contract`, `asset`, `account`, `nft`,
+/// `pool`). Distinct from `INVALID_FILTER` because `type` is a
+/// top-level query param, not a `filter[key]` parameter.
+pub const INVALID_SEARCH_TYPE: &str = "invalid_search_type";
+
 // ---------------------------------------------------------------------------
 // Builders
 // ---------------------------------------------------------------------------

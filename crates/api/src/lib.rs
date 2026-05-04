@@ -22,6 +22,7 @@ mod liquidity_pools;
 mod network;
 pub mod openapi;
 mod ops;
+mod search;
 mod state;
 mod stellar_archive;
 mod transactions;

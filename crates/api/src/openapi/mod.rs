@@ -17,6 +17,9 @@ use crate::assets::dto::{AssetDetailResponse, AssetItem, AssetTransactionItem};
 use crate::contracts::dto::{
     ContractDetailResponse, ContractStats, EventItem, InterfaceResponse, InvocationItem,
 };
+use crate::search::dto::{
+    EntityType, SearchGroups, SearchHit, SearchRedirect, SearchResponse, SearchResults,
+};
 use crate::stellar_archive::dto::{
     E3HeavyFields, E3Response, HeavyFieldsStatus, SignatureDto, XdrEventDto, XdrOperationDto,
 };
@@ -65,6 +68,12 @@ use schemas::{ErrorEnvelope, PageInfo, Paginated};
         AssetDetailResponse,
         Paginated<AssetTransactionItem>,
         AssetTransactionItem,
+        SearchResponse,
+        SearchRedirect,
+        SearchResults,
+        SearchGroups,
+        SearchHit,
+        EntityType,
     )),
 )]
 pub struct ApiDoc;
@@ -87,4 +96,5 @@ pub fn register_routes() -> OpenApiRouter<crate::AppState> {
         .nest("/v1", crate::liquidity_pools::router())
         .nest("/v1", crate::assets::router())
         .nest("/v1", crate::ledgers::router())
+        .nest("/v1", crate::search::router())
 }
