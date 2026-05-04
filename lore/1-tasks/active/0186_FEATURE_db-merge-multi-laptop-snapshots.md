@@ -202,8 +202,8 @@ NFT mints, LP activity). Then run, in order:
       services on ports 5433–5437; both reset procedures (merge target,
       snapshot source) documented in script README.
 - [ ] `merge ingest` automates the FDW setup (`CREATE EXTENSION
-  postgres_fdw`, server, user mapping, `IMPORT FOREIGN SCHEMA public …
-  INTO merge_source`) and tears it down on success.
+postgres_fdw`, server, user mapping, `IMPORT FOREIGN SCHEMA public …
+INTO merge_source`) and tears it down on success.
 - [ ] `crates/db-merge` exists with three subcommands: `ingest`, `finalize`,
       `diff`; CLI flags follow `backfill-runner` conventions.
 - [ ] All 18 ADR-0040 table-by-table merge semantics implemented (collapsed
