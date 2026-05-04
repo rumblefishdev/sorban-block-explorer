@@ -10,6 +10,7 @@ mod liquidity_pools;
 mod network;
 mod openapi;
 mod ops;
+mod search;
 pub mod state;
 #[cfg(test)]
 mod tests_integration;
@@ -371,6 +372,41 @@ mod tests {
             spec["components"]["schemas"]["NetworkStats"].is_object(),
             "spec missing NetworkStats component: {spec}"
         );
+    }
+
+    #[tokio::test]
+    async fn api_docs_json_contains_search_path() {
+        let app = test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api-docs-json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let spec: Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            spec["paths"]["/v1/search"].is_object(),
+            "spec missing /v1/search path: {spec}"
+        );
+        for component in [
+            "SearchResponse",
+            "SearchRedirect",
+            "SearchResults",
+            "SearchGroups",
+            "SearchHit",
+            "EntityType",
+        ] {
+            assert!(
+                spec["components"]["schemas"][component].is_object(),
+                "spec missing {component} component: {spec}"
+            );
+        }
     }
 
     #[cfg(feature = "swagger-ui")]

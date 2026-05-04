@@ -117,8 +117,8 @@ Partitioned by monthly `created_at` range (7): `transactions`, `operations_appea
 - Enum-style categorical columns: `SMALLINT` with value-range `CHECK` (`0..=15` or `0..=127`), decoded via `*_name(smallint)` SQL helper functions.
 - Partitioning key on every high-volume table: `created_at TIMESTAMPTZ`.
 - `ledger_sequence` is a denormalised lookup column on every high-volume
-  child table (transactions, operations_appearances, soroban_*_appearances,
-  account_balances_current, etc.); never an FK target into `ledgers`.
+  child table (`transactions`, `operations_appearances`, `soroban_*_appearances`,
+  `account_balances_current`, etc.); never an FK target into `ledgers`.
   Originally framed (this snapshot taken at migration `20260424000000`,
   pre-supersession) as a "bridge to S3 `parsed_ledger_{N}.json`" per the
   ADR 0011 storage track; that storage track was abandoned by

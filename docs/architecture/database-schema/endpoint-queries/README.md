@@ -36,11 +36,11 @@ Every file in this directory must:
 
 Per task 0167 §"Data Source Boundary":
 
-| Source                                                                                                                            | Used by                                                                                 |
-| --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Source                                                                                                                            | Used by                                                                                                                |
+| --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | **DB-only** (Postgres)                                                                                                            | All list endpoints + most detail endpoints, including E5 (transactions-in-ledger sublist; see supersession note below) |
-| **DB + Public Stellar ledger archive** ([ADR 0029](../../../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md)) | E3 (envelope/result/result_meta + parsed invocation tree), E14 (full event topics/data) |
-| **DB + S3 per-entity blob** (`s3://<bucket>/assets/{id}.json`)                                                                    | E9 (`description`, `home_page`) — task **0164**                                         |
+| **DB + Public Stellar ledger archive** ([ADR 0029](../../../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md)) | E3 (envelope/result/result_meta + parsed invocation tree), E14 (full event topics/data)                                |
+| **DB + S3 per-entity blob** (`s3://<bucket>/assets/{id}.json`)                                                                    | E9 (`description`, `home_page`) — task **0164**                                                                        |
 
 > **SUPERSESSION NOTE (2026-04).** An earlier framing of E5 (per task 0167)
 > sourced the embedded `transactions[]` sublist from a per-ledger
@@ -255,10 +255,10 @@ Using the same parsed envelope as step 2, the API enriches each op row:
 
 **Statement A — DB header:**
 
-| Field                                                                                | Source                                                                                                                                                                                                       |
-| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `sequence`, `hash`, `closed_at`, `protocol_version`, `transaction_count`, `base_fee` | DB → `ledgers` row                                                                                                                                                                                           |
-| `prev_sequence`, `next_sequence`                                                     | DB → two LATERALs over `idx_ledgers_closed_at`                                                                                                                                                               |
+| Field                                                                                | Source                                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sequence`, `hash`, `closed_at`, `protocol_version`, `transaction_count`, `base_fee` | DB → `ledgers` row                                                                                                                                                                                         |
+| `prev_sequence`, `next_sequence`                                                     | DB → two LATERALs over `idx_ledgers_closed_at`                                                                                                                                                             |
 | `ledger_sequence_s3_bridge`                                                          | DB → equal to `sequence`; retained as an explicit alias for readability of the supersession (legacy of the pre-ADR-0029 S3 framing). The API does **not** fetch any S3 blob keyed by this value post-0029. |
 
 **Statement B — embedded transactions sublist:**
@@ -267,8 +267,8 @@ Using the same parsed envelope as step 2, the API enriches each op row:
 `transactions` (`WHERE created_at = $closed_at AND ledger_sequence = $sequence`)
 that touches a single monthly child via `idx_tx_ledger`:
 
-| Field            | Source                                                                                                                                                                                                                                                                                                                  |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Field            | Source                                                                                                                                                                                                                                                       |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `transactions[]` | DB → `transactions` partition, projecting the structural fields of `TransactionListItem` (`hash`, `application_order`, `source_account`, `fee_charged`, `successful`, `operation_count`, `has_soroban`). Memo / heavy fields stay on E3 detail per ADR 0029. |
 
 The SQL queries the `transactions` partition with full partition pruning;

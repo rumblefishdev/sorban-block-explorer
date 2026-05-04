@@ -122,7 +122,7 @@ output in PR description).
 
 1. **Tighten `is_strkey_account`** ([`staging.rs:1373-1378`](../../../crates/indexer/src/handler/persist/staging.rs#L1373))
    from `Some('G' | 'M')` first-char match to `s.len() <= 56 &&
-   s.starts_with('G')`. The M-prefix branch was a transitional measure
+s.starts_with('G')`. The M-prefix branch was a transitional measure
    pending task 0177 (canonicalize MuxedAccount → ed25519 G-strkey at
    the parser boundary). PR #145 merged 0177; M-prefix values no longer
    reach this filter on the happy path. Tightening to G-only aligns
