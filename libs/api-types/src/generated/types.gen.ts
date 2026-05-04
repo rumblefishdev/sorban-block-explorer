@@ -198,6 +198,18 @@ export type E3ResponseTransactionDetailLight = {
 };
 
 /**
+ * Entity discriminator. Closed allowlist used by the `type=` filter
+ * and the `entity_type` field on every hit / redirect.
+ */
+export type EntityType =
+  | 'transaction'
+  | 'account'
+  | 'asset'
+  | 'contract'
+  | 'nft'
+  | 'pool';
+
+/**
  * Canonical error response body.
  *
  * Intentionally simpler than RFC 7807 (`problem+json`) — see ADR 0008.
@@ -645,6 +657,70 @@ export type ParticipantItem = {
    * underlying `NUMERIC(28,7)` precision (no f64 round-trip).
    */
   shares: string;
+};
+
+/**
+ * Per-entity buckets. Empty buckets are omitted from the JSON output
+ * via `skip_serializing_if` — frontend treats absent and empty array
+ * identically, and dropping empties keeps the dropdown payload tight
+ * when a typed `?type=` filter narrows results to a single bucket.
+ */
+export type SearchGroups = {
+  accounts?: Array<SearchHit>;
+  assets?: Array<SearchHit>;
+  contracts?: Array<SearchHit>;
+  nfts?: Array<SearchHit>;
+  pools?: Array<SearchHit>;
+  transactions?: Array<SearchHit>;
+};
+
+/**
+ * Single search row. Narrow shape — same four columns for every
+ * entity bucket; rich entity payloads are NOT inlined here.
+ *
+ * `identifier` is the canonical human-shown id (hex hash for
+ * transactions / pools, StrKey for accounts / contracts, asset code
+ * for assets, name for NFTs). For `asset` and `nft` it is NOT unique —
+ * the frontend MUST route via `surrogate_id`.
+ */
+export type SearchHit = {
+  entity_type: EntityType;
+  identifier: string;
+  label: string;
+  surrogate_id?: number | null;
+};
+
+/**
+ * Redirect payload — frontend navigates directly to the entity page.
+ */
+export type SearchRedirect = {
+  entity_id: string;
+  entity_type: EntityType;
+};
+
+/**
+ * Discriminated response: `redirect` for unambiguous exact match,
+ * `results` for grouped broad search.
+ *
+ * `#[serde(tag = "type")]` puts the discriminator on the wire as
+ * `"type": "redirect" | "results"` per the task spec, mirroring the
+ * frontend search-bar UX expectation: a `redirect` causes the bar to
+ * navigate directly; a `results` shows the dropdown with grouped hits.
+ */
+export type SearchResponse =
+  | (SearchRedirect & {
+      type: 'redirect';
+    })
+  | (SearchResults & {
+      type: 'results';
+    });
+
+/**
+ * Results payload — six entity-typed buckets, each capped at the
+ * per-group `limit` chosen by the caller (default 10, ceiling 50).
+ */
+export type SearchResults = {
+  groups: SearchGroups;
 };
 
 /**
@@ -1242,6 +1318,48 @@ export type GetNetworkStatsResponses = {
 
 export type GetNetworkStatsResponse =
   GetNetworkStatsResponses[keyof GetNetworkStatsResponses];
+
+export type GetSearchData = {
+  body?: never;
+  path?: never;
+  query: {
+    /**
+     * Search query string. Required, non-empty after trim.
+     */
+    q: string;
+    /**
+     * CSV of entity types to include. Allowed: transaction, contract, asset, account, nft, pool.
+     */
+    type?: string;
+    /**
+     * Per-group result cap. Default 10, max 50.
+     */
+    limit?: number;
+  };
+  url: '/v1/search';
+};
+
+export type GetSearchErrors = {
+  /**
+   * Validation error
+   */
+  400: ErrorEnvelope;
+  /**
+   * Database error
+   */
+  500: ErrorEnvelope;
+};
+
+export type GetSearchError = GetSearchErrors[keyof GetSearchErrors];
+
+export type GetSearchResponses = {
+  /**
+   * Search results
+   */
+  200: SearchResponse;
+};
+
+export type GetSearchResponse = GetSearchResponses[keyof GetSearchResponses];
 
 export type ListTransactionsData = {
   body?: never;

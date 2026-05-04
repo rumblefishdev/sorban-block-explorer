@@ -82,9 +82,9 @@ fn is_strkey_prefix(s: &str, prefix: char) -> bool {
 }
 
 /// Try to decode `s` as standard-alphabet base64 representing exactly
-/// 32 bytes. Length 44 with optional `=` padding is the canonical
-/// encoding; we tolerate length 43 (no padding) for callers that strip
-/// it. Returns `None` for any other length / charset / payload size.
+/// 32 bytes. Length 44 with `=` padding is the canonical encoding; we
+/// tolerate length 43 (no padding) for callers that strip it. Returns
+/// `None` for any other length / charset / payload size.
 fn decode_base64_32(s: &str) -> Option<[u8; 32]> {
     use base64::Engine;
     if !matches!(s.len(), 43 | 44) {
@@ -99,7 +99,20 @@ fn decode_base64_32(s: &str) -> Option<[u8; 32]> {
     {
         return None;
     }
-    let bytes = base64::engine::general_purpose::STANDARD.decode(s).ok()?;
+    // STANDARD engine refuses unpadded input. Re-pad to 44 chars when
+    // the caller stripped the trailing `=`, then run a single decode
+    // path. Avoids carrying two engine variants for what is the same
+    // 32-byte payload either way.
+    let padded: String;
+    let to_decode: &str = if s.len() == 43 {
+        padded = format!("{s}=");
+        &padded
+    } else {
+        s
+    };
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(to_decode)
+        .ok()?;
     bytes.try_into().ok()
 }
 
@@ -160,6 +173,21 @@ mod tests {
         let encoded = base64::engine::general_purpose::STANDARD.encode(raw);
         assert_eq!(encoded.len(), 44);
         let out = classify(&encoded);
+        assert_eq!(out.hash_bytes.as_deref(), Some(raw.as_slice()));
+        assert!(out.is_fully_typed);
+    }
+
+    #[test]
+    fn classifies_base64_32_bytes_unpadded() {
+        // Same 32-byte payload but caller stripped the trailing `=`.
+        // 44-char padded → 43-char unpadded. The decoder MUST tolerate
+        // the unpadded form because some Stellar tools emit it that way.
+        let raw = [0x42u8; 32];
+        use base64::Engine;
+        let padded = base64::engine::general_purpose::STANDARD.encode(raw);
+        let unpadded = padded.trim_end_matches('=').to_string();
+        assert_eq!(unpadded.len(), 43);
+        let out = classify(&unpadded);
         assert_eq!(out.hash_bytes.as_deref(), Some(raw.as_slice()));
         assert!(out.is_fully_typed);
     }

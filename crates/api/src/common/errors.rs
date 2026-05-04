@@ -72,11 +72,15 @@ pub const INVALID_SEQUENCE: &str = "invalid_sequence";
 /// cause is logged server-side and never returned to the client.
 pub const DB_ERROR: &str = "db_error";
 
-/// `q` query parameter on `/v1/search` was missing or empty after trim.
-/// Distinct from `INVALID_QUERY` (malformed query string at HTTP layer)
-/// and `INVALID_FILTER` (bad value in `filter[...]`) — search's `q` is a
+/// `q` query parameter on `/v1/search` failed shape validation: missing,
+/// empty after trim, or longer than the per-endpoint byte cap
+/// (`search::handlers::MAX_Q_LEN`, currently 256). Distinct from
+/// `INVALID_QUERY` (malformed query string at HTTP layer) and
+/// `INVALID_FILTER` (bad value in `filter[...]`) — search's `q` is a
 /// required top-level parameter with its own dedicated UX on the
-/// frontend search bar.
+/// frontend search bar. The 400 body's `details` field carries the cap
+/// and received length so the frontend can render a precise hint
+/// without parsing the human-readable message.
 pub const INVALID_SEARCH_QUERY: &str = "invalid_search_query";
 
 /// `type=...` filter on `/v1/search` carried a value outside the closed

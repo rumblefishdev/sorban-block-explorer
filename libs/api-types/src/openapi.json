@@ -780,6 +780,78 @@
         }
       }
     },
+    "/v1/search": {
+      "get": {
+        "tags": ["search"],
+        "summary": "Unified search across all entity types.",
+        "description": "`?q=` is required. `?type=` (CSV) restricts the result to specific\nentity types — values must be in the closed allowlist\n(`transaction`, `contract`, `asset`, `account`, `nft`, `pool`).\n`?limit=` caps each entity bucket independently (default 10,\nceiling 50).\n\nBehaviour:\n* If `q` is a fully-typed entity id (64-hex hash, full G-StrKey,\n  full C-StrKey) and the corresponding entity exists, the response\n  is `{ \"type\": \"redirect\", \"entity_type\", \"entity_id\" }` — frontend\n  navigates directly.\n* Otherwise the response is `{ \"type\": \"results\", \"groups\": {...} }`\n  with up to `limit` rows per entity bucket. Rows carry the same\n  four columns regardless of bucket: `entity_type`, `identifier`,\n  `label`, `surrogate_id` (BIGINT FK or `null`).\n\nAuthoritative SQL:\n`docs/architecture/database-schema/endpoint-queries/22_get_search.sql`.",
+        "operationId": "get_search",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Search query string. Required, non-empty after trim.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "description": "CSV of entity types to include. Allowed: transaction, contract, asset, account, nft, pool.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Per-group result cap. Default 10, max 50.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 50,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Search results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Database error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/transactions": {
       "get": {
         "tags": ["transactions"],
@@ -1291,6 +1363,11 @@
           }
         ],
         "description": "Merged E3 response: DB light fields + optional XDR heavy fields.\n\n`heavy_fields_status` = `Ok` when `heavy` is `Some`, `Unavailable` when\nthe public-archive fetch failed and the caller degraded gracefully."
+      },
+      "EntityType": {
+        "type": "string",
+        "description": "Entity discriminator. Closed allowlist used by the `type=` filter\nand the `entity_type` field on every hit / redirect.",
+        "enum": ["transaction", "account", "asset", "contract", "nft", "pool"]
       },
       "ErrorEnvelope": {
         "type": "object",
@@ -1993,6 +2070,130 @@
           "shares": {
             "type": "string",
             "description": "Pool-share balance carried as a decimal string preserving the\nunderlying `NUMERIC(28,7)` precision (no f64 round-trip)."
+          }
+        }
+      },
+      "SearchGroups": {
+        "type": "object",
+        "description": "Per-entity buckets. Empty buckets are omitted from the JSON output\nvia `skip_serializing_if` — frontend treats absent and empty array\nidentically, and dropping empties keeps the dropdown payload tight\nwhen a typed `?type=` filter narrows results to a single bucket.",
+        "properties": {
+          "accounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            }
+          },
+          "assets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            }
+          },
+          "contracts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            }
+          },
+          "nfts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            }
+          },
+          "pools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            }
+          },
+          "transactions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            }
+          }
+        }
+      },
+      "SearchHit": {
+        "type": "object",
+        "description": "Single search row. Narrow shape — same four columns for every\nentity bucket; rich entity payloads are NOT inlined here.\n\n`identifier` is the canonical human-shown id (hex hash for\ntransactions / pools, StrKey for accounts / contracts, asset code\nfor assets, name for NFTs). For `asset` and `nft` it is NOT unique —\nthe frontend MUST route via `surrogate_id`.",
+        "required": ["entity_type", "identifier", "label"],
+        "properties": {
+          "entity_type": {
+            "$ref": "#/components/schemas/EntityType"
+          },
+          "identifier": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "surrogate_id": {
+            "type": ["integer", "null"],
+            "format": "int64"
+          }
+        }
+      },
+      "SearchRedirect": {
+        "type": "object",
+        "description": "Redirect payload — frontend navigates directly to the entity page.",
+        "required": ["entity_type", "entity_id"],
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "entity_type": {
+            "$ref": "#/components/schemas/EntityType"
+          }
+        }
+      },
+      "SearchResponse": {
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SearchRedirect"
+              },
+              {
+                "type": "object",
+                "required": ["type"],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": ["redirect"]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SearchResults"
+              },
+              {
+                "type": "object",
+                "required": ["type"],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": ["results"]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "description": "Discriminated response: `redirect` for unambiguous exact match,\n`results` for grouped broad search.\n\n`#[serde(tag = \"type\")]` puts the discriminator on the wire as\n`\"type\": \"redirect\" | \"results\"` per the task spec, mirroring the\nfrontend search-bar UX expectation: a `redirect` causes the bar to\nnavigate directly; a `results` shows the dropdown with grouped hits."
+      },
+      "SearchResults": {
+        "type": "object",
+        "description": "Results payload — six entity-typed buckets, each capped at the\nper-group `limit` chosen by the caller (default 10, ceiling 50).",
+        "required": ["groups"],
+        "properties": {
+          "groups": {
+            "$ref": "#/components/schemas/SearchGroups"
           }
         }
       },

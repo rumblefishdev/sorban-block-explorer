@@ -390,11 +390,12 @@ Behaviour:
   `soroban_contracts`, the response is `{ "type": "redirect", "entity_type", "entity_id" }`
   and the frontend navigates directly to the entity page.
 - otherwise the response is `{ "type": "results", "groups": {...} }` with up to `limit`
-  rows per entity bucket (default 10, hard ceiling 50). `groups` includes only buckets
-  that have at least one match; entity buckets with zero results may be omitted from the
-  response entirely. Each row carries the same four columns regardless of bucket:
-  `entity_type`, `identifier`, `label`, `surrogate_id` (BIGINT FK or `null` for tx /
-  pool which route by `identifier`).
+  rows per entity bucket (default 10, hard ceiling 50). Each row carries the same four
+  columns regardless of bucket: `entity_type`, `identifier`, `label`, `surrogate_id`
+  (BIGINT FK or `null` for tx / pool which route by `identifier`). `groups` includes
+  only buckets that have at least one match — empty buckets are omitted from the
+  response (the OpenAPI schema marks them optional); frontend treats absent and empty
+  array identically.
 
 Authoritative SQL:
 [`22_get_search.sql`](../database-schema/endpoint-queries/22_get_search.sql) — UNION ALL
