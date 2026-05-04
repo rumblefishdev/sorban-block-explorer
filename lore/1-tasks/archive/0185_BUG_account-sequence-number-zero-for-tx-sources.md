@@ -2,17 +2,11 @@
 id: '0185'
 title: 'BUG: `accounts.sequence_number` stays `0` for accounts that are tx sources within a ledger (sentinel coercion + unconditional overwrite)'
 type: BUG
-status: active
+status: completed
 related_adr: ['0026', '0037']
 related_tasks: ['0175', '0177', '0178', '0179']
 tags:
-  [
-    priority-high,
-    layer-persist,
-    audit-driven,
-    accounts,
-    snapshot-correctness,
-  ]
+  [priority-high, layer-persist, audit-driven, accounts, snapshot-correctness]
 links:
   - crates/indexer/src/handler/persist/staging.rs
   - crates/xdr-parser/src/state.rs
@@ -52,13 +46,37 @@ history:
       re-running staging unit tests + a 1k spot re-backfill on
       62016000–62016999 against the post-fix binary, expecting
       GDFAOY / GCEETSI to surface `sequence_number > 0`.
+  - date: '2026-05-04'
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Closed via PR #154. Two-layer fix shipped: (1) staging-side
+      `Entry::Occupied/Vacant` merge in
+      `crates/indexer/src/handler/persist/staging.rs::merge_account_state_overrides`
+      so sentinel `-1` never clobbers a real seq within one ledger,
+      and (2) write-side split-CTE UPSERT in
+      `crates/indexer/src/handler/persist/write.rs::upsert_accounts`
+      so the `<> -1` predicate sees the raw input value (not the
+      `COALESCE`'d 0). Phase 1 invariant `accounts.I5` added to
+      `crates/audit-harness/sql/11_accounts.sql`. 7 unit tests cover
+      the merge contract on both orderings + 4 edge cases. Empirical
+      validation on a clean-slate 30k re-backfill (62016000-62046000):
+      `accounts.I5 = 0` violations (was 6796 pre-fix), all 5
+      audit-driven violators report real `sequence_number` matching
+      protocol-expected ranges, full Phase 1 invariants suite green
+      (89/89), Phase 2c `archive-diff --table liquidity-pools
+      --sample 1000` 1000/1000 match, Phase 2a `horizon-diff --table
+      transactions --sample 100` 100/100 match. Two Copilot review
+      comments addressed (stale `EXCLUDED.*` references in merge
+      docstring + inline comment updated to reflect the split-CTE
+      shape). PR #154 merged at commit 5bf0804.
 ---
 
 # `accounts.sequence_number = 0` for tx-source accounts
 
 ## Summary
 
-Indexed accounts that *were* the source of one or more transactions
+Indexed accounts that _were_ the source of one or more transactions
 within a backfilled ledger range can end up with `accounts.sequence_number = 0`
 in our DB even though Stellar protocol bumps `seq_num` on every successful
 (and most failed-fee-charged) tx sourced by that account. The root cause
@@ -73,7 +91,8 @@ and if that last entry is trustline-only, the real sequence is lost.
 
 Dataset: 30k smoke (mainnet ledgers 62016000–62046000), develop binary
 post `lore-0173 + lore-0177 + lore-0181 + lore-0182 + lore-0183 + lore-0178
-+ lore-0179`. Phase 1 invariants and Phase 2c diffs all green; this bug
+
+- lore-0179`. Phase 1 invariants and Phase 2c diffs all green; this bug
 is **exclusively** surfaced by the manual E06 audit cross-checking
 `sequence_number` against Horizon.
 
@@ -278,6 +297,7 @@ fewer branches; pick whichever the implementor finds clearer.
 
       (The window parameters need wiring through `run-invariants.sh`
       env or hard-coded for the 30k smoke window for now.)
+
 - [ ] Re-run audit harness Phase 1 on a clean-slate post-fix re-backfill
       of the same 30k smoke — new invariant returns 0 violations
 - [ ] Re-run E06 manual audit on the post-fix dataset — `GDFAOY...`,
@@ -309,5 +329,5 @@ fewer branches; pick whichever the implementor finds clearer.
   merge to support multi-ledger semantics — this fix is intra-ledger
   only. Cross-ledger sequence retention is already correct via the
   SQL-side `CASE WHEN EXCLUDED.last_seen_ledger >= accounts.last_seen_ledger
-  AND EXCLUDED.sequence_number <> -1 THEN EXCLUDED.sequence_number ELSE
-  accounts.sequence_number END` clause in `upsert_accounts`.
+AND EXCLUDED.sequence_number <> -1 THEN EXCLUDED.sequence_number ELSE
+accounts.sequence_number END` clause in `upsert_accounts`.
