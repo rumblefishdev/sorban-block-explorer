@@ -34,13 +34,23 @@ pub struct SearchResults {
     pub groups: SearchGroups,
 }
 
+/// Per-entity buckets. Empty buckets are omitted from the JSON output
+/// via `skip_serializing_if` — frontend treats absent and empty array
+/// identically, and dropping empties keeps the dropdown payload tight
+/// when a typed `?type=` filter narrows results to a single bucket.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 pub struct SearchGroups {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub transactions: Vec<SearchHit>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub accounts: Vec<SearchHit>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub assets: Vec<SearchHit>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub contracts: Vec<SearchHit>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub nfts: Vec<SearchHit>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pools: Vec<SearchHit>,
 }
 
@@ -73,6 +83,13 @@ pub enum EntityType {
 }
 
 impl EntityType {
+    /// Wire-format names for every variant. Single source of truth used
+    /// by `parse()`, error messages, and any future API surface that
+    /// needs to enumerate the closed set (e.g. an OpenAPI enum
+    /// extension or a debug listing endpoint).
+    pub const ALL: &'static [&'static str] =
+        &["transaction", "contract", "asset", "account", "nft", "pool"];
+
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "transaction" => Some(Self::Transaction),
@@ -82,6 +99,24 @@ impl EntityType {
             "nft" => Some(Self::Nft),
             "pool" => Some(Self::Pool),
             _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Lock the invariant that `ALL` and `parse()` agree on the closed
+    /// set. If a variant is added in the future and one site is missed,
+    /// this catches the drift before the divergence reaches the wire.
+    #[test]
+    fn all_const_matches_parse_round_trip() {
+        for name in EntityType::ALL {
+            assert!(
+                EntityType::parse(name).is_some(),
+                "EntityType::ALL contains `{name}` but parse() rejects it"
+            );
         }
     }
 }

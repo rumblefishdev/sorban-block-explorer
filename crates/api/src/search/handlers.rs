@@ -183,8 +183,14 @@ fn parse_type_filter(raw: Option<&str>) -> Result<IncludeFlags, Response> {
         let Some(t) = EntityType::parse(token) else {
             return Err(errors::bad_request_with_details(
                 errors::INVALID_SEARCH_TYPE,
-                "Invalid type filter. Allowed values: transaction, contract, asset, account, nft, pool",
-                serde_json::json!({ "received": token }),
+                format!(
+                    "Invalid type filter. Allowed values: {}",
+                    EntityType::ALL.join(", ")
+                ),
+                serde_json::json!({
+                    "received": token,
+                    "allowed": EntityType::ALL,
+                }),
             ));
         };
         flags.enable(t);
@@ -219,20 +225,21 @@ fn parse_limit(raw: Option<&str>) -> Result<u32, Response> {
 }
 
 /// Partition rows from the union query into per-entity buckets.
+///
+/// Matches on the typed `EntityType` carried by `SearchHit` (already
+/// parsed by `queries::fetch_search`). Exhaustive match — adding a
+/// 7th variant fails to compile here, forcing the new bucket to be
+/// wired through `SearchGroups` in the same change.
 fn group_hits(rows: Vec<(String, SearchHit)>) -> SearchGroups {
     let mut g = SearchGroups::default();
-    for (entity_type, hit) in rows {
-        match entity_type.as_str() {
-            "transaction" => g.transactions.push(hit),
-            "contract" => g.contracts.push(hit),
-            "asset" => g.assets.push(hit),
-            "account" => g.accounts.push(hit),
-            "nft" => g.nfts.push(hit),
-            "pool" => g.pools.push(hit),
-            // 22_get_search.sql emits only the closed set above; an
-            // unexpected literal is a query-shape regression, not a
-            // runtime branch we need to handle.
-            other => tracing::error!(entity_type = other, "unknown entity_type in search row"),
+    for (_entity_type_raw, hit) in rows {
+        match hit.entity_type {
+            EntityType::Transaction => g.transactions.push(hit),
+            EntityType::Contract => g.contracts.push(hit),
+            EntityType::Asset => g.assets.push(hit),
+            EntityType::Account => g.accounts.push(hit),
+            EntityType::Nft => g.nfts.push(hit),
+            EntityType::Pool => g.pools.push(hit),
         }
     }
     g

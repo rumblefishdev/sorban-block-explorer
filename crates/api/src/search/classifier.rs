@@ -69,12 +69,16 @@ pub fn classify(q: &str) -> Classified {
 /// Returns true when `s` could be a prefix of a StrKey starting with
 /// `prefix`: it begins with `prefix`, every byte is in the StrKey
 /// base32 alphabet (`A-Z` and `2-7`), and length ∈ [2, 56].
+///
+/// Cheap checks (length + prefix byte) come first so the alphabet scan
+/// only runs on candidates that already passed the shape gate.
 fn is_strkey_prefix(s: &str, prefix: char) -> bool {
     let bytes = s.as_bytes();
     let len = bytes.len();
-    (2..=56).contains(&len)
-        && bytes[0] == prefix as u8
-        && bytes.iter().all(|b| matches!(b, b'A'..=b'Z' | b'2'..=b'7'))
+    if !(2..=56).contains(&len) || bytes[0] != prefix as u8 {
+        return false;
+    }
+    bytes.iter().all(|b| matches!(b, b'A'..=b'Z' | b'2'..=b'7'))
 }
 
 /// Try to decode `s` as standard-alphabet base64 representing exactly
