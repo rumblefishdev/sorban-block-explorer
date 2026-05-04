@@ -6,13 +6,7 @@ status: active
 related_adr: ['0026', '0037']
 related_tasks: ['0175', '0177', '0178', '0179']
 tags:
-  [
-    priority-high,
-    layer-persist,
-    audit-driven,
-    accounts,
-    snapshot-correctness,
-  ]
+  [priority-high, layer-persist, audit-driven, accounts, snapshot-correctness]
 links:
   - crates/indexer/src/handler/persist/staging.rs
   - crates/xdr-parser/src/state.rs
@@ -58,7 +52,7 @@ history:
 
 ## Summary
 
-Indexed accounts that *were* the source of one or more transactions
+Indexed accounts that _were_ the source of one or more transactions
 within a backfilled ledger range can end up with `accounts.sequence_number = 0`
 in our DB even though Stellar protocol bumps `seq_num` on every successful
 (and most failed-fee-charged) tx sourced by that account. The root cause
@@ -73,7 +67,8 @@ and if that last entry is trustline-only, the real sequence is lost.
 
 Dataset: 30k smoke (mainnet ledgers 62016000–62046000), develop binary
 post `lore-0173 + lore-0177 + lore-0181 + lore-0182 + lore-0183 + lore-0178
-+ lore-0179`. Phase 1 invariants and Phase 2c diffs all green; this bug
+
+- lore-0179`. Phase 1 invariants and Phase 2c diffs all green; this bug
 is **exclusively** surfaced by the manual E06 audit cross-checking
 `sequence_number` against Horizon.
 
@@ -278,6 +273,7 @@ fewer branches; pick whichever the implementor finds clearer.
 
       (The window parameters need wiring through `run-invariants.sh`
       env or hard-coded for the 30k smoke window for now.)
+
 - [ ] Re-run audit harness Phase 1 on a clean-slate post-fix re-backfill
       of the same 30k smoke — new invariant returns 0 violations
 - [ ] Re-run E06 manual audit on the post-fix dataset — `GDFAOY...`,
@@ -309,5 +305,5 @@ fewer branches; pick whichever the implementor finds clearer.
   merge to support multi-ledger semantics — this fix is intra-ledger
   only. Cross-ledger sequence retention is already correct via the
   SQL-side `CASE WHEN EXCLUDED.last_seen_ledger >= accounts.last_seen_ledger
-  AND EXCLUDED.sequence_number <> -1 THEN EXCLUDED.sequence_number ELSE
-  accounts.sequence_number END` clause in `upsert_accounts`.
+AND EXCLUDED.sequence_number <> -1 THEN EXCLUDED.sequence_number ELSE
+accounts.sequence_number END` clause in `upsert_accounts`.
