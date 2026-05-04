@@ -467,10 +467,11 @@ impl Staged {
         //   regression that prompted this rewrite (bug class: sentinel
         //   coercion + unconditional `HashMap.insert`).
         // * `first_seen_ledger`: take the earliest non-NULL value across
-        //   merged entries. SQL's UPSERT also applies `LEAST` on the
-        //   server side, so per-ledger minimisation here is defensive.
-        // * `home_domain`: latest non-NULL wins per the SQL UPSERT shape
-        //   (`EXCLUDED.home_domain IS NOT NULL ⇒ overwrite`).
+        //   merged entries. The split-CTE write path (`write.rs::upsert_accounts`)
+        //   also applies `LEAST(a.first_seen_ledger, i.fs)` server-side, so
+        //   per-ledger minimisation here is defensive.
+        // * `home_domain`: latest non-NULL wins per the split-CTE write shape
+        //   (`i.hd IS NOT NULL ⇒ overwrite`, where `i` is the `input` CTE).
         let account_state_overrides = merge_account_state_overrides(account_states);
 
         // --- wasm_interface_metadata rows (deduped by wasm_hash) ------------
@@ -1458,11 +1459,13 @@ fn op_participant_str_keys(op_type: OperationType, details: &Value) -> Vec<Strin
 ///   when one was already seen for this account in this ledger —
 ///   overwriting a real seq with `-1` (or coercing `-1` to `0` and writing
 ///   it through) would lose ground-truth state on the persist path.
-/// * `first_seen_ledger`: take the earliest non-NULL value. SQL's UPSERT
-///   also applies `LEAST` server-side; the per-ledger minimisation here
-///   is defensive.
-/// * `home_domain`: latest non-NULL wins per the SQL UPSERT shape
-///   (`EXCLUDED.home_domain IS NOT NULL ⇒ overwrite`).
+/// * `first_seen_ledger`: take the earliest non-NULL value. The split-CTE
+///   write path (`write.rs::upsert_accounts`) also applies
+///   `LEAST(a.first_seen_ledger, i.fs)` server-side; the per-ledger
+///   minimisation here is defensive.
+/// * `home_domain`: latest non-NULL wins per the split-CTE write shape
+///   (`i.hd IS NOT NULL ⇒ overwrite`, where `i` is the `input` CTE in
+///   `upsert_accounts`).
 ///
 /// See [task 0185](../../../../lore/1-tasks/active/0185_BUG_account-sequence-number-zero-for-tx-sources.md)
 /// for the audit-driven regression that prompted this rewrite (bug class:
