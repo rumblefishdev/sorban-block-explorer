@@ -20,7 +20,7 @@ use crate::contracts::dto::{
 use crate::search::dto::{
     EntityType, SearchGroups, SearchHit, SearchRedirect, SearchResponse, SearchResults,
 };
-use crate::stellar_archive::dto::{
+use crate::runtime_enrichment::stellar_archive::dto::{
     E3HeavyFields, E3Response, HeavyFieldsStatus, SignatureDto, XdrEventDto, XdrOperationDto,
 };
 use crate::transactions::dto::{OperationItem, TransactionDetailLight, TransactionListItem};

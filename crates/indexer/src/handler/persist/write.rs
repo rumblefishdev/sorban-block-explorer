@@ -64,28 +64,65 @@ pub(super) async fn upsert_accounts(
             }
         }
 
+        // Split INSERT and UPDATE into two data-modifying CTEs sharing one
+        // `input` CTE so the raw sentinel `-1` (passed in `sq` for accounts
+        // with no state-change in this ledger) is visible to the UPDATE
+        // branch's predicate. The earlier single-INSERT-with-DO-UPDATE
+        // approach used `COALESCE(NULLIF(sq, -1), 0)` inside the SELECT,
+        // which made `EXCLUDED.sequence_number` always read `0` for sentinel
+        // rows; the predicate `EXCLUDED.sequence_number <> -1` was
+        // therefore always TRUE for sentinel inputs, which caused the
+        // UPDATE to overwrite a previously-stored real `sequence_number`
+        // with `0` whenever the account appeared in a ledger where it had
+        // no state change (e.g. participant-only). See lore-0185 and the
+        // 100k diag run that confirmed it: parser emits 4118 real seqs for
+        // `GASYWY2Y…`; staging merges them all; SQL UPSERT overwrites with
+        // `0` on subsequent participant-only ledgers.
+        //
+        // INSERT branch keeps the `COALESCE` to give brand-new rows the
+        // `0` default when there's no state info; UPDATE branch references
+        // the raw `i.sq` from the `input` CTE so the `<> -1` predicate
+        // works as the staging layer expects.
         let rows: Vec<(i64, String)> = sqlx::query_as(
             r#"
-            INSERT INTO accounts (account_id, first_seen_ledger, last_seen_ledger, sequence_number, home_domain)
-            SELECT ak, fs, ls, COALESCE(NULLIF(sq, -1), 0), hd
-              FROM UNNEST($1::VARCHAR[], $2::BIGINT[], $3::BIGINT[], $4::BIGINT[], $5::VARCHAR[])
-                AS t(ak, fs, ls, sq, hd)
-            ON CONFLICT (account_id) DO UPDATE
-              SET last_seen_ledger = GREATEST(accounts.last_seen_ledger, EXCLUDED.last_seen_ledger),
-                  sequence_number  = CASE
-                      WHEN EXCLUDED.last_seen_ledger >= accounts.last_seen_ledger
-                       AND EXCLUDED.sequence_number <> -1
-                      THEN EXCLUDED.sequence_number
-                      ELSE accounts.sequence_number
-                  END,
-                  home_domain = CASE
-                      WHEN EXCLUDED.last_seen_ledger >= accounts.last_seen_ledger
-                       AND EXCLUDED.home_domain IS NOT NULL
-                      THEN EXCLUDED.home_domain
-                      ELSE accounts.home_domain
-                  END,
-                  first_seen_ledger = LEAST(accounts.first_seen_ledger, EXCLUDED.first_seen_ledger)
-            RETURNING id, account_id
+            WITH input AS (
+                SELECT ak, fs, ls, sq, hd
+                FROM UNNEST($1::VARCHAR[], $2::BIGINT[], $3::BIGINT[], $4::BIGINT[], $5::VARCHAR[])
+                    AS t(ak, fs, ls, sq, hd)
+            ),
+            inserted AS (
+                INSERT INTO accounts (account_id, first_seen_ledger, last_seen_ledger, sequence_number, home_domain)
+                SELECT ak, fs, ls, COALESCE(NULLIF(sq, -1), 0), hd
+                  FROM input
+                ON CONFLICT (account_id) DO NOTHING
+                RETURNING id, account_id
+            ),
+            updated AS (
+                UPDATE accounts a
+                SET last_seen_ledger = GREATEST(a.last_seen_ledger, i.ls),
+                    sequence_number  = CASE
+                        WHEN i.ls >= a.last_seen_ledger
+                         AND i.sq <> -1
+                        THEN i.sq
+                        ELSE a.sequence_number
+                    END,
+                    home_domain = CASE
+                        WHEN i.ls >= a.last_seen_ledger
+                         AND i.hd IS NOT NULL
+                        THEN i.hd
+                        ELSE a.home_domain
+                    END,
+                    first_seen_ledger = LEAST(a.first_seen_ledger, i.fs)
+                FROM input i
+                WHERE a.account_id = i.ak
+                  AND NOT EXISTS (
+                      SELECT 1 FROM inserted ins WHERE ins.account_id = a.account_id
+                  )
+                RETURNING a.id, a.account_id
+            )
+            SELECT id, account_id FROM inserted
+            UNION ALL
+            SELECT id, account_id FROM updated
             "#,
         )
         .bind(&keys)

@@ -105,8 +105,8 @@ mod tests {
     use crate::contracts::cache::new_contract_cache;
     use crate::network;
     use crate::network::cache::new_network_cache;
+    use crate::runtime_enrichment::stellar_archive::StellarArchiveFetcher;
     use crate::state::AppState;
-    use crate::stellar_archive::StellarArchiveFetcher;
 
     fn app(db: PgPool) -> Router {
         let aws_cfg = aws_sdk_s3::config::Builder::new()

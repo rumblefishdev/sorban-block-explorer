@@ -23,8 +23,8 @@ mod network;
 pub mod openapi;
 mod ops;
 mod search;
+mod runtime_enrichment;
 mod state;
-mod stellar_archive;
 mod transactions;
 
 pub use state::AppState;

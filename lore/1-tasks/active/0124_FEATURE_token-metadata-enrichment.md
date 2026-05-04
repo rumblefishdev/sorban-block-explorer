@@ -2,7 +2,7 @@
 id: '0124'
 title: 'Indexer: token metadata enrichment pipeline'
 type: FEATURE
-status: backlog
+status: active
 related_adr: []
 related_tasks: ['0049', '0074']
 tags: [priority-low, effort-medium, layer-indexer, audit-gap]
@@ -14,6 +14,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Spawned from pipeline audit — assets.metadata column exists but is hardcoded to None. No plan to populate it.'
+  - date: '2026-05-04'
+    status: active
+    who: karolkow
+    note: 'Promoted to active for implementation.'
 ---
 
 # Indexer: token metadata enrichment pipeline

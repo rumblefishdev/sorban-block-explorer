@@ -15,8 +15,8 @@ use crate::common::cursor::{self, TsIdCursor};
 use crate::common::extractors::Pagination;
 use crate::common::{errors, path};
 use crate::openapi::schemas::{ErrorEnvelope, PageInfo, Paginated};
+use crate::runtime_enrichment::stellar_archive::extractors::collect_tx_metas;
 use crate::state::AppState;
-use crate::stellar_archive::extractors::collect_tx_metas;
 
 use super::dto::{
     ContractDetailResponse, ContractStats, EventItem, InterfaceResponse, InvocationItem,
