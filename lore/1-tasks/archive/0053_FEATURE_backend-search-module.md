@@ -40,9 +40,9 @@ Implement the Search module providing unified search across all entity types wit
 
 > **Stack:** axum 0.8 + utoipa 5.4 + sqlx 0.8 (per ADR 0005). Code in crates/api/.
 
-## Status: Active
+## Status: Completed
 
-**Current state:** In progress. Dependencies complete: 0023 (bootstrap, superseded by Rust per ADR 0005), 0043 (pagination), 0092 (Rust API stack research). DB indexes used by `22_get_search.sql` already exist via migrations `0001_extensions`, `0002_identity_and_ledgers`, `0005_tokens_nfts`, `20260428000100_add_endpoint_query_indexes` — task 0133 not blocking.
+**Final state:** Implemented and completed. Dependencies were satisfied: 0023 (bootstrap, superseded by Rust per ADR 0005), 0043 (pagination), 0092 (Rust API stack research). DB indexes used by `22_get_search.sql` already exist via migrations `0001_extensions`, `0002_identity_and_ledgers`, `0005_tokens_nfts`, `20260428000100_add_endpoint_query_indexes` — task 0133 was not blocking.
 
 ## Context
 
