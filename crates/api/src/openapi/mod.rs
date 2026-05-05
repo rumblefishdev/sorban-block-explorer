@@ -27,7 +27,10 @@ use crate::runtime_enrichment::stellar_archive::dto::{
 use crate::search::dto::{
     EntityType, SearchGroups, SearchHit, SearchRedirect, SearchResponse, SearchResults,
 };
-use crate::transactions::dto::{OperationItem, TransactionDetailLight, TransactionListItem};
+use crate::transactions::dto::{
+    EventAppearanceItem, InvocationAppearanceItem, OperationItem, TransactionDetailLight,
+    TransactionListItem,
+};
 use schemas::{ErrorEnvelope, PageInfo, Paginated};
 
 /// Root OpenAPI document. Holds API metadata and declares shared
@@ -55,6 +58,8 @@ use schemas::{ErrorEnvelope, PageInfo, Paginated};
         E3Response<TransactionDetailLight>,
         TransactionDetailLight,
         OperationItem,
+        EventAppearanceItem,
+        InvocationAppearanceItem,
         E3HeavyFields,
         SignatureDto,
         XdrEventDto,
