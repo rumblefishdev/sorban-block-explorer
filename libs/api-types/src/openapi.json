@@ -30,6 +30,147 @@
         }
       }
     },
+    "/v1/accounts/{account_id}": {
+      "get": {
+        "tags": ["accounts"],
+        "summary": "Account detail — header from `accounts` + balances from\n`account_balances_current` (canonical 06 statements A + B).",
+        "operationId": "get_account",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "description": "Stellar account StrKey (G…, 56 chars)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Account detail with current balances",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid account_id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Account not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/accounts/{account_id}/transactions": {
+      "get": {
+        "tags": ["accounts"],
+        "summary": "Paginated transactions involving the account (source or participant).\n404 when the StrKey is unknown — distinct from \"indexed account, no\ntransactions yet\" (matches assets/contracts sub-resource pattern).",
+        "operationId": "list_account_transactions",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "description": "Stellar account StrKey (G…, 56 chars)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Items per page (1–100, default 20).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque pagination cursor from a previous response.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated transactions involving the account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Paginated_AccountTransactionItem"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid account_id / pagination",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Account not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/assets": {
       "get": {
         "tags": ["assets"],
@@ -1561,6 +1702,131 @@
   },
   "components": {
     "schemas": {
+      "AccountBalance": {
+        "type": "object",
+        "description": "Native rows have `null` `asset_code` / `asset_issuer`; credit rows have both.",
+        "required": ["type", "balance", "last_updated_ledger"],
+        "properties": {
+          "asset_code": {
+            "type": ["string", "null"]
+          },
+          "asset_issuer": {
+            "type": ["string", "null"]
+          },
+          "asset_type_name": {
+            "type": ["string", "null"],
+            "description": "`native` | `credit_alphanum4` | `credit_alphanum12`."
+          },
+          "balance": {
+            "type": "string",
+            "description": "`NUMERIC(28,7)` as fixed-precision string (preserves trailing zeros)."
+          },
+          "last_updated_ledger": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "type": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Raw SMALLINT — stable across label renames."
+          }
+        }
+      },
+      "AccountDetailResponse": {
+        "type": "object",
+        "required": [
+          "account_id",
+          "sequence_number",
+          "balances",
+          "first_seen_ledger",
+          "last_seen_ledger"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "balances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountBalance"
+            }
+          },
+          "first_seen_ledger": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "home_domain": {
+            "type": ["string", "null"]
+          },
+          "last_seen_ledger": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sequence_number": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "AccountTransactionItem": {
+        "type": "object",
+        "description": "Slim — `inner_tx_hash` / `contract_ids[]` live on `/v1/transactions` only.",
+        "required": [
+          "hash",
+          "ledger_sequence",
+          "application_order",
+          "source_account",
+          "fee_charged",
+          "successful",
+          "operation_count",
+          "has_soroban",
+          "operation_types",
+          "created_at"
+        ],
+        "properties": {
+          "application_order": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1-based position in ledger."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "fee_charged": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Stroops."
+          },
+          "has_soroban": {
+            "type": "boolean"
+          },
+          "hash": {
+            "type": "string",
+            "description": "64-char lowercase hex."
+          },
+          "ledger_sequence": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "operation_count": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "operation_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "source_account": {
+            "type": "string"
+          },
+          "successful": {
+            "type": "boolean"
+          }
+        }
+      },
       "AssetDetailResponse": {
         "allOf": [
           {
@@ -2477,6 +2743,78 @@
             "description": "Page size that produced `data`. Echoes the client's requested\nlimit (clamped server-side).",
             "maximum": 100,
             "minimum": 1
+          }
+        }
+      },
+      "Paginated_AccountTransactionItem": {
+        "type": "object",
+        "description": "Canonical envelope for paginated list responses.\n\nGeneric over the item type `T` so every endpoint can reuse a single\nshape. Concrete instantiations (e.g. `Paginated<Transaction>`) are\npicked up automatically by utoipa-axum via the handler return type\nwhen M2 endpoint modules are wired in. Unused in M1 — kept as\ninfrastructure that M2 endpoints will consume.",
+        "required": ["data", "page"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Slim — `inner_tx_hash` / `contract_ids[]` live on `/v1/transactions` only.",
+              "required": [
+                "hash",
+                "ledger_sequence",
+                "application_order",
+                "source_account",
+                "fee_charged",
+                "successful",
+                "operation_count",
+                "has_soroban",
+                "operation_types",
+                "created_at"
+              ],
+              "properties": {
+                "application_order": {
+                  "type": "integer",
+                  "format": "int32",
+                  "description": "1-based position in ledger."
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "fee_charged": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Stroops."
+                },
+                "has_soroban": {
+                  "type": "boolean"
+                },
+                "hash": {
+                  "type": "string",
+                  "description": "64-char lowercase hex."
+                },
+                "ledger_sequence": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "operation_count": {
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "operation_types": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "source_account": {
+                  "type": "string"
+                },
+                "successful": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
           }
         }
       },

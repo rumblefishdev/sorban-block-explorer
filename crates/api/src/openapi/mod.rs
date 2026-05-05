@@ -13,6 +13,7 @@ use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use crate::accounts::dto::{AccountBalance, AccountDetailResponse, AccountTransactionItem};
 use crate::assets::dto::{AssetDetailResponse, AssetItem, AssetTransactionItem};
 use crate::contracts::dto::{
     ContractDetailResponse, ContractStats, EventItem, InterfaceResponse, InvocationItem,
@@ -77,6 +78,10 @@ use schemas::{ErrorEnvelope, PageInfo, Paginated};
         AssetDetailResponse,
         Paginated<AssetTransactionItem>,
         AssetTransactionItem,
+        AccountDetailResponse,
+        AccountBalance,
+        Paginated<AccountTransactionItem>,
+        AccountTransactionItem,
         Paginated<NftItem>,
         NftItem,
         Paginated<NftTransferItem>,
@@ -117,5 +122,6 @@ pub fn register_routes() -> OpenApiRouter<crate::AppState> {
         .nest("/v1", crate::nfts::router())
         .nest("/v1", crate::assets::router())
         .nest("/v1", crate::ledgers::router())
+        .nest("/v1", crate::accounts::router())
         .nest("/v1", crate::search::router())
 }

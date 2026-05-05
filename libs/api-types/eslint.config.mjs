@@ -9,6 +9,8 @@ export default [
         'error',
         {
           ignoredFiles: ['{projectRoot}/eslint.config.{js,cjs,mjs,ts,cts,mts}'],
+          // Imported only inside the lint-ignored src/generated/ tree.
+          ignoredDependencies: ['@tanstack/react-query'],
         },
       ],
     },

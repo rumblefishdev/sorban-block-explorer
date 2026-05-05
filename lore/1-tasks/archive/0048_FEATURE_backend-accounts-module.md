@@ -2,7 +2,7 @@
 id: '0048'
 title: 'Backend: Accounts module (detail + balances + transactions)'
 type: FEATURE
-status: active
+status: completed
 related_adr: ['0005']
 related_tasks: ['0023', '0043', '0092']
 tags: [layer-backend, accounts]
@@ -21,6 +21,10 @@ history:
     status: active
     who: FilipDz
     note: 'Activated — natural continuation of 0049 (tokens) + 0050 (contracts) backend modules.'
+  - date: 2026-05-05
+    status: completed
+    who: FilipDz
+    note: 'Shipped per canonical SQL 06/07. 11 integration tests, OpenAPI regenerated.'
 ---
 
 # Backend: Accounts module (detail + balances + transactions)
@@ -187,15 +191,15 @@ Validate account_id format (G+56 characters). Return 400 for malformed IDs.
 
 ## Acceptance Criteria
 
-- [ ] `GET /v1/accounts/:account_id` returns account detail with balances
-- [ ] `GET /v1/accounts/:account_id/transactions` returns paginated transaction list
-- [ ] Balances served from JSONB array in accounts table
-- [ ] Transaction list uses standard cursor pagination envelope
-- [ ] Account_id validated as G+56 chars format
-- [ ] 404 for non-existent accounts
-- [ ] 400 for invalid account_id format
-- [ ] No operations, effects, or offers endpoints present
-- [ ] Standard error envelope on all errors
+- [x] `GET /v1/accounts/:account_id` returns account detail with balances
+- [x] `GET /v1/accounts/:account_id/transactions` returns paginated transaction list
+- [x] Balances served from `account_balances_current` (per ADR 0026 / ADR 0035 — original spec said "JSONB array on accounts" but that table never existed; canonical SQL 06 is authoritative)
+- [x] Transaction list uses standard cursor pagination envelope (`Paginated<T>` + `TsIdCursor`)
+- [x] Account_id validated as G+56 chars format (`path::strkey('G', "account_id")`)
+- [x] 404 for non-existent accounts (both detail and transactions sub-resource)
+- [x] 400 for invalid account_id format
+- [x] No operations, effects, or offers endpoints present
+- [x] Standard error envelope on all errors
 
 ## Notes
 
