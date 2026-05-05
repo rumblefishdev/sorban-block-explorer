@@ -177,6 +177,7 @@ pub async fn process_ledger(
             })
             .collect();
 
+    let mut all_contract_name_writes: Vec<(String, String)> = Vec::new();
     for (_tx_hash, tx_source, changes) in &all_ledger_entry_changes {
         let deployments =
             xdr_parser::extract_contract_deployments(changes, tx_source, &sac_identity_by_contract);
@@ -200,6 +201,14 @@ pub async fn process_ledger(
         // Parser-side producer; persist + API layer is task 0126.
         let lp_pos = xdr_parser::extract_lp_positions(changes);
         all_lp_positions.extend(lp_pos);
+
+        // Task 0156 / ADR 0041 — `Symbol("name")` ContractData writes for
+        // late-init and re-init patterns (deploy + storage init in
+        // different ledgers, or post-deploy name updates). The constructor
+        // pattern (deploy + init same ledger) is already covered by
+        // `extract_contract_deployments`'s second pass.
+        let name_writes = xdr_parser::extract_contract_data_name_writes(changes);
+        all_contract_name_writes.extend(name_writes);
     }
 
     let all_nfts = xdr_parser::detect_nfts(&all_nft_events);
@@ -236,6 +245,7 @@ pub async fn process_ledger(
         &all_nfts,
         &nft_events,
         &all_lp_positions,
+        &all_contract_name_writes,
         classification_cache,
     )
     .await?;

@@ -100,6 +100,7 @@ pub async fn persist_ledger(
     nfts: &[ExtractedNft],
     nft_events: &[ExtractedNftEvent],
     lp_positions: &[ExtractedLpPosition],
+    contract_name_writes: &[(String, String)],
     classification_cache: &ClassificationCache,
 ) -> Result<(), HandlerError> {
     let stage_start = Instant::now();
@@ -118,6 +119,7 @@ pub async fn persist_ledger(
         nfts,
         nft_events,
         lp_positions,
+        contract_name_writes,
     )?;
     let stage_ms = stage_start.elapsed().as_millis();
 
@@ -246,6 +248,12 @@ async fn run_all_steps(
 
     let t = Instant::now();
     let contract_ids = write::upsert_contracts_returning_id(db_tx, staged, &account_ids).await?;
+    // Task 0156 / ADR 0041 — apply late-init / re-init `Symbol("name")`
+    // ContractData writes captured by the parser. Runs after the contract
+    // upsert so every targeted row is guaranteed to exist; constructor-
+    // pattern names (deploy + storage init same ledger) already landed
+    // via the upsert above.
+    write::apply_contract_name_writes(db_tx, &staged.contract_name_writes).await?;
     timings.contracts_ms = t.elapsed().as_millis();
     // Populate per-worker cache with definitive classifications observed
     // this ledger (SAC → Token, WASM-classified deployments → Nft/Fungible).

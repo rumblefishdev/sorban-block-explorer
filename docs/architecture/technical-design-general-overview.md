@@ -1040,9 +1040,9 @@ CREATE TABLE soroban_contracts (
     deployed_at_ledger      BIGINT,
     contract_type           SMALLINT,                                            -- ADR 0031, nullable
     is_sac                  BOOLEAN     NOT NULL DEFAULT false,
-    metadata                JSONB,
+    name                    VARCHAR(256),                                        -- ADR 0041, on-chain Symbol("name")
     search_vector           TSVECTOR GENERATED ALWAYS AS (
-                                to_tsvector('simple', COALESCE(metadata->>'name', '') || ' ' || contract_id)
+                                to_tsvector('simple', COALESCE(name, '') || ' ' || contract_id)
                             ) STORED
 );
 ```
