@@ -139,6 +139,7 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
         &nfts,
         &nft_events,
         &lp_positions,
+        &[],
         &classification_cache,
     )
     .await
@@ -299,6 +300,7 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
         &nfts,
         &nft_events,
         &lp_positions,
+        &[],
         &classification_cache,
     )
     .await
@@ -519,6 +521,7 @@ async fn v4_per_op_events_land_in_appearance_index() {
         &[],
         &[],
         &[],
+        &[],
         &classification_cache,
     )
     .await
@@ -692,6 +695,7 @@ async fn v4_diag_contract_mirror_does_not_inflate_amount() {
         &[tx],
         &[],
         &events,
+        &[],
         &[],
         &[],
         &[],
@@ -895,7 +899,7 @@ fn make_contract_deployment() -> ExtractedContractDeployment {
         deployed_at_ledger: TEST_LEDGER_SEQ,
         contract_type: ContractType::Token,
         is_sac: true,
-        metadata: json!({"name": "TEST"}),
+        name: Some("TEST".to_string()),
         // Task 0160: match the SAC asset row fixture (make_sac_asset) so
         // integration tests exercise a complete SAC identity end-to-end.
         sac_asset: Some(xdr_parser::types::SacAssetIdentity::Credit {
@@ -1282,7 +1286,7 @@ async fn stub_wasm_unblocks_unknown_hash_and_real_upload_upgrades_it() {
         deployed_at_ledger: STUB_LEDGER_SEQ,
         contract_type: ContractType::Other,
         is_sac: false,
-        metadata: json!({}),
+        name: None,
         sac_asset: None,
     };
 
@@ -1317,6 +1321,7 @@ async fn stub_wasm_unblocks_unknown_hash_and_real_upload_upgrades_it() {
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
+        &[],
         &classification_cache,
     )
     .await
@@ -1396,6 +1401,7 @@ async fn stub_wasm_unblocks_unknown_hash_and_real_upload_upgrades_it() {
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
+        &[],
         &classification_cache,
     )
     .await
@@ -1523,6 +1529,7 @@ async fn nft_filter_drops_fungible_classified_contract() {
         &nfts,
         &no_nft_events,
         &no_lp_positions,
+        &[],
         &classification_cache,
     )
     .await
@@ -1616,7 +1623,7 @@ fn deploy_with(contract_id: &str, wasm_hash: &str) -> ExtractedContractDeploymen
         deployed_at_ledger: FILTER_LEDGER_SEQ,
         contract_type: ContractType::Other, // parser default; staging overrides
         is_sac: false,
-        metadata: json!({}),
+        name: None,
         sac_asset: None,
     }
 }
@@ -1763,7 +1770,7 @@ async fn soroban_fungible_contract_produces_assets_row() {
         deployed_at_ledger: TK_LEDGER_SEQ_1,
         contract_type: ContractType::Other, // staging overrides via classifier
         is_sac: false,
-        metadata: json!({}),
+        name: None,
         sac_asset: None,
     }];
     // Drive the real parser → persist wiring end-to-end so a regression in
@@ -1806,6 +1813,7 @@ async fn soroban_fungible_contract_produces_assets_row() {
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
+        &[],
         &classification_cache,
     )
     .await
@@ -1904,7 +1912,7 @@ async fn late_wasm_upload_backfills_assets_row() {
         deployed_at_ledger: LWU_LEDGER_SEQ_1,
         contract_type: ContractType::Other,
         is_sac: false,
-        metadata: json!({}),
+        name: None,
         sac_asset: None,
     }];
 
@@ -1939,6 +1947,7 @@ async fn late_wasm_upload_backfills_assets_row() {
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
+        &[],
         &classification_cache,
     )
     .await
@@ -2009,6 +2018,7 @@ async fn late_wasm_upload_backfills_assets_row() {
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
+        &[],
         &classification_cache,
     )
     .await
@@ -2076,6 +2086,7 @@ async fn late_wasm_upload_backfills_assets_row() {
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
+        &[],
         &classification_cache2,
     )
     .await
@@ -2307,7 +2318,7 @@ async fn xlm_sac_deployment_lands_with_null_identity() {
         deployed_at_ledger: SAC160_XLM_LEDGER_SEQ,
         contract_type: ContractType::Token,
         is_sac: true,
-        metadata: json!({}),
+        name: None,
         sac_asset: Some(xdr_parser::types::SacAssetIdentity::Native),
     }];
     let assets = vec![ExtractedAsset {
@@ -2350,6 +2361,7 @@ async fn xlm_sac_deployment_lands_with_null_identity() {
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
+        &[],
         &cache,
     )
     .await
@@ -2452,7 +2464,7 @@ async fn classic_to_sac_greatest_promotion_is_monotonic() {
         deployed_at_ledger: SAC160_CREDIT_LEDGER_SEQ,
         contract_type: ContractType::Token,
         is_sac: true,
-        metadata: json!({}),
+        name: None,
         sac_asset: Some(xdr_parser::types::SacAssetIdentity::Credit {
             code: "USDC".to_string(),
             issuer: SAC160_ISSUER_STRKEY.to_string(),
@@ -2485,6 +2497,7 @@ async fn classic_to_sac_greatest_promotion_is_monotonic() {
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
+        &[],
         &cache,
     )
     .await
@@ -2521,6 +2534,7 @@ async fn classic_to_sac_greatest_promotion_is_monotonic() {
         &no_nfts,
         &no_nft_events,
         &no_lp_positions,
+        &[],
         &cache2,
     )
     .await
