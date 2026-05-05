@@ -148,8 +148,12 @@ The backend serves data from the block explorer's own database, adding:
   [ADR 0029](../../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md),
   the backend resolves enrichable detail fields at request time rather than
   persisting them. Two transport-specific submodules under
-  `crates/api/src/runtime_enrichment/` share the architectural shape (per-request,
-  fail-soft, in-process LRU-cached, status surfaced via `enrichment_status`):
+  `crates/api/src/runtime_enrichment/` share the architectural shape
+  (per-request, fail-soft, in-process LRU-cached). Status surfacing is
+  per-submodule: archive-backed endpoints expose a `heavy_fields_status`
+  discriminator (`ok` / `unavailable`); SEP-1 enrichment surfaces failures
+  silently as `null` description / home_page (warn-logged) and adds no
+  status field today:
   - **`runtime_enrichment::stellar_archive`** — fetches `.xdr.zst` ledger files
     from the public Stellar archive on S3, decompresses with `crates/xdr-parser`
     and merges decoded payload into responses. Drives E3 `/transactions/:hash`
