@@ -195,5 +195,6 @@ Author drafts an ADR at pickup, either:
 
 ## Future Work
 
-- If task 0138 (contract token balances) concludes it needs `decimals` to scale balance values, spawn a follow-up to add `decimals SMALLINT` (or appropriate) column to `soroban_contracts` and extract `Symbol("decimals")`. Do NOT re-introduce JSONB.
 - If post-launch UX feedback ever surfaces a need for token `symbol` (separate from `asset_code`), spawn a follow-up adding `symbol VARCHAR(N)`. No current consumer.
+
+`decimals` follow-up was previously listed here pending task 0138's design decision. Task 0138 was archived 2026-05-05 as scope-out per current technical design (Soroban contract token balances are explicitly excluded from `account_balances_current`). With no consumer for `decimals` value, the follow-up is removed.

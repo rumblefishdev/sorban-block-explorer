@@ -843,7 +843,16 @@ XDR parsing happens in two places, each with a different scope:
   persisted; E14 re-expands it from the archive via
   `xdr_parser::extract_events`
 - Known SEP-41 / NFT transfer patterns also drive derived-state upserts on
-  `assets`, `nfts`, `nft_ownership`, and `account_balances_current`
+  `assets`, `nfts`, and `nft_ownership`. Per-account Soroban token holdings
+  are explicitly out of scope: `account_balances_current` (§4.17 of the
+  schema overview) carries only classic balances (native XLM + trustlines)
+  per ADR 0035; Soroban `ContractData` `Balance(address)` entries are not
+  extracted into per-account state. See archived task 0138 (closed
+  2026-05-05 as scope-out per current technical design) and the §4.2
+  entry-type map above, which routes "Account balance changes" to
+  `LedgerEntryChanges (ACCOUNT type)` only — `CONTRACT_DATA` entries are
+  the source of contract events, deployments, and per-asset registry
+  upserts (`assets`, `nfts`), not per-account holdings.
 
 **From `SorobanTransactionMeta.diagnosticEvents` / invocation tree:**
 
