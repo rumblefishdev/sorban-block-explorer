@@ -1140,7 +1140,10 @@ mod tests {
         )];
 
         let writes = extract_contract_data_name_writes(&changes);
-        assert_eq!(writes, vec![("CABC123".to_string(), "USD Coin".to_string())]);
+        assert_eq!(
+            writes,
+            vec![("CABC123".to_string(), "USD Coin".to_string())]
+        );
     }
 
     /// Re-init pattern — an existing `Symbol("name")` storage entry is
@@ -1166,7 +1169,12 @@ mod tests {
     /// some SDK builders emit short tokens this way). Helper must accept it.
     #[test]
     fn name_writes_decodes_symbol_scval() {
-        let changes = vec![make_name_change("CABC123", "created", "sym", &json!("USDC"))];
+        let changes = vec![make_name_change(
+            "CABC123",
+            "created",
+            "sym",
+            &json!("USDC"),
+        )];
 
         let writes = extract_contract_data_name_writes(&changes);
         assert_eq!(writes, vec![("CABC123".to_string(), "USDC".to_string())]);
