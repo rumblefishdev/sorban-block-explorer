@@ -1,3 +1,8 @@
+---
+name: pr
+description: Create a GitHub pull request from the active lore task and git diff.
+---
+
 # /pr — Create a pull request from the active lore task
 
 Create a GitHub PR with title and body derived from the active lore task and git diff.

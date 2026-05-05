@@ -545,9 +545,23 @@ pub fn extract_liquidity_pools(
         if change.entry_type != "liquidity_pool" {
             continue;
         }
+        // Lore-0189: include `state` change_type. Stellar Core writes
+        // a read-only `state` snapshot of every LedgerEntry referenced
+        // (but not modified) by an operation. Skipping these used to
+        // produce orphan `lp_positions` rows when a pool_share trustline
+        // was created/updated/removed in a ledger that did not also
+        // mutate the pool's reserves — the pool was visible in op_meta
+        // only as `state`, the trustline carried the position update,
+        // and the FK from `lp_positions.pool_id → liquidity_pools.pool_id`
+        // tripped. Including `state` here lets us extract the full pool
+        // dimension (asset_a, asset_b, fee, reserves) from the snapshot
+        // and satisfy the FK without resorting to sentinel placeholders
+        // for the common case. Snapshots emitted alongside are absorbed
+        // by `liquidity_pool_snapshots`'s
+        // `uq_lp_snapshots_pool_ledger DO NOTHING` (write.rs).
         if !matches!(
             change.change_type.as_str(),
-            "created" | "updated" | "restored"
+            "created" | "updated" | "restored" | "state"
         ) {
             continue;
         }
@@ -1657,6 +1671,83 @@ mod tests {
         )];
 
         assert!(extract_lp_positions(&changes).is_empty());
+    }
+
+    // -- Lore-0189: pool extraction includes `state` change_type --
+
+    #[test]
+    fn pool_extracted_from_state_change_type() {
+        // Lore-0189 reproducer: ledger 62148003 contained pool d63184... only
+        // as a `state` snapshot (no reserves change), but a pool_share trustline
+        // for that pool was simultaneously `removed` — producing an `lp_positions`
+        // emit with a pool_id that, pre-fix, was not present in `pool_rows`.
+        // Post-fix, `state` is included in the filter so the pool dimension is
+        // captured from the snapshot.
+        let changes = vec![make_change(
+            "liquidity_pool",
+            "state",
+            json!({
+                "pool_id": "d63184d4e5601fad174d9d5fa8e79f2366f6818892e43867a952e8adb13fa561",
+            }),
+            Some(json!({
+                "pool_id": "d63184d4e5601fad174d9d5fa8e79f2366f6818892e43867a952e8adb13fa561",
+                "params": {
+                    "asset_a": { "type": "credit_alphanum4", "code": "Lira", "issuer": "GBU3EGQO" },
+                    "asset_b": { "type": "credit_alphanum12", "code": "liragold", "issuer": "GAIHDHWF" },
+                    "fee": 30,
+                },
+                "reserve_a": 0,
+                "reserve_b": 0,
+                "total_pool_shares": 0,
+                "type": "constant_product",
+            })),
+        )];
+
+        let (pools, snapshots) = extract_liquidity_pools(&changes);
+        assert_eq!(pools.len(), 1, "state change_type must produce 1 pool row");
+        assert_eq!(snapshots.len(), 1);
+
+        let pool = &pools[0];
+        assert_eq!(
+            pool.pool_id,
+            "d63184d4e5601fad174d9d5fa8e79f2366f6818892e43867a952e8adb13fa561"
+        );
+        assert_eq!(pool.fee_bps, 30);
+        // `state` is not creation — created_at_ledger must remain None.
+        assert!(
+            pool.created_at_ledger.is_none(),
+            "state must NOT mark as creation"
+        );
+        assert_eq!(pool.last_updated_ledger, 100);
+    }
+
+    #[test]
+    fn pool_state_only_does_not_promote_to_creation() {
+        // Reinforces the contract: `state` is observed-not-created. If we
+        // ever start treating it as a creation, downstream logic that
+        // depends on `created_at_ledger` (e.g. earliest-observation
+        // analytics) would silently regress.
+        let changes = vec![make_change(
+            "liquidity_pool",
+            "state",
+            json!({"pool_id": "aabb"}),
+            Some(json!({
+                "pool_id": "aabb",
+                "params": {
+                    "asset_a": { "type": "native" },
+                    "asset_b": { "type": "credit_alphanum4", "code": "USDC", "issuer": "GIS" },
+                    "fee": 30,
+                },
+                "reserve_a": 100_i64,
+                "reserve_b": 50_i64,
+                "total_pool_shares": 70_i64,
+                "type": "constant_product",
+            })),
+        )];
+
+        let (pools, _) = extract_liquidity_pools(&changes);
+        assert_eq!(pools.len(), 1);
+        assert!(pools[0].created_at_ledger.is_none());
     }
 
     #[test]
