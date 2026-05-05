@@ -2984,6 +2984,57 @@ async fn accounts_transactions_unknown_returns_404_against_real_db() {
     assert_eq!(json["code"], "not_found");
 }
 
+/// Indexed account with zero `transaction_participants` rows must return
+/// 200 + an empty page, distinct from the 404 path. Locks the contract
+/// against accidental regression to "404 when no transactions yet".
+#[tokio::test]
+async fn accounts_transactions_indexed_account_zero_participations_returns_empty_page() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT a.account_id \
+         FROM accounts a \
+         LEFT JOIN transaction_participants tp ON tp.account_id = a.id \
+         GROUP BY a.account_id \
+         HAVING COUNT(tp.*) = 0 \
+         LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    let Some((account_strkey,)) = row else {
+        eprintln!("no zero-participation accounts — skipping empty-page test");
+        return;
+    };
+
+    let resp = build_app(pool)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/accounts/{account_strkey}/transactions"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200: {json}");
+    assert!(
+        json["data"].is_array() && json["data"].as_array().unwrap().is_empty(),
+        "data should be empty: {json}"
+    );
+    assert_eq!(json["page"]["has_more"], false, "has_more: {json}");
+    assert!(
+        json["page"]["cursor"].is_null(),
+        "cursor should be absent: {json}"
+    );
+}
+
 /// Cursor traversal: page A and page B (continuation) must not overlap.
 /// Same shape as the transactions/ledgers cursor tests but on the account
 /// transactions sub-resource.

@@ -124,21 +124,18 @@ pub async fn list_account_transactions(
         return resp;
     }
 
-    let account_known = match fetch_account(&state.db, &account_id).await {
-        Ok(Some(_)) => true,
-        Ok(None) => false,
+    let header = match fetch_account(&state.db, &account_id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return errors::not_found(format!("account '{account_id}' not found")),
         Err(e) => {
             tracing::error!("DB error resolving account {account_id}: {e}");
             return errors::internal_error(errors::DB_ERROR, "database error");
         }
     };
-    if !account_known {
-        return errors::not_found(format!("account '{account_id}' not found"));
-    }
 
     let mut rows = match fetch_transactions(
         &state.db,
-        &account_id,
+        header.id,
         i64::from(pagination.limit) + 1,
         pagination.cursor.as_ref(),
     )

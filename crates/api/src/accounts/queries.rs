@@ -120,11 +120,12 @@ pub async fn fetch_balances(
 // Transactions query — canonical 07
 // ---------------------------------------------------------------------------
 
-/// CTE inlines StrKey → BIGINT so the planner walks the
-/// `transaction_participants` PK keyset. Caller passes `limit + 1`.
+/// Caller threads the surrogate `account_id` (from [`fetch_account`]) so the
+/// planner walks the `transaction_participants` PK keyset directly. Caller
+/// passes `limit + 1`.
 pub async fn fetch_transactions(
     pool: &PgPool,
-    account_strkey: &str,
+    account_id: i64,
     limit: i64,
     cursor: Option<&TsIdCursor>,
 ) -> Result<Vec<AccountTxRow>, sqlx::Error> {
@@ -132,10 +133,7 @@ pub async fn fetch_transactions(
     let cursor_id = cursor.map(|c| c.id);
 
     let raw: Vec<PgRow> = sqlx::query(
-        "WITH acc AS ( \
-             SELECT id FROM accounts WHERE account_id = $1 \
-         ) \
-         SELECT \
+        "SELECT \
              t.id, \
              encode(t.hash, 'hex')          AS hash, \
              t.ledger_sequence, \
@@ -147,8 +145,7 @@ pub async fn fetch_transactions(
              t.has_soroban, \
              COALESCE(ops.operation_types, ARRAY[]::text[]) AS operation_types, \
              t.created_at \
-         FROM acc \
-         JOIN transaction_participants tp ON tp.account_id = acc.id \
+         FROM transaction_participants tp \
          JOIN transactions t \
                 ON t.id         = tp.transaction_id \
                AND t.created_at = tp.created_at \
@@ -160,11 +157,12 @@ pub async fn fetch_transactions(
              WHERE oa.transaction_id = t.id \
                AND oa.created_at     = t.created_at \
          ) ops ON TRUE \
-         WHERE ($3::timestamptz IS NULL OR (tp.created_at, tp.transaction_id) < ($3, $4)) \
+         WHERE tp.account_id = $1 \
+           AND ($3::timestamptz IS NULL OR (tp.created_at, tp.transaction_id) < ($3, $4)) \
          ORDER BY tp.created_at DESC, tp.transaction_id DESC \
          LIMIT $2",
     )
-    .bind(account_strkey)
+    .bind(account_id)
     .bind(limit)
     .bind(cursor_ts)
     .bind(cursor_id)
