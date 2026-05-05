@@ -16,9 +16,11 @@ pub mod state;
 #[cfg(test)]
 mod tests_integration;
 mod transactions;
-// Runtime details enrichment — S3 archive reread + (future) HTTP stellar.toml.
-// Used by E3, E13 and E14 endpoint handlers. Exposed as module so future
-// handlers can call the extractors without further wiring.
+// Runtime details enrichment — S3 archive reread + HTTP stellar.toml fetch.
+// stellar_archive submodule drives E3 (`/transactions/:hash`) and E14
+// (`/contracts/:id/events`); sep1 submodule drives E9 (`/assets/:id`).
+// Exposed as module so future handlers can call the extractors without
+// further wiring.
 mod runtime_enrichment;
 
 use axum::{Json, Router, routing::get};

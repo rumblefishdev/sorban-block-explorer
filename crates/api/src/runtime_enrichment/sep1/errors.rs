@@ -1,17 +1,20 @@
 //! Error type for the SEP-1 stellar.toml fetcher.
 //!
-//! Every variant maps to `EnrichmentStatus::Unavailable` on the consumer
-//! side — the API never propagates a 5xx because of an enrichment failure.
-//! The variants exist so logs / metrics can attribute outages to their
-//! root cause.
+//! Every variant collapses to `null` `description` / `home_page` on the
+//! consumer side (warn-logged) — the API never propagates a 5xx because of
+//! an enrichment failure. The variants exist so logs / metrics can attribute
+//! outages to their root cause.
 
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Sep1Error {
-    /// The asset's issuer account has no `home_domain` set on-chain, so
-    /// there is no SEP-1 source to consult. Not really an error from the
-    /// caller's perspective — surfaced as `unavailable` with empty fields.
+    /// Reserved for callers that want to express "no `home_domain` to fetch"
+    /// as an error rather than short-circuiting upstream. Today's only
+    /// consumer (`assets::handlers::get_asset`) skips the fetch entirely
+    /// when `home_domain` is `None` / empty, so this variant is currently
+    /// not constructed; kept so future consumers can map the missing-domain
+    /// case onto the same enum the rest of the failures use.
     #[error("issuer has no home_domain set")]
     MissingHomeDomain,
 

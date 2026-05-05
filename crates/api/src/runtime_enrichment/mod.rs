@@ -1,8 +1,9 @@
 //! Runtime details enrichment — per-request, fail-soft, in-process.
 //!
 //! Two transport-specific submodules share a common shape: best-effort fetch,
-//! merge into the DB-light slice, signal status via an `enrichment_status`
-//! field on the response.
+//! merge into the DB-light slice, on failure surface the enrichment fields as
+//! `null` and warn-log (no `enrichment_status` discriminator today — re-introduce
+//! when a frontend needs to distinguish "fetch failed" from "no data published").
 //!
 //! - [`stellar_archive`] — S3 reread of public Stellar archive ledgers (ADR 0029).
 //! - [`sep1`] — HTTP fetch of issuer stellar.toml files (task 0188).
