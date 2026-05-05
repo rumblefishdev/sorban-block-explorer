@@ -1587,11 +1587,116 @@ pub(super) async fn upsert_nfts_and_ownership(
 // 13. liquidity_pools + snapshots + lp_positions
 // ---------------------------------------------------------------------------
 
+/// Lore-0189: discover pool_ids referenced by `staged.lp_position_rows` that
+/// are missing both from `staged.pool_rows` (will not be inserted by 13a) and
+/// from the `liquidity_pools` table (no prior persistence).
+///
+/// Such pool_ids would FK-fail the `lp_positions` INSERT at 13c. They show up
+/// during partial / mid-stream backfills when a `pool_share` trustline is
+/// created/updated/removed in a ledger that does not also surface the pool's
+/// `LedgerEntry` (and the pool was created in a pre-window ledger). The
+/// extractor's `state` filter loosening (Layer 3, see `xdr_parser::extract_liquidity_pools`)
+/// covers the common subcase where the pool appears as a `state` snapshot in
+/// op_meta. This function catches the residual: pools with no representation
+/// in the current ledger at all.
+async fn detect_orphan_pool_ids(
+    db_tx: &mut Transaction<'_, Postgres>,
+    staged: &Staged,
+) -> Result<Vec<Vec<u8>>, HandlerError> {
+    if staged.lp_position_rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let staged_pool_ids: HashSet<&[u8]> = staged
+        .pool_rows
+        .iter()
+        .map(|p| p.pool_id.as_slice())
+        .collect();
+
+    let mut referenced: HashSet<Vec<u8>> = HashSet::new();
+    for pos in &staged.lp_position_rows {
+        if !staged_pool_ids.contains(pos.pool_id.as_slice()) {
+            referenced.insert(pos.pool_id.to_vec());
+        }
+    }
+    if referenced.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let candidates: Vec<Vec<u8>> = referenced.into_iter().collect();
+    let known: Vec<Vec<u8>> =
+        sqlx::query_scalar("SELECT pool_id FROM liquidity_pools WHERE pool_id = ANY($1::BYTEA[])")
+            .bind(&candidates)
+            .fetch_all(&mut **db_tx)
+            .await?;
+    let known_set: HashSet<Vec<u8>> = known.into_iter().collect();
+
+    Ok(candidates
+        .into_iter()
+        .filter(|c| !known_set.contains(c))
+        .collect())
+}
+
+/// Lore-0189: write a sentinel placeholder pool row for every orphan pool_id
+/// detected by `detect_orphan_pool_ids`. The row uses a convention marker —
+/// `created_at_ledger = 0` — that no real pool can carry (Stellar pubnet
+/// genesis ledger seq is 1) and that the 13a `ON CONFLICT DO UPDATE` clause
+/// recognizes for a one-shot upgrade when the real pool data is later observed
+/// (extractor `state` filter, Layer 3).
+///
+/// Sentinel field shape:
+/// - asset_a_type=0, asset_a_code=NULL, asset_a_issuer_id=NULL
+/// - asset_b_type=0, asset_b_code=NULL, asset_b_issuer_id=NULL
+/// - fee_bps=0
+/// - created_at_ledger=0  (the marker)
+///
+/// `ON CONFLICT (pool_id) DO NOTHING` because real or earlier-sentinel rows
+/// must not be touched here — the upgrade transition is handled by 13a.
+async fn insert_sentinel_pools(
+    db_tx: &mut Transaction<'_, Postgres>,
+    pool_ids: &[Vec<u8>],
+) -> Result<(), HandlerError> {
+    sqlx::query(
+        r#"
+        INSERT INTO liquidity_pools (
+            pool_id, asset_a_type, asset_a_code, asset_a_issuer_id,
+            asset_b_type, asset_b_code, asset_b_issuer_id,
+            fee_bps, created_at_ledger
+        )
+        SELECT pool_id, 0::SMALLINT, NULL::VARCHAR, NULL::BIGINT,
+               0::SMALLINT, NULL::VARCHAR, NULL::BIGINT,
+               0::INTEGER, 0::BIGINT
+          FROM UNNEST($1::BYTEA[]) AS t(pool_id)
+        ON CONFLICT (pool_id) DO NOTHING
+        "#,
+    )
+    .bind(pool_ids)
+    .execute(&mut **db_tx)
+    .await?;
+    Ok(())
+}
+
 pub(super) async fn upsert_pools_and_snapshots(
     db_tx: &mut Transaction<'_, Postgres>,
     staged: &Staged,
     account_ids: &HashMap<String, i64>,
 ) -> Result<(), HandlerError> {
+    // Lore-0189: emit sentinel placeholder pool rows for any lp_position
+    // pool_id that won't be covered by 13a (not in staged.pool_rows) and
+    // is not already in the DB. Must run BEFORE 13a so the 13c
+    // lp_positions INSERT FK resolves. Sentinels are upgradable —
+    // see 13a's ON CONFLICT clause.
+    let orphan_pool_ids = detect_orphan_pool_ids(db_tx, staged).await?;
+    if !orphan_pool_ids.is_empty() {
+        let sample: Vec<String> = orphan_pool_ids.iter().take(3).map(hex::encode).collect();
+        tracing::warn!(
+            ledger_sequence = staged.ledger_sequence,
+            count = orphan_pool_ids.len(),
+            sample = ?sample,
+            "lore-0189: emitting sentinel placeholder pool rows for orphan lp_positions"
+        );
+        insert_sentinel_pools(db_tx, &orphan_pool_ids).await?;
+    }
+
     // 13a. liquidity_pools
     if !staged.pool_rows.is_empty() {
         for chunk in staged.pool_rows.chunks(CHUNK_SIZE) {
@@ -1640,9 +1745,44 @@ pub(super) async fn upsert_pools_and_snapshots(
                     $5::SMALLINT[], $6::VARCHAR[], $7::BIGINT[],
                     $8::INTEGER[], $9::BIGINT[]
                 )
+                -- Lore-0189: sentinel-aware UPSERT.
+                --
+                -- Existing row with `created_at_ledger=0` is a sentinel
+                -- placeholder emitted by `insert_sentinel_pools` to satisfy
+                -- the lp_positions FK when the real pool dimension was
+                -- not available at the orphan ledger. When real data
+                -- arrives (incoming `created_at_ledger > 0`), every
+                -- dimension field is upgraded to EXCLUDED. Otherwise,
+                -- existing real values are preserved (no downgrade).
+                --
+                -- `created_at_ledger`: NULLIF folds sentinel 0 to NULL so
+                -- LEAST falls through to the real value when only one side
+                -- is real. COALESCE(..., 0) keeps the sentinel marker if
+                -- both sides are sentinel (no real data ever observed).
                 ON CONFLICT (pool_id) DO UPDATE SET
-                    asset_a_type = liquidity_pools.asset_a_type,
-                    created_at_ledger = LEAST(liquidity_pools.created_at_ledger, EXCLUDED.created_at_ledger)
+                    asset_a_type      = CASE WHEN liquidity_pools.created_at_ledger = 0 AND EXCLUDED.created_at_ledger > 0
+                                             THEN EXCLUDED.asset_a_type
+                                             ELSE liquidity_pools.asset_a_type END,
+                    asset_a_code      = CASE WHEN liquidity_pools.created_at_ledger = 0 AND EXCLUDED.created_at_ledger > 0
+                                             THEN EXCLUDED.asset_a_code
+                                             ELSE liquidity_pools.asset_a_code END,
+                    asset_a_issuer_id = CASE WHEN liquidity_pools.created_at_ledger = 0 AND EXCLUDED.created_at_ledger > 0
+                                             THEN EXCLUDED.asset_a_issuer_id
+                                             ELSE liquidity_pools.asset_a_issuer_id END,
+                    asset_b_type      = CASE WHEN liquidity_pools.created_at_ledger = 0 AND EXCLUDED.created_at_ledger > 0
+                                             THEN EXCLUDED.asset_b_type
+                                             ELSE liquidity_pools.asset_b_type END,
+                    asset_b_code      = CASE WHEN liquidity_pools.created_at_ledger = 0 AND EXCLUDED.created_at_ledger > 0
+                                             THEN EXCLUDED.asset_b_code
+                                             ELSE liquidity_pools.asset_b_code END,
+                    asset_b_issuer_id = CASE WHEN liquidity_pools.created_at_ledger = 0 AND EXCLUDED.created_at_ledger > 0
+                                             THEN EXCLUDED.asset_b_issuer_id
+                                             ELSE liquidity_pools.asset_b_issuer_id END,
+                    fee_bps           = CASE WHEN liquidity_pools.created_at_ledger = 0 AND EXCLUDED.created_at_ledger > 0
+                                             THEN EXCLUDED.fee_bps
+                                             ELSE liquidity_pools.fee_bps END,
+                    created_at_ledger = COALESCE(LEAST(NULLIF(liquidity_pools.created_at_ledger, 0),
+                                                       NULLIF(EXCLUDED.created_at_ledger, 0)), 0)
                 "#,
             )
             .bind(&pools)
