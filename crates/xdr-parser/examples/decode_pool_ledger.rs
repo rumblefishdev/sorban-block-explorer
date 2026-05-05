@@ -90,11 +90,6 @@ struct TxView {
     meta: stellar_xdr::curr::TransactionMeta,
 }
 
-/// Lower-case the supplied JSON value if it is a string, else return as-is.
-fn json_str_lower(v: Option<&serde_json::Value>) -> Option<String> {
-    v.and_then(|v| v.as_str()).map(|s| s.to_lowercase())
-}
-
 fn main() {
     let args = parse_args();
     eprintln!(
@@ -169,7 +164,6 @@ fn main() {
                         } else {
                             println!("  data:            <none — change is `removed`>");
                         }
-                        let _ = json_str_lower; // silence unused if compiler complains
                     }
                 }
             }

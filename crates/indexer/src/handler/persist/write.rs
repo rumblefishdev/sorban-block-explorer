@@ -1755,10 +1755,11 @@ pub(super) async fn upsert_pools_and_snapshots(
                 -- dimension field is upgraded to EXCLUDED. Otherwise,
                 -- existing real values are preserved (no downgrade).
                 --
-                -- `created_at_ledger`: NULLIF folds sentinel 0 to NULL so
-                -- LEAST falls through to the real value when only one side
-                -- is real. COALESCE(..., 0) keeps the sentinel marker if
-                -- both sides are sentinel (no real data ever observed).
+                -- `created_at_ledger` upgrade table:
+                --   sentinel (0) + real (>0)   → real            (sentinel→real upgrade)
+                --   real (>0) + sentinel (0)   → existing real   (no downgrade)
+                --   real + real                → LEAST(...)      (earliest observation wins)
+                --   sentinel + sentinel        → 0               (still sentinel)
                 ON CONFLICT (pool_id) DO UPDATE SET
                     asset_a_type      = CASE WHEN liquidity_pools.created_at_ledger = 0 AND EXCLUDED.created_at_ledger > 0
                                              THEN EXCLUDED.asset_a_type
@@ -1781,8 +1782,18 @@ pub(super) async fn upsert_pools_and_snapshots(
                     fee_bps           = CASE WHEN liquidity_pools.created_at_ledger = 0 AND EXCLUDED.created_at_ledger > 0
                                              THEN EXCLUDED.fee_bps
                                              ELSE liquidity_pools.fee_bps END,
-                    created_at_ledger = COALESCE(LEAST(NULLIF(liquidity_pools.created_at_ledger, 0),
-                                                       NULLIF(EXCLUDED.created_at_ledger, 0)), 0)
+                    -- Explicit CASE (not COALESCE+LEAST+NULLIF) so the upgrade
+                    -- semantics are unambiguous on inspection without relying
+                    -- on PG-specific NULL-ignoring LEAST behavior.
+                    created_at_ledger = CASE
+                        WHEN liquidity_pools.created_at_ledger = 0 AND EXCLUDED.created_at_ledger > 0
+                            THEN EXCLUDED.created_at_ledger
+                        WHEN liquidity_pools.created_at_ledger > 0 AND EXCLUDED.created_at_ledger = 0
+                            THEN liquidity_pools.created_at_ledger
+                        WHEN liquidity_pools.created_at_ledger > 0 AND EXCLUDED.created_at_ledger > 0
+                            THEN LEAST(liquidity_pools.created_at_ledger, EXCLUDED.created_at_ledger)
+                        ELSE 0  -- both sentinel
+                    END
                 "#,
             )
             .bind(&pools)
