@@ -1,20 +1,20 @@
 ---
-id: '0188'
+id: '0189'
 title: 'lp_positions FK violation when parent pool not extracted in same ledger'
 type: BUG
 status: active
 related_adr: []
-related_tasks: ['0126', '0179']
+related_tasks: ['0126', '0179', '0185']
 tags: ['phase-pools', 'effort-medium', 'priority-high', 'indexer', 'extraction']
 links: []
 history:
   - date: 2026-05-05
     status: backlog
-    who: stanislaw
-    note: 'Crashed bridge backfill (lore-0185 follow-up) at ledger 62148003 with FK violation lp_positions_pool_id_fkey. Spawned for unit-level repro and fix; partial 132k dataset accepted, no full re-backfill needed.'
+    who: stkrolikiewicz
+    note: 'Crashed bridge backfill (lore-0185 follow-up) at ledger 62148003 with FK violation lp_positions_pool_id_fkey. Spawned for unit-level repro and fix; partial 132k dataset accepted, no full re-backfill needed. Originally created as 0188 — renamed to 0189 due to ID collision with concurrent multi-laptop merge (0188 SEP-1 fetcher).'
   - date: 2026-05-05
     status: active
-    who: stanislaw
+    who: stkrolikiewicz
     note: 'Promoted to active for unit-level repro + fix. Backfill at 132k partial dataset accepted as audit baseline.'
 ---
 
