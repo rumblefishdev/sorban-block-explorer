@@ -16,9 +16,13 @@ use crate::runtime_enrichment::stellar_archive::extractors::extract_e3_heavy;
 use crate::runtime_enrichment::stellar_archive::merge::merge_e3_response;
 use crate::state::AppState;
 
-use super::dto::{ListParams, OperationItem, TransactionDetailLight, TransactionListItem};
+use super::dto::{
+    EventAppearanceItem, InvocationAppearanceItem, ListParams, OperationItem,
+    TransactionDetailLight, TransactionListItem,
+};
 use super::queries::{
-    ResolvedListParams, fetch_detail, fetch_list, fetch_operations, lookup_hash_index,
+    ResolvedListParams, fetch_detail, fetch_event_appearances, fetch_invocation_appearances,
+    fetch_list, fetch_operations, fetch_participants, lookup_hash_index,
 };
 
 // ---------------------------------------------------------------------------
@@ -104,11 +108,16 @@ pub async fn list_transactions(
         .map(|row| TransactionListItem {
             hash: row.hash,
             ledger_sequence: row.ledger_sequence,
+            application_order: row.application_order,
             source_account: row.source_account,
-            successful: row.successful,
             fee_charged: row.fee_charged,
-            created_at: row.created_at,
+            inner_tx_hash: row.inner_tx_hash,
+            successful: row.successful,
             operation_count: row.operation_count,
+            has_soroban: row.has_soroban,
+            operation_types: row.operation_types,
+            contract_ids: row.contract_ids,
+            created_at: row.created_at,
         })
         .collect();
 
@@ -206,31 +215,87 @@ pub async fn get_transaction(State(state): State<AppState>, Path(hash): Path<Str
         }
     };
 
+    // When the archive is unavailable, fall back to the DB-side appearance
+    // index so the response stays useful. Sub-fetch errors degrade that
+    // one array to `[]` rather than failing the whole detail call.
+    let (participants, soroban_events, soroban_invocations) = if heavy.is_none() {
+        let (p_res, e_res, i_res) = tokio::join!(
+            fetch_participants(&state.db, tx.id, tx.created_at),
+            fetch_event_appearances(&state.db, tx.id, tx.created_at),
+            fetch_invocation_appearances(&state.db, tx.id, tx.created_at),
+        );
+        let participants = p_res.unwrap_or_else(|e| {
+            tracing::warn!("DB fallback: fetch_participants failed: {e}");
+            Vec::new()
+        });
+        let events = e_res
+            .unwrap_or_else(|e| {
+                tracing::warn!("DB fallback: fetch_event_appearances failed: {e}");
+                Vec::new()
+            })
+            .into_iter()
+            .map(|r| EventAppearanceItem {
+                contract_id: r.contract_id,
+                ledger_sequence: r.ledger_sequence,
+                amount: r.amount,
+                created_at: r.created_at,
+            })
+            .collect();
+        let invocations = i_res
+            .unwrap_or_else(|e| {
+                tracing::warn!("DB fallback: fetch_invocation_appearances failed: {e}");
+                Vec::new()
+            })
+            .into_iter()
+            .map(|r| InvocationAppearanceItem {
+                contract_id: r.contract_id,
+                caller_account: r.caller_account,
+                ledger_sequence: r.ledger_sequence,
+                amount: r.amount,
+                created_at: r.created_at,
+            })
+            .collect();
+        (participants, events, invocations)
+    } else {
+        (Vec::new(), Vec::new(), Vec::new())
+    };
+
     let light = TransactionDetailLight {
         hash: tx.hash,
         ledger_sequence: tx.ledger_sequence,
+        application_order: tx.application_order,
         source_account: tx.source_account,
-        successful: tx.successful,
         fee_charged: tx.fee_charged,
+        inner_tx_hash: tx.inner_tx_hash,
+        successful: tx.successful,
+        operation_count: tx.operation_count,
+        has_soroban: tx.has_soroban,
         created_at: tx.created_at,
         parse_error: tx.parse_error,
         operations: db_operations(&op_rows),
+        participants,
+        soroban_events,
+        soroban_invocations,
     };
 
     Json(merge_e3_response(light, heavy)).into_response()
 }
 
-/// Project DB-side operation rows onto the light `OperationItem` slice
-/// (type tag + contract_id only). XDR-decoded per-op details live in
-/// `heavy.operations[]`.
 fn db_operations(op_rows: &[super::queries::OpRow]) -> Vec<OperationItem> {
     op_rows
         .iter()
         .map(|op| OperationItem {
-            op_type: OperationType::try_from(op.op_type)
-                .map(|t: OperationType| t.to_string())
-                .unwrap_or_else(|_| "unknown".to_string()),
+            appearance_id: op.appearance_id,
+            type_name: op.type_name.clone(),
+            op_type: op.op_type,
+            source_account: op.source_account.clone(),
+            destination_account: op.destination_account.clone(),
             contract_id: op.contract_id.clone(),
+            asset_code: op.asset_code.clone(),
+            asset_issuer: op.asset_issuer.clone(),
+            pool_id: op.pool_id.clone(),
+            ledger_sequence: op.ledger_sequence,
+            created_at: op.created_at,
         })
         .collect()
 }

@@ -1447,7 +1447,7 @@
           {
             "name": "filter[contract_id]",
             "in": "query",
-            "description": "Filter by contract StrKey (C…) that appears in an operation.",
+            "description": "Filter by contract StrKey (C…) — matches root op, nested call, or event emission.",
             "required": false,
             "schema": {
               "type": ["string", "null"]
@@ -1901,18 +1901,29 @@
         "allOf": [
           {
             "type": "object",
-            "description": "DB-sourced light slice for the transaction detail endpoint.\n\nComposed with `E3HeavyFields` via `merge_e3_response` (from task 0150)\ninto the wrapped E3 response. All XDR-sourced fields (memo, result_code,\nsignatures, events, operations details, envelope_xdr/result_xdr,\noperation_tree) live in the `heavy` block — see `E3Response`.",
+            "description": "DB-sourced light slice for the transaction detail endpoint.\n\nComposed with `E3HeavyFields` via `merge_e3_response` (task 0150). All\nXDR-sourced fields (memo, result_code, signatures, events, operation\ndetails, envelope_xdr/result_xdr, operation_tree) live in `heavy`.",
             "required": [
               "hash",
               "ledger_sequence",
+              "application_order",
               "source_account",
-              "successful",
               "fee_charged",
+              "successful",
+              "operation_count",
+              "has_soroban",
               "created_at",
               "parse_error",
-              "operations"
+              "operations",
+              "participants",
+              "soroban_events",
+              "soroban_invocations"
             ],
             "properties": {
+              "application_order": {
+                "type": "integer",
+                "format": "int32",
+                "description": "1-based position of this transaction within its ledger."
+              },
               "created_at": {
                 "type": "string",
                 "format": "date-time"
@@ -1922,24 +1933,55 @@
                 "format": "int64",
                 "description": "Fee charged in stroops."
               },
+              "has_soroban": {
+                "type": "boolean"
+              },
               "hash": {
                 "type": "string",
                 "description": "Transaction hash (64-char lowercase hex)."
+              },
+              "inner_tx_hash": {
+                "type": ["string", "null"],
+                "description": "Inner-transaction hash (64-char hex) for fee-bump envelopes, `null` otherwise."
               },
               "ledger_sequence": {
                 "type": "integer",
                 "format": "int64"
               },
+              "operation_count": {
+                "type": "integer",
+                "format": "int32"
+              },
               "operations": {
                 "type": "array",
                 "items": {
                   "$ref": "#/components/schemas/OperationItem"
-                },
-                "description": "Operations as known to the DB — type tag + contract_id only. XDR-decoded\nper-op detail (function name, raw parameters) lives in\n`heavy.operations[]`."
+                }
               },
               "parse_error": {
                 "type": "boolean",
                 "description": "`true` when the XDR parser encountered an error for this transaction."
+              },
+              "participants": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Accounts touched by this transaction. Populated only when\n`heavy_fields_status = \"unavailable\"`; otherwise `[]` and consumers\nshould rely on the heavy block."
+              },
+              "soroban_events": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/EventAppearanceItem"
+                },
+                "description": "Soroban event appearance index rows. Same fallback semantics as\n`participants`. Full topics + data live in `heavy.contract_events`."
+              },
+              "soroban_invocations": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/InvocationAppearanceItem"
+                },
+                "description": "Soroban invocation appearance index rows. Same fallback semantics\nas `participants`. Full call hierarchy lives in `heavy.operation_tree`."
               },
               "source_account": {
                 "type": "string"
@@ -1991,6 +2033,27 @@
           "message": {
             "type": "string",
             "description": "Human-readable error description."
+          }
+        }
+      },
+      "EventAppearanceItem": {
+        "type": "object",
+        "required": ["contract_id", "ledger_sequence", "amount", "created_at"],
+        "properties": {
+          "amount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "contract_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ledger_sequence": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -2057,6 +2120,31 @@
           "interface_metadata": {},
           "wasm_hash": {
             "type": ["string", "null"]
+          }
+        }
+      },
+      "InvocationAppearanceItem": {
+        "type": "object",
+        "required": ["contract_id", "ledger_sequence", "amount", "created_at"],
+        "properties": {
+          "amount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "caller_account": {
+            "type": ["string", "null"],
+            "description": "Root caller G-StrKey. Per ADR 0034 nested-call hierarchy is XDR-only."
+          },
+          "contract_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ledger_sequence": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -2318,16 +2406,55 @@
       },
       "OperationItem": {
         "type": "object",
-        "description": "DB-sourced operation row in `TransactionDetailLight`.",
-        "required": ["type"],
+        "required": [
+          "appearance_id",
+          "type_name",
+          "type",
+          "ledger_sequence",
+          "created_at"
+        ],
         "properties": {
-          "contract_id": {
+          "appearance_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Global BIGSERIAL `operations_appearances.id`; result-set order\n(`ORDER BY oa.id`) is the operation's within-tx application order."
+          },
+          "asset_code": {
             "type": ["string", "null"],
-            "description": "Contract StrKey (C…) involved in the operation, if applicable."
+            "description": "Asset code (≤12 chars) for classic asset operations."
+          },
+          "asset_issuer": {
+            "type": ["string", "null"]
+          },
+          "contract_id": {
+            "type": ["string", "null"]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "destination_account": {
+            "type": ["string", "null"]
+          },
+          "ledger_sequence": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pool_id": {
+            "type": ["string", "null"],
+            "description": "Hex-encoded liquidity pool ID."
+          },
+          "source_account": {
+            "type": ["string", "null"]
           },
           "type": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Raw `OperationType` SMALLINT (ADR 0031)."
+          },
+          "type_name": {
             "type": "string",
-            "description": "Operation type tag in canonical SCREAMING_SNAKE_CASE\n(e.g. `\"INVOKE_HOST_FUNCTION\"`, `\"PAYMENT\"`) — produced by\n`domain::OperationType`'s `Display` impl."
+            "description": "Operation type tag in canonical SCREAMING_SNAKE_CASE\n(e.g. `\"INVOKE_HOST_FUNCTION\"`)."
           }
         }
       },
@@ -2946,13 +3073,29 @@
               "required": [
                 "hash",
                 "ledger_sequence",
+                "application_order",
                 "source_account",
-                "successful",
                 "fee_charged",
-                "created_at",
-                "operation_count"
+                "successful",
+                "operation_count",
+                "has_soroban",
+                "operation_types",
+                "contract_ids",
+                "created_at"
               ],
               "properties": {
+                "application_order": {
+                  "type": "integer",
+                  "format": "int32",
+                  "description": "1-based position of this transaction within its ledger."
+                },
+                "contract_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "All C-StrKeys touched anywhere in the transaction."
+                },
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
@@ -2962,9 +3105,17 @@
                   "format": "int64",
                   "description": "Fee charged in stroops."
                 },
+                "has_soroban": {
+                  "type": "boolean",
+                  "description": "`true` when the transaction touched at least one Soroban contract\n(root invocation, nested call, or event emission)."
+                },
                 "hash": {
                   "type": "string",
                   "description": "Transaction hash (64-char lowercase hex)."
+                },
+                "inner_tx_hash": {
+                  "type": ["string", "null"],
+                  "description": "Inner-transaction hash (64-char hex) for fee-bump envelopes, `null` otherwise."
                 },
                 "ledger_sequence": {
                   "type": "integer",
@@ -2973,6 +3124,13 @@
                 "operation_count": {
                   "type": "integer",
                   "format": "int32"
+                },
+                "operation_types": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "All distinct operation type names in the transaction\n(e.g. `[\"INVOKE_HOST_FUNCTION\", \"PAYMENT\"]`)."
                 },
                 "source_account": {
                   "type": "string"
@@ -3299,18 +3457,29 @@
       },
       "TransactionDetailLight": {
         "type": "object",
-        "description": "DB-sourced light slice for the transaction detail endpoint.\n\nComposed with `E3HeavyFields` via `merge_e3_response` (from task 0150)\ninto the wrapped E3 response. All XDR-sourced fields (memo, result_code,\nsignatures, events, operations details, envelope_xdr/result_xdr,\noperation_tree) live in the `heavy` block — see `E3Response`.",
+        "description": "DB-sourced light slice for the transaction detail endpoint.\n\nComposed with `E3HeavyFields` via `merge_e3_response` (task 0150). All\nXDR-sourced fields (memo, result_code, signatures, events, operation\ndetails, envelope_xdr/result_xdr, operation_tree) live in `heavy`.",
         "required": [
           "hash",
           "ledger_sequence",
+          "application_order",
           "source_account",
-          "successful",
           "fee_charged",
+          "successful",
+          "operation_count",
+          "has_soroban",
           "created_at",
           "parse_error",
-          "operations"
+          "operations",
+          "participants",
+          "soroban_events",
+          "soroban_invocations"
         ],
         "properties": {
+          "application_order": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1-based position of this transaction within its ledger."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -3320,24 +3489,55 @@
             "format": "int64",
             "description": "Fee charged in stroops."
           },
+          "has_soroban": {
+            "type": "boolean"
+          },
           "hash": {
             "type": "string",
             "description": "Transaction hash (64-char lowercase hex)."
+          },
+          "inner_tx_hash": {
+            "type": ["string", "null"],
+            "description": "Inner-transaction hash (64-char hex) for fee-bump envelopes, `null` otherwise."
           },
           "ledger_sequence": {
             "type": "integer",
             "format": "int64"
           },
+          "operation_count": {
+            "type": "integer",
+            "format": "int32"
+          },
           "operations": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/OperationItem"
-            },
-            "description": "Operations as known to the DB — type tag + contract_id only. XDR-decoded\nper-op detail (function name, raw parameters) lives in\n`heavy.operations[]`."
+            }
           },
           "parse_error": {
             "type": "boolean",
             "description": "`true` when the XDR parser encountered an error for this transaction."
+          },
+          "participants": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Accounts touched by this transaction. Populated only when\n`heavy_fields_status = \"unavailable\"`; otherwise `[]` and consumers\nshould rely on the heavy block."
+          },
+          "soroban_events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EventAppearanceItem"
+            },
+            "description": "Soroban event appearance index rows. Same fallback semantics as\n`participants`. Full topics + data live in `heavy.contract_events`."
+          },
+          "soroban_invocations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InvocationAppearanceItem"
+            },
+            "description": "Soroban invocation appearance index rows. Same fallback semantics\nas `participants`. Full call hierarchy lives in `heavy.operation_tree`."
           },
           "source_account": {
             "type": "string"
@@ -3353,13 +3553,29 @@
         "required": [
           "hash",
           "ledger_sequence",
+          "application_order",
           "source_account",
-          "successful",
           "fee_charged",
-          "created_at",
-          "operation_count"
+          "successful",
+          "operation_count",
+          "has_soroban",
+          "operation_types",
+          "contract_ids",
+          "created_at"
         ],
         "properties": {
+          "application_order": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1-based position of this transaction within its ledger."
+          },
+          "contract_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "All C-StrKeys touched anywhere in the transaction."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -3369,9 +3585,17 @@
             "format": "int64",
             "description": "Fee charged in stroops."
           },
+          "has_soroban": {
+            "type": "boolean",
+            "description": "`true` when the transaction touched at least one Soroban contract\n(root invocation, nested call, or event emission)."
+          },
           "hash": {
             "type": "string",
             "description": "Transaction hash (64-char lowercase hex)."
+          },
+          "inner_tx_hash": {
+            "type": ["string", "null"],
+            "description": "Inner-transaction hash (64-char hex) for fee-bump envelopes, `null` otherwise."
           },
           "ledger_sequence": {
             "type": "integer",
@@ -3380,6 +3604,13 @@
           "operation_count": {
             "type": "integer",
             "format": "int32"
+          },
+          "operation_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "All distinct operation type names in the transaction\n(e.g. `[\"INVOKE_HOST_FUNCTION\", \"PAYMENT\"]`)."
           },
           "source_account": {
             "type": "string"

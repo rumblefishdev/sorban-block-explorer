@@ -50,19 +50,25 @@ pub struct LedgerDetailRow {
 
 /// DB-side projection of an embedded transaction row.
 ///
-/// Mirrors `transactions::queries::TxListRow`: structural fields only,
-/// plus the internal `id` used as cursor tie-break (not exposed on the
-/// public `TransactionListItem` DTO).
+/// Mirrors `transactions::queries::TxListRow` so both entry points
+/// (`GET /v1/transactions` and `GET /v1/ledgers/:seq/transactions`)
+/// produce a `TransactionListItem` with identical canonical-aligned
+/// fields. `id` is the internal cursor tie-break, not exposed on the DTO.
 #[derive(Debug, sqlx::FromRow)]
 pub struct LedgerTxRow {
     pub id: i64,
     pub hash: String,
     pub ledger_sequence: i64,
+    pub application_order: i16,
     pub source_account: String,
-    pub successful: bool,
     pub fee_charged: i64,
-    pub created_at: DateTime<Utc>,
+    pub inner_tx_hash: Option<String>,
+    pub successful: bool,
     pub operation_count: i16,
+    pub has_soroban: bool,
+    pub operation_types: Vec<String>,
+    pub contract_ids: Vec<String>,
+    pub created_at: DateTime<Utc>,
 }
 
 impl From<LedgerTxRow> for TransactionListItem {
@@ -70,11 +76,16 @@ impl From<LedgerTxRow> for TransactionListItem {
         Self {
             hash: row.hash,
             ledger_sequence: row.ledger_sequence,
+            application_order: row.application_order,
             source_account: row.source_account,
-            successful: row.successful,
             fee_charged: row.fee_charged,
-            created_at: row.created_at,
+            inner_tx_hash: row.inner_tx_hash,
+            successful: row.successful,
             operation_count: row.operation_count,
+            has_soroban: row.has_soroban,
+            operation_types: row.operation_types,
+            contract_ids: row.contract_ids,
+            created_at: row.created_at,
         }
     }
 }
@@ -189,15 +200,44 @@ pub async fn fetch_transactions(
     sqlx::query_as::<_, LedgerTxRow>(
         "SELECT \
             t.id, \
-            encode(t.hash, 'hex')   AS hash, \
+            encode(t.hash, 'hex')          AS hash, \
             t.ledger_sequence, \
-            a.account_id            AS source_account, \
-            t.successful, \
+            t.application_order, \
+            a.account_id                   AS source_account, \
             t.fee_charged, \
-            t.created_at, \
-            t.operation_count \
+            encode(t.inner_tx_hash, 'hex') AS inner_tx_hash, \
+            t.successful, \
+            t.operation_count, \
+            t.has_soroban, \
+            COALESCE(ops.operation_types, ARRAY[]::text[]) AS operation_types, \
+            COALESCE(ctr.contract_ids,    ARRAY[]::text[]) AS contract_ids, \
+            t.created_at \
         FROM transactions t \
         JOIN accounts a ON a.id = t.source_id \
+        LEFT JOIN LATERAL ( \
+            SELECT array_agg(DISTINCT op_type_name(oa.type) ORDER BY op_type_name(oa.type)) AS operation_types \
+            FROM operations_appearances oa \
+            WHERE oa.transaction_id = t.id \
+              AND oa.created_at     = t.created_at \
+        ) ops ON TRUE \
+        LEFT JOIN LATERAL ( \
+            SELECT array_agg(DISTINCT sc.contract_id ORDER BY sc.contract_id) AS contract_ids \
+            FROM ( \
+                SELECT contract_id FROM operations_appearances \
+                WHERE transaction_id = t.id \
+                  AND created_at     = t.created_at \
+                  AND contract_id IS NOT NULL \
+                UNION \
+                SELECT contract_id FROM soroban_invocations_appearances \
+                WHERE transaction_id = t.id \
+                  AND created_at     = t.created_at \
+                UNION \
+                SELECT contract_id FROM soroban_events_appearances \
+                WHERE transaction_id = t.id \
+                  AND created_at     = t.created_at \
+            ) all_ctr \
+            JOIN soroban_contracts sc ON sc.id = all_ctr.contract_id \
+        ) ctr ON TRUE \
         WHERE t.ledger_sequence = $1 \
           AND t.created_at      = $2 \
           AND ($3::timestamptz IS NULL OR (t.created_at, t.id) < ($3, $4)) \
