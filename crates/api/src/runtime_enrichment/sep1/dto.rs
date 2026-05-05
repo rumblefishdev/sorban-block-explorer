@@ -65,6 +65,10 @@ ORG_URL = "https://example.com"
         let usdc = &parsed.currencies[0];
         assert_eq!(usdc.code.as_deref(), Some("USDC"));
         assert_eq!(
+            usdc.issuer.as_deref(),
+            Some("GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+        );
+        assert_eq!(
             usdc.desc.as_deref(),
             Some("Fully reserved fiat-collateralised stablecoin.")
         );

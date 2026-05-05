@@ -627,8 +627,13 @@ Design notes:
   there is no native branch in `detect_assets`. Operator deletion of this row
   breaks the `/assets` listing and any future FK that targets it.
 - `icon_url` is the only SEP-1 enrichment field on the DB row — it serves the
-  list-page thumbnail (per-row), and is targeted by the future type-1
-  enrichment worker (separate task)
+  list-page thumbnail (per-row), and is targeted by the future **type-1
+  enrichment worker** (a scheduled Lambda crate that runs offline against the
+  same stellar.toml endpoints used by `runtime_enrichment::sep1`, batches the
+  fetches, and writes the result back to the DB so list endpoints stay DB-only.
+  Distinct from **type-2 runtime enrichment** in `crates/api/src/runtime_enrichment`,
+  which fetches per-request and never writes to the DB. See task 0188 §"Out
+  of Scope" for the full type-1 / type-2 split.)
 - asset-detail SEP-1 fields (`description`, `home_page`, `conditions`,
   `is_asset_anchored`, `anchor_*`, `redemption_instructions`,
   `display_decimals`, organisation info) are NOT stored on this row at all —
@@ -642,7 +647,6 @@ Design notes:
 - type-1 enrichment worker for `icon_url` backfill (separate Lambda crate) is
   planned but currently unimplemented; it will write `icon_url` via batched
   HTTPS GETs to the same stellar.toml files the runtime fetcher uses
-- `total_supply` and `holder_count` are stock fields also populated post-ingest
 - `total_supply` and `holder_count` are stock fields also populated post-ingest
 - `soroban_contracts.contract_type = 'token'` classifies a contract's SEP-41 role
   and is intentionally distinct from this table's name — the two coexist without
