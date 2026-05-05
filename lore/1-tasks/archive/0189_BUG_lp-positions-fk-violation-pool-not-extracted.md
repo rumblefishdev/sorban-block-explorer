@@ -2,9 +2,9 @@
 id: '0189'
 title: 'lp_positions FK violation when parent pool not extracted in same ledger'
 type: BUG
-status: active
+status: completed
 related_adr: ['0041']
-related_tasks: ['0126', '0179', '0185']
+related_tasks: ['0126', '0179', '0185', '0193']
 tags: ['phase-pools', 'effort-medium', 'priority-high', 'indexer', 'extraction']
 links: []
 history:
@@ -16,6 +16,21 @@ history:
     status: active
     who: stkrolikiewicz
     note: 'Promoted to active for unit-level repro + fix. Backfill at 132k partial dataset accepted as audit baseline.'
+  - date: 2026-05-05
+    status: completed
+    who: stkrolikiewicz
+    note: >
+      Completed via PR #159 (merge commit 749de29). Two-layer fix shipped:
+      Layer 3 (extract_liquidity_pools `state` change_type) + sentinel
+      placeholder pool with `created_at_ledger=0` marker + sentinel-aware
+      UPSERT upgrade. ADR 0041 added (extends 0027/0031/0037, complies with
+      0032). 5 new tests (2 unit xdr-parser + 3 integration indexer); all
+      207 pre-existing tests still pass; clippy clean. Integration replay
+      62148003-62148010 succeeded (8 ledgers indexed without FK violation,
+      pool d63184 written with REAL data via Layer 3 — sentinel did NOT
+      fire). Audit-harness 15_liquidity_pools.sql + 17_lp_positions.sql
+      0 violations; new I6 placeholder count metric. Spawned 0193 (API
+      sentinel filter) to backlog. Copilot review addressed in 99cccfa.
 ---
 
 # lp_positions FK violation when parent pool not extracted in same ledger
@@ -236,9 +251,39 @@ A is preferred — preserves data, fixes root cause.
 - Related: 0126 (pool-participants-tracking) introduced
   `lp_positions`. 0179 (lp-asset canonical order) recent LP bug.
 
+## Issues Encountered
+
+- **Plan-mode XDR file path mismatch (FC4DCC04 vs FC4BB25C)**: Initial plan referenced
+  hex prefix `FC4DCC04--62148003.xdr.zst` from earlier agent investigation. Verified
+  during plan-gap audit that real prefix is `FC4BB25C--62148003.xdr.zst`. Updated
+  plan + docstring of `decode_pool_ledger.rs` example. Not a regression — caught
+  pre-implementation.
+- **Architectural pivot: orphan detection in `write.rs`, not staging**: Initial plan
+  put orphan detection in `staging.rs::Staged::prepare()`, which is sync without DB
+  pool. Caught in plan-gap audit; moved to `write.rs::upsert_pools_and_snapshots`
+  (already has `db_tx: &mut Transaction`). No code lost, just moved.
+- **Copilot review confusion on `LEAST(NULLIF(...,0), NULLIF(...,0))` form**: Original
+  `created_at_ledger` UPSERT used PG-specific NULL-ignoring `LEAST` semantics
+  (PostgreSQL ignores NULLs in LEAST/GREATEST, returns the first non-NULL). Verified
+  empirically — integration test passed before and after rewrite. But Copilot's
+  misread itself was evidence the form was easy to misunderstand. Rewrote as
+  explicit CASE with embedded truth-table comment for portability + clarity. Fix
+  shipped in commit `99cccfa`.
+
+**Broken/modified tests:** none. All 5 new tests added (2 unit + 3 integration);
+existing 14 indexer integration tests + 193 xdr-parser unit tests still pass.
+
 ## Future Work
 
-- API endpoint sentinel handling — 5 pool endpoint queries surface placeholder rows
-  as garbage data. Out of scope; spawn follow-up backlog task once this fix lands.
-- Full from-genesis backfill (separate long-running task; placeholder count
-  converges to 0).
+Spawned to backlog tasks:
+
+- **0193** — API endpoints: filter or annotate sentinel placeholder
+  `liquidity_pools` rows. The 5 pool endpoint queries currently surface sentinels
+  as garbage data (`native+native, fee=0, ledger=0`). Defer until more sentinels
+  appear in production-like partial backfills (current 132k DB has 0 sentinels;
+  Layer 3 sufficient for the tested range).
+
+Not yet a separate task — operational, not engineering:
+
+- Full from-genesis backfill — would converge sentinel placeholder count to 0
+  permanently. Multi-day operation; out of scope for this fix.
