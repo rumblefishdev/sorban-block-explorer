@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@rumblefish/api-types": "*",
+    "@rumblefish/soroban-block-explorer-ui": "*",
     "tslib": "^2.3.0"
   },
   "nx": {

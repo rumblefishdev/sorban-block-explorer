@@ -235,7 +235,7 @@ These are backend concerns even when their outputs are consumed by frontend page
 | Contracts       | `GET /contracts/:contract_id`, `GET /contracts/:contract_id/interface`, `GET /contracts/:contract_id/invocations`, `GET /contracts/:contract_id/events`                |
 | NFTs            | `GET /nfts`, `GET /nfts/:id`, `GET /nfts/:id/transfers`                                                                                                                |
 | Liquidity Pools | `GET /liquidity-pools`, `GET /liquidity-pools/:id`, `GET /liquidity-pools/:id/transactions`, `GET /liquidity-pools/:id/chart`, `GET /liquidity-pools/:id/participants` |
-| Search          | `GET /search?q=&type=transaction,contract,asset,account,nft,pool`                                                                                                      |
+| Search          | `GET /search?q=&type=transaction,contract,asset,account,nft,pool&limit=10`                                                                                             |
 
 ### 6.3 Resource Details
 
@@ -340,7 +340,8 @@ place where indexed contract metadata and decoded usage history are exposed.
 #### NFTs
 
 **`GET /nfts`** - Paginated list of NFTs. Query params: `limit`, `cursor`,
-`filter[collection]`, `filter[contract_id]`.
+`filter[collection]` (exact match), `filter[contract_id]` (C-StrKey), `filter[name]`
+(substring; rejects `%`/`_` literals — canonical SQL `15_get_nfts_list.sql`).
 
 **`GET /nfts/:id`** - NFT detail: name, token ID, collection, contract, owner, metadata,
 media URL.
@@ -353,15 +354,25 @@ quality may vary significantly.
 #### Liquidity Pools
 
 **`GET /liquidity-pools`** - Paginated list of pools. Query params: `limit`, `cursor`,
-`filter[assets]`, `filter[min_tvl]`.
+`filter[asset_a_code]`, `filter[asset_a_issuer]` (G-StrKey), `filter[asset_b_code]`,
+`filter[asset_b_issuer]` (G-StrKey), `filter[min_tvl]` (decimal). Per-leg
+`(code, issuer)` must be supplied paired or both omitted (classic identity).
+Filter semantics in canonical SQL `18_get_liquidity_pools_list.sql`.
 
 **`GET /liquidity-pools/:id`** - Pool detail: asset pair, fee, reserves, total shares, TVL.
+Dynamic fields come from the latest snapshot row; clients that care about
+freshness read `latest_snapshot_at` in the response.
 
 **`GET /liquidity-pools/:id/transactions`** - Deposits, withdrawals, and trades for this
 pool.
 
 **`GET /liquidity-pools/:id/chart`** - Time-series data for TVL, volume, and fee revenue.
-Query params: `interval` (1h/1d/1w), `from`, `to`.
+Query params (all optional, sensible defaults): `interval` (`1h`/`1d`/`1w`,
+default `1d`), `from` (ISO 8601, default `to` minus interval-appropriate
+window — `1h→7d`, `1d→90d`, `1w→104w`), `to` (ISO 8601, default `now()`,
+exclusive upper bound). `from < to` enforced; bucket count capped to keep
+aggregation bounded. Bucket aggregation policy in canonical SQL
+`21_get_liquidity_pools_chart.sql`.
 
 **`GET /liquidity-pools/:id/participants`** - Paginated list of liquidity providers
 with their share size, share percentage of the pool, first deposit ledger, and last
@@ -375,16 +386,36 @@ backend should keep raw pool state and chart-series generation concerns clearly 
 
 #### Search
 
-**`GET /search?q=&type=transaction,contract,asset,account,nft,pool`** - Generic search
-across all entity types. Uses prefix/exact matching on hashes, account IDs, contract IDs,
-asset codes, pool IDs, and NFT identifiers. Full-text search on metadata via
-`tsvector`/`tsquery` and GIN indexes where entity metadata is indexed.
+**`GET /search?q=&type=transaction,contract,asset,account,nft,pool&limit=10`** - Generic
+search across all entity types. The classifier maps the raw `q` to two derived inputs
+consumed by the canonical SQL: `hash_bytes` (32-byte BYTEA — drives `transaction` and
+`pool` exact-match branches because pool ids are also 32-byte BYTEA) and `strkey_prefix`
+(upper-cased StrKey or any `G…` / `C…` prefix — drives the `account` and `contract`
+prefix branches). The raw `q` is also fed to the trigram / FTS branches (`assets`,
+`nfts`, `soroban_contracts.search_vector`).
 
-Search is not just a DB query wrapper. It is an API behavior surface that must:
+Behaviour:
 
-- classify likely query types
-- support exact-match redirect behavior in the consuming frontend
-- return grouped broad-search results for ambiguous inputs
+- when `q` is a fully-typed entity id (64-hex hash, full G-StrKey, full C-StrKey) **and**
+  an exact row exists in `transaction_hash_index` / `liquidity_pools` / `accounts` /
+  `soroban_contracts`, the response is `{ "type": "redirect", "entity_type", "entity_id" }`
+  and the frontend navigates directly to the entity page.
+- otherwise the response is `{ "type": "results", "groups": {...} }` with up to `limit`
+  rows per entity bucket (default 10, hard ceiling 50). Each row carries the same four
+  columns regardless of bucket: `entity_type`, `identifier`, `label`, `surrogate_id`
+  (BIGINT FK or `null` for tx / pool which route by `identifier`). `groups` includes
+  only buckets that have at least one match — empty buckets are omitted from the
+  response (the OpenAPI schema marks them optional); frontend treats absent and empty
+  array identically.
+
+Authoritative SQL:
+[`22_get_search.sql`](../database-schema/endpoint-queries/22_get_search.sql) — UNION ALL
+of six narrow CTEs, each `LIMIT $per_group_limit`-bounded, with `:include_*` BOOLEAN
+flags resolved from the optional `?type=` filter (the planner removes branches whose
+flag is FALSE).
+
+No caching: `q` variability makes a TTL cache useless and the per-CTE `LIMIT` keeps each
+query bounded.
 
 ## 7. Data Access and Response Model
 

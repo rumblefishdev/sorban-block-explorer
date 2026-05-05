@@ -296,7 +296,7 @@ to `operations_appearances`. Pattern matches ADRs 0033/0034 for events and
 invocations: one row per distinct operation identity per transaction,
 `amount BIGINT` counts collapsed duplicates. Per-op detail (envelope decode,
 soroban args, memos, claimants, predicates, etc.) is re-materialised from
-XDR at read time via the `stellar_archive` extractors.
+XDR at read time via the `runtime_enrichment::stellar_archive` extractors.
 
 ```sql
 CREATE TABLE operations_appearances (
@@ -355,7 +355,7 @@ Design notes:
   type-14 collapses from 12 709 operations to 179 rows
 - `transfer_amount NUMERIC(28,7)` and `application_order SMALLINT` were
   dropped — no API endpoint reads them, and per-op detail is already
-  re-materialised from XDR by `stellar_archive` extractors per
+  re-materialised from XDR by `runtime_enrichment::stellar_archive` extractors per
   [ADR 0029](../../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md)
 - ingest staging aggregates operations at the `HashMap<OpIdentity, i64>`
   level before the bulk INSERT; write layer uses

@@ -670,6 +670,253 @@
         }
       }
     },
+    "/v1/liquidity-pools": {
+      "get": {
+        "tags": ["liquidity-pools"],
+        "operationId": "list_pools",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Items per page (1–100, default 20).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque pagination cursor from a previous response.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filter[asset_a_code]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": ["string", "null"]
+            }
+          },
+          {
+            "name": "filter[asset_a_issuer]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": ["string", "null"]
+            }
+          },
+          {
+            "name": "filter[asset_b_code]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": ["string", "null"]
+            }
+          },
+          {
+            "name": "filter[asset_b_issuer]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": ["string", "null"]
+            }
+          },
+          {
+            "name": "filter[min_tvl]",
+            "in": "query",
+            "description": "Minimum TVL threshold as a decimal string (matches the underlying\n`NUMERIC(28,7)` column without an f64 round-trip).",
+            "required": false,
+            "schema": {
+              "type": ["string", "null"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated liquidity-pool list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Paginated_PoolItem"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/liquidity-pools/{pool_id}": {
+      "get": {
+        "tags": ["liquidity-pools"],
+        "operationId": "get_pool",
+        "parameters": [
+          {
+            "name": "pool_id",
+            "in": "path",
+            "description": "Pool ID — 64-char lowercase hex (BYTEA(32)) per ADR 0024.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pool detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoolItem"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid pool_id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Pool not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/liquidity-pools/{pool_id}/chart": {
+      "get": {
+        "tags": ["liquidity-pools"],
+        "operationId": "get_pool_chart",
+        "parameters": [
+          {
+            "name": "pool_id",
+            "in": "path",
+            "description": "Pool ID — 64-char lowercase hex (BYTEA(32)).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "interval",
+            "in": "query",
+            "description": "Bucket width: `1h` | `1d` | `1w`. Validated against an allowlist.\nDefault: `1d`.",
+            "required": false,
+            "schema": {
+              "type": ["string", "null"]
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Inclusive lower bound, ISO 8601 / RFC 3339 timestamp.\nDefault: `to` minus the interval-appropriate window (see struct doc).",
+            "required": false,
+            "schema": {
+              "type": ["string", "null"]
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Exclusive upper bound, ISO 8601 / RFC 3339 timestamp.\nDefault: `now()`.",
+            "required": false,
+            "schema": {
+              "type": ["string", "null"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Time-bucketed pool chart series",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChartResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid pool_id / interval / from / to",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Pool not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Database error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/liquidity-pools/{pool_id}/participants": {
       "get": {
         "tags": ["liquidity-pools"],
@@ -750,6 +997,86 @@
         }
       }
     },
+    "/v1/liquidity-pools/{pool_id}/transactions": {
+      "get": {
+        "tags": ["liquidity-pools"],
+        "operationId": "list_pool_transactions",
+        "parameters": [
+          {
+            "name": "pool_id",
+            "in": "path",
+            "description": "Pool ID — 64-char lowercase hex (BYTEA(32)).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Items per page (1–100, default 20).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque pagination cursor from a previous response.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated pool transactions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Paginated_PoolTransactionItem"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid pool_id, limit, or cursor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Pool not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Database error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/network/stats": {
       "get": {
         "tags": ["network"],
@@ -763,6 +1090,307 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/NetworkStats"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Database error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/nfts": {
+      "get": {
+        "tags": ["nfts"],
+        "operationId": "list_nfts",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Items per page (1–100, default 20).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque pagination cursor from a previous response.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filter[collection]",
+            "in": "query",
+            "description": "Exact match against `nfts.collection_name` (btree\n`idx_nfts_collection`). Trigram support is task 0132.",
+            "required": false,
+            "schema": {
+              "type": ["string", "null"]
+            }
+          },
+          {
+            "name": "filter[contract_id]",
+            "in": "query",
+            "description": "Contract C-StrKey; resolved to `soroban_contracts.id` server-side.",
+            "required": false,
+            "schema": {
+              "type": ["string", "null"]
+            }
+          },
+          {
+            "name": "filter[name]",
+            "in": "query",
+            "description": "Substring match against `nfts.name` via the `idx_nfts_name_trgm`\nGIN index. SQL wraps the value in `%...%`; caller MUST NOT pass\n`%` / `_` literals.",
+            "required": false,
+            "schema": {
+              "type": ["string", "null"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated NFT list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Paginated_NftItem"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/nfts/{id}": {
+      "get": {
+        "tags": ["nfts"],
+        "operationId": "get_nft",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Internal NFT surrogate id (`nfts.id`).",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "NFT detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NftItem"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid id format",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NFT not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/nfts/{id}/transfers": {
+      "get": {
+        "tags": ["nfts"],
+        "operationId": "list_nft_transfers",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Internal NFT surrogate id (`nfts.id`).",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Items per page (1–100, default 20).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque pagination cursor from a previous response.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated NFT transfer history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Paginated_NftTransferItem"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid id / pagination",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NFT not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/search": {
+      "get": {
+        "tags": ["search"],
+        "summary": "Unified search across all entity types.",
+        "description": "`?q=` is required. `?type=` (CSV) restricts the result to specific\nentity types — values must be in the closed allowlist\n(`transaction`, `contract`, `asset`, `account`, `nft`, `pool`).\n`?limit=` caps each entity bucket independently (default 10,\nceiling 50).\n\nBehaviour:\n* If `q` is a fully-typed entity id (64-hex hash, full G-StrKey,\n  full C-StrKey) and the corresponding entity exists, the response\n  is `{ \"type\": \"redirect\", \"entity_type\", \"entity_id\" }` — frontend\n  navigates directly.\n* Otherwise the response is `{ \"type\": \"results\", \"groups\": {...} }`\n  with up to `limit` rows per entity bucket. Rows carry the same\n  four columns regardless of bucket: `entity_type`, `identifier`,\n  `label`, `surrogate_id` (BIGINT FK or `null`).\n\nAuthoritative SQL:\n`docs/architecture/database-schema/endpoint-queries/22_get_search.sql`.",
+        "operationId": "get_search",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Search query string. Required, non-empty after trim.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "description": "CSV of entity types to include. Allowed: transaction, contract, asset, account, nft, pool.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Per-group result cap. Default 10, max 50.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 50,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Search results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -1092,6 +1720,57 @@
           }
         }
       },
+      "ChartDataPoint": {
+        "type": "object",
+        "description": "One row from the chart endpoint. Shape pinned to canonical SQL\n`21_get_liquidity_pools_chart.sql`. `tvl` is \"TVL at close of bucket\"\n(last value); `volume` and `fee_revenue` are SUM (cumulative within\nthe bucket).",
+        "required": ["bucket", "samples_in_bucket"],
+        "properties": {
+          "bucket": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "fee_revenue": {
+            "type": ["string", "null"]
+          },
+          "samples_in_bucket": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tvl": {
+            "type": ["string", "null"]
+          },
+          "volume": {
+            "type": ["string", "null"]
+          }
+        }
+      },
+      "ChartResponse": {
+        "type": "object",
+        "description": "`GET /v1/liquidity-pools/:id/chart` response.",
+        "required": ["pool_id", "interval", "from", "to", "data_points"],
+        "properties": {
+          "data_points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChartDataPoint"
+            }
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "interval": {
+            "type": "string"
+          },
+          "pool_id": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "ContractDetailResponse": {
         "type": "object",
         "required": ["contract_id", "is_sac", "stats"],
@@ -1333,6 +2012,11 @@
           }
         ],
         "description": "Merged E3 response: DB light fields + optional XDR heavy fields.\n\n`heavy_fields_status` = `Ok` when `heavy` is `Some`, `Unavailable` when\nthe public-archive fetch failed and the caller degraded gracefully."
+      },
+      "EntityType": {
+        "type": "string",
+        "description": "Entity discriminator. Closed allowlist used by the `type=` filter\nand the `entity_type` field on every hit / redirect.",
+        "enum": ["transaction", "account", "asset", "contract", "nft", "pool"]
       },
       "ErrorEnvelope": {
         "type": "object",
@@ -1629,6 +2313,94 @@
             "type": "number",
             "format": "double",
             "description": "Transactions per second over a 60s rolling window. Computed as\n`SUM(ledgers.transaction_count)` divided by the actual span\nbetween MIN/MAX `closed_at` in the window. Stable on partial /\nsingle-ledger windows (NULLIF guards zero-span)."
+          }
+        }
+      },
+      "NftItem": {
+        "type": "object",
+        "description": "One NFT row returned by the list endpoint. Shape pinned to canonical\nSQL `15_get_nfts_list.sql`.",
+        "required": ["id", "contract_id", "token_id"],
+        "properties": {
+          "collection_name": {
+            "type": ["string", "null"]
+          },
+          "contract_id": {
+            "type": "string",
+            "description": "Contract C-StrKey resolved via `soroban_contracts` join."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "last_seen_ledger": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Most recent ledger where ownership state changed\n(`nfts.current_owner_ledger`)."
+          },
+          "media_url": {
+            "type": ["string", "null"]
+          },
+          "metadata": {
+            "description": "Verbatim JSONB at mint time. Shape is contract-defined (no canonical\nschema yet) — frontend renders defensively."
+          },
+          "minted_at_ledger": {
+            "type": ["integer", "null"],
+            "format": "int64"
+          },
+          "name": {
+            "type": ["string", "null"]
+          },
+          "owner_account": {
+            "type": ["string", "null"],
+            "description": "Current owner G-StrKey, or `null` for burned NFTs (ADR 0037 §13)."
+          },
+          "token_id": {
+            "type": "string"
+          }
+        }
+      },
+      "NftTransferItem": {
+        "type": "object",
+        "description": "One row of NFT transfer history. Shape pinned to canonical SQL\n`17_get_nfts_transfers.sql`.",
+        "required": [
+          "transaction_hash",
+          "ledger_sequence",
+          "event_type",
+          "created_at",
+          "event_order"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "event_order": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "event_type": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Raw NftEventType discriminant (ADR 0031)."
+          },
+          "event_type_name": {
+            "type": ["string", "null"],
+            "description": "`mint | transfer | burn` — pre-decoded via `nft_event_type_name(...)`."
+          },
+          "from_account": {
+            "type": ["string", "null"],
+            "description": "Previous-owner G-StrKey reconstructed via `LEAD(owner_id)` over the\nper-NFT ownership timeline (DESC window — older event sits at the\nFOLLOWING window position). `null` on the mint row only.\n\nPage boundaries are handled implicitly by the `limit + 1` peek\nfetch: the peek row participates in the window-function input, so\nthe last *kept* row's `from_account` reads the peek's owner before\n`finalize_page` drops the peek. No client-side stitching needed."
+          },
+          "ledger_sequence": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "to_account": {
+            "type": ["string", "null"],
+            "description": "New owner G-StrKey. `null` on burn."
+          },
+          "transaction_hash": {
+            "type": "string"
           }
         }
       },
@@ -1987,6 +2759,120 @@
           }
         }
       },
+      "Paginated_NftItem": {
+        "type": "object",
+        "description": "Canonical envelope for paginated list responses.\n\nGeneric over the item type `T` so every endpoint can reuse a single\nshape. Concrete instantiations (e.g. `Paginated<Transaction>`) are\npicked up automatically by utoipa-axum via the handler return type\nwhen M2 endpoint modules are wired in. Unused in M1 — kept as\ninfrastructure that M2 endpoints will consume.",
+        "required": ["data", "page"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One NFT row returned by the list endpoint. Shape pinned to canonical\nSQL `15_get_nfts_list.sql`.",
+              "required": ["id", "contract_id", "token_id"],
+              "properties": {
+                "collection_name": {
+                  "type": ["string", "null"]
+                },
+                "contract_id": {
+                  "type": "string",
+                  "description": "Contract C-StrKey resolved via `soroban_contracts` join."
+                },
+                "id": {
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "last_seen_ledger": {
+                  "type": ["integer", "null"],
+                  "format": "int64",
+                  "description": "Most recent ledger where ownership state changed\n(`nfts.current_owner_ledger`)."
+                },
+                "media_url": {
+                  "type": ["string", "null"]
+                },
+                "metadata": {
+                  "description": "Verbatim JSONB at mint time. Shape is contract-defined (no canonical\nschema yet) — frontend renders defensively."
+                },
+                "minted_at_ledger": {
+                  "type": ["integer", "null"],
+                  "format": "int64"
+                },
+                "name": {
+                  "type": ["string", "null"]
+                },
+                "owner_account": {
+                  "type": ["string", "null"],
+                  "description": "Current owner G-StrKey, or `null` for burned NFTs (ADR 0037 §13)."
+                },
+                "token_id": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        }
+      },
+      "Paginated_NftTransferItem": {
+        "type": "object",
+        "description": "Canonical envelope for paginated list responses.\n\nGeneric over the item type `T` so every endpoint can reuse a single\nshape. Concrete instantiations (e.g. `Paginated<Transaction>`) are\npicked up automatically by utoipa-axum via the handler return type\nwhen M2 endpoint modules are wired in. Unused in M1 — kept as\ninfrastructure that M2 endpoints will consume.",
+        "required": ["data", "page"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One row of NFT transfer history. Shape pinned to canonical SQL\n`17_get_nfts_transfers.sql`.",
+              "required": [
+                "transaction_hash",
+                "ledger_sequence",
+                "event_type",
+                "created_at",
+                "event_order"
+              ],
+              "properties": {
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "event_order": {
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "event_type": {
+                  "type": "integer",
+                  "format": "int32",
+                  "description": "Raw NftEventType discriminant (ADR 0031)."
+                },
+                "event_type_name": {
+                  "type": ["string", "null"],
+                  "description": "`mint | transfer | burn` — pre-decoded via `nft_event_type_name(...)`."
+                },
+                "from_account": {
+                  "type": ["string", "null"],
+                  "description": "Previous-owner G-StrKey reconstructed via `LEAD(owner_id)` over the\nper-NFT ownership timeline (DESC window — older event sits at the\nFOLLOWING window position). `null` on the mint row only.\n\nPage boundaries are handled implicitly by the `limit + 1` peek\nfetch: the peek row participates in the window-function input, so\nthe last *kept* row's `from_account` reads the peek's owner before\n`finalize_page` drops the peek. No client-side stitching needed."
+                },
+                "ledger_sequence": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "to_account": {
+                  "type": ["string", "null"],
+                  "description": "New owner G-StrKey. `null` on burn."
+                },
+                "transaction_hash": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        }
+      },
       "Paginated_ParticipantItem": {
         "type": "object",
         "description": "Canonical envelope for paginated list responses.\n\nGeneric over the item type `T` so every endpoint can reuse a single\nshape. Concrete instantiations (e.g. `Paginated<Transaction>`) are\npicked up automatically by utoipa-axum via the handler return type\nwhen M2 endpoint modules are wired in. Unused in M1 — kept as\ninfrastructure that M2 endpoints will consume.",
@@ -2025,6 +2911,146 @@
                 "shares": {
                   "type": "string",
                   "description": "Pool-share balance carried as a decimal string preserving the\nunderlying `NUMERIC(28,7)` precision (no f64 round-trip)."
+                }
+              }
+            }
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        }
+      },
+      "Paginated_PoolItem": {
+        "type": "object",
+        "description": "Canonical envelope for paginated list responses.\n\nGeneric over the item type `T` so every endpoint can reuse a single\nshape. Concrete instantiations (e.g. `Paginated<Transaction>`) are\npicked up automatically by utoipa-axum via the handler return type\nwhen M2 endpoint modules are wired in. Unused in M1 — kept as\ninfrastructure that M2 endpoints will consume.",
+        "required": ["data", "page"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One pool row returned by the list endpoint. Shape pinned to canonical\nSQL `18_get_liquidity_pools_list.sql`. Pools without a fresh snapshot\nin the freshness window come back with `null` for every dynamic field\n(`reserve_a`, `reserve_b`, `total_shares`, `tvl`, `volume`,\n`fee_revenue`, `latest_snapshot_*`); frontend renders these as \"stale\".",
+              "required": [
+                "pool_id",
+                "asset_a",
+                "asset_b",
+                "fee_bps",
+                "fee_percent",
+                "created_at_ledger"
+              ],
+              "properties": {
+                "asset_a": {
+                  "$ref": "#/components/schemas/PoolAssetLeg"
+                },
+                "asset_b": {
+                  "$ref": "#/components/schemas/PoolAssetLeg"
+                },
+                "created_at_ledger": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "fee_bps": {
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "fee_percent": {
+                  "type": "string",
+                  "description": "`fee_bps / 100` as decimal string. Conversion done server-side so\nthe frontend can render directly (frontend §6.13/§6.14)."
+                },
+                "fee_revenue": {
+                  "type": ["string", "null"]
+                },
+                "latest_snapshot_at": {
+                  "type": ["string", "null"],
+                  "format": "date-time"
+                },
+                "latest_snapshot_ledger": {
+                  "type": ["integer", "null"],
+                  "format": "int64"
+                },
+                "pool_id": {
+                  "type": "string",
+                  "description": "64-char lowercase hex (BYTEA(32) on the wire) per ADR 0024."
+                },
+                "reserve_a": {
+                  "type": ["string", "null"]
+                },
+                "reserve_b": {
+                  "type": ["string", "null"]
+                },
+                "total_shares": {
+                  "type": ["string", "null"]
+                },
+                "tvl": {
+                  "type": ["string", "null"]
+                },
+                "volume": {
+                  "type": ["string", "null"]
+                }
+              }
+            }
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        }
+      },
+      "Paginated_PoolTransactionItem": {
+        "type": "object",
+        "description": "Canonical envelope for paginated list responses.\n\nGeneric over the item type `T` so every endpoint can reuse a single\nshape. Concrete instantiations (e.g. `Paginated<Transaction>`) are\npicked up automatically by utoipa-axum via the handler return type\nwhen M2 endpoint modules are wired in. Unused in M1 — kept as\ninfrastructure that M2 endpoints will consume.",
+        "required": ["data", "page"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One row from `/liquidity-pools/:id/transactions`. Shape pinned to\ncanonical SQL `20_get_liquidity_pools_transactions.sql`.",
+              "required": [
+                "hash",
+                "ledger_sequence",
+                "source_account",
+                "fee_charged",
+                "successful",
+                "operation_count",
+                "has_soroban",
+                "operation_types",
+                "created_at"
+              ],
+              "properties": {
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "fee_charged": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "has_soroban": {
+                  "type": "boolean"
+                },
+                "hash": {
+                  "type": "string"
+                },
+                "ledger_sequence": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "operation_count": {
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "operation_types": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Distinct `op_type_name(...)` labels for every op in the tx, sorted\nasc. Frontend §6.14 categorises trade vs LP-mgmt activity from this\nlist (policy lives client-side, not in SQL)."
+                },
+                "source_account": {
+                  "type": "string"
+                },
+                "successful": {
+                  "type": "boolean"
                 }
               }
             }
@@ -2151,6 +3177,266 @@
           "shares": {
             "type": "string",
             "description": "Pool-share balance carried as a decimal string preserving the\nunderlying `NUMERIC(28,7)` precision (no f64 round-trip)."
+          }
+        }
+      },
+      "PoolAssetLeg": {
+        "type": "object",
+        "description": "One leg of an LP's asset pair. Surfaces both the decoded\n`asset_type_name` (SQL `asset_type_name()`) and the raw `asset_type`\nSMALLINT — same contract as `assets/dto::AssetItem`.",
+        "required": ["asset_type"],
+        "properties": {
+          "asset_code": {
+            "type": ["string", "null"]
+          },
+          "asset_type": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Raw SMALLINT (0=native, 1=classic_credit, 2=sac, 3=soroban)."
+          },
+          "asset_type_name": {
+            "type": ["string", "null"],
+            "description": "`native | classic_credit | sac | soroban`. `null` only on schema drift."
+          },
+          "issuer": {
+            "type": ["string", "null"]
+          }
+        }
+      },
+      "PoolItem": {
+        "type": "object",
+        "description": "One pool row returned by the list endpoint. Shape pinned to canonical\nSQL `18_get_liquidity_pools_list.sql`. Pools without a fresh snapshot\nin the freshness window come back with `null` for every dynamic field\n(`reserve_a`, `reserve_b`, `total_shares`, `tvl`, `volume`,\n`fee_revenue`, `latest_snapshot_*`); frontend renders these as \"stale\".",
+        "required": [
+          "pool_id",
+          "asset_a",
+          "asset_b",
+          "fee_bps",
+          "fee_percent",
+          "created_at_ledger"
+        ],
+        "properties": {
+          "asset_a": {
+            "$ref": "#/components/schemas/PoolAssetLeg"
+          },
+          "asset_b": {
+            "$ref": "#/components/schemas/PoolAssetLeg"
+          },
+          "created_at_ledger": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "fee_bps": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "fee_percent": {
+            "type": "string",
+            "description": "`fee_bps / 100` as decimal string. Conversion done server-side so\nthe frontend can render directly (frontend §6.13/§6.14)."
+          },
+          "fee_revenue": {
+            "type": ["string", "null"]
+          },
+          "latest_snapshot_at": {
+            "type": ["string", "null"],
+            "format": "date-time"
+          },
+          "latest_snapshot_ledger": {
+            "type": ["integer", "null"],
+            "format": "int64"
+          },
+          "pool_id": {
+            "type": "string",
+            "description": "64-char lowercase hex (BYTEA(32) on the wire) per ADR 0024."
+          },
+          "reserve_a": {
+            "type": ["string", "null"]
+          },
+          "reserve_b": {
+            "type": ["string", "null"]
+          },
+          "total_shares": {
+            "type": ["string", "null"]
+          },
+          "tvl": {
+            "type": ["string", "null"]
+          },
+          "volume": {
+            "type": ["string", "null"]
+          }
+        }
+      },
+      "PoolTransactionItem": {
+        "type": "object",
+        "description": "One row from `/liquidity-pools/:id/transactions`. Shape pinned to\ncanonical SQL `20_get_liquidity_pools_transactions.sql`.",
+        "required": [
+          "hash",
+          "ledger_sequence",
+          "source_account",
+          "fee_charged",
+          "successful",
+          "operation_count",
+          "has_soroban",
+          "operation_types",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "fee_charged": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "has_soroban": {
+            "type": "boolean"
+          },
+          "hash": {
+            "type": "string"
+          },
+          "ledger_sequence": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "operation_count": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "operation_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Distinct `op_type_name(...)` labels for every op in the tx, sorted\nasc. Frontend §6.14 categorises trade vs LP-mgmt activity from this\nlist (policy lives client-side, not in SQL)."
+          },
+          "source_account": {
+            "type": "string"
+          },
+          "successful": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SearchGroups": {
+        "type": "object",
+        "description": "Per-entity buckets. Empty buckets are omitted from the JSON output\nvia `skip_serializing_if` — frontend treats absent and empty array\nidentically, and dropping empties keeps the dropdown payload tight\nwhen a typed `?type=` filter narrows results to a single bucket.",
+        "properties": {
+          "accounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            }
+          },
+          "assets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            }
+          },
+          "contracts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            }
+          },
+          "nfts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            }
+          },
+          "pools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            }
+          },
+          "transactions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            }
+          }
+        }
+      },
+      "SearchHit": {
+        "type": "object",
+        "description": "Single search row. Narrow shape — same four columns for every\nentity bucket; rich entity payloads are NOT inlined here.\n\n`identifier` is the canonical human-shown id (hex hash for\ntransactions / pools, StrKey for accounts / contracts, asset code\nfor assets, name for NFTs). For `asset` and `nft` it is NOT unique —\nthe frontend MUST route via `surrogate_id`.",
+        "required": ["entity_type", "identifier", "label"],
+        "properties": {
+          "entity_type": {
+            "$ref": "#/components/schemas/EntityType"
+          },
+          "identifier": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "surrogate_id": {
+            "type": ["integer", "null"],
+            "format": "int64"
+          }
+        }
+      },
+      "SearchRedirect": {
+        "type": "object",
+        "description": "Redirect payload — frontend navigates directly to the entity page.",
+        "required": ["entity_type", "entity_id"],
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "entity_type": {
+            "$ref": "#/components/schemas/EntityType"
+          }
+        }
+      },
+      "SearchResponse": {
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SearchRedirect"
+              },
+              {
+                "type": "object",
+                "required": ["type"],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": ["redirect"]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SearchResults"
+              },
+              {
+                "type": "object",
+                "required": ["type"],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": ["results"]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "description": "Discriminated response: `redirect` for unambiguous exact match,\n`results` for grouped broad search.\n\n`#[serde(tag = \"type\")]` puts the discriminator on the wire as\n`\"type\": \"redirect\" | \"results\"` per the task spec, mirroring the\nfrontend search-bar UX expectation: a `redirect` causes the bar to\nnavigate directly; a `results` shows the dropdown with grouped hits."
+      },
+      "SearchResults": {
+        "type": "object",
+        "description": "Results payload — six entity-typed buckets, each capped at the\nper-group `limit` chosen by the caller (default 10, ceiling 50).",
+        "required": ["groups"],
+        "properties": {
+          "groups": {
+            "$ref": "#/components/schemas/SearchGroups"
           }
         }
       },

@@ -1,10 +1,14 @@
-//! Liquidity pools API module: pool participants list (task 0126).
+//! Liquidity pools API module.
 //!
-//! Today exposes a single endpoint —
-//! `GET /v1/liquidity-pools/{pool_id}/participants` — sourced from the
-//! `lp_positions` table (populated by task 0162). Pool metadata / detail /
-//! list endpoints will arrive in follow-up tasks; the module is shaped
-//! so additional handlers can be registered without restructuring.
+//! Endpoints (canonical SQL `endpoint-queries/{18..21,23}_*.sql`):
+//!   - `GET /v1/liquidity-pools`                          (task 0052)
+//!   - `GET /v1/liquidity-pools/{pool_id}`                (task 0052)
+//!   - `GET /v1/liquidity-pools/{pool_id}/transactions`   (task 0052)
+//!   - `GET /v1/liquidity-pools/{pool_id}/chart`          (task 0052)
+//!   - `GET /v1/liquidity-pools/{pool_id}/participants`   (task 0126)
+//!
+//! Pagination, error envelopes, cursor codec, and StrKey validation come
+//! from `crate::common::*` (task 0043).
 
 pub mod dto;
 mod handlers;
@@ -17,5 +21,10 @@ use crate::state::AppState;
 
 /// Sub-router mounted under `/v1` in `main::app`.
 pub fn router() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().routes(routes!(handlers::list_participants))
+    OpenApiRouter::new()
+        .routes(routes!(handlers::list_pools))
+        .routes(routes!(handlers::get_pool))
+        .routes(routes!(handlers::list_pool_transactions))
+        .routes(routes!(handlers::get_pool_chart))
+        .routes(routes!(handlers::list_participants))
 }

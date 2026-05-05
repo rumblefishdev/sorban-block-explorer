@@ -17,8 +17,15 @@ use crate::assets::dto::{AssetDetailResponse, AssetItem, AssetTransactionItem};
 use crate::contracts::dto::{
     ContractDetailResponse, ContractStats, EventItem, InterfaceResponse, InvocationItem,
 };
-use crate::stellar_archive::dto::{
+use crate::liquidity_pools::dto::{
+    ChartDataPoint, ChartResponse, PoolAssetLeg, PoolItem, PoolTransactionItem,
+};
+use crate::nfts::dto::{NftItem, NftTransferItem};
+use crate::runtime_enrichment::stellar_archive::dto::{
     E3HeavyFields, E3Response, HeavyFieldsStatus, SignatureDto, XdrEventDto, XdrOperationDto,
+};
+use crate::search::dto::{
+    EntityType, SearchGroups, SearchHit, SearchRedirect, SearchResponse, SearchResults,
 };
 use crate::transactions::dto::{
     EventAppearanceItem, InvocationAppearanceItem, OperationItem, TransactionDetailLight,
@@ -70,6 +77,23 @@ use schemas::{ErrorEnvelope, PageInfo, Paginated};
         AssetDetailResponse,
         Paginated<AssetTransactionItem>,
         AssetTransactionItem,
+        Paginated<NftItem>,
+        NftItem,
+        Paginated<NftTransferItem>,
+        NftTransferItem,
+        Paginated<PoolItem>,
+        PoolItem,
+        PoolAssetLeg,
+        Paginated<PoolTransactionItem>,
+        PoolTransactionItem,
+        ChartResponse,
+        ChartDataPoint,
+        SearchResponse,
+        SearchRedirect,
+        SearchResults,
+        SearchGroups,
+        SearchHit,
+        EntityType,
     )),
 )]
 pub struct ApiDoc;
@@ -90,6 +114,8 @@ pub fn register_routes() -> OpenApiRouter<crate::AppState> {
         .nest("/v1", crate::transactions::router())
         .nest("/v1", crate::contracts::router())
         .nest("/v1", crate::liquidity_pools::router())
+        .nest("/v1", crate::nfts::router())
         .nest("/v1", crate::assets::router())
         .nest("/v1", crate::ledgers::router())
+        .nest("/v1", crate::search::router())
 }

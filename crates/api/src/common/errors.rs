@@ -59,6 +59,11 @@ pub const INVALID_CONTRACT_ID: &str = "invalid_contract_id";
 /// (not 56 chars / wrong prefix `G` / wrong base32 alphabet).
 pub const INVALID_ACCOUNT_ID: &str = "invalid_account_id";
 
+/// Path parameter `:pool_id` failed shape validation (not 64 lowercase
+/// hex chars). LP `pool_id` is `BYTEA(32)` on the wire per ADR 0024;
+/// the API surfaces it as 64-char lowercase hex.
+pub const INVALID_POOL_ID: &str = "invalid_pool_id";
+
 /// Path parameter `:sequence` failed numeric / range validation
 /// (not a positive integer fitting in `u32`).
 ///
@@ -71,6 +76,23 @@ pub const INVALID_SEQUENCE: &str = "invalid_sequence";
 /// Unrecoverable database error. Surfaces as HTTP 500; the detailed
 /// cause is logged server-side and never returned to the client.
 pub const DB_ERROR: &str = "db_error";
+
+/// `q` query parameter on `/v1/search` failed shape validation: missing,
+/// empty after trim, or longer than the per-endpoint byte cap
+/// (`search::handlers::MAX_Q_LEN`, currently 256). Distinct from
+/// `INVALID_QUERY` (malformed query string at HTTP layer) and
+/// `INVALID_FILTER` (bad value in `filter[...]`) — search's `q` is a
+/// required top-level parameter with its own dedicated UX on the
+/// frontend search bar. The 400 body's `details` field carries the cap
+/// and received length so the frontend can render a precise hint
+/// without parsing the human-readable message.
+pub const INVALID_SEARCH_QUERY: &str = "invalid_search_query";
+
+/// `type=...` filter on `/v1/search` carried a value outside the closed
+/// allowlist (`transaction`, `contract`, `asset`, `account`, `nft`,
+/// `pool`). Distinct from `INVALID_FILTER` because `type` is a
+/// top-level query param, not a `filter[key]` parameter.
+pub const INVALID_SEARCH_TYPE: &str = "invalid_search_type";
 
 // ---------------------------------------------------------------------------
 // Builders

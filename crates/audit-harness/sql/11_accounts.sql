@@ -41,3 +41,30 @@ WHERE first_seen_ledger > last_seen_ledger;
 SELECT COUNT(*) AS violations
 FROM accounts
 WHERE first_seen_ledger < 0 OR last_seen_ledger < 0;
+
+\echo '### I5 — every account that is the source of ≥1 transaction in the dataset has sequence_number > 0'
+-- Stellar protocol bumps `seq_num` on every successful (and most
+-- failed-fee-charged) transaction sourced by an account. If our DB
+-- ever shows `accounts.sequence_number = 0` for an account that we
+-- recorded as a tx source, the persist layer dropped the real value.
+-- Surfaced by manual endpoint audit E06 and lore-0185 (sentinel
+-- coercion + unconditional `HashMap.insert` in
+-- `crates/indexer/src/handler/persist/staging.rs:448-465` —
+-- trustline-only state changes (sentinel `-1`) clobbered a real
+-- sequence set earlier in the same ledger). The post-fix invariant
+-- holds: any account with at least one row in `transactions.source_id`
+-- must have `sequence_number > 0`.
+SELECT COUNT(*) AS violations,
+       (SELECT array_agg(account_id) FROM (
+           SELECT a.account_id FROM accounts a
+           WHERE a.sequence_number = 0
+             AND EXISTS (
+                 SELECT 1 FROM transactions t WHERE t.source_id = a.id
+             )
+           ORDER BY a.id LIMIT 5
+       ) s) AS sample
+FROM accounts a
+WHERE a.sequence_number = 0
+  AND EXISTS (
+      SELECT 1 FROM transactions t WHERE t.source_id = a.id
+  );

@@ -18,6 +18,29 @@ mv <file> .trash/
 
 **Writing code without an active task is FORBIDDEN.**
 
+## API Types Codegen — regenerate before commit
+
+If a PR touches **any of these paths**, the OpenAPI spec changes and the
+TypeScript types in `libs/api-types/src/{openapi.json,generated/}` MUST
+be regenerated before commit (CI gate `API types freshness`):
+
+- `crates/api/**` (handlers, DTOs, openapi schemas, routes)
+- `Cargo.toml` / `Cargo.lock`
+- `libs/api-types/**`
+
+Command:
+
+```bash
+npx nx run @rumblefish/api-types:generate
+```
+
+This runs `cargo run -p api --bin extract_openapi > libs/api-types/src/openapi.json`
+followed by `openapi-ts` codegen. Stage the resulting changes (`openapi.json` +
+`generated/*`) in the same commit as the API change.
+
+CI runs `nx run @rumblefish/api-types:check-generated` (a `git diff --exit-code`
+on those paths). Skipping the regen → red `API types freshness` check.
+
 ## Evergreen Architecture Docs
 
 Per [ADR 0032](./lore/2-adrs/0032_docs-architecture-evergreen-maintenance.md),
