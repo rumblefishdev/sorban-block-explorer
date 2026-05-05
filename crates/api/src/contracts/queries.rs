@@ -24,7 +24,7 @@ pub async fn fetch_contract(
     pool: &PgPool,
     contract_id: &str,
 ) -> Result<Option<ContractRow>, sqlx::Error> {
-    // Per ADR 0041 / task 0156: `soroban_contracts.metadata JSONB` was
+    // Per ADR 0042 / task 0156: `soroban_contracts.metadata JSONB` was
     // replaced by typed `name VARCHAR(256)`. The detail response no
     // longer projects a `metadata` field (was always `{}` in practice
     // and added no value). The `name` column is consumed only by the

@@ -2880,6 +2880,7 @@ async fn orphan_position_emits_sentinel_pool() {
         &Vec::new(),
         &Vec::new(),
         &lp_positions,
+        &[],
         &cache,
     )
     .await
@@ -2995,6 +2996,7 @@ async fn sentinel_pool_upgraded_on_real_data() {
         &Vec::new(),
         &Vec::new(),
         &lp_positions_t1,
+        &[],
         &cache,
     )
     .await
@@ -3043,6 +3045,7 @@ async fn sentinel_pool_upgraded_on_real_data() {
         &Vec::new(),
         &Vec::new(),
         &Vec::new(),
+        &[],
         &cache,
     )
     .await
@@ -3135,6 +3138,7 @@ async fn orphan_detection_skipped_when_pool_in_db() {
         &Vec::new(),
         &Vec::new(),
         &Vec::new(),
+        &[],
         &cache,
     )
     .await
@@ -3173,6 +3177,7 @@ async fn orphan_detection_skipped_when_pool_in_db() {
         &Vec::new(),
         &Vec::new(),
         &lp_positions_t2,
+        &[],
         &cache,
     )
     .await

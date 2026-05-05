@@ -363,7 +363,7 @@ and stored in `wasm_interface_metadata.metadata` (keyed by `wasm_hash BYTEA(32)`
 deduplicated across every contract instance that shares the same WASM.
 
 `soroban_contracts.name VARCHAR(256)` (per
-[ADR 0041](../../../lore/2-adrs/0041_soroban-contracts-typed-name-column.md))
+[ADR 0042](../../../lore/2-adrs/0042_soroban-contracts-typed-name-column.md))
 carries the human-readable contract name extracted from the standard
 `Symbol("name")` ContractData persistent storage entry. The parser's
 `extract_contract_deployments` second pass (state.rs) populates the
@@ -372,7 +372,7 @@ field at deploy time when the storage init lands in the same ledger
 indexer's `apply_contract_name_writes` helper covers the deploy-then-init
 and re-init patterns by emitting a retroactive UPDATE on every ledger
 that surfaces a `Symbol("name")` Created or Updated event. The earlier
-JSONB-backed metadata column was retired by ADR 0041 in favour of the
+JSONB-backed metadata column was retired by ADR 0042 in favour of the
 typed shape; richer metadata enrichment (description, icon, home_page)
 landed off-row per [ADR 0023](../../../lore/2-adrs/0023_tokens-typed-metadata-columns.md)
 narrowing rather than as further JSONB fields.

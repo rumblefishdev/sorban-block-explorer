@@ -1,4 +1,4 @@
--- Task 0156 / ADR 0041 — replace `soroban_contracts.metadata JSONB` with
+-- Task 0156 / ADR 0042 — replace `soroban_contracts.metadata JSONB` with
 -- typed `name VARCHAR(256)`. Per ADR 0023 narrowing (codified in ADR 0037),
 -- typed columns are preferred over JSONB for closed-shape data. The
 -- JSONB column was added forward-looking but only ever needed to carry a

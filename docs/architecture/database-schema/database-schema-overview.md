@@ -410,7 +410,7 @@ CREATE TABLE soroban_contracts (
     deployed_at_ledger      BIGINT,
     contract_type           SMALLINT,                                       -- ADR 0031, nullable
     is_sac                  BOOLEAN     NOT NULL DEFAULT false,
-    name                    VARCHAR(256),                                   -- ADR 0041, on-chain Symbol("name")
+    name                    VARCHAR(256),                                   -- ADR 0042, on-chain Symbol("name")
     search_vector           TSVECTOR GENERATED ALWAYS AS (
                                 to_tsvector('simple', COALESCE(name, '') || ' ' || contract_id)
                             ) STORED,
@@ -443,7 +443,7 @@ Design notes:
   references before deployment meta is observed — those rows start NULL and get
   filled when the deploy meta lands. The `contract_type_name(ty)` SQL helper renders
   the canonical string
-- `name` is `VARCHAR(256)` ([ADR 0041](../../../lore/2-adrs/0041_soroban-contracts-typed-name-column.md))
+- `name` is `VARCHAR(256)` ([ADR 0042](../../../lore/2-adrs/0042_soroban-contracts-typed-name-column.md))
   populated by the indexer from the standard `Symbol("name")` ContractData
   persistent storage entry — written at deploy time when the storage init
   is in the same ledger (constructor pattern), or backfilled by
@@ -801,7 +801,7 @@ Design notes:
 - current reserves and total shares are **not** persisted on the parent row; the most
   recent `liquidity_pool_snapshots` row is the authoritative current-state source
   (pool transaction history itself is derived from `operations_appearances` + `soroban_events_appearances`)
-- **Sentinel placeholder rows** ([ADR 0041](../../../lore/2-adrs/0041_lp-positions-orphan-handling-state-filter-and-sentinel-pool.md)):
+- **Sentinel placeholder rows** ([ADR 0042](../../../lore/2-adrs/0041_lp-positions-orphan-handling-state-filter-and-sentinel-pool.md)):
   during partial / mid-stream backfills, an `lp_positions` row may reference a pool
   whose `LedgerEntry` is not in the current ledger and not previously persisted (the
   pool was created in a pre-window ledger and untouched in the current one). To satisfy

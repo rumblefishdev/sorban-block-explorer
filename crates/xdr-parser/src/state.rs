@@ -102,7 +102,7 @@ pub fn extract_contract_deployments(
     // ledger). For deploy-then-init contracts where the storage write
     // lands in a later ledger, the indexer's
     // `extract_contract_data_name_writes` path fills the column then.
-    // Per ADR 0041 + task 0156.
+    // Per ADR 0042 + task 0156.
     for deployment in deployments.iter_mut() {
         for change in changes {
             if change.entry_type != "contract_data" || change.change_type != "created" {
@@ -144,7 +144,7 @@ pub fn extract_contract_deployments(
 ///    storage entry. The `change_type == "updated"` filter catches this
 ///    case as well; the indexer overwrites the existing name.
 ///
-/// Per ADR 0041 + task 0156.
+/// Per ADR 0042 + task 0156.
 pub fn extract_contract_data_name_writes(
     changes: &[ExtractedLedgerEntryChange],
 ) -> Vec<(String, String)> {
@@ -841,7 +841,7 @@ pub fn detect_assets(
                 asset_code: None,
                 issuer_address: None,
                 contract_id: Some(deployment.contract_id.clone()),
-                // Per ADR 0041 / task 0156: thread the on-chain
+                // Per ADR 0042 / task 0156: thread the on-chain
                 // `Symbol("name")` extracted at deploy time into the
                 // asset row. Late-init / re-init paths land via the
                 // indexer's `apply_contract_name_writes` helper; that
@@ -1048,7 +1048,7 @@ mod tests {
         assert!(deployments.is_empty());
     }
 
-    // -- Symbol("name") extraction tests (ADR 0041 / task 0156) --
+    // -- Symbol("name") extraction tests (ADR 0042 / task 0156) --
 
     /// Helper — build a `contract_data` change carrying a `Symbol("name")`
     /// key and a string SCVal value. Mirrors the JSON intermediate shape

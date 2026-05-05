@@ -298,7 +298,7 @@ pub struct ExtractedContractDeployment {
     /// (`extract_contract_data_name_writes`) populates the column on
     /// the next ledger that emits the storage entry.
     ///
-    /// Maps to `soroban_contracts.name VARCHAR(256)` per ADR 0041.
+    /// Maps to `soroban_contracts.name VARCHAR(256)` per ADR 0042.
     pub name: Option<String>,
     /// Task 0160 — SAC underlying asset identity resolved from
     /// `ContractIdPreimage::FromAsset` (top-level op OR auth-entry

@@ -380,7 +380,7 @@ pub(super) async fn upsert_contracts_returning_id(
 ) -> Result<HashMap<String, i64>, HandlerError> {
     let mut out: HashMap<String, i64> = HashMap::new();
 
-    // Pass 1 — rich rows with name (per ADR 0041 typed column).
+    // Pass 1 — rich rows with name (per ADR 0042 typed column).
     for chunk in staged.contract_rows.chunks(CHUNK_SIZE) {
         let mut contract_ids: Vec<String> = Vec::with_capacity(chunk.len());
         let mut wasm_hashes: Vec<Option<Vec<u8>>> = Vec::with_capacity(chunk.len());
@@ -506,7 +506,7 @@ pub(super) async fn upsert_contracts_returning_id(
 /// Apply late-init / re-init `Symbol("name")` storage writes to
 /// `soroban_contracts.name`.
 ///
-/// Per ADR 0041 + task 0156, the constructor pattern (deploy + storage
+/// Per ADR 0042 + task 0156, the constructor pattern (deploy + storage
 /// init in the same ledger) is handled by `extract_contract_deployments`
 /// populating `name` directly. This helper covers the orthogonal cases:
 ///

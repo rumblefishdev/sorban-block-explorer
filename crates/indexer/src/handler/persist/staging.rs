@@ -190,7 +190,7 @@ pub(super) struct ContractRow {
     pub deployed_at_ledger: Option<i64>,
     pub contract_type: ContractType,
     pub is_sac: bool,
-    /// Per ADR 0041 — replaces previous `metadata: Option<Value>` JSONB
+    /// Per ADR 0042 — replaces previous `metadata: Option<Value>` JSONB
     /// blob with a typed `name VARCHAR(256)` column. Populated by the
     /// xdr-parser's constructor-pattern second pass (deploy + storage
     /// init in the same ledger). Late-init / re-init updates land via
@@ -243,7 +243,7 @@ pub(super) struct Staged {
 
     pub wasm_rows: Vec<WasmRow>,
     pub contract_rows: Vec<ContractRow>,
-    /// Per ADR 0041 / task 0156 — late-init and re-init `Symbol("name")`
+    /// Per ADR 0042 / task 0156 — late-init and re-init `Symbol("name")`
     /// writes captured by `xdr_parser::extract_contract_data_name_writes`.
     /// Each `(contract_id, name)` pair triggers a retroactive
     /// `UPDATE soroban_contracts SET name = …` after the contract upsert,

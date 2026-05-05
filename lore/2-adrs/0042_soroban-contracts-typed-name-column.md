@@ -14,7 +14,7 @@ history:
     note: 'ADR created alongside task 0156 implementation.'
 ---
 
-# ADR 0041: Replace `soroban_contracts.metadata` JSONB with typed `name` VARCHAR column
+# ADR 0042: Replace `soroban_contracts.metadata` JSONB with typed `name` VARCHAR column
 
 **Related:**
 

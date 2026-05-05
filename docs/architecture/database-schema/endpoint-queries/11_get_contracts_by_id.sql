@@ -41,7 +41,7 @@ SELECT
     contract_type_name(sc.contract_type) AS contract_type_name,
     sc.contract_type                   AS contract_type,
     sc.is_sac
-    -- Per ADR 0041 / task 0156: `metadata JSONB` replaced by typed
+    -- Per ADR 0042 / task 0156: `metadata JSONB` replaced by typed
     -- `name VARCHAR(256)`. E11 detail response no longer projects a
     -- metadata field; `name` is consumed only by the search query
     -- (`COALESCE(sc.name, '')` in 22_get_search.sql). The detail page

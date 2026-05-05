@@ -202,7 +202,7 @@ pub async fn process_ledger(
         let lp_pos = xdr_parser::extract_lp_positions(changes);
         all_lp_positions.extend(lp_pos);
 
-        // Task 0156 / ADR 0041 — `Symbol("name")` ContractData writes for
+        // Task 0156 / ADR 0042 — `Symbol("name")` ContractData writes for
         // late-init and re-init patterns (deploy + storage init in
         // different ledgers, or post-deploy name updates). The constructor
         // pattern (deploy + init same ledger) is already covered by
