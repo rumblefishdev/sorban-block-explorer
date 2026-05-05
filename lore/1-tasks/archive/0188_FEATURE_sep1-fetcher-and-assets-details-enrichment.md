@@ -2,7 +2,7 @@
 id: '0188'
 title: 'Feature: SEP-1 stellar.toml fetcher + GET /v1/assets/{id} runtime enrichment'
 type: FEATURE
-status: active
+status: completed
 related_adr: ['0029', '0032']
 related_tasks: ['0187', '0124', '0125']
 tags:
@@ -29,6 +29,18 @@ history:
       liquidity_pools modules now exist but neither uses SEP-1 (NFTs use
       metadata-URI fetch, LP uses price oracle — both separate enrichment
       paths). Only assets/{id} consumes SEP-1; scope unchanged.
+  - date: '2026-05-05'
+    status: completed
+    who: karolkow
+    note: >
+      Implementation done — strict scope (description + home_page only),
+      runtime SEP-1 fetcher, RuntimeEnrichment AppState bundle, canonical
+      SQL + endpoint-queries README updated. 22 files changed, +967
+      insertions / -32 deletions in main commit (post-trim from initial
+      9-field draft). Tests: 177 passed (4 new dto::tests + 5 new
+      client::tests for validate_host), 0 failed, 5 ignored. cargo check
+      + clippy -D warnings clean. HTTP path coverage intentionally
+      deferred to follow-up `#[ignore]` real-issuer smoke.
 ---
 
 # SEP-1 stellar.toml fetcher + GET /v1/assets/{id} runtime enrichment
@@ -190,40 +202,40 @@ abandoned per-entity S3 enrichment plan:
 
 ## Acceptance Criteria
 
-- [ ] `runtime_enrichment::sep1` exposes `Sep1Fetcher`, `Sep1TomlParsed`,
+- [x] `runtime_enrichment::sep1` exposes `Sep1Fetcher`, `Sep1TomlParsed`,
       `Sep1Currency` (re-exports). `Sep1Documentation` and `Sep1Error` accessible
       via fully-qualified `sep1::dto::*` / `sep1::errors::*` paths — not
       re-exported until a second consumer needs them. Skeleton TODO removed.
-- [ ] `reqwest` promoted to workspace deps; `toml` added to workspace.
-- [ ] `RuntimeEnrichment { stellar_archive, sep1 }` struct lives in
+- [x] `reqwest` promoted to workspace deps; `toml` added to workspace.
+- [x] `RuntimeEnrichment { stellar_archive, sep1 }` struct lives in
       `runtime_enrichment::mod`; `AppState.runtime_enrichment` replaces the
       old flat `fetcher` + `sep1` fields. Wired through `main.rs` and every
       test-app builder (`tests_integration::build_app`,
       `network::handlers::tests::app`, `main::tests::test_app`); access path
       becomes `state.runtime_enrichment.stellar_archive.fetch_ledger(...)`
       and `state.runtime_enrichment.sep1.fetch(...)`.
-- [ ] `AssetDetailResponse` shape unchanged from before this task —
+- [x] `AssetDetailResponse` shape unchanged from before this task —
       `description` and `home_page` continue to exist as `Option<String>`,
       but they are now populated from SEP-1 instead of hardcoded `None`.
       No new fields added.
-- [ ] `GET /v1/assets/{id}` returns 200 in every code path (success / fetch
+- [x] `GET /v1/assets/{id}` returns 200 in every code path (success / fetch
       failure / no home_domain / native XLM); never 5xx on a SEP-1 failure;
       existing light-slice fields unchanged.
-- [ ] `Sep1Currency` and `Sep1Documentation` parser DTOs model only the fields
+- [x] `Sep1Currency` and `Sep1Documentation` parser DTOs model only the fields
       the API consumes today (`code`, `issuer`, `desc` and `org_url`
       respectively). Adding a new SEP-1 field for a future consumer requires
       adding it to BOTH the parser DTO and the response DTO at the same time.
-- [ ] Body size cap is implemented in `capped_body` and bounded by
+- [x] Body size cap is implemented in `capped_body` and bounded by
       `MAX_BODY_BYTES = 100 * 1024` (verified by inspection / future
       real-issuer smoke).
-- [ ] Connect timeout 1 s, total timeout 2 s configured (constants exported
+- [x] Connect timeout 1 s, total timeout 2 s configured (constants exported
       from `client.rs`).
-- [ ] Built-in SSRF guard: RFC 1035 hostname check + `IpAddr::parse` rejection
+- [x] Built-in SSRF guard: RFC 1035 hostname check + `IpAddr::parse` rejection
       run before any I/O. Documented limitation: DNS-resolved private addresses
       (issuer.example.com → 10.x.x.x) NOT blocked at this layer.
-- [ ] `cargo check -p api`, `cargo clippy -p api -- -D warnings`, and
+- [x] `cargo check -p api`, `cargo clippy -p api -- -D warnings`, and
       `cargo test -p api` all clean.
-- [ ] **Docs updated** — `docs/architecture/backend/backend-overview.md`
+- [x] **Docs updated** — `docs/architecture/backend/backend-overview.md`
       §4.1 describes the two transport-specific submodules under
       `runtime_enrichment` (stellar_archive + sep1);
       `docs/architecture/database-schema/database-schema-overview.md` §4.10
@@ -242,6 +254,168 @@ abandoned per-entity S3 enrichment plan:
 - DNS-resolved private-IP SSRF blocking (resolve domain → check against RFC 1918 / 6598 / link-local) — only literal-IP rejection done here. Follow-up if threat model demands.
 - ADR 0029 amendment — deferred until a unified description across both submodules is worth writing (separate cleanup task).
 - Archiving 0124 / 0125 as superseded — separate cleanup task once both runtime + worker module pairs land.
+
+## Implementation Notes
+
+**Files touched (22 total, post-trim):**
+
+- 3 new files: `crates/api/src/runtime_enrichment/sep1/{client,dto,errors}.rs`.
+  Body of the previously-skeleton submodule from task 0187.
+- `runtime_enrichment/mod.rs`: added `RuntimeEnrichment { stellar_archive, sep1 }`
+  bundle struct + re-exports.
+- `state.rs`: replaced flat `fetcher` + (would-be) `sep1` fields with single
+  `runtime_enrichment: RuntimeEnrichment` field. Mirrors module structure 1:1.
+- `assets/queries.rs`: `ASSET_SELECT` extended with `iss.home_domain AS issuer_home_domain`;
+  `AssetRow.issuer_home_domain` added.
+- `assets/handlers.rs`: `get_asset` does conditional `state.runtime_enrichment.sep1.fetch(domain)` →
+  `extract_sep1_fields(parsed, code, issuer)` → set `description` + `home_page` on response.
+  Failure / no-domain → both null + warn-log.
+- `assets/dto.rs`: existing `description` / `home_page` fields documented as
+  SEP-1-sourced; no new fields added.
+- 6 consumer files updated for `state.fetcher` → `state.runtime_enrichment.stellar_archive`
+  rewrite: `main.rs`, `tests_integration.rs`, `network/handlers.rs`,
+  `transactions/handlers.rs`, `contracts/handlers.rs`, `openapi/mod.rs`.
+- Workspace deps: `reqwest` promoted from `audit-harness` inheritance to
+  `[workspace.dependencies]`; `toml = "0.8"` added.
+- 4 docs updated: `docs/architecture/backend/backend-overview.md` §4.1
+  (split into stellar_archive + sep1 sub-bullets); `database-schema-overview.md`
+  §4.10 Assets (SEP-1 detail fields not persisted at all);
+  `endpoint-queries/README.md` §09 (S3 overlay → runtime SEP-1 fetch);
+  `endpoint-queries/09_get_assets_by_id.sql` (added `iss.home_domain`,
+  replaced S3 reference).
+
+**Final code metrics (`crates/api/src/runtime_enrichment/sep1/`):**
+
+- `client.rs`: 252 lines (Sep1Fetcher + validate_host + capped_body + 5 unit tests)
+- `dto.rs`: 115 lines (Sep1TomlParsed + Sep1Currency {code, issuer, desc} +
+  Sep1Documentation {org_url} + 4 unit tests)
+- `errors.rs`: 52 lines (Sep1Error enum, 7 variants)
+- `mod.rs`: re-exports
+
+**Verification:**
+
+- `cargo check -p api` — clean
+- `cargo clippy -p api -- -D warnings` — clean
+- `cargo test -p api --lib --bins` — 177 passed, 0 failed, 5 ignored
+
+## Design Decisions
+
+### From Plan
+
+1. **Strict scope to existing 2 fields**: `description` and `home_page` —
+   the only fields originally hardcoded `None` on `AssetDetailResponse`.
+   No new response fields added. Karol's call: adding fields later is
+   cheap (parser + response DTO + handler tuple); removing them after a
+   frontend ships against them is expensive. Default to under-exposing.
+
+2. **Parser surface mirrors response surface**: `Sep1Currency` models only
+   `code`, `issuer`, `desc`; `Sep1Documentation` models only `org_url`.
+   Other SEP-1 fields silently dropped at parse time. When a future
+   consumer needs more, add to parser DTO + response DTO together.
+
+3. **Type-2 over type-1 for these fields**: details-only, change rarely
+   but unpredictably, cache makes hot path cheap, no need for worker /
+   storage. Mirrors the existing `stellar_archive` pattern from ADR 0029.
+
+4. **Built-in SSRF guard (RFC 1035 + IP-literal rejection)**: minimal
+   ~10 lines, runs before any I/O. Documented gap: DNS-resolved private
+   IPs (issuer.example.com → 10.x.x.x) NOT blocked at this layer.
+
+5. **In-memory LRU cache (24 h TTL, 1024 entries) only**: no DDB / S3 /
+   Postgres caching. Cold start drops cache; revisit only if p95 latency
+   demands it post-launch.
+
+### Emerged
+
+6. **`RuntimeEnrichment { stellar_archive, sep1 }` bundle struct**: original
+   plan put `sep1: Sep1Fetcher` as a flat AppState field alongside the
+   existing `fetcher: StellarArchiveFetcher`. Karol pushed back during
+   review — group both under one struct so AppState's field count
+   doesn't grow per new transport, and the grouping mirrors the
+   `runtime_enrichment` module 1:1. Refactored 6 consumer sites.
+
+7. **`Sep1Fetcher` test injection — base_override-then-removed**: initial
+   draft used an `Arc<dyn Fn(&str) -> String>` closure (`EndpointResolver`)
+   to point the fetcher at a localhost fixture. Karol flagged that
+   pattern as overengineering — test scaffolding leaking into production
+   type. First simplified to `Option<String> base_override` field. Then
+   dropped entirely along with the 5 fixture-server tests they enabled —
+   HTTP path coverage was marginal (parser covered by dto::tests, host
+   validation by client::tests, glue is ~5 lines of error mapping +
+   10-line size cap loop). Saved 167 lines in client.rs (419 → 252).
+
+8. **Dropped initial 9-field draft + `Sep1OrganizationDto` + `EnrichmentStatus`**:
+   first implementation exposed `description`, `home_page`, `conditions`,
+   `is_asset_anchored`, `anchor_asset_type`, `anchor_asset`,
+   `redemption_instructions`, `display_decimals`, `organization`, plus
+   an `enrichment_status: ok | unavailable` discriminator. Karol called
+   it scope creep and reverted to 2 fields. `Sep1OrganizationDto` and
+   `EnrichmentStatus` types deleted entirely.
+
+9. **`home_page` mapped from `DOCUMENTATION.ORG_URL`**: SEP-1 has no
+   per-currency `home_page` field. Closest semantic match is the
+   issuing organisation's URL. Preserves backward compatibility with
+   the previous DB-sourced `home_page` column dropped by task 0164.
+
+10. **Canonical SQL `09_get_assets_by_id.sql` updated for the new pattern**:
+    added `iss.home_domain AS issuer_home_domain` projection (internal
+    SEP-1 lookup key, not in API response); dropped outdated
+    "S3 returns: description, home_page (task 0164)" header comment;
+    replaced with "Runtime SEP-1 fetch via runtime_enrichment::sep1
+    (task 0188)". Plus `endpoint-queries/README.md` §09 mirror update.
+
+11. **Endpoint type for AppState fetch sites changed to grouped path**:
+    every `state.fetcher.fetch_*(...)` call updated to
+    `state.runtime_enrichment.stellar_archive.fetch_*(...)`. Mechanical
+    but touches 3 handler files. No re-export shim added — explicit
+    submodule path keeps SEP-1 / archive symmetry visible at every site.
+
+## Issues Encountered
+
+- **Untracked task file blocked branch checkout**: when promoting 0188 from
+  backlog, `git checkout -b feat/0188_… origin/develop` failed because the
+  task md was untracked locally and its path matched a file already at
+  develop tip (the cherry-picked `chore(lore-0188): activate task`
+  commit). Fix: moved untracked copy to `.trash/` per CLAUDE.md, then
+  checkout succeeded. Same pattern as task 0187 promotion. Not a
+  regression.
+
+- **moka cache hit assertion timing**: cache-hit fixture test (later
+  dropped) failed with `entry_count == 0` instead of `1` because moka's
+  async entry-count bookkeeping lags by a tick after insert. Fix at the
+  time was to compare returned `Arc::ptr_eq` for proven cache hit; the
+  whole test was later removed when fixture-server tests were dropped.
+
+- **Linter reordered import lines**: each save through the project's
+  format pipeline shuffled `use` statements alphabetically. Cosmetic.
+
+## Future Work
+
+Tracked separately as planned follow-ups (not spawned as backlog tasks
+yet — Karol prefers larger-scope batches per the M2 enrichment plan):
+
+- **Type-1 enrichment-worker crate** (next task in the M2 plan):
+  scheduled Lambda + EventBridge cron + first jobs:
+
+  - `assets.icon_url` backfill (HTTP from stellar.toml CURRENCIES[].image)
+  - `liquidity_pool_snapshots.{tvl, volume, fee_revenue}` (supersedes
+    backlog task 0125 — uses CoinGecko / StellarExpert / Horizon
+    aggregator for USD price oracle)
+  - `assets.usd_price` + `assets.usd_price_updated_at` — NEW columns
+    for asset-detail USD price (parity with stellarchain.io/markets
+    view; not in canonical schema today)
+
+- **Cleanup task** (after type-1 worker lands): archive 0124, 0125, 0156
+  as superseded; ADR 0029 amendment to reflect runtime_enrichment as
+  the umbrella concept across both transports.
+
+- **Real-issuer `#[ignore]` smoke test** against e.g. `ultrastellar.com`
+  — verifies HTTP path end-to-end with a real network round-trip.
+
+- **Sep1 enrichment for `GET /v1/accounts/{id}`** — when the accounts
+  module (0048 pending PR) ships, wire SEP-1 org info via account's
+  `home_domain`. Reuses the existing `runtime_enrichment::sep1::Sep1Fetcher`
+  with no new infrastructure.
 
 ## Notes
 
