@@ -1,5 +1,5 @@
 ---
-id: '0191'
+id: '0192'
 title: 'operations_appearances order by oa.id != on-chain apply order'
 type: BUG
 status: backlog
