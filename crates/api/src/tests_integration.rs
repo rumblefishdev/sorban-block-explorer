@@ -23,6 +23,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 use utoipa_axum::router::OpenApiRouter;
 
+use crate::accounts;
 use crate::assets;
 use crate::contracts;
 use crate::ledgers;
@@ -69,6 +70,7 @@ fn build_app(db: PgPool) -> Router {
         .nest("/v1", nfts::router())
         .nest("/v1", assets::router())
         .nest("/v1", ledgers::router())
+        .nest("/v1", accounts::router())
         .with_state(state)
         .split_for_parts();
     router
@@ -2609,4 +2611,513 @@ async fn lp_transactions_invalid_pool_id_returns_400_envelope() {
     let (status, json) = body_json(resp).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(json["code"], "invalid_pool_id");
+}
+
+// ===========================================================================
+// Accounts (task 0048)
+// ===========================================================================
+
+const ACCOUNTS_VALID_G: &str = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAT";
+
+/// Path-shape validation must fire before any DB contact and return the
+/// canonical `invalid_account_id` envelope. Covers wrong prefix (C-StrKey
+/// against G validator), short input, and lowercase letters.
+#[tokio::test]
+async fn accounts_invalid_id_returns_400_envelope() {
+    for bad in [
+        "BAD",
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJ", // C-StrKey
+        "gaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaat", // lowercase
+    ] {
+        let app = lazy_app();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/accounts/{bad}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let (status, json) = body_json(resp).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "case {bad}: {json}");
+        assert_eq!(json["code"], "invalid_account_id", "case {bad}: {json}");
+    }
+}
+
+/// Sub-resource (transactions) shares the same path validator — assert it
+/// fires before the pagination extractor sees anything.
+#[tokio::test]
+async fn accounts_transactions_invalid_id_returns_400_envelope() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/accounts/BAD/transactions")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_account_id");
+}
+
+/// `?limit=` validation on the transactions sub-resource must fire before
+/// the path validator yields control to DB.
+#[tokio::test]
+async fn accounts_transactions_invalid_limit_returns_envelope_before_db() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v1/accounts/{ACCOUNTS_VALID_G}/transactions?limit=0"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_limit");
+}
+
+/// Malformed `?cursor=` must surface as `invalid_cursor` before any DB
+/// contact, just like every other paginated list endpoint.
+#[tokio::test]
+async fn accounts_transactions_invalid_cursor_returns_envelope_before_db() {
+    let app = lazy_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v1/accounts/{ACCOUNTS_VALID_G}/transactions?cursor=not!!base64"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_cursor");
+}
+
+// ---------------------------------------------------------------------------
+// DB-touching tests — gated on DATABASE_URL.
+// ---------------------------------------------------------------------------
+
+/// Detail endpoint shape against a live `accounts` row. Picks an account
+/// with the most balances so the balances projection is exercised, and
+/// asserts every documented header field plus the short-TTL Cache-Control
+/// header. Skips when the DB has no accounts.
+#[tokio::test]
+async fn accounts_detail_returns_header_and_balances_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping accounts detail integration test");
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        eprintln!("DATABASE_URL unreachable — skipping");
+        return;
+    };
+
+    // Pick an indexed account with at least one balance row (preferring
+    // the one with the most balances so we exercise the multi-row branch).
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT a.account_id \
+         FROM accounts a \
+         JOIN account_balances_current abc ON abc.account_id = a.id \
+         GROUP BY a.account_id \
+         ORDER BY COUNT(*) DESC \
+         LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    let Some((account_strkey,)) = row else {
+        eprintln!("DB has no accounts with balances — skipping detail shape test");
+        return;
+    };
+
+    let resp = build_app(pool)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/accounts/{account_strkey}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let cc = resp
+        .headers()
+        .get(axum::http::header::CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200: {json}");
+    assert_eq!(
+        cc.as_deref(),
+        Some("public, max-age=10"),
+        "Cache-Control: {cc:?}"
+    );
+    for k in [
+        "account_id",
+        "sequence_number",
+        "balances",
+        "home_domain",
+        "first_seen_ledger",
+        "last_seen_ledger",
+    ] {
+        assert!(json.get(k).is_some(), "detail missing `{k}`: {json}");
+    }
+    assert_eq!(json["account_id"], account_strkey);
+    let balances = json["balances"]
+        .as_array()
+        .unwrap_or_else(|| panic!("balances not array: {json}"));
+    assert!(!balances.is_empty(), "expected ≥1 balance row: {json}");
+    for bal in balances {
+        for k in ["asset_type_name", "type", "balance", "last_updated_ledger"] {
+            assert!(bal.get(k).is_some(), "balance missing `{k}`: {bal}");
+        }
+        // Native rows must carry NULL code/issuer; credit rows must carry both
+        // (CHECK ck_abc_native on the source table).
+        let asset_type = bal["type"].as_i64().unwrap();
+        if asset_type == 0 {
+            assert!(bal["asset_code"].is_null(), "native asset_code: {bal}");
+            assert!(bal["asset_issuer"].is_null(), "native asset_issuer: {bal}");
+        } else {
+            assert!(bal["asset_code"].is_string(), "credit asset_code: {bal}");
+            assert!(
+                bal["asset_issuer"].is_string(),
+                "credit asset_issuer: {bal}"
+            );
+        }
+    }
+}
+
+/// Detail endpoint shape against an account with **zero balances** —
+/// the LIVE dev DB carries ~45% accounts in this state (uninitialized
+/// observations + accounts whose balance pipeline hasn't caught up).
+/// `account_balances_current` returns no rows; the response must still
+/// be 200 with `balances: []`, not 404. Skips when the DB has no
+/// zero-balance accounts.
+#[tokio::test]
+async fn accounts_detail_with_zero_balances_returns_empty_array_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT a.account_id \
+         FROM accounts a \
+         LEFT JOIN account_balances_current abc ON abc.account_id = a.id \
+         GROUP BY a.account_id \
+         HAVING COUNT(abc.*) = 0 \
+         LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    let Some((account_strkey,)) = row else {
+        eprintln!("no zero-balance accounts — skipping empty-balances test");
+        return;
+    };
+
+    let resp = build_app(pool)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/accounts/{account_strkey}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200: {json}");
+    assert_eq!(json["account_id"], account_strkey);
+    assert!(
+        json["balances"].is_array() && json["balances"].as_array().unwrap().is_empty(),
+        "balances should be empty array: {json}"
+    );
+}
+
+/// 404 for an account StrKey that passes shape validation but is not
+/// indexed. Uses the all-zeros (with valid CRC trailer used in test
+/// fixtures) StrKey — vanishingly unlikely to be a real account.
+#[tokio::test]
+async fn accounts_detail_unknown_returns_404_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    let resp = build_app(pool)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/accounts/{ACCOUNTS_VALID_G}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "expected 404: {json}");
+    assert_eq!(json["code"], "not_found");
+}
+
+/// Transactions sub-resource shape against a live row. Picks an account
+/// with ≥1 participation row from `transaction_participants` so the
+/// LATERAL `operation_types[]` aggregate produces a non-trivial result.
+/// Asserts canonical 07's projection 1:1.
+#[tokio::test]
+async fn accounts_transactions_returns_paginated_envelope_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT a.account_id \
+         FROM accounts a \
+         JOIN transaction_participants tp ON tp.account_id = a.id \
+         GROUP BY a.account_id \
+         ORDER BY COUNT(*) DESC \
+         LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    let Some((account_strkey,)) = row else {
+        eprintln!("DB has no accounts with participations — skipping");
+        return;
+    };
+
+    let resp = build_app(pool)
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v1/accounts/{account_strkey}/transactions?limit=3"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let cc = resp
+        .headers()
+        .get(axum::http::header::CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200: {json}");
+    assert_eq!(
+        cc.as_deref(),
+        Some("public, max-age=10"),
+        "Cache-Control: {cc:?}"
+    );
+    assert!(json["data"].is_array(), "data not array: {json}");
+    assert!(json["page"]["limit"].is_number(), "page.limit: {json}");
+    assert!(
+        json["page"]["has_more"].is_boolean(),
+        "page.has_more: {json}"
+    );
+
+    if let Some(row) = json["data"].get(0) {
+        for k in [
+            "hash",
+            "ledger_sequence",
+            "application_order",
+            "source_account",
+            "fee_charged",
+            "successful",
+            "operation_count",
+            "has_soroban",
+            "operation_types",
+            "created_at",
+        ] {
+            assert!(row.get(k).is_some(), "tx row missing `{k}`: {row}");
+        }
+        assert!(
+            row["operation_types"].is_array(),
+            "operation_types not array: {row}"
+        );
+    }
+}
+
+/// 404 on the sub-resource when the account is unknown — same UX as the
+/// detail endpoint, distinct from "indexed account with empty list".
+#[tokio::test]
+async fn accounts_transactions_unknown_returns_404_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    let resp = build_app(pool)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/accounts/{ACCOUNTS_VALID_G}/transactions"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "expected 404: {json}");
+    assert_eq!(json["code"], "not_found");
+}
+
+/// Indexed account with zero `transaction_participants` rows must return
+/// 200 + an empty page, distinct from the 404 path. Locks the contract
+/// against accidental regression to "404 when no transactions yet".
+#[tokio::test]
+async fn accounts_transactions_indexed_account_zero_participations_returns_empty_page() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT a.account_id \
+         FROM accounts a \
+         LEFT JOIN transaction_participants tp ON tp.account_id = a.id \
+         GROUP BY a.account_id \
+         HAVING COUNT(tp.*) = 0 \
+         LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    let Some((account_strkey,)) = row else {
+        eprintln!("no zero-participation accounts — skipping empty-page test");
+        return;
+    };
+
+    let resp = build_app(pool)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/accounts/{account_strkey}/transactions"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "expected 200: {json}");
+    assert!(
+        json["data"].is_array() && json["data"].as_array().unwrap().is_empty(),
+        "data should be empty: {json}"
+    );
+    assert_eq!(json["page"]["has_more"], false, "has_more: {json}");
+    assert!(
+        json["page"]["cursor"].is_null(),
+        "cursor should be absent: {json}"
+    );
+}
+
+/// Cursor traversal: page A and page B (continuation) must not overlap.
+/// Same shape as the transactions/ledgers cursor tests but on the account
+/// transactions sub-resource.
+#[tokio::test]
+async fn accounts_transactions_cursor_round_trip_no_overlap_against_real_db() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = PgPool::connect(&database_url).await else {
+        return;
+    };
+
+    // Pick an account with at least 4 participation rows so we have a
+    // realistic chance of `has_more = true` on page A.
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT a.account_id \
+         FROM accounts a \
+         JOIN transaction_participants tp ON tp.account_id = a.id \
+         GROUP BY a.account_id \
+         HAVING COUNT(*) >= 4 \
+         ORDER BY COUNT(*) DESC \
+         LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    let Some((account_strkey,)) = row else {
+        eprintln!("no account with ≥4 participations — skipping cursor traversal test");
+        return;
+    };
+
+    let app = build_app(pool);
+
+    let resp_a = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v1/accounts/{account_strkey}/transactions?limit=2"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status_a, json_a) = body_json(resp_a).await;
+    assert_eq!(status_a, StatusCode::OK, "page A: {json_a}");
+    let data_a = json_a["data"].as_array().cloned().unwrap_or_default();
+    if data_a.len() < 2 || !json_a["page"]["has_more"].as_bool().unwrap_or(false) {
+        eprintln!("DB returned fewer than 2 + has_more — skipping overlap assertion");
+        return;
+    }
+    let cursor = json_a["page"]["cursor"].as_str().unwrap().to_owned();
+
+    let resp_b = app
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v1/accounts/{account_strkey}/transactions?limit=2&cursor={cursor}"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status_b, json_b) = body_json(resp_b).await;
+    assert_eq!(status_b, StatusCode::OK, "page B: {json_b}");
+
+    let hashes_a: Vec<String> = data_a
+        .iter()
+        .map(|r| r["hash"].as_str().unwrap().to_owned())
+        .collect();
+    let hashes_b: Vec<String> = json_b["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["hash"].as_str().unwrap().to_owned())
+        .collect();
+    for h in &hashes_b {
+        assert!(
+            !hashes_a.contains(h),
+            "hash {h} appears on both pages A={hashes_a:?} B={hashes_b:?}"
+        );
+    }
 }

@@ -1,5 +1,6 @@
 //! REST API Lambda handler for the Soroban block explorer.
 
+mod accounts;
 mod assets;
 mod cache;
 mod common;
@@ -427,6 +428,43 @@ mod tests {
             spec["components"]["schemas"]["NetworkStats"].is_object(),
             "spec missing NetworkStats component: {spec}"
         );
+    }
+
+    #[tokio::test]
+    async fn api_docs_json_contains_accounts_paths() {
+        let app = test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api-docs-json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let spec: Value = serde_json::from_slice(&bytes).unwrap();
+        for path in [
+            "/v1/accounts/{account_id}",
+            "/v1/accounts/{account_id}/transactions",
+        ] {
+            assert!(
+                spec["paths"][path].is_object(),
+                "spec missing {path} path: {spec}"
+            );
+        }
+        for component in [
+            "AccountDetailResponse",
+            "AccountBalance",
+            "AccountTransactionItem",
+        ] {
+            assert!(
+                spec["components"]["schemas"][component].is_object(),
+                "spec missing {component} component: {spec}"
+            );
+        }
     }
 
     #[tokio::test]
