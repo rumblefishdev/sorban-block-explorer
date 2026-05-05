@@ -2,7 +2,7 @@
 id: '0191'
 title: 'Type-1 enrichment live path (icon only): SQS-driven worker for assets.icon_url'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0029']
 related_tasks: ['0124', '0187', '0188']
 tags:
@@ -24,6 +24,10 @@ history:
     status: backlog
     who: karolkow
     note: 'Task drafted after 0188. Live-path-only, icon-only MVP. Backfill deferred to Future Work (no separate task spawned yet); LP analytics deferred (track separately under 0125).'
+  - date: '2026-05-05'
+    status: active
+    who: karolkow
+    note: 'Activated for implementation. Branch feat/0191_type1-enrichment-worker-lambda cut from develop with feat/0188 merged in for the SEP-1 fetcher base.'
 ---
 
 # Type-1 enrichment live path (icon only): SQS-driven worker for `assets.icon_url`
