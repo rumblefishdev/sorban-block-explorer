@@ -11,6 +11,7 @@ members = [
     "crates/backfill-bench",
     "crates/backfill-runner",
     "crates/audit-harness",
+    "crates/db-merge",
 ]
 
 [workspace.dependencies]

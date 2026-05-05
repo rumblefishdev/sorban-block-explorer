@@ -1,0 +1,26 @@
+[package]
+name = "db-merge"
+version = "0.1.0"
+edition = "2024"
+description = "Multi-laptop backfill snapshot merge tool — implements ADR 0040"
+
+[[bin]]
+name = "db-merge"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { workspace = true, features = [
+    "macros",
+    "rt-multi-thread",
+    "sync",
+    "signal",
+    "fs",
+    "process",
+    "time",
+] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+sqlx = { workspace = true }
+clap = { version = "4", features = ["derive", "env"] }
+chrono = { workspace = true }
+thiserror = { workspace = true }
