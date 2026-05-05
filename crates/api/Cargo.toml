@@ -43,6 +43,9 @@ futures = "0.3"
 hex = { workspace = true }
 bytes = "1"
 moka = { version = "0.12", features = ["sync", "future"] }
+# SEP-1 stellar.toml fetcher (task 0188): HTTP client + TOML parser.
+reqwest = { workspace = true }
+toml = { workspace = true }
 
 [dev-dependencies]
 tower = "0.5"

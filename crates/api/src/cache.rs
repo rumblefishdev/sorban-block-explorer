@@ -18,12 +18,10 @@
 //! does its `.await`s outside the `get`/`insert` call) — sync is sharded
 //! and lock-free for reads with no risk of holding a lock across `.await`.
 //!
-//! The `network_cache` is the exception: it needs `try_get_with` with an
-//! async initialiser (a Postgres query) to deduplicate concurrent
-//! cold-cache requests on a singleton key. That cache is built ad-hoc
-//! with `moka::future::Cache::builder()` directly — see
-//! `crates/api/src/network/cache.rs`. If a second future-cache callsite
-//! ever appears, lift it into a `ttl_future_cache` companion helper here.
+//! When a callsite needs `try_get_with` on an async initialiser to
+//! deduplicate concurrent cold-cache misses, use [`ttl_future_cache`]
+//! instead. The first such caller was the network stats cache (one
+//! singleton key, per task 0180); SEP-1 (task 0188) is the second.
 //!
 //! ## Capacity defaults
 //!
@@ -36,6 +34,7 @@ use std::hash::Hash;
 use std::sync::Arc;
 use std::time::Duration;
 
+pub use moka::future::Cache as FutureCache;
 pub use moka::sync::Cache;
 
 /// Build a TTL-only cache with an explicit max-entry bound.
@@ -52,6 +51,20 @@ where
     V: Send + Sync + 'static,
 {
     Cache::builder()
+        .time_to_live(ttl)
+        .max_capacity(max_capacity)
+        .build()
+}
+
+/// `moka::future::Cache` companion to [`ttl_cache`] for callers that need
+/// `try_get_with` with an `async` initialiser — i.e. cold-miss stampede
+/// protection where the load fn is itself a future.
+pub fn ttl_future_cache<K, V>(ttl: Duration, max_capacity: u64) -> FutureCache<K, Arc<V>>
+where
+    K: Hash + Eq + Send + Sync + 'static,
+    V: Send + Sync + 'static,
+{
+    FutureCache::builder()
         .time_to_live(ttl)
         .max_capacity(max_capacity)
         .build()
