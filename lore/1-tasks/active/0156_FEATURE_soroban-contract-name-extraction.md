@@ -2,7 +2,7 @@
 id: '0156'
 title: 'Indexer: extract Soroban token name from ContractData (typed `name` column)'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0023', '0027', '0031', '0037']
 related_tasks: ['0120', '0124', '0133']
 tags: [priority-medium, effort-medium, layer-indexer, layer-db, schema-change]
@@ -61,6 +61,10 @@ history:
       or NULL; nothing to copy). Effort small → medium. ADR is to be
       drafted by author at pickup (amendment to ADR 0023 or new ADR
       formalizing the typed-name decision).
+  - date: '2026-05-05'
+    status: active
+    who: stkrolikiewicz
+    note: 'Promoted via /promote-task 0156. Picked up for implementation.'
 ---
 
 # Indexer: extract Soroban token name from ContractData at deploy time
