@@ -1,3 +1,8 @@
+---
+name: compare-with-stellar-api
+description: Verify a database query output against Horizon, stellar.expert, and independently parsed raw XDR.
+---
+
 # /compare-with-stellar-api — Verify a DB query's output against Horizon + stellar.expert + raw XDR
 
 Take a path to a SQL query, run it against the local Docker Postgres, pick 5 representative rows (mix of edge cases + random), then dispatch 3 parallel subagents to cross-check those rows against:
