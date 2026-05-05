@@ -627,14 +627,22 @@ Design notes:
   there is no native branch in `detect_assets`. Operator deletion of this row
   breaks the `/assets` listing and any future FK that targets it.
 - `icon_url` is the only SEP-1 enrichment field on the DB row — it serves the
-  list-page thumbnail (per-row). Asset-detail metadata (`description`,
-  `home_page`) lives per-entity in S3 at `s3://<bucket>/assets/{id}.json` per
-  [ADR 0037](../../../lore/2-adrs/0037_current-schema-snapshot.md) / task 0164;
-  this narrows the original typed-columns plan from
+  list-page thumbnail (per-row), and is targeted by the future type-1
+  enrichment worker (separate task)
+- asset-detail SEP-1 fields (`description`, `home_page`, `conditions`,
+  `is_asset_anchored`, `anchor_*`, `redemption_instructions`,
+  `display_decimals`, organisation info) are NOT stored on this row at all —
+  they are resolved at request time on `GET /v1/assets/{id}` by the
+  `runtime_enrichment::sep1` fetcher (task 0188), which reads
+  `accounts.home_domain` for the issuer and pulls `https://{home_domain}/.well-known/stellar.toml`.
+  This narrows the original typed-columns plan from
   [ADR 0023](../../../lore/2-adrs/0023_tokens-typed-metadata-columns.md) Part 3
-- the SEP-1 / SEP-41 enrichment worker (ADR 0022 pattern) is planned and
-  currently unimplemented; when built, it will write `icon_url` to the DB
-  and the detail JSON document to S3; not inline with ledger ingest
+  and supersedes the per-entity S3 hydration sketched under task 0164;
+  details-only fields are not persisted at all
+- type-1 enrichment worker for `icon_url` backfill (separate Lambda crate) is
+  planned but currently unimplemented; it will write `icon_url` via batched
+  HTTPS GETs to the same stellar.toml files the runtime fetcher uses
+- `total_supply` and `holder_count` are stock fields also populated post-ingest
 - `total_supply` and `holder_count` are stock fields also populated post-ingest
 - `soroban_contracts.contract_type = 'token'` classifies a contract's SEP-41 role
   and is intentionally distinct from this table's name — the two coexist without

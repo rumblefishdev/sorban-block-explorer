@@ -25,6 +25,8 @@ use axum::{Json, Router, routing::get};
 use utoipa::openapi::OpenApi as OpenApiSpec;
 
 use crate::config::AppConfig;
+use crate::runtime_enrichment::RuntimeEnrichment;
+use crate::runtime_enrichment::sep1::Sep1Fetcher;
 use crate::runtime_enrichment::stellar_archive::StellarArchiveFetcher;
 use crate::state::AppState;
 
@@ -103,7 +105,10 @@ async fn main() {
         .load()
         .await;
     let s3_client = aws_sdk_s3::Client::new(&aws_config);
-    let fetcher = StellarArchiveFetcher::new(s3_client);
+    let runtime_enrichment = RuntimeEnrichment {
+        stellar_archive: StellarArchiveFetcher::new(s3_client),
+        sep1: Sep1Fetcher::new().expect("failed to build SEP-1 stellar.toml HTTP client"),
+    };
 
     let config = AppConfig::from_env();
     let passphrase = std::env::var("STELLAR_NETWORK_PASSPHRASE").unwrap_or_else(|_| {
@@ -117,7 +122,7 @@ async fn main() {
     let network_id = xdr_parser::network_id(&passphrase);
     let state = AppState {
         db,
-        fetcher,
+        runtime_enrichment,
         contract_cache: contracts::cache::new_contract_cache(),
         network_cache: network::cache::new_network_cache(),
         network_id,
@@ -152,12 +157,18 @@ mod tests {
             .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
             .build();
         let s3 = aws_sdk_s3::Client::from_conf(aws_cfg);
-        let fetcher = StellarArchiveFetcher::new(s3);
+        let runtime_enrichment = RuntimeEnrichment {
+            stellar_archive: StellarArchiveFetcher::new(s3),
+            // Real SEP-1 fetcher with a stub HTTP client. The spec / health
+            // tests below never reach get_asset, so the client never makes a
+            // real request.
+            sep1: Sep1Fetcher::new().expect("build sep1 fetcher"),
+        };
         app(
             &test_config(),
             AppState {
                 db,
-                fetcher,
+                runtime_enrichment,
                 contract_cache: contracts::cache::new_contract_cache(),
                 network_cache: network::cache::new_network_cache(),
                 network_id: xdr_parser::network_id(xdr_parser::MAINNET_PASSPHRASE),

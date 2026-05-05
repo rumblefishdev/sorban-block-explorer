@@ -33,6 +33,11 @@ pub struct AssetRow {
     /// `soroban_contracts.deployed_at_ledger` — populated for SAC and
     /// Soroban-native rows; `None` for native and classic_credit.
     pub deployed_at_ledger: Option<i64>,
+    /// `accounts.home_domain` for the issuer, used as the SEP-1 lookup
+    /// key in `get_asset` runtime enrichment (task 0188). `None` for
+    /// native, no-issuer, and issuer accounts that did not set
+    /// `home_domain` on-chain.
+    pub issuer_home_domain: Option<String>,
 }
 
 #[derive(Debug)]
@@ -76,6 +81,7 @@ const ASSET_SELECT: &str = "SELECT a.id, \
      a.asset_type AS asset_type, \
      a.asset_code, \
      iss.account_id AS issuer, \
+     iss.home_domain AS issuer_home_domain, \
      sc.contract_id, \
      a.name, \
      a.total_supply::text AS total_supply, \
@@ -99,6 +105,7 @@ fn map_asset_row(r: &PgRow) -> AssetRow {
         holder_count: r.get("holder_count"),
         icon_url: r.get("icon_url"),
         deployed_at_ledger: r.get("deployed_at_ledger"),
+        issuer_home_domain: r.get("issuer_home_domain"),
     }
 }
 
