@@ -5,6 +5,61 @@ export type ClientOptions = {
 };
 
 /**
+ * Native rows have `null` `asset_code` / `asset_issuer`; credit rows have both.
+ */
+export type AccountBalance = {
+  asset_code?: string | null;
+  asset_issuer?: string | null;
+  /**
+   * `native` | `credit_alphanum4` | `credit_alphanum12`.
+   */
+  asset_type_name?: string | null;
+  /**
+   * `NUMERIC(28,7)` as fixed-precision string (preserves trailing zeros).
+   */
+  balance: string;
+  last_updated_ledger: number;
+  /**
+   * Raw SMALLINT — stable across label renames.
+   */
+  type: number;
+};
+
+export type AccountDetailResponse = {
+  account_id: string;
+  balances: Array<AccountBalance>;
+  first_seen_ledger: number;
+  home_domain?: string | null;
+  last_seen_ledger: number;
+  sequence_number: number;
+};
+
+/**
+ * Slim — `inner_tx_hash` / `contract_ids[]` live on `/v1/transactions` only.
+ */
+export type AccountTransactionItem = {
+  /**
+   * 1-based position in ledger.
+   */
+  application_order: number;
+  created_at: string;
+  /**
+   * Stroops.
+   */
+  fee_charged: number;
+  has_soroban: boolean;
+  /**
+   * 64-char lowercase hex.
+   */
+  hash: string;
+  ledger_sequence: number;
+  operation_count: number;
+  operation_types: Array<string>;
+  source_account: string;
+  successful: boolean;
+};
+
+/**
  * Detail response. `description` is populated from the issuer stellar.toml
  * `CURRENCIES[].desc` field; `home_page` is populated from
  * `DOCUMENTATION.ORG_URL` (SEP-1 has no per-currency `home_page` field —
@@ -574,6 +629,40 @@ export type PageInfo = {
    * limit (clamped server-side).
    */
   limit: number;
+};
+
+/**
+ * Canonical envelope for paginated list responses.
+ *
+ * Generic over the item type `T` so every endpoint can reuse a single
+ * shape. Concrete instantiations (e.g. `Paginated<Transaction>`) are
+ * picked up automatically by utoipa-axum via the handler return type
+ * when M2 endpoint modules are wired in. Unused in M1 — kept as
+ * infrastructure that M2 endpoints will consume.
+ */
+export type PaginatedAccountTransactionItem = {
+  data: Array<{
+    /**
+     * 1-based position in ledger.
+     */
+    application_order: number;
+    created_at: string;
+    /**
+     * Stroops.
+     */
+    fee_charged: number;
+    has_soroban: boolean;
+    /**
+     * 64-char lowercase hex.
+     */
+    hash: string;
+    ledger_sequence: number;
+    operation_count: number;
+    operation_types: Array<string>;
+    source_account: string;
+    successful: boolean;
+  }>;
+  page: PageInfo;
 };
 
 /**
@@ -1277,6 +1366,93 @@ export type HealthResponses = {
    */
   200: unknown;
 };
+
+export type GetAccountData = {
+  body?: never;
+  path: {
+    /**
+     * Stellar account StrKey (G…, 56 chars)
+     */
+    account_id: string;
+  };
+  query?: never;
+  url: '/v1/accounts/{account_id}';
+};
+
+export type GetAccountErrors = {
+  /**
+   * Invalid account_id
+   */
+  400: ErrorEnvelope;
+  /**
+   * Account not found
+   */
+  404: ErrorEnvelope;
+  /**
+   * Internal server error
+   */
+  500: ErrorEnvelope;
+};
+
+export type GetAccountError = GetAccountErrors[keyof GetAccountErrors];
+
+export type GetAccountResponses = {
+  /**
+   * Account detail with current balances
+   */
+  200: AccountDetailResponse;
+};
+
+export type GetAccountResponse = GetAccountResponses[keyof GetAccountResponses];
+
+export type ListAccountTransactionsData = {
+  body?: never;
+  path: {
+    /**
+     * Stellar account StrKey (G…, 56 chars)
+     */
+    account_id: string;
+  };
+  query?: {
+    /**
+     * Items per page (1–100, default 20).
+     */
+    limit?: number;
+    /**
+     * Opaque pagination cursor from a previous response.
+     */
+    cursor?: string;
+  };
+  url: '/v1/accounts/{account_id}/transactions';
+};
+
+export type ListAccountTransactionsErrors = {
+  /**
+   * Invalid account_id / pagination
+   */
+  400: ErrorEnvelope;
+  /**
+   * Account not found
+   */
+  404: ErrorEnvelope;
+  /**
+   * Internal server error
+   */
+  500: ErrorEnvelope;
+};
+
+export type ListAccountTransactionsError =
+  ListAccountTransactionsErrors[keyof ListAccountTransactionsErrors];
+
+export type ListAccountTransactionsResponses = {
+  /**
+   * Paginated transactions involving the account
+   */
+  200: PaginatedAccountTransactionItem;
+};
+
+export type ListAccountTransactionsResponse =
+  ListAccountTransactionsResponses[keyof ListAccountTransactionsResponses];
 
 export type ListAssetsData = {
   body?: never;

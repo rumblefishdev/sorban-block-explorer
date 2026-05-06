@@ -12,6 +12,7 @@
 //! to import twice.
 #![allow(dead_code)]
 
+mod accounts;
 mod assets;
 mod cache;
 mod common;

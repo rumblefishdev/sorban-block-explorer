@@ -9,6 +9,7 @@ import {
 
 import { client } from '../client.gen.js';
 import {
+  getAccount,
   getAsset,
   getContract,
   getInterface,
@@ -20,6 +21,7 @@ import {
   getSearch,
   getTransaction,
   health,
+  listAccountTransactions,
   listAssets,
   listAssetTransactions,
   listEvents,
@@ -34,6 +36,9 @@ import {
   type Options,
 } from '../sdk.gen.js';
 import type {
+  GetAccountData,
+  GetAccountError,
+  GetAccountResponse,
   GetAssetData,
   GetAssetError,
   GetAssetResponse,
@@ -65,6 +70,9 @@ import type {
   GetTransactionError,
   GetTransactionResponse,
   HealthData,
+  ListAccountTransactionsData,
+  ListAccountTransactionsError,
+  ListAccountTransactionsResponse,
   ListAssetsData,
   ListAssetsError,
   ListAssetsResponse,
@@ -165,18 +173,22 @@ export const healthOptions = (options?: Options<HealthData>) =>
     queryKey: healthQueryKey(options),
   });
 
-export const listAssetsQueryKey = (options?: Options<ListAssetsData>) =>
-  createQueryKey('listAssets', options);
+export const getAccountQueryKey = (options: Options<GetAccountData>) =>
+  createQueryKey('getAccount', options);
 
-export const listAssetsOptions = (options?: Options<ListAssetsData>) =>
+/**
+ * Account detail — header from `accounts` + balances from
+ * `account_balances_current` (canonical 06 statements A + B).
+ */
+export const getAccountOptions = (options: Options<GetAccountData>) =>
   queryOptions<
-    ListAssetsResponse,
-    ListAssetsError,
-    ListAssetsResponse,
-    ReturnType<typeof listAssetsQueryKey>
+    GetAccountResponse,
+    GetAccountError,
+    GetAccountResponse,
+    ReturnType<typeof getAccountQueryKey>
   >({
     queryFn: async ({ queryKey, signal }) => {
-      const { data } = await listAssets({
+      const { data } = await getAccount({
         ...options,
         ...queryKey[0],
         signal,
@@ -184,7 +196,37 @@ export const listAssetsOptions = (options?: Options<ListAssetsData>) =>
       });
       return data;
     },
-    queryKey: listAssetsQueryKey(options),
+    queryKey: getAccountQueryKey(options),
+  });
+
+export const listAccountTransactionsQueryKey = (
+  options: Options<ListAccountTransactionsData>
+) => createQueryKey('listAccountTransactions', options);
+
+/**
+ * Paginated transactions involving the account (source or participant).
+ * 404 when the StrKey is unknown — distinct from "indexed account, no
+ * transactions yet" (matches assets/contracts sub-resource pattern).
+ */
+export const listAccountTransactionsOptions = (
+  options: Options<ListAccountTransactionsData>
+) =>
+  queryOptions<
+    ListAccountTransactionsResponse,
+    ListAccountTransactionsError,
+    ListAccountTransactionsResponse,
+    ReturnType<typeof listAccountTransactionsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await listAccountTransactions({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: listAccountTransactionsQueryKey(options),
   });
 
 const createInfiniteParams = <
@@ -220,6 +262,80 @@ const createInfiniteParams = <
   }
   return params as unknown as typeof page;
 };
+
+export const listAccountTransactionsInfiniteQueryKey = (
+  options: Options<ListAccountTransactionsData>
+): QueryKey<Options<ListAccountTransactionsData>> =>
+  createQueryKey('listAccountTransactions', options, true);
+
+/**
+ * Paginated transactions involving the account (source or participant).
+ * 404 when the StrKey is unknown — distinct from "indexed account, no
+ * transactions yet" (matches assets/contracts sub-resource pattern).
+ */
+export const listAccountTransactionsInfiniteOptions = (
+  options: Options<ListAccountTransactionsData>
+) =>
+  infiniteQueryOptions<
+    ListAccountTransactionsResponse,
+    ListAccountTransactionsError,
+    InfiniteData<ListAccountTransactionsResponse>,
+    QueryKey<Options<ListAccountTransactionsData>>,
+    | string
+    | Pick<
+        QueryKey<Options<ListAccountTransactionsData>>[0],
+        'body' | 'headers' | 'path' | 'query'
+      >
+  >(
+    // @ts-ignore
+    {
+      queryFn: async ({ pageParam, queryKey, signal }) => {
+        // @ts-ignore
+        const page: Pick<
+          QueryKey<Options<ListAccountTransactionsData>>[0],
+          'body' | 'headers' | 'path' | 'query'
+        > =
+          typeof pageParam === 'object'
+            ? pageParam
+            : {
+                query: {
+                  cursor: pageParam,
+                },
+              };
+        const params = createInfiniteParams(queryKey, page);
+        const { data } = await listAccountTransactions({
+          ...options,
+          ...params,
+          signal,
+          throwOnError: true,
+        });
+        return data;
+      },
+      queryKey: listAccountTransactionsInfiniteQueryKey(options),
+    }
+  );
+
+export const listAssetsQueryKey = (options?: Options<ListAssetsData>) =>
+  createQueryKey('listAssets', options);
+
+export const listAssetsOptions = (options?: Options<ListAssetsData>) =>
+  queryOptions<
+    ListAssetsResponse,
+    ListAssetsError,
+    ListAssetsResponse,
+    ReturnType<typeof listAssetsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await listAssets({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: listAssetsQueryKey(options),
+  });
 
 export const listAssetsInfiniteQueryKey = (
   options?: Options<ListAssetsData>

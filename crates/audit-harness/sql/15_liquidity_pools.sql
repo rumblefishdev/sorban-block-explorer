@@ -75,3 +75,24 @@ SELECT
 \echo '### I5 — fee_bps in [0, 10000] (basis points)'
 SELECT COUNT(*) AS violations
 FROM liquidity_pools WHERE fee_bps < 0 OR fee_bps > 10000;
+
+\echo '### I6 — sentinel placeholder pool count (informational, not a violation)'
+-- Lore-0189: pool rows emitted with `created_at_ledger=0` are sentinel
+-- placeholders inserted by `insert_sentinel_pools` (in
+-- crates/indexer/src/handler/persist/write.rs) when a `lp_positions` row
+-- references a pool whose `LedgerEntry` is not in the current ledger AND
+-- not previously persisted. Typical for partial / mid-stream backfills.
+-- Sentinels self-heal — the next time the pool's real `LedgerEntry`
+-- appears (created/updated/restored OR `state` snapshot via the
+-- post-lore-0189 `extract_liquidity_pools` filter), the 13a UPSERT in
+-- write.rs upgrades the row to real metadata.
+--
+-- This is not a violation; it is a thermometer for partial backfill
+-- coverage. On a from-genesis backfill it should converge to 0.
+-- All other 15_liquidity_pools.sql invariants (I1 size, I2 PK, I3 pair
+-- order, I4 issuer FK, I5 fee_bps range) are tolerant of sentinel rows
+-- by construction (32-byte pool_id, sentinel asset fields are
+-- type=0/code NULL/issuer NULL/fee=0 — within all constraint ranges).
+SELECT COUNT(*) AS placeholder_pools
+FROM liquidity_pools
+WHERE created_at_ledger = 0;

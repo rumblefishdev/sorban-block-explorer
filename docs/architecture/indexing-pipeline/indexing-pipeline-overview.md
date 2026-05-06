@@ -188,7 +188,19 @@ committed in a single atomic DB transaction:
     renamed from `tokens`; four `asset_type` variants)
 12. derive and upsert `nfts`, append `nft_ownership` rows
 13. derive and upsert `liquidity_pools`, append `liquidity_pool_snapshots`,
-    upsert `lp_positions`
+    upsert `lp_positions`. Per
+    [ADR 0041](../../../lore/2-adrs/0041_lp-positions-orphan-handling-state-filter-and-sentinel-pool.md),
+    before the pool UPSERT the persist layer detects orphan
+    `lp_positions.pool_id` (referenced by a position but not in
+    `staged.pool_rows` and not in `liquidity_pools`) and emits a sentinel
+    placeholder pool row (`created_at_ledger=0`, asset/fee fields NULL/0)
+    so the FK from `lp_positions.pool_id` resolves. Sentinels self-heal —
+    the 13a UPSERT replaces all dimension fields with real data when the
+    real pool is later observed (created/updated/restored, or `state` per
+    `extract_liquidity_pools` post-lore-0189). The extractor itself
+    accepts `state` change_type for `liquidity_pool` entries (lore-0189),
+    capturing the common case where Stellar Core writes a read-only
+    snapshot of a referenced-but-unmodified pool
 14. upsert `accounts` summary and `account_balances_current`
     (the parallel `account_balance_history` append was removed in task 0159
     per [ADR 0035](../../../lore/2-adrs/0035_drop-account-balance-history.md);

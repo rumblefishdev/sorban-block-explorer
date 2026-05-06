@@ -1,3 +1,8 @@
+---
+name: promote-task
+description: Activate a lore task, update task status, and push the status-only change to develop.
+---
+
 # /promote-task — Activate a lore task and push to develop
 
 Promote a task from `backlog` to `active`, assign the current user, and push directly to `develop` — no PR needed. This triggers the GH Pages board deploy.

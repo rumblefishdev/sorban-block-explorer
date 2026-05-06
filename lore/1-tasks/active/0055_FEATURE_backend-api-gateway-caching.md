@@ -2,7 +2,7 @@
 id: '0055'
 title: 'Backend: API Gateway response caching and cache-control headers'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0005']
 related_tasks: ['0023', '0092', '0097']
 tags: [layer-backend, caching, api-gateway, performance]
@@ -17,6 +17,10 @@ history:
     status: backlog
     who: stkrolikiewicz
     note: 'Updated per ADR 0005: axum → Rust (axum + utoipa + sqlx)'
+  - date: 2026-05-05
+    status: active
+    who: FilipDz
+    note: 'Activated as M2 wrap-up after 0048 merge. Per-endpoint Cache-Control already set across modules; this task wraps up the strategy + immutable-tx detection + error-response no-store + spec doc for CDK task 0097.'
 ---
 
 # Backend: API Gateway response caching and cache-control headers

@@ -2,7 +2,7 @@
 id: '0156'
 title: 'Indexer: extract Soroban token name from ContractData (typed `name` column)'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0023', '0027', '0031', '0037']
 related_tasks: ['0120', '0124', '0133']
 tags: [priority-medium, effort-medium, layer-indexer, layer-db, schema-change]
@@ -61,6 +61,10 @@ history:
       or NULL; nothing to copy). Effort small → medium. ADR is to be
       drafted by author at pickup (amendment to ADR 0023 or new ADR
       formalizing the typed-name decision).
+  - date: '2026-05-05'
+    status: active
+    who: stkrolikiewicz
+    note: 'Promoted via /promote-task 0156. Picked up for implementation.'
 ---
 
 # Indexer: extract Soroban token name from ContractData at deploy time
@@ -195,5 +199,6 @@ Author drafts an ADR at pickup, either:
 
 ## Future Work
 
-- If task 0138 (contract token balances) concludes it needs `decimals` to scale balance values, spawn a follow-up to add `decimals SMALLINT` (or appropriate) column to `soroban_contracts` and extract `Symbol("decimals")`. Do NOT re-introduce JSONB.
 - If post-launch UX feedback ever surfaces a need for token `symbol` (separate from `asset_code`), spawn a follow-up adding `symbol VARCHAR(N)`. No current consumer.
+
+`decimals` follow-up was previously listed here pending task 0138's design decision. Task 0138 was archived 2026-05-05 as scope-out per current technical design (Soroban contract token balances are explicitly excluded from `account_balances_current`). With no consumer for `decimals` value, the follow-up is removed.

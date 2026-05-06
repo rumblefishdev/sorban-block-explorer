@@ -7,6 +7,9 @@ import type {
   TDataShape,
 } from './client/index.js';
 import type {
+  GetAccountData,
+  GetAccountErrors,
+  GetAccountResponses,
   GetAssetData,
   GetAssetErrors,
   GetAssetResponses,
@@ -39,6 +42,9 @@ import type {
   GetTransactionResponses,
   HealthData,
   HealthResponses,
+  ListAccountTransactionsData,
+  ListAccountTransactionsErrors,
+  ListAccountTransactionsResponses,
   ListAssetsData,
   ListAssetsErrors,
   ListAssetsResponses,
@@ -102,6 +108,33 @@ export const health = <ThrowOnError extends boolean = false>(
     url: '/health',
     ...options,
   });
+
+/**
+ * Account detail — header from `accounts` + balances from
+ * `account_balances_current` (canonical 06 statements A + B).
+ */
+export const getAccount = <ThrowOnError extends boolean = false>(
+  options: Options<GetAccountData, ThrowOnError>
+) =>
+  (options.client ?? client).get<
+    GetAccountResponses,
+    GetAccountErrors,
+    ThrowOnError
+  >({ url: '/v1/accounts/{account_id}', ...options });
+
+/**
+ * Paginated transactions involving the account (source or participant).
+ * 404 when the StrKey is unknown — distinct from "indexed account, no
+ * transactions yet" (matches assets/contracts sub-resource pattern).
+ */
+export const listAccountTransactions = <ThrowOnError extends boolean = false>(
+  options: Options<ListAccountTransactionsData, ThrowOnError>
+) =>
+  (options.client ?? client).get<
+    ListAccountTransactionsResponses,
+    ListAccountTransactionsErrors,
+    ThrowOnError
+  >({ url: '/v1/accounts/{account_id}/transactions', ...options });
 
 export const listAssets = <ThrowOnError extends boolean = false>(
   options?: Options<ListAssetsData, ThrowOnError>
