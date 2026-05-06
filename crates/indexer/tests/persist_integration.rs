@@ -166,6 +166,40 @@ async fn synthetic_ledger_insert_and_replay_is_idempotent() {
         counts_first.events_amount_sum, 1,
         "SUM(amount) must equal the ingested non-diagnostic event count (ADR 0033)"
     );
+
+    // Task 0156 / ADR 0042 — verify the typed `name` column landed
+    // on `soroban_contracts` from the deployment fixture and that the
+    // GENERATED `search_vector` recomputed so an FTS query matches.
+    // (Unit-level extraction paths — constructor, late-init, re-init,
+    // SCVal variants — are exercised in `state.rs` unit tests; this
+    // case verifies the indexer write path + the typed column +
+    // generated search_vector end-to-end on a real DB.)
+    let (sc_name,): (Option<String>,) =
+        sqlx::query_as("SELECT name FROM soroban_contracts WHERE contract_id = $1")
+            .bind(TOKEN_CONTRACT)
+            .fetch_one(&pool)
+            .await
+            .expect("soroban_contracts row missing for fixture token contract");
+    assert_eq!(
+        sc_name.as_deref(),
+        Some("TEST"),
+        "soroban_contracts.name must reflect deployment.name from the fixture"
+    );
+
+    let (fts_hits,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM soroban_contracts \
+         WHERE contract_id = $1 \
+           AND search_vector @@ to_tsquery('simple', 'TEST')",
+    )
+    .bind(TOKEN_CONTRACT)
+    .fetch_one(&pool)
+    .await
+    .expect("FTS query failed");
+    assert_eq!(
+        fts_hits, 1,
+        "GENERATED search_vector must match `to_tsquery('TEST')` on the typed name column \
+         (ADR 0042: search_vector reads `name` directly, not `metadata->>'name'`)"
+    );
     assert_eq!(
         counts_first.invocations, 1,
         "soroban_invocations_appearances row count — one (contract, tx, ledger) trio"
