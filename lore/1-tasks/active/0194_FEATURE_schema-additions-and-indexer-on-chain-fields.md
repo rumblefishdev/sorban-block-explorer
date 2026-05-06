@@ -2,7 +2,7 @@
 id: '0194'
 title: 'DB completeness: schema additions + indexer for on-chain NULL fields needed by list endpoints'
 type: FEATURE
-status: backlog
+status: active
 related_adr: ['0029', '0032', '0037']
 related_tasks:
   ['0119', '0125', '0135', '0156', '0188', '0191', '0195', '0196', '0197']
@@ -23,6 +23,10 @@ history:
     status: backlog
     who: karolkow
     note: 'Spawned from M2 enrichment planning session 2026-05-06. First of four tasks (0194-0197) implementing the field allocation rule: list endpoint + on-chain → indexer; off-chain → enrichment Lambda; detail-only → runtime type-2.'
+  - date: '2026-05-06'
+    status: active
+    who: karolkow
+    note: 'Activated to start implementation. Branch cut from develop; 0191 SQS enrichment branch will be merged into the feature branch since 0191 PR has not yet landed on develop and 0194 needs its enrichment-shared crate context.'
 ---
 
 # DB completeness: schema additions + indexer for on-chain NULL fields needed by list endpoints
