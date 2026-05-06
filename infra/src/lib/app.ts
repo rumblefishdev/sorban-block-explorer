@@ -119,6 +119,8 @@ export function createApp({
     apiFunction: compute.apiFunction,
     processorFunction: compute.processorFunction,
     deadLetterQueue: compute.deadLetterQueue,
+    enrichmentDlq: compute.enrichmentDlq,
+    enrichmentWorkerFunction: compute.enrichmentWorkerFunction,
     rdsInstance: rds.dbInstance,
     restApi: apiGateway.api,
   });

@@ -627,13 +627,19 @@ Design notes:
   there is no native branch in `detect_assets`. Operator deletion of this row
   breaks the `/assets` listing and any future FK that targets it.
 - `icon_url` is the only SEP-1 enrichment field on the DB row — it serves the
-  list-page thumbnail (per-row), and is targeted by the future **type-1
-  enrichment worker** (a scheduled Lambda crate that runs offline against the
-  same stellar.toml endpoints used by `runtime_enrichment::sep1`, batches the
-  fetches, and writes the result back to the DB so list endpoints stay DB-only.
-  Distinct from **type-2 runtime enrichment** in `crates/api/src/runtime_enrichment`,
-  which fetches per-request and never writes to the DB. See task 0188 §"Out
-  of Scope" for the full type-1 / type-2 split.)
+  list-page thumbnail (per-row), and is populated by the **type-1 enrichment
+  worker Lambda** (`crates/enrichment-worker`, task 0191): the indexer Lambda
+  emits one SQS message per newly inserted asset, the worker consumes the
+  queue, fetches the issuer's `https://{home_domain}/.well-known/stellar.toml`
+  via the shared `enrichment-shared::sep1` fetcher, extracts the matching
+  `CURRENCIES[].image`, and writes back. Worker writes are unconditional —
+  duplicate or refresh messages overwrite, which keeps the worker stateless.
+  Permanent fetch failures (missing `home_domain`, 4xx, malformed TOML, no
+  matching `CURRENCIES[]` row, URL exceeding the column length) write an
+  empty-string sentinel `''` so re-runs short-circuit on
+  `WHERE icon_url IS NULL`. Distinct from **type-2 runtime enrichment** in
+  `crates/api/src/runtime_enrichment` (task 0188), which fetches per-request
+  for `description` / `home_page` and never writes to the DB.
 - asset-detail SEP-1 fields (`description`, `home_page`, `conditions`,
   `is_asset_anchored`, `anchor_*`, `redemption_instructions`,
   `display_decimals`, organisation info) are NOT stored on this row at all —
@@ -644,9 +650,6 @@ Design notes:
   [ADR 0023](../../../lore/2-adrs/0023_tokens-typed-metadata-columns.md) Part 3
   and supersedes the per-entity S3 hydration sketched under task 0164;
   details-only fields are not persisted at all
-- type-1 enrichment worker for `icon_url` backfill (separate Lambda crate) is
-  planned but currently unimplemented; it will write `icon_url` via batched
-  HTTPS GETs to the same stellar.toml files the runtime fetcher uses
 - `total_supply` and `holder_count` are stock fields also populated post-ingest
 - `soroban_contracts.contract_type = 'token'` classifies a contract's SEP-41 role
   and is intentionally distinct from this table's name — the two coexist without

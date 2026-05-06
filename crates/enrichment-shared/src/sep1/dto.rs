@@ -1,11 +1,12 @@
 //! DTOs for the SEP-1 stellar.toml schema slice we consume.
 //!
-//! Per task 0188 strict scope, the parser models only the SEP-1 fields
-//! actually surfaced by `GET /v1/assets/{id}` today: `code` / `issuer`
-//! for matching, `desc` for `description`, and `DOCUMENTATION.ORG_URL` for
-//! `home_page`. Anything else in the file is silently ignored. When a new
-//! consumer asks for a field, add it here and in the response DTO at the
-//! same time — keep the parser surface no wider than the API surface.
+//! Started under task 0188 with a strict scope: only the SEP-1 fields
+//! surfaced by `GET /v1/assets/{id}` (`code` / `issuer` / `desc` / and
+//! `DOCUMENTATION.ORG_URL`). Task 0191 added `image` to support type-1
+//! icon enrichment of `assets.icon_url`. Anything else in the file is
+//! silently ignored — keep the parser surface no wider than the
+//! consumer surface; add a field here at the same time you add the
+//! consumer.
 //!
 //! TOML keys are case-sensitive: top-level uses upper-case (`CURRENCIES`,
 //! `DOCUMENTATION`); inside `[DOCUMENTATION]` keys are SCREAMING_SNAKE_CASE,
@@ -25,16 +26,18 @@ pub struct Sep1TomlParsed {
     pub documentation: Option<Sep1Documentation>,
 }
 
-/// Per-token entry inside `CURRENCIES`. Only the three fields the API
-/// consumes are modelled.
+/// Per-token entry inside `CURRENCIES`. Only the fields current consumers
+/// read are modelled — extend deliberately when a new consumer arrives.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Sep1Currency {
     /// Used to match against the queried asset's code.
     pub code: Option<String>,
     /// Used to match against the queried asset's issuer StrKey.
     pub issuer: Option<String>,
-    /// Mapped to `AssetDetailResponse::description`.
+    /// Mapped to `AssetDetailResponse::description` (api type-2, task 0188).
     pub desc: Option<String>,
+    /// Mapped to `assets.icon_url` (worker type-1, task 0191).
+    pub image: Option<String>,
 }
 
 /// `[DOCUMENTATION]` table. Only `ORG_URL` is consumed today (mapped to

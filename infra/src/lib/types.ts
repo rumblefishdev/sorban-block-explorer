@@ -31,6 +31,18 @@ export interface EnvironmentConfig {
   readonly indexerLambdaConcurrency: number;
   readonly indexerLambdaRetryAttempts: number;
 
+  /** Memory for the type-1 enrichment worker Lambda (task 0191). */
+  readonly enrichmentWorkerLambdaMemory: number;
+  /** Per-invocation timeout for the type-1 enrichment worker Lambda. */
+  readonly enrichmentWorkerLambdaTimeout: number;
+  /**
+   * Reserved concurrency for the type-1 enrichment worker. Kept low
+   * (1–2) to be polite to issuer servers and bounded against RDS
+   * connection exhaustion. `0` disables the worker, mirroring the
+   * `indexerLambdaConcurrency` pattern.
+   */
+  readonly enrichmentWorkerLambdaConcurrency: number;
+
   // Ingestion — ECS Fargate (consumed by IngestionStack)
 
   /** Fargate CPU units for Galexie tasks (256, 512, 1024, 2048, 4096). */

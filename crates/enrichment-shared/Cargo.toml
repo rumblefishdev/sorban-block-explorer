@@ -1,0 +1,18 @@
+[package]
+name = "enrichment-shared"
+version = "0.1.0"
+edition = "2024"
+description = "Shared HTTP-based enrichment building blocks (SEP-1 toml fetcher, future LP price source) used by api runtime_enrichment, the enrichment-worker Lambda, and any local backfill tools."
+
+[lib]
+name = "enrichment_shared"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
+reqwest = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+moka = { version = "0.12", features = ["sync", "future"] }
+sqlx = { workspace = true }

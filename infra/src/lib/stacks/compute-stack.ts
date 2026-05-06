@@ -3,6 +3,7 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as lambdaDestinations from 'aws-cdk-lib/aws-lambda-destinations';
+import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as s3n from 'aws-cdk-lib/aws-s3-notifications';
@@ -41,6 +42,12 @@ export class ComputeStack extends cdk.Stack {
   readonly apiFunction: lambda.IFunction;
   readonly processorFunction: lambda.IFunction;
   readonly deadLetterQueue: sqs.IQueue;
+  /** Type-1 enrichment DLQ (task 0191). Exposed so the
+   *  observability layer can attach the depth alarm. */
+  readonly enrichmentDlq: sqs.IQueue;
+  /** Type-1 enrichment worker Lambda (task 0191). Exposed so the
+   *  observability layer can attach error-rate / metric alarms. */
+  readonly enrichmentWorkerFunction: lambda.IFunction;
 
   constructor(scope: Construct, id: string, props: ComputeStackProps) {
     super(scope, id, props);
@@ -77,6 +84,16 @@ export class ComputeStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    const enrichmentWorkerLogGroup = new logs.LogGroup(
+      this,
+      'EnrichmentWorkerLogGroup',
+      {
+        logGroupName: `/aws/lambda/${config.envName}-soroban-explorer-enrichment-worker`,
+        retention: logs.RetentionDays.ONE_MONTH,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+      }
+    );
+
     const sharedLambdaProps = {
       architecture: lambda.Architecture.ARM_64,
       vpc,
@@ -107,6 +124,40 @@ export class ComputeStack extends cdk.Stack {
       retentionPeriod: cdk.Duration.days(DLQ_RETENTION_DAYS),
     });
     this.deadLetterQueue = dlq;
+
+    // ---------------------
+    // Type-1 Enrichment Queue (task 0191)
+    // ---------------------
+    // Indexer publishes one message per asset that needs runtime
+    // enrichment (icon today; LP analytics later) after each ledger
+    // commit. The worker Lambda below consumes the queue, fetches the
+    // SEP-1 toml, and writes assets.icon_url. Standard queue (at-least-
+    // once delivery is fine; the worker is idempotent on
+    // assets.icon_url IS NULL but is also designed to handle
+    // duplicate-as-refresh per task 0191).
+    const enrichmentDlq = new sqs.Queue(this, 'EnrichmentDlq', {
+      queueName: `${config.envName}-enrichment-dlq`,
+      retentionPeriod: cdk.Duration.days(DLQ_RETENTION_DAYS),
+    });
+
+    const enrichmentQueue = new sqs.Queue(this, 'EnrichmentQueue', {
+      queueName: `${config.envName}-enrichment`,
+      retentionPeriod: cdk.Duration.days(DLQ_RETENTION_DAYS),
+      // Visibility timeout must exceed the worker's per-record budget.
+      // Worker is one HTTP fetch (~2 s timeout) + one UPDATE — pad to
+      // 60 s so a slow batch never duplicates work mid-flight.
+      visibilityTimeout: cdk.Duration.seconds(60),
+      deadLetterQueue: {
+        queue: enrichmentDlq,
+        maxReceiveCount: 3,
+      },
+    });
+    this.enrichmentDlq = enrichmentDlq;
+
+    // Depth alarm + dashboard widget for `enrichmentDlq` live in
+    // `CloudWatchStack` alongside the other alarms — same pattern as
+    // the ledger-processor DLQ. ComputeStack only owns the queue
+    // itself; observability is wired in the dedicated stack.
 
     // ---------------------
     // API Lambda
@@ -152,6 +203,10 @@ export class ComputeStack extends cdk.Stack {
         ...sharedEnv,
         BUCKET_NAME: ledgerBucket.bucketName,
         RUST_LOG: 'info',
+        // Task 0191 — indexer emits enrichment messages here after
+        // each ledger commit. When the env var is unset (local dev /
+        // tests) the publisher silently no-ops.
+        ENRICHMENT_QUEUE_URL: enrichmentQueue.queueUrl,
       },
     });
     this.processorFunction = processorFunction;
@@ -179,10 +234,50 @@ export class ComputeStack extends cdk.Stack {
     }
 
     // ---------------------
+    // Type-1 Enrichment Worker Lambda (task 0191)
+    // ---------------------
+    const enrichmentWorkerFunction = new RustFunction(
+      this,
+      'EnrichmentWorkerFunction',
+      {
+        functionName: `${config.envName}-soroban-explorer-enrichment-worker`,
+        manifestPath: cargoWorkspacePath,
+        binaryName: 'enrichment-worker',
+        ...sharedLambdaProps,
+        logGroup: enrichmentWorkerLogGroup,
+        memorySize: config.enrichmentWorkerLambdaMemory,
+        timeout: cdk.Duration.seconds(config.enrichmentWorkerLambdaTimeout),
+        // Polite to issuer servers and bounded against accidental RDS
+        // exhaustion. Mirror the indexer concurrency pattern: 0 in
+        // staging (disabled), low single-digit in production. Bursts
+        // of 200 parallel HTTPS requests to one issuer's host would
+        // look indistinguishable from a DDoS attack.
+        reservedConcurrentExecutions: config.enrichmentWorkerLambdaConcurrency,
+        environment: {
+          ...sharedEnv,
+          RUST_LOG: 'info',
+        },
+      }
+    );
+
+    // SQS event source mapping. ReportBatchItemFailures lets the worker
+    // ack only the records it successfully processed — failed records
+    // redeliver up to maxReceiveCount and then land in the DLQ.
+    enrichmentWorkerFunction.addEventSource(
+      new lambdaEventSources.SqsEventSource(enrichmentQueue, {
+        batchSize: 10,
+        maxBatchingWindow: cdk.Duration.seconds(5),
+        reportBatchItemFailures: true,
+      })
+    );
+    this.enrichmentWorkerFunction = enrichmentWorkerFunction;
+
+    // ---------------------
     // IAM Grants
     // ---------------------
     dbSecret.grantRead(apiFunction);
     dbSecret.grantRead(processorFunction);
+    dbSecret.grantRead(enrichmentWorkerFunction);
     ledgerBucket.grantRead(processorFunction);
     processorFunction.addToRolePolicy(
       new iam.PolicyStatement({
@@ -195,6 +290,12 @@ export class ComputeStack extends cdk.Stack {
         },
       })
     );
+
+    // Indexer publishes enrichment messages.
+    enrichmentQueue.grantSendMessages(processorFunction);
+    // Worker reads + deletes from the queue (grantConsumeMessages also
+    // covers ChangeMessageVisibility for partial-batch failures).
+    enrichmentQueue.grantConsumeMessages(enrichmentWorkerFunction);
 
     // ---------------------
     // Tags

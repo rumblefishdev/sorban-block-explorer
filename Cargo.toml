@@ -11,6 +11,8 @@ members = [
     "crates/backfill-bench",
     "crates/backfill-runner",
     "crates/audit-harness",
+    "crates/enrichment-shared",
+    "crates/enrichment-worker",
 ]
 
 [workspace.dependencies]
@@ -54,6 +56,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # AWS SDK
 aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-sdk-secretsmanager = "1"
+aws-sdk-sqs = "1"
 
 # Error handling
 thiserror = "2"

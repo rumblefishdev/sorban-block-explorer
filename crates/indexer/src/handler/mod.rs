@@ -4,6 +4,7 @@
 //! orchestrates the four parsing stages, and wraps all writes for a single
 //! ledger in one atomic database transaction.
 
+pub mod enrichment_publish;
 pub mod persist;
 pub mod process;
 
@@ -75,6 +76,11 @@ pub struct HandlerState {
     /// one Lambda instance reuses the same cache across every invocation
     /// it serves.
     pub classification_cache: persist::ClassificationCache,
+    /// Type-1 enrichment SQS publisher (task 0191). Required —
+    /// constructed eagerly at Lambda init; cold start fails if the
+    /// `ENRICHMENT_QUEUE_URL` env var is missing or empty (CW Init
+    /// Errors metric surfaces the misconfig).
+    pub enrichment_publisher: enrichment_publish::Publisher,
 }
 
 // ---------------------------------------------------------------------------
@@ -152,7 +158,7 @@ async fn process_s3_object(
 
     // Step 4: Process each ledger in the batch
     for ledger_meta in batch.ledger_close_metas.iter() {
-        if let Err(e) = process::process_ledger(
+        let extracted_assets = match process::process_ledger(
             ledger_meta,
             &state.db_pool,
             Some(&state.cw_client),
@@ -160,13 +166,26 @@ async fn process_s3_object(
         )
         .await
         {
-            error!(
-                key,
-                error = %e,
-                "ledger processing failed — returning error for Lambda retry"
-            );
-            return Err(e);
-        }
+            Ok(assets) => assets,
+            Err(e) => {
+                error!(
+                    key,
+                    error = %e,
+                    "ledger processing failed — returning error for Lambda retry"
+                );
+                return Err(e);
+            }
+        };
+
+        // Type-1 enrichment SQS publish (task 0191). Galaxy Lambda
+        // concern only — kept here in handler/mod.rs (Lambda-specific
+        // orchestration) so the shared `process_ledger` stays free of
+        // SQS coupling. Fail-soft: publish errors do not abort the
+        // S3 record because the persistence has already committed.
+        state
+            .enrichment_publisher
+            .publish_for_extracted_assets(&state.db_pool, &extracted_assets)
+            .await;
     }
 
     Ok(())

@@ -7,11 +7,10 @@
 //! a `Sep1Error` that the consumer maps silently to null fields — the API never
 //! 5xx's because of an enrichment failure.
 //!
-//! Cache: `moka::future::Cache` (built via `crate::cache::ttl_future_cache`)
-//! with a 24 h TTL and 1024-entry capacity; warm only within a single Lambda
-//! container, lost on cold start. The future variant lets us collapse
-//! concurrent cold-cache misses for the same `home_domain` onto a single
-//! in-flight HTTP fetch via `try_get_with`.
+//! Cache: `moka::future::Cache` with a 24 h TTL and 1024-entry capacity; warm
+//! only within a single Lambda container, lost on cold start. The future
+//! variant lets us collapse concurrent cold-cache misses for the same
+//! `home_domain` onto a single in-flight HTTP fetch via `try_get_with`.
 //!
 //! Built-in SSRF guards (best-effort, not airtight):
 //!   - `home_domain` must be RFC 1035-style (ASCII alphanumeric / `.` / `-`).
@@ -35,10 +34,9 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use moka::future::Cache as FutureCache;
 use reqwest::redirect::Policy;
 use tracing::instrument;
-
-use crate::cache::{FutureCache, ttl_future_cache};
 
 use super::dto::Sep1TomlParsed;
 use super::errors::Sep1Error;
@@ -92,7 +90,10 @@ impl Sep1Fetcher {
             .redirect(Policy::limited(0))
             .user_agent(USER_AGENT)
             .build()?;
-        let cache = ttl_future_cache(CACHE_TTL, CACHE_CAPACITY);
+        let cache = FutureCache::builder()
+            .time_to_live(CACHE_TTL)
+            .max_capacity(CACHE_CAPACITY)
+            .build();
         Ok(Self { client, cache })
     }
 

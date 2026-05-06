@@ -1,34 +1,23 @@
 [package]
-name = "indexer"
+name = "enrichment-worker"
 version = "0.1.0"
 edition = "2024"
-description = "Ledger Processor Lambda for the Soroban block explorer"
-
-[lib]
-name = "indexer"
-path = "src/lib.rs"
+description = "Type-1 enrichment worker Lambda — consumes SQS messages emitted by the indexer (Galaxy) Lambda and runs per-kind HTTP fetches that write the enriched columns (icon_url today; LP analytics later) back to Postgres."
 
 [[bin]]
-name = "indexer"
+name = "enrichment-worker"
 path = "src/main.rs"
 
 [dependencies]
-xdr-parser = { path = "../xdr-parser" }
-domain = { path = "../domain", features = ["sqlx"] }
+enrichment-shared = { path = "../enrichment-shared" }
 db = { path = "../db", features = ["aws-secrets"] }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 lambda_runtime = { workspace = true }
+aws_lambda_events = { version = "0.16", default-features = false, features = ["sqs"] }
 aws-config = { workspace = true }
-aws-sdk-cloudwatch = "1"
-aws-sdk-s3 = "1"
-aws-sdk-sqs = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-chrono = { workspace = true }
 thiserror = { workspace = true }
 sqlx = { workspace = true }
-stellar-xdr = { workspace = true }
-hex = { workspace = true }
-percent-encoding = "2"

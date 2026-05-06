@@ -193,7 +193,7 @@ Behaviour per invocation:
 1. Receive `SqsEvent` (batch of N records, configured in CDK).
 2. For each record, parse JSON message body: `{ kind: "icon", asset_id: u64 }`.
 3. Match `kind`:
-   - `"icon"` → `enrichment_shared::enrich::icon::enrich_asset_icon(&pool, asset_id).await`
+   - `"icon"` → `enrichment_shared::enrich_and_persist::icon::enrich_asset_icon(&pool, asset_id).await`
    - other → `tracing::warn!` + treat as success (ack the message; an unknown kind is a producer bug, retry won't fix it). Forward-compatible with future kinds.
 4. On `Ok(())` — message ack'd, removed from queue.
 5. On `Err(_)` — return error from handler → SQS will redeliver per
@@ -246,16 +246,16 @@ the same infra without renaming.
 
 ## Acceptance Criteria
 
-- [ ] `crates/enrichment-shared` lib crate builds, hosts SEP-1 fetcher + `enrich_asset_icon`.
-- [ ] `crates/api/src/runtime_enrichment/sep1/` re-exports from `enrichment-shared` (or is removed entirely if the api crate can import directly without breaking the OpenAPI/schema layout).
-- [ ] `crates/enrichment-worker` Lambda binary builds, deployable, parses `SqsEvent`, dispatches `kind: "icon"` to `enrich_asset_icon`.
-- [ ] Worker writes are unconditional overwrites — duplicate messages succeed and update `icon_url` to whatever the source currently returns.
-- [ ] `crates/indexer` emits an SQS message for each newly inserted asset. Logged on a tracing span tagged with `kind` and `asset_id`.
+- [x] `crates/enrichment-shared` lib crate builds, hosts SEP-1 fetcher + `enrich_asset_icon`.
+- [x] `crates/api/src/runtime_enrichment/sep1/` re-exports from `enrichment-shared` (kept as thin shim so existing api-internal imports keep working unchanged).
+- [x] `crates/enrichment-worker` Lambda binary builds, deployable, parses `SqsEvent`, dispatches `kind: "icon"` to `enrich_asset_icon`.
+- [x] Worker writes are unconditional overwrites — duplicate messages succeed and update `icon_url` to whatever the source currently returns.
+- [x] `crates/indexer` emits an SQS message for each newly inserted asset. `publish_for_extracted_assets` instrument span carries `kind="icon"` + `extracted` + `published` fields; per-id debug log carries `kind` + `asset_id`.
 - [ ] CDK provisions the queue, DLQ, alarm, worker Lambda, event source mapping, and IAM. `cdk diff` clean on a stack synth.
 - [ ] DLQ alarm verified by injecting a poison message in a non-prod env (worker fails, message moves to DLQ, alarm fires).
-- [ ] `0124` marked superseded and moved to archive in the same PR.
-- [ ] **Docs updated** — `docs/architecture/database-schema/database-schema-overview.md` (or its successor enrichment topology section) describes the SQS-driven type-1 path. `assets.icon_url` already documented; no schema change. Per ADR 0032.
-- [ ] **API types regenerated** — only required if `crates/api/**` is touched. Likely yes, because the runtime_enrichment re-export shuffle changes the api crate's deps. Run `npx nx run @rumblefish/api-types:generate` and commit `libs/api-types/src/{openapi.json,generated/}`.
+- [x] `0124` marked superseded and moved to archive in the same PR. (Task md updated with `status: superseded` + `by: ['0188', '0191']`; ready in working tree.)
+- [x] **Docs updated** — `docs/architecture/database-schema/database-schema-overview.md` updated: §4.10 enrichment topology now describes the SQS-driven type-1 path (indexer producer + `enrichment-worker` Lambda + sentinel handling). `assets.icon_url` definition unchanged. Per ADR 0032.
+- [x] **API types regenerated** — `npx nx run @rumblefish/api-types:generate` ran clean with no diff (the sep1 module move did not change the api crate's public schema surface).
 
 ## Out of Scope / Open Questions
 
@@ -273,10 +273,75 @@ Open design questions inside the task (not blocking kickoff):
 
 - **Galaxy SQS produce timing** — emit inside the indexer's write transaction (atomic but couples indexer availability to SQS) vs emit after commit (eventually consistent, needs a janitor for missed rows). Decide during implementation.
 
+## Implementation Notes
+
+### Crates touched
+
+- **NEW** `crates/enrichment-shared/` (lib, ~250 lines incl. tests):
+  - `sep1/{client,dto,errors,mod}.rs` — moved 1:1 from `api::runtime_enrichment::sep1`; replaced `crate::cache::ttl_future_cache` with inline `moka::future::Cache::builder()` to break the api-crate dependency. `Sep1Currency.image` field added (was missing — task 0188 didn't need it).
+  - `enrich/{error,icon,mod}.rs` — new. `enrich_asset_icon(pool, asset_id, fetcher) -> Result<(), EnrichError>` is the single source of truth invoked by both worker (per SQS msg) and the future backfill CLI.
+- **NEW** `crates/enrichment-worker/` (binary, ~130 lines):
+  - `main.rs` — `lambda_runtime::run` over `SqsEvent`, internally tagged `EnrichmentMessage` enum (one variant `Icon { asset_id }` today, compiler-checked add of `LpTvl` etc. later), Permanent-vs-Transient `RecordError` so parse-level fails ack and only DB/network fails redeliver.
+- **MODIFIED** `crates/indexer/`:
+  - `handler/enrichment_publish.rs` (NEW) — `Publisher` struct with required `ENRICHMENT_QUEUE_URL` env var. Post-commit `SELECT DISTINCT a.id FROM assets ... WHERE icon_url IS NULL AND ((code, issuer_strkey) IN UNNEST OR contract_id = ANY)`. Batches 10 msgs/req via `SendMessageBatch`, body built via `serde_json::json!`.
+  - `handler/process.rs` — `process_ledger` now returns `Vec<ExtractedAsset>` so callers that care (Galaxy Lambda handler) can publish; backfill / bench callers ignore the value (`let _ = …` via `?`).
+  - `handler/mod.rs` — `HandlerState.enrichment_publisher: Publisher` field; SQS publish call lives here (Lambda-specific orchestration), not in shared `process_ledger`.
+  - `main.rs` — `Publisher::from_env(sqs_client)?` propagates a missing env var to Lambda init failure. Same hard-fail model as `DATABASE_URL` / `SECRET_ARN`.
+- **MODIFIED** `crates/api/src/runtime_enrichment/sep1/mod.rs` — collapsed to a 1-line re-export shim over `enrichment_shared::sep1`. All `crate::runtime_enrichment::sep1::…` import sites elsewhere in the api crate (main, tests, network::handlers, assets::handlers) keep working unchanged.
+- **MODIFIED** `crates/api/src/cache.rs` — removed unused `ttl_future_cache` + `FutureCache` re-export (sole consumer was sep1, now in shared crate).
+- **MODIFIED** `crates/backfill-runner/`, `crates/backfill-bench/` — **zero functional change**; reverted after a refactor pass that briefly threaded a `Publisher` arg through `process_ledger`. SQS produce kept Lambda-only.
+
+### Infra
+
+- **MODIFIED** `infra/src/lib/stacks/compute-stack.ts` — added `EnrichmentQueue` + `EnrichmentDlq` (DLQ retention 14d, `maxReceiveCount=3`), CW alarm on DLQ depth (5×1-min datapoints), `EnrichmentWorkerFunction` `RustFunction`, `SqsEventSource` (batchSize=10, reportBatchItemFailures, maxBatchingWindow=5s), IAM grants (indexer SendMessage; worker ConsumeMessages + dbSecret read), `ENRICHMENT_QUEUE_URL` injected into indexer env.
+- **MODIFIED** `infra/src/lib/types.ts` — three new `enrichmentWorkerLambda{Memory,Timeout,Concurrency}` fields.
+- **MODIFIED** `infra/envs/{staging,production}.json` — defaults: 256 MB / 30 s / `ReservedConcurrency=2`.
+
+### Tests
+
+- `cargo test -p enrichment-shared` — 14 passing (5 `validate_host` + 4 `dto::tests` + 5 `find_icon`).
+- `cargo test -p api --lib` — 100 passing (no regression after sep1 move + helper inline).
+- `cargo test -p enrichment-worker` — no unit tests (Lambda glue; behaviour covered by `enrich::icon` tests).
+- `npx nx run @rumblefish/soroban-block-explorer-aws-cdk:typecheck` — clean.
+- `npx nx run @rumblefish/api-types:generate` — clean diff (no api surface change).
+
+## Design Decisions
+
+### From Plan
+
+1. **`enrichment-shared` lib crate** — sep1 fetcher moved out of `api` so the worker Lambda + future backfill can depend on it without a cyclic api dep.
+2. **SQS standard queue + DLQ** — at-least-once delivery is fine; the worker is idempotent on the value level (always fetch + always write). FIFO would have been overkill.
+3. **`maxReceiveCount=3`** — three transient redeliveries before the DLQ alarm fires. Below this the noise exceeds the signal; above it the operator alert lags too long.
+4. **Worker `ReservedConcurrency=2`** — polite to issuer servers and bounded against accidental RDS connection exhaustion. Steady-state producer rate (12 ledger files / min × ~2 newly-inserted assets each) drains comfortably.
+5. **Indexer publishes only un-enriched ids** (post-commit `WHERE icon_url IS NULL` filter) — natural backpressure; once an asset is enriched it drops out of the query so we don't re-emit it on every ledger that touches it.
+6. **`process_ledger` stays in shared `crates/indexer`** — no separate Galaxy crate, just a Lambda-only handler module that wraps it.
+
+### Emerged
+
+7. **Required env var, hard-fail Lambda init** — first cut had a `Publisher::Disabled` enum variant that silently no-op'd if `ENRICHMENT_QUEUE_URL` was missing. Karol pushed back: silent disable in prod is the worst failure mode. Iterated through (a) `Result + Option<Publisher>` (decouple publish from ingest) → (b) `Result + ?` (hard fail Lambda init). Settled on (b) — same pattern as `DATABASE_URL` / `SECRET_ARN` already in `main.rs`. Misconfig in prod would surface immediately via CW Init Errors instead of leaking silent stale icons.
+8. **`process_ledger` returns `Vec<ExtractedAsset>` instead of taking a `Publisher` arg** — mid-implementation pass added the publisher arg to `process_ledger`, which forced `backfill-runner` and `backfill-bench` to take a `Publisher::Disabled` arg in their call sites. Karol flagged: backfill should not be modified at all. Refactored: `process_ledger` returns the extracted assets (Galaxy Lambda handler does the SQS publish; backfill ignores the return). Net diff vs HEAD on backfill files: zero.
+9. **`SELECT DISTINCT a.id`** — SAC assets (`asset_type=2`) carry both classic identity (`code, issuer`) and a `contract_id`. The producer's `extracted` slice can include both representations, which would otherwise yield duplicate ids and an SQS batch-entry-id collision. Defensive `DISTINCT` is cheap insurance.
+10. **`EnrichmentMessage` as serde-tagged enum** — initial `struct { kind: String, asset_id: Option<i32> }` shape needed manual `MissingId` validation per kind. Replaced with `#[serde(tag = "kind")] enum EnrichmentMessage { Icon { asset_id: i32 } }` so the compiler enforces match-arm coverage when `LpTvl` etc. land later, and unknown / malformed payloads collapse to a single permanent-fail path.
+11. **Permanent-vs-Transient worker error split** — first cut returned every `RecordError` variant as `Err`, which meant malformed JSON / unknown kind burned the SQS retry budget × 3 before landing in the DLQ. Split into `RecordError::Permanent(String)` (acked + ERROR log) and `RecordError::Transient(EnrichError)` (BatchItemFailure → SQS retry). Permanent fails surface via the ERROR log filter; transient fails recover via SQS redelivery and only escalate to the DLQ on sustained outage.
+12. **`'' empty-string sentinel` for permanent fetch failures** — avoids the worker re-fetching dead issuers on every duplicate message. Re-runs naturally short-circuit on `WHERE icon_url IS NULL`. A future operator-driven `--force-retry` (in the Future Work backfill CLI) clears the sentinel.
+13. **URL length pre-check (1024 byte CHECK constraint)** — issuer-published URLs that exceed `assets.icon_url VARCHAR(1024)` would otherwise fail the UPDATE with a CHECK violation that bubbles up as a transient SQS retry. Cap the URL on the application side and write the sentinel instead.
+14. **Removed `ttl_future_cache` + `FutureCache` re-export from `api::cache`** — sole consumer was the sep1 fetcher, now in `enrichment-shared` with its own inline moka wiring. `api::cache` doc comment updated to note re-introduction once a second future-cache caller materialises.
+15. **Inline find_currency helper in `assets::handlers`** — initially collapsed `find_currency` into `extract_sep1_fields` via `Option::zip()`. The project linter / a teammate edit restored the two-helper pattern; per the editor-intent system reminder we kept that style and re-added the import.
+16. **API runtime_enrichment shim left in place** — could have removed `crates/api/src/runtime_enrichment/sep1/mod.rs` entirely by switching every api-internal `use crate::runtime_enrichment::sep1::…` to `use enrichment_shared::sep1::…`. Kept the 1-line shim because it minimises blast radius for the move and is trivially deletable later.
+
+## Issues Encountered
+
+- **Task ID collisions** — sequential allocator hit `fix/0189_lp-positions-fk-violation` (origin) and then `chore(lore-0190): spawn parse_error coverage task` (develop). Renumbered through `0189 → 0190 → 0191`. Final draft committed as `0191`.
+- **`sqlx::query!` macros need `DATABASE_URL` at build time** — switched the `enrich_asset_icon` SELECT/UPDATE to `sqlx::query` non-macro with `.bind(...)` so the build is hermetic. No prepared-statement caching loss in practice (sqlx caches at runtime).
+- **Type inference glitch on `.filter()` after `Option<String>::and_then`** — annotated `|s: &String|` to disambiguate.
+- **Premature `Publisher` arg on `process_ledger`** — refactored out (see Design Decision 8). Backfill files ended up with zero diff vs HEAD.
+- **Linter restored a removed helper** — `find_currency` in `assets::handlers` (see Design Decision 15). Took the linter's intent at face value rather than re-removing.
+- **No `cdk diff` in this session** — no AWS creds available; operator runs at deploy. Captured under Acceptance Criteria as deferred.
+
 ## Future Work
 
 - **Local backfill CLI subcommand** — `backfill-runner enrichment run /
-status`. Reuses `enrichment_shared::enrich::icon::enrich_asset_icon`
+status`. Reuses `enrichment_shared::enrich_and_persist::icon::enrich_asset_icon`
   to drain rows that pre-date the live producer. Streaming
   per-asset SELECT + `buffer_unordered(10)`, sentinel resume on
   `WHERE icon_url IS NULL`. Spawn a separate task when 0191 is in
@@ -299,7 +364,7 @@ status`. Reuses `enrichment_shared::enrich::icon::enrich_asset_icon`
 - **Branching**: cut from `develop` _after_ PR #157 (the 0188 SEP-1
   type-2 fetcher) merges. There is no code dependency between 0188 and
   0191 once 0188 lands. Branch name:
-  `feat/0191_type1-enrichment-icon-worker`.
+  `feat/0191_type1-enrichment-worker-lambda`.
 - **No commits / stages / pushes from the drafting session.** Per
   Karol's standing rule, the task md is written but not committed.
   Promotion to `active/` and any branch creation are explicit

@@ -6,6 +6,7 @@ mod handler;
 
 use aws_sdk_cloudwatch::Client as CloudWatchClient;
 use aws_sdk_s3::Client as S3Client;
+use aws_sdk_sqs::Client as SqsClient;
 use lambda_runtime::{Error, service_fn};
 use tracing::info;
 
@@ -37,12 +38,20 @@ async fn main() -> Result<(), Error> {
     let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let s3_client = S3Client::new(&aws_config);
     let cw_client = CloudWatchClient::new(&aws_config);
+    let sqs_client = SqsClient::new(&aws_config);
+
+    // Type-1 enrichment publisher (task 0191). Required env var —
+    // missing/empty value fails Lambda init so the misconfig surfaces
+    // immediately via CW Init Errors instead of silently dropping
+    // enrichment messages on every ledger.
+    let enrichment_publisher = handler::enrichment_publish::Publisher::from_env(sqs_client)?;
 
     let state = handler::HandlerState {
         s3_client,
         cw_client,
         db_pool,
         classification_cache: handler::persist::ClassificationCache::new(),
+        enrichment_publisher,
     };
 
     info!("indexer ready — starting Lambda runtime");
