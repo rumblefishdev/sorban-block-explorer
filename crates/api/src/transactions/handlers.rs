@@ -194,7 +194,12 @@ pub async fn get_transaction(State(state): State<AppState>, Path(hash): Path<Str
     // returning the light slice from DB. Out-of-range BIGINT → u32 also
     // degrades to heavy = None rather than wrapping silently.
     let heavy = match u32::try_from(index.ledger_sequence) {
-        Ok(seq) => match state.fetcher.fetch_ledger(seq).await {
+        Ok(seq) => match state
+            .runtime_enrichment
+            .stellar_archive
+            .fetch_ledger(seq)
+            .await
+        {
             Ok(meta) => extract_e3_heavy(&meta, &hash, &state.network_id),
             Err(e) => {
                 tracing::warn!("failed to fetch ledger {seq} for tx detail: {e}");

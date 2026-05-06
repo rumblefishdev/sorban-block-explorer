@@ -12,6 +12,7 @@ use crate::common::extractors::Pagination;
 use crate::common::filters;
 use crate::common::pagination::{finalize_page, finalize_ts_id_page, into_envelope};
 use crate::openapi::schemas::{ErrorEnvelope, PageInfo, Paginated};
+use crate::runtime_enrichment::sep1::{Sep1Currency, Sep1TomlParsed};
 use crate::state::AppState;
 
 use super::dto::{AssetDetailResponse, AssetItem, AssetTransactionItem, ListParams};
@@ -168,13 +169,75 @@ pub async fn get_asset(State(state): State<AppState>, Path(id): Path<String>) ->
     };
 
     let deployed_at_ledger = row.deployed_at_ledger;
+    let issuer = row.issuer.clone();
+    let asset_code = row.asset_code.clone();
+    let home_domain = row.issuer_home_domain.clone();
+
+    // SEP-1 runtime enrichment (task 0188). `description` ← matched
+    // `CURRENCIES[].desc`; `home_page` ← `DOCUMENTATION.ORG_URL`. Native
+    // XLM / no-issuer Soroban tokens / accounts without `home_domain`
+    // skip the fetch and surface both as `null`. A real fetch failure
+    // also yields `null` (warn-logged) — the API never propagates a 5xx
+    // because of an enrichment failure.
+    let (description, home_page) = match home_domain.as_deref() {
+        Some(domain) if !domain.is_empty() => {
+            match state.runtime_enrichment.sep1.fetch(domain).await {
+                Ok(parsed) => {
+                    extract_sep1_fields(&parsed, asset_code.as_deref(), issuer.as_deref())
+                }
+                Err(e) => {
+                    tracing::warn!("SEP-1 fetch failed for issuer home_domain {domain:?}: {e}");
+                    (None, None)
+                }
+            }
+        }
+        _ => (None, None),
+    };
+
     let response = AssetDetailResponse {
         item: map_item(row),
         deployed_at_ledger,
-        description: None,
-        home_page: None,
+        description,
+        home_page,
     };
     Json(response).into_response()
+}
+
+/// Pull the two SEP-1 fields the API exposes: `desc` from the matching
+/// `CURRENCIES[]` row (by `code` + `issuer`) and `ORG_URL` from
+/// `DOCUMENTATION` (used as `home_page` since SEP-1 has no per-currency
+/// homepage field). A missing currency match still yields the org URL —
+/// useful when the issuer publishes their site but doesn't list every
+/// individual token.
+fn extract_sep1_fields(
+    parsed: &Sep1TomlParsed,
+    asset_code: Option<&str>,
+    issuer: Option<&str>,
+) -> (Option<String>, Option<String>) {
+    let description = match (asset_code, issuer) {
+        (Some(code), Some(iss)) => {
+            find_currency(&parsed.currencies, code, iss).and_then(|c| c.desc.clone())
+        }
+        _ => None,
+    };
+    let home_page = parsed
+        .documentation
+        .as_ref()
+        .and_then(|d| d.org_url.clone());
+    (description, home_page)
+}
+
+/// Find the `CURRENCIES[]` entry whose `code` and `issuer` match the
+/// queried asset. Returns the first match (SEP-1 does not require codes
+/// to be unique, but in practice they are per issuer).
+fn find_currency<'a>(
+    currencies: &'a [Sep1Currency],
+    asset_code: &str,
+    issuer: &str,
+) -> Option<&'a Sep1Currency> {
+    currencies
+        .iter()
+        .find(|c| c.code.as_deref() == Some(asset_code) && c.issuer.as_deref() == Some(issuer))
 }
 
 async fn fetch_with(
