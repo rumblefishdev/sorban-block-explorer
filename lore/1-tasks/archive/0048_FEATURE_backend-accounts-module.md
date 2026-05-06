@@ -35,9 +35,10 @@ Implement the Accounts module providing account detail (summary + balances) and 
 
 > **Stack:** axum 0.8 + utoipa 5.4 + sqlx 0.8 (per ADR 0005). Code in crates/api/.
 
-## Status: Backlog
+## Status: Completed
 
-**Current state:** Not started. Depends on tasks 0023 (bootstrap), 0043 (pagination).
+**Current state:** Shipped 2026-05-05 (FilipDz). 11 integration tests
+passing, OpenAPI regenerated. See history entry above.
 
 ## Context
 

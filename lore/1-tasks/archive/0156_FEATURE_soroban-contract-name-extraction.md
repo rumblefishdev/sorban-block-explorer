@@ -134,8 +134,8 @@ If a future task (e.g. 0138 if it concludes it needs `decimals`) adds another fi
 ALTER TABLE soroban_contracts DROP COLUMN search_vector;
 -- Replace metadata JSONB with typed name VARCHAR(256).
 ALTER TABLE soroban_contracts ADD COLUMN name VARCHAR(256);
--- No-op data move: aktualnie wszystkie rows mają metadata = {} lub NULL.
--- Pozostawione jako defence-in-depth na wypadek istniejących wpisów.
+-- No-op data move: currently all rows have metadata = {} or NULL.
+-- Kept as defence-in-depth in case of existing entries.
 UPDATE soroban_contracts SET name = metadata->>'name'
   WHERE metadata IS NOT NULL AND metadata ? 'name';
 ALTER TABLE soroban_contracts DROP COLUMN metadata;
@@ -169,7 +169,7 @@ Update `detect_assets` (task 0120) so the Fungible branch reads `deployment.name
 
 `upsert_contracts_returning_id` (`crates/indexer/src/handler/persist/write.rs:393-426`) currently passes `metadatas: Vec<Option<Value>>` and binds `$8::JSONB[]`. Change to `names: Vec<Option<String>>` bound as `$8::VARCHAR[]`; update the `INSERT ... ON CONFLICT DO UPDATE SET metadata = COALESCE(EXCLUDED.metadata, soroban_contracts.metadata)` clause to `name = COALESCE(EXCLUDED.name, soroban_contracts.name)`. The GENERATED `search_vector` recomputes on the new value.
 
-`ContractRow` struct (in same file or staging.rs:503-501 region) — drop `metadata: Option<Value>`, add `name: Option<String>`.
+`ContractRow` struct (in same file or `staging.rs` around lines 501-503) — drop `metadata: Option<Value>`, add `name: Option<String>`.
 
 ### 5. Search query + API repository update
 

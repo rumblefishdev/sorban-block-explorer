@@ -17,6 +17,10 @@ export interface CloudWatchStackProps extends cdk.StackProps {
   readonly apiFunction: lambda.IFunction;
   readonly processorFunction: lambda.IFunction;
   readonly deadLetterQueue: sqs.IQueue;
+  /** Type-1 enrichment DLQ (task 0191) — alarmed on depth > 0. */
+  readonly enrichmentDlq: sqs.IQueue;
+  /** Type-1 enrichment worker Lambda (task 0191) — error-rate alarm. */
+  readonly enrichmentWorkerFunction: lambda.IFunction;
   readonly rdsInstance: rds.IDatabaseInstance;
   readonly restApi: apigateway.RestApi;
 }
@@ -52,6 +56,8 @@ export class CloudWatchStack extends cdk.Stack {
       apiFunction,
       processorFunction,
       deadLetterQueue,
+      enrichmentDlq,
+      enrichmentWorkerFunction,
       rdsInstance,
       restApi,
     } = props;
@@ -223,6 +229,69 @@ export class CloudWatchStack extends cdk.Stack {
     );
 
     // ---------------------
+    // Alarm 5b: Type-1 enrichment DLQ depth (task 0191)
+    // Any message landing in the enrichment DLQ means an asset
+    // permanently failed enrichment after maxReceiveCount=3 retries.
+    // Same shape as Alarm 5.
+    // ---------------------
+    withActions(
+      new cloudwatch.Alarm(this, 'EnrichmentDlqDepthAlarm', {
+        alarmName: `${config.envName}-enrichment-dlq-depth`,
+        alarmDescription:
+          'Enrichment worker DLQ has messages — one or more assets permanently failed enrichment.',
+        metric: new cloudwatch.Metric({
+          namespace: 'AWS/SQS',
+          metricName: 'ApproximateNumberOfMessagesVisible',
+          dimensionsMap: { QueueName: enrichmentDlq.queueName },
+          period: cdk.Duration.minutes(1),
+          statistic: cloudwatch.Stats.MAXIMUM,
+          label: 'Enrichment DLQ depth',
+        }),
+        threshold: 0,
+        comparisonOperator:
+          cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+        evaluationPeriods: 1,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      })
+    );
+
+    // ---------------------
+    // Alarm 5c: Type-1 enrichment worker error rate (task 0191)
+    // Mirrors Alarm 2 (ProcessorErrorRateAlarm) but for the worker
+    // Lambda. Uses the same threshold config — both Lambdas have
+    // similar acceptable error rates.
+    // ---------------------
+    const workerErrors = enrichmentWorkerFunction.metricErrors({
+      period: cdk.Duration.minutes(5),
+      statistic: cloudwatch.Stats.SUM,
+    });
+    const workerInvocations = enrichmentWorkerFunction.metricInvocations({
+      period: cdk.Duration.minutes(5),
+      statistic: cloudwatch.Stats.SUM,
+    });
+    withActions(
+      new cloudwatch.Alarm(this, 'EnrichmentWorkerErrorRateAlarm', {
+        alarmName: `${config.envName}-enrichment-worker-error-rate`,
+        alarmDescription:
+          'Enrichment worker Lambda error rate exceeded threshold — DB / network / SEP-1 issues.',
+        metric: new cloudwatch.MathExpression({
+          expression: 'errors / invocations',
+          usingMetrics: {
+            errors: workerErrors,
+            invocations: workerInvocations,
+          },
+          period: cdk.Duration.minutes(5),
+          label: 'Worker Error Rate',
+        }),
+        threshold: config.processorErrorRateThreshold,
+        comparisonOperator:
+          cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+        evaluationPeriods: 1,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      })
+    );
+
+    // ---------------------
     // Alarm 6: API Gateway 5xx rate
     // 5xxError / Count > threshold over 5-minute window.
     // ---------------------
@@ -340,7 +409,7 @@ export class CloudWatchStack extends cdk.Stack {
                 label: 'Errors',
               }),
             ],
-            width: 8,
+            width: 6,
             height: 6,
           }),
           new cloudwatch.GraphWidget({
@@ -355,7 +424,22 @@ export class CloudWatchStack extends cdk.Stack {
                 label: 'DLQ depth',
               }),
             ],
-            width: 8,
+            width: 6,
+            height: 6,
+          }),
+          new cloudwatch.GraphWidget({
+            title: 'Enrichment DLQ depth',
+            left: [
+              new cloudwatch.Metric({
+                namespace: 'AWS/SQS',
+                metricName: 'ApproximateNumberOfMessagesVisible',
+                dimensionsMap: { QueueName: enrichmentDlq.queueName },
+                period: cdk.Duration.minutes(1),
+                statistic: cloudwatch.Stats.MAXIMUM,
+                label: 'Enrichment DLQ depth',
+              }),
+            ],
+            width: 6,
             height: 6,
           }),
           new cloudwatch.GraphWidget({
@@ -380,7 +464,7 @@ export class CloudWatchStack extends cdk.Stack {
                 label: 'API',
               }),
             ],
-            width: 8,
+            width: 6,
             height: 6,
           }),
         ],

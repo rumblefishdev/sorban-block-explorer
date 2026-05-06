@@ -40,7 +40,7 @@ Per task 0167 §"Data Source Boundary":
 | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | **DB-only** (Postgres)                                                                                                            | All list endpoints + most detail endpoints, including E5 (transactions-in-ledger sublist; see supersession note below) |
 | **DB + Public Stellar ledger archive** ([ADR 0029](../../../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md)) | E3 (envelope/result/result_meta + parsed invocation tree), E14 (full event topics/data)                                |
-| **DB + S3 per-entity blob** (`s3://<bucket>/assets/{id}.json`)                                                                    | E9 (`description`, `home_page`) — task **0164**                                                                        |
+| **DB + runtime SEP-1 HTTP fetch** (`https://{issuer.home_domain}/.well-known/stellar.toml`)                                       | E9 (`description`, `home_page`) — task **0188**, supersedes the abandoned per-entity S3 blob plan from task 0164       |
 
 > **SUPERSESSION NOTE (2026-04).** An earlier framing of E5 (per task 0167)
 > sourced the embedded `transactions[]` sublist from a per-ledger
@@ -62,31 +62,31 @@ blob for E9) and marks the off-DB fields with
 
 ## Index
 
-| #   | File                                                                                 | Endpoint                                  | Source         |
-| --- | ------------------------------------------------------------------------------------ | ----------------------------------------- | -------------- |
-| 01  | [`01_get_network_stats.sql`](01_get_network_stats.sql)                               | `GET /network/stats`                      | DB-only        |
-| 02  | [`02_get_transactions_list.sql`](02_get_transactions_list.sql)                       | `GET /transactions`                       | DB-only        |
-| 03  | [`03_get_transactions_by_hash.sql`](03_get_transactions_by_hash.sql)                 | `GET /transactions/:hash`                 | DB + Archive   |
-| 04  | [`04_get_ledgers_list.sql`](04_get_ledgers_list.sql)                                 | `GET /ledgers`                            | DB-only        |
-| 05  | [`05_get_ledgers_by_sequence.sql`](05_get_ledgers_by_sequence.sql)                   | `GET /ledgers/:sequence`                  | DB-only        |
-| 06  | [`06_get_accounts_by_id.sql`](06_get_accounts_by_id.sql)                             | `GET /accounts/:account_id`               | DB-only        |
-| 07  | [`07_get_accounts_transactions.sql`](07_get_accounts_transactions.sql)               | `GET /accounts/:account_id/transactions`  | DB-only        |
-| 08  | [`08_get_assets_list.sql`](08_get_assets_list.sql)                                   | `GET /assets`                             | DB-only        |
-| 09  | [`09_get_assets_by_id.sql`](09_get_assets_by_id.sql)                                 | `GET /assets/:id`                         | DB + S3 entity |
-| 10  | [`10_get_assets_transactions.sql`](10_get_assets_transactions.sql)                   | `GET /assets/:id/transactions`            | DB-only        |
-| 11  | [`11_get_contracts_by_id.sql`](11_get_contracts_by_id.sql)                           | `GET /contracts/:contract_id`             | DB-only        |
-| 12  | [`12_get_contracts_interface.sql`](12_get_contracts_interface.sql)                   | `GET /contracts/:contract_id/interface`   | DB-only        |
-| 13  | [`13_get_contracts_invocations.sql`](13_get_contracts_invocations.sql)               | `GET /contracts/:contract_id/invocations` | DB-only        |
-| 14  | [`14_get_contracts_events.sql`](14_get_contracts_events.sql)                         | `GET /contracts/:contract_id/events`      | DB + Archive   |
-| 15  | [`15_get_nfts_list.sql`](15_get_nfts_list.sql)                                       | `GET /nfts`                               | DB-only        |
-| 16  | [`16_get_nfts_by_id.sql`](16_get_nfts_by_id.sql)                                     | `GET /nfts/:id`                           | DB-only        |
-| 17  | [`17_get_nfts_transfers.sql`](17_get_nfts_transfers.sql)                             | `GET /nfts/:id/transfers`                 | DB-only        |
-| 18  | [`18_get_liquidity_pools_list.sql`](18_get_liquidity_pools_list.sql)                 | `GET /liquidity-pools`                    | DB-only        |
-| 19  | [`19_get_liquidity_pools_by_id.sql`](19_get_liquidity_pools_by_id.sql)               | `GET /liquidity-pools/:id`                | DB-only        |
-| 20  | [`20_get_liquidity_pools_transactions.sql`](20_get_liquidity_pools_transactions.sql) | `GET /liquidity-pools/:id/transactions`   | DB-only        |
-| 21  | [`21_get_liquidity_pools_chart.sql`](21_get_liquidity_pools_chart.sql)               | `GET /liquidity-pools/:id/chart`          | DB-only        |
-| 22  | [`22_get_search.sql`](22_get_search.sql)                                             | `GET /search`                             | DB-only        |
-| 23  | [`23_get_liquidity_pools_participants.sql`](23_get_liquidity_pools_participants.sql) | `GET /liquidity-pools/:id/participants`   | DB-only        |
+| #   | File                                                                                 | Endpoint                                  | Source       |
+| --- | ------------------------------------------------------------------------------------ | ----------------------------------------- | ------------ |
+| 01  | [`01_get_network_stats.sql`](01_get_network_stats.sql)                               | `GET /network/stats`                      | DB-only      |
+| 02  | [`02_get_transactions_list.sql`](02_get_transactions_list.sql)                       | `GET /transactions`                       | DB-only      |
+| 03  | [`03_get_transactions_by_hash.sql`](03_get_transactions_by_hash.sql)                 | `GET /transactions/:hash`                 | DB + Archive |
+| 04  | [`04_get_ledgers_list.sql`](04_get_ledgers_list.sql)                                 | `GET /ledgers`                            | DB-only      |
+| 05  | [`05_get_ledgers_by_sequence.sql`](05_get_ledgers_by_sequence.sql)                   | `GET /ledgers/:sequence`                  | DB-only      |
+| 06  | [`06_get_accounts_by_id.sql`](06_get_accounts_by_id.sql)                             | `GET /accounts/:account_id`               | DB-only      |
+| 07  | [`07_get_accounts_transactions.sql`](07_get_accounts_transactions.sql)               | `GET /accounts/:account_id/transactions`  | DB-only      |
+| 08  | [`08_get_assets_list.sql`](08_get_assets_list.sql)                                   | `GET /assets`                             | DB-only      |
+| 09  | [`09_get_assets_by_id.sql`](09_get_assets_by_id.sql)                                 | `GET /assets/:id`                         | DB + SEP-1   |
+| 10  | [`10_get_assets_transactions.sql`](10_get_assets_transactions.sql)                   | `GET /assets/:id/transactions`            | DB-only      |
+| 11  | [`11_get_contracts_by_id.sql`](11_get_contracts_by_id.sql)                           | `GET /contracts/:contract_id`             | DB-only      |
+| 12  | [`12_get_contracts_interface.sql`](12_get_contracts_interface.sql)                   | `GET /contracts/:contract_id/interface`   | DB-only      |
+| 13  | [`13_get_contracts_invocations.sql`](13_get_contracts_invocations.sql)               | `GET /contracts/:contract_id/invocations` | DB-only      |
+| 14  | [`14_get_contracts_events.sql`](14_get_contracts_events.sql)                         | `GET /contracts/:contract_id/events`      | DB + Archive |
+| 15  | [`15_get_nfts_list.sql`](15_get_nfts_list.sql)                                       | `GET /nfts`                               | DB-only      |
+| 16  | [`16_get_nfts_by_id.sql`](16_get_nfts_by_id.sql)                                     | `GET /nfts/:id`                           | DB-only      |
+| 17  | [`17_get_nfts_transfers.sql`](17_get_nfts_transfers.sql)                             | `GET /nfts/:id/transfers`                 | DB-only      |
+| 18  | [`18_get_liquidity_pools_list.sql`](18_get_liquidity_pools_list.sql)                 | `GET /liquidity-pools`                    | DB-only      |
+| 19  | [`19_get_liquidity_pools_by_id.sql`](19_get_liquidity_pools_by_id.sql)               | `GET /liquidity-pools/:id`                | DB-only      |
+| 20  | [`20_get_liquidity_pools_transactions.sql`](20_get_liquidity_pools_transactions.sql) | `GET /liquidity-pools/:id/transactions`   | DB-only      |
+| 21  | [`21_get_liquidity_pools_chart.sql`](21_get_liquidity_pools_chart.sql)               | `GET /liquidity-pools/:id/chart`          | DB-only      |
+| 22  | [`22_get_search.sql`](22_get_search.sql)                                             | `GET /search`                             | DB-only      |
+| 23  | [`23_get_liquidity_pools_participants.sql`](23_get_liquidity_pools_participants.sql) | `GET /liquidity-pools/:id/participants`   | DB-only      |
 
 ## Cursor encoding (shared convention)
 
@@ -324,22 +324,23 @@ The driver is `transaction_participants` (which per ADR 0020 / task 0163 include
 
 ### 09. `GET /assets/:id`
 
-**Source:** DB header + **S3 per-entity blob** (`s3://<bucket>/assets/{id}.json`) per ADR 0037 §11 / task 0164.
+**Source:** DB header + **runtime SEP-1 HTTP fetch** via `runtime_enrichment::sep1` (task 0188). Supersedes the abandoned per-entity S3 blob plan (task 0164 / ADR 0037 §11).
 
 **Step 1 — DB row:**
 
 | Field                                                                                                                                                                 | Source                                                                                  |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | `id`, `asset_type_name`, `asset_type`, `asset_code`, `issuer`, `contract_id`, `name`, `total_supply`, `holder_count`, `icon_url`, `deployed_at_ledger` (Soroban only) | DB → same shape as E8 + `soroban_contracts.deployed_at_ledger` for SAC / soroban-native |
+| `issuer_home_domain` (internal — not in API response)                                                                                                                 | DB → `accounts.home_domain` via the existing `iss` join; consumed by Step 2 only        |
 
-**Step 2 — S3 overlay:**
+**Step 2 — Runtime SEP-1 fetch:**
 
-The API constructs the key `s3://<bucket>/assets/{id}.json` (`{id}` = the surrogate from step 1) and fetches the blob (off-chain SEP-1 enrichment, not derived from XDR; missing blob renders the two fields as blank per the §6.9 "tolerate partial availability" expectation).
+If `issuer_home_domain` is non-NULL the API issues a single HTTPS GET to `https://{issuer_home_domain}/.well-known/stellar.toml` through `runtime_enrichment::sep1::Sep1Fetcher` (24 h LRU per warm Lambda, 1 s connect / 2 s total budget, 100 KB body cap, RFC 1035 + IP-literal SSRF guard). Native XLM, no-issuer Soroban tokens, accounts without `home_domain`, and any fetch failure all degrade silently to NULL on both fields — consistent with the §6.9 "tolerate partial availability" expectation.
 
-| Field         | Source                               |
-| ------------- | ------------------------------------ |
-| `description` | S3 → SEP-1-derived asset description |
-| `home_page`   | S3 → SEP-1-derived issuer home page  |
+| Field         | Source                                                                                                |
+| ------------- | ----------------------------------------------------------------------------------------------------- |
+| `description` | Runtime → `CURRENCIES[].desc` for the row whose `(code, issuer)` matches the asset                    |
+| `home_page`   | Runtime → `DOCUMENTATION.ORG_URL` (SEP-1 has no per-currency `home_page` field; org URL is the match) |
 
 ### 10. `GET /assets/:id/transactions`
 

@@ -1,11 +1,14 @@
-//! HTTP fetch of issuer stellar.toml files (SEP-1) for runtime details enrichment.
+//! Thin re-export shim over [`enrichment_shared::sep1`].
 //!
-//! Per the M2 enrichment plan, this submodule will provide a fail-soft, LRU-cached
-//! reqwest-based client that resolves an issuer's `home_domain` to its stellar.toml
-//! and parses the SEP-1 fields (`CURRENCIES[]`, `DOCUMENTATION`, etc.) consumed by
-//! `GET /v1/assets/{id}` and (once accounts ships) `GET /v1/accounts/{id}`.
+//! The fetcher itself lives in the shared `enrichment-shared` crate so it
+//! can be used by both the api crate's runtime (per-request type-2
+//! enrichment) and the worker Lambda / future backfill tools (type-1).
+//! Per task 0191; the move was a 1:1 lift from this module.
 //!
-//! Skeleton intentionally empty — body is wired in the follow-up task spawned
-//! after this refactor lands.
+//! Existing api-internal call sites import from
+//! `crate::runtime_enrichment::sep1::…`; this shim keeps those imports
+//! working without forcing every consumer to switch to the
+//! `enrichment_shared` path. New external consumers (worker Lambda,
+//! backfill tool) should import from `enrichment_shared::sep1` directly.
 
-// TODO(0187 follow-up): impl SEP-1 stellar.toml fetcher.
+pub use enrichment_shared::sep1::{Sep1Currency, Sep1Fetcher, Sep1TomlParsed};

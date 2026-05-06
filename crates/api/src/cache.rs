@@ -3,10 +3,7 @@
 //! Most in-process caches go through this [`ttl_cache`] builder over
 //! `moka::sync::Cache` so every module gets the same defaults (TTL and
 //! bounded `max_capacity`) without copy-pasting the `Arc<Mutex<HashMap>>`,
-//! sweep heuristic and poison-recovery boilerplate. The one exception
-//! is the `network_cache`, which uses `moka::future::Cache` for
-//! stampede protection on an async initialiser — see the "Sync vs
-//! future" section below.
+//! sweep heuristic and poison-recovery boilerplate.
 //!
 //! See `lore/1-tasks/archive/0180_REFACTOR_api-cache-moka-migration.md`
 //! for the rationale (in particular: why `moka` and why no Redis yet).
@@ -18,12 +15,13 @@
 //! does its `.await`s outside the `get`/`insert` call) — sync is sharded
 //! and lock-free for reads with no risk of holding a lock across `.await`.
 //!
-//! The `network_cache` is the exception: it needs `try_get_with` with an
-//! async initialiser (a Postgres query) to deduplicate concurrent
-//! cold-cache requests on a singleton key. That cache is built ad-hoc
-//! with `moka::future::Cache::builder()` directly — see
-//! `crates/api/src/network/cache.rs`. If a second future-cache callsite
-//! ever appears, lift it into a `ttl_future_cache` companion helper here.
+//! Callers that need `try_get_with` on an `async` initialiser (cold-miss
+//! stampede protection where the load fn is itself a future) use
+//! `moka::future::Cache` directly — see e.g. `crate::network::cache`. A
+//! shared `ttl_future_cache` helper used to live here as a companion to
+//! [`ttl_cache`]; with only one in-tree caller it was pure indirection,
+//! so it was inlined back into the call sites. Re-introduce here once a
+//! second caller materialises and the duplication starts to hurt.
 //!
 //! ## Capacity defaults
 //!

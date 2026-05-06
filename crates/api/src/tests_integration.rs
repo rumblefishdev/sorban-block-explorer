@@ -28,6 +28,8 @@ use crate::assets;
 use crate::contracts;
 use crate::ledgers;
 use crate::nfts;
+use crate::runtime_enrichment::RuntimeEnrichment;
+use crate::runtime_enrichment::sep1::Sep1Fetcher;
 use crate::runtime_enrichment::stellar_archive::StellarArchiveFetcher;
 use crate::state::AppState;
 use crate::{liquidity_pools, transactions};
@@ -52,12 +54,19 @@ fn build_app(db: PgPool) -> Router {
         .timeout_config(crate::runtime_enrichment::stellar_archive::default_timeout_config())
         .build();
     let s3 = aws_sdk_s3::Client::from_conf(aws_cfg);
-    let fetcher = StellarArchiveFetcher::new(s3);
     let contract_cache = crate::contracts::cache::new_contract_cache();
     let network_cache = crate::network::cache::new_network_cache();
+    // Real fetchers with default config. Integration tests below never
+    // hit a real issuer or S3 (validation tests short-circuit before
+    // any handler reaches the fetcher; DB-gated tests use fixtures).
+    // Keeping them construct-only ensures AppState wiring stays exercised.
+    let runtime_enrichment = RuntimeEnrichment {
+        stellar_archive: StellarArchiveFetcher::new(s3),
+        sep1: Sep1Fetcher::new().expect("build sep1 fetcher"),
+    };
     let state = AppState {
         db,
-        fetcher,
+        runtime_enrichment,
         contract_cache,
         network_cache,
         network_id: xdr_parser::network_id(xdr_parser::MAINNET_PASSPHRASE),

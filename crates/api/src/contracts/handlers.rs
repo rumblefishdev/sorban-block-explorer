@@ -47,7 +47,11 @@ async fn fetch_unique_ledgers(
             .collect()
     };
 
-    let results = state.fetcher.fetch_ledgers(&unique_seqs).await;
+    let results = state
+        .runtime_enrichment
+        .stellar_archive
+        .fetch_ledgers(&unique_seqs)
+        .await;
     unique_seqs
         .into_iter()
         .zip(results)

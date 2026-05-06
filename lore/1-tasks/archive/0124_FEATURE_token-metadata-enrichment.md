@@ -2,9 +2,9 @@
 id: '0124'
 title: 'Indexer: token metadata enrichment pipeline'
 type: FEATURE
-status: active
+status: superseded
 related_adr: []
-related_tasks: ['0049', '0074']
+related_tasks: ['0049', '0074', '0188', '0191']
 tags: [priority-low, effort-medium, layer-indexer, audit-gap]
 milestone: 1
 links:
@@ -18,6 +18,17 @@ history:
     status: active
     who: karolkow
     note: 'Promoted to active for implementation.'
+  - date: '2026-05-05'
+    status: superseded
+    who: karolkow
+    by: ['0188', '0191']
+    note: >
+      Token metadata is now delivered by two complementary tasks. 0188
+      (SEP-1 type-2 fetcher) covers the per-request runtime path —
+      `description` and `home_page` on `GET /v1/assets/{id}`. 0191
+      (type-1 SQS-driven worker) covers the persisted `assets.icon_url`
+      column. The original "JSONB blob enrichment" approach is
+      obsolete: typed columns + runtime fetch replaced the blob.
 ---
 
 # Indexer: token metadata enrichment pipeline

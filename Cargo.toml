@@ -11,6 +11,8 @@ members = [
     "crates/backfill-bench",
     "crates/backfill-runner",
     "crates/audit-harness",
+    "crates/enrichment-shared",
+    "crates/enrichment-worker",
 ]
 
 [workspace.dependencies]
@@ -54,6 +56,16 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # AWS SDK
 aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-sdk-secretsmanager = "1"
+aws-sdk-sqs = "1"
 
 # Error handling
 thiserror = "2"
+
+# HTTP client (used by audit-harness for Horizon API + api crate for SEP-1
+# stellar.toml fetches per task 0188). rustls-tls + json features only —
+# no native-tls so the build stays small and reproducible across Lambda /
+# CI / local without OpenSSL system deps.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
+# TOML parsing (SEP-1 stellar.toml files per task 0188).
+toml = "0.8"
