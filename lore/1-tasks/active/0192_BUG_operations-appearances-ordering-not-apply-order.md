@@ -2,7 +2,7 @@
 id: '0192'
 title: 'operations_appearances order by oa.id != on-chain apply order'
 type: BUG
-status: backlog
+status: active
 related_adr: ['0029', '0033', '0034']
 related_tasks: ['0163', '0172']
 tags:
@@ -38,6 +38,13 @@ history:
       premise no endpoint reads it; this finding suggests endpoint 03
       Statement C implicitly relies on ordering that the schema cannot
       guarantee.
+  - date: '2026-05-06'
+    status: active
+    who: stkrolikiewicz
+    note: >
+      Activated. Prerequisite to running the 374k-ledger audit-harness
+      backfill — fixing this first avoids ingesting millions of rows
+      with broken ordering and a second backfill to repair them.
 ---
 
 # `operations_appearances ORDER BY oa.id` ≠ on-chain apply order
