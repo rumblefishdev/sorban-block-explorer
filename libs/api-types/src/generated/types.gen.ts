@@ -60,8 +60,14 @@ export type AccountTransactionItem = {
 };
 
 /**
- * Detail response. `description` / `home_page` always `null` until task
- * 0164 wires the per-entity S3 hydration (ADR 0037 §342).
+ * Detail response. `description` is populated from the issuer stellar.toml
+ * `CURRENCIES[].desc` field; `home_page` is populated from
+ * `DOCUMENTATION.ORG_URL` (SEP-1 has no per-currency `home_page` field —
+ * the org URL is the closest semantic match and preserves backward
+ * compatibility with the previous DB-sourced column). Both default to
+ * `null` for native XLM, assets without an issuer, issuers without an
+ * on-chain `home_domain`, fetch failures, and stellar.toml files with
+ * no matching `[[CURRENCIES]]` entry.
  */
 export type AssetDetailResponse = {
   asset_code?: string | null;

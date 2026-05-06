@@ -20,6 +20,7 @@ swagger-ui = ["dep:utoipa-swagger-ui"]
 [dependencies]
 domain = { path = "../domain", features = ["sqlx", "utoipa"] }
 db = { path = "../db", features = ["aws-secrets"] }
+enrichment-shared = { path = "../enrichment-shared" }
 sqlx = { workspace = true }
 xdr-parser = { path = "../xdr-parser" }
 axum = { workspace = true }
@@ -43,6 +44,9 @@ futures = "0.3"
 hex = { workspace = true }
 bytes = "1"
 moka = { version = "0.12", features = ["sync", "future"] }
+# `reqwest` and `toml` are pulled in transitively via `enrichment-shared`'s
+# `Sep1Fetcher`; nothing in `crates/api/src/**` uses them directly, so they
+# are intentionally not re-declared here.
 
 [dev-dependencies]
 tower = "0.5"

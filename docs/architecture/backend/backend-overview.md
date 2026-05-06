@@ -144,20 +144,33 @@ The backend serves data from the block explorer's own database, adding:
 - **Search** - unified search across transaction hashes, account IDs, contract IDs, token
   identifiers, NFT identifiers, pool IDs, and indexed metadata using PostgreSQL full-text
   indexes
-- **Read-time XDR fetch for heavy-field endpoints** — per
+- **Runtime details enrichment** — per
   [ADR 0029](../../../lore/2-adrs/0029_abandon-parsed-artifacts-read-time-xdr-fetch.md),
-  the backend does **not** store raw envelope / result / result-meta XDR on
-  `transactions`, and per
-  [ADR 0033](../../../lore/2-adrs/0033_soroban-events-appearances-read-time-detail.md) /
-  [ADR 0034](../../../lore/2-adrs/0034_soroban-invocations-appearances-read-time-detail.md)
-  it does not store decoded events / invocation-tree nodes either. For E3
-  `/transactions/:hash` (full envelope + parsed invocation tree),
-  E13 `/contracts/:id/invocations` (per-node function name / args / return value),
-  and E14 `/contracts/:id/events` (full event detail) the API fetches the
-  corresponding `.xdr.zst` from the public Stellar ledger archive, decompresses
-  it, parses it with the shared `crates/xdr-parser` crate, and merges the
-  decoded payload into the response. List endpoints never call the archive and
-  answer from typed summary columns + appearance indexes only
+  the backend resolves enrichable detail fields at request time rather than
+  persisting them. Two transport-specific submodules under
+  `crates/api/src/runtime_enrichment/` share the architectural shape
+  (per-request, fail-soft, in-process LRU-cached). Status surfacing is
+  per-submodule: archive-backed endpoints expose a `heavy_fields_status`
+  discriminator (`ok` / `unavailable`); SEP-1 enrichment surfaces failures
+  silently as `null` description / home_page (warn-logged) and adds no
+  status field today:
+  - **`runtime_enrichment::stellar_archive`** — fetches `.xdr.zst` ledger files
+    from the public Stellar archive on S3, decompresses with `crates/xdr-parser`
+    and merges decoded payload into responses. Drives E3 `/transactions/:hash`
+    (full envelope + parsed invocation tree, per
+    [ADR 0033](../../../lore/2-adrs/0033_soroban-events-appearances-read-time-detail.md) /
+    [ADR 0034](../../../lore/2-adrs/0034_soroban-invocations-appearances-read-time-detail.md))
+    and E14 `/contracts/:id/events` (full event detail). List endpoints never
+    call the archive and answer from typed summary columns + appearance indexes only.
+  - **`runtime_enrichment::sep1`** — issues HTTPS GETs to
+    `https://{issuer.home_domain}/.well-known/stellar.toml`, parses the SEP-1
+    schema, and merges `[[CURRENCIES]]` per-token fields plus
+    `[DOCUMENTATION]` org info into asset detail responses (task 0188).
+    Built-in safeguards: 100 KB body cap (per SEP-1 spec), 1 s connect / 2 s
+    request timeouts, RFC 1035 hostname validation rejecting IP literals, and
+    a 24 h LRU cache (1024 entries) keyed by lowercase home_domain. Currently
+    consumed only by `GET /v1/assets/{id}`; future detail endpoints
+    (accounts, etc.) will reuse the same fetcher
 - **Surrogate-key resolution** — every StrKey that enters a route parameter
   (`G...`, `C...`) is resolved to the `BIGINT` surrogate via the relevant
   `UNIQUE` index at the request boundary

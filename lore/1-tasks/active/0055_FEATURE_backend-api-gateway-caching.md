@@ -45,12 +45,12 @@ Caching at the API Gateway level is the primary response caching mechanism. Clou
 
 ### Per-Endpoint Cache Mapping
 
-#### Long TTL (immutable, 300s+)
+#### Long TTL (immutable, 3600s)
 
-| Endpoint                                     | TTL   | Rationale                            |
-| -------------------------------------------- | ----- | ------------------------------------ |
-| `GET /ledgers/:sequence` (closed/historical) | 300s+ | Closed ledgers are immutable         |
-| `GET /transactions/:hash` (finalized)        | 300s+ | Finalized transactions are immutable |
+| Endpoint                                     | TTL   | Rationale                                                        |
+| -------------------------------------------- | ----- | ---------------------------------------------------------------- |
+| `GET /ledgers/:sequence` (closed/historical) | 3600s | Closed ledgers are immutable; 1h matches stage cache max         |
+| `GET /transactions/:hash` (finalized)        | 3600s | Finalized transactions are immutable; same 1h horizon as ledgers |
 
 #### Short TTL (5-15s)
 

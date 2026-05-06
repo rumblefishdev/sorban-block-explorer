@@ -105,6 +105,8 @@ mod tests {
     use crate::contracts::cache::new_contract_cache;
     use crate::network;
     use crate::network::cache::new_network_cache;
+    use crate::runtime_enrichment::RuntimeEnrichment;
+    use crate::runtime_enrichment::sep1::Sep1Fetcher;
     use crate::runtime_enrichment::stellar_archive::StellarArchiveFetcher;
     use crate::state::AppState;
 
@@ -114,10 +116,13 @@ mod tests {
             .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
             .build();
         let s3 = aws_sdk_s3::Client::from_conf(aws_cfg);
-        let fetcher = StellarArchiveFetcher::new(s3);
+        let runtime_enrichment = RuntimeEnrichment {
+            stellar_archive: StellarArchiveFetcher::new(s3),
+            sep1: Sep1Fetcher::new().expect("build sep1 fetcher"),
+        };
         let state = AppState {
             db,
-            fetcher,
+            runtime_enrichment,
             contract_cache: new_contract_cache(),
             network_cache: new_network_cache(),
             network_id: xdr_parser::network_id(xdr_parser::MAINNET_PASSPHRASE),

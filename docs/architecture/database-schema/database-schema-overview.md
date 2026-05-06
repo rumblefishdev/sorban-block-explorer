@@ -636,14 +636,31 @@ Design notes:
   there is no native branch in `detect_assets`. Operator deletion of this row
   breaks the `/assets` listing and any future FK that targets it.
 - `icon_url` is the only SEP-1 enrichment field on the DB row — it serves the
-  list-page thumbnail (per-row). Asset-detail metadata (`description`,
-  `home_page`) lives per-entity in S3 at `s3://<bucket>/assets/{id}.json` per
-  [ADR 0037](../../../lore/2-adrs/0037_current-schema-snapshot.md) / task 0164;
-  this narrows the original typed-columns plan from
+  list-page thumbnail (per-row), and is populated by the **type-1 enrichment
+  worker Lambda** (`crates/enrichment-worker`, task 0191): the indexer Lambda
+  emits one SQS message per newly inserted asset, the worker consumes the
+  queue, fetches the issuer's `https://{home_domain}/.well-known/stellar.toml`
+  via the shared `enrichment-shared::sep1` fetcher, extracts the matching
+  `CURRENCIES[].image`, and writes back. Worker writes are unconditional —
+  duplicate or refresh messages overwrite, which keeps the worker stateless.
+  Permanent fetch failures (missing `home_domain`, 4xx, malformed TOML, no
+  matching `CURRENCIES[]` row, URL exceeding the column length) write an
+  empty-string sentinel `''`. Because `''` is NOT NULL, the indexer's
+  un-enriched-asset producer query (`WHERE a.icon_url IS NULL`) excludes
+  these rows on subsequent ledgers — they are not re-emitted to the
+  enrichment queue. Distinct from **type-2 runtime enrichment** in
+  `crates/api/src/runtime_enrichment` (task 0188), which fetches per-request
+  for `description` / `home_page` and never writes to the DB.
+- asset-detail SEP-1 fields (`description`, `home_page`, `conditions`,
+  `is_asset_anchored`, `anchor_*`, `redemption_instructions`,
+  `display_decimals`, organisation info) are NOT stored on this row at all —
+  they are resolved at request time on `GET /v1/assets/{id}` by the
+  `runtime_enrichment::sep1` fetcher (task 0188), which reads
+  `accounts.home_domain` for the issuer and pulls `https://{home_domain}/.well-known/stellar.toml`.
+  This narrows the original typed-columns plan from
   [ADR 0023](../../../lore/2-adrs/0023_tokens-typed-metadata-columns.md) Part 3
-- the SEP-1 / SEP-41 enrichment worker (ADR 0022 pattern) is planned and
-  currently unimplemented; when built, it will write `icon_url` to the DB
-  and the detail JSON document to S3; not inline with ledger ingest
+  and supersedes the per-entity S3 hydration sketched under task 0164;
+  details-only fields are not persisted at all
 - `total_supply` and `holder_count` are stock fields also populated post-ingest
 - `soroban_contracts.contract_type = 'token'` classifies a contract's SEP-41 role
   and is intentionally distinct from this table's name — the two coexist without
