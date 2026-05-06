@@ -277,6 +277,32 @@ export function validateConfig(config: EnvironmentConfig): void {
     );
   }
   if (
+    !Number.isInteger(config.enrichmentWorkerLambdaMemory) ||
+    config.enrichmentWorkerLambdaMemory < 128
+  ) {
+    errors.push(
+      `enrichmentWorkerLambdaMemory must be an integer >= 128 (Lambda min), got: ${config.enrichmentWorkerLambdaMemory}`
+    );
+  }
+  if (
+    !Number.isInteger(config.enrichmentWorkerLambdaTimeout) ||
+    config.enrichmentWorkerLambdaTimeout <= 0 ||
+    config.enrichmentWorkerLambdaTimeout > 900
+  ) {
+    errors.push(
+      `enrichmentWorkerLambdaTimeout must be an integer in (0, 900] seconds, got: ${config.enrichmentWorkerLambdaTimeout}`
+    );
+  }
+  if (
+    !Number.isInteger(config.enrichmentWorkerLambdaConcurrency) ||
+    config.enrichmentWorkerLambdaConcurrency < 0
+  ) {
+    errors.push(
+      `enrichmentWorkerLambdaConcurrency must be a non-negative integer (0 disables the worker), got: ${config.enrichmentWorkerLambdaConcurrency}`
+    );
+  }
+
+  if (
     !config.slackWorkspaceId ||
     config.slackWorkspaceId.includes('CHANGE_ME')
   ) {
