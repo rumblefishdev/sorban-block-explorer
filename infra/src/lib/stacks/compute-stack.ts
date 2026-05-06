@@ -204,8 +204,10 @@ export class ComputeStack extends cdk.Stack {
         BUCKET_NAME: ledgerBucket.bucketName,
         RUST_LOG: 'info',
         // Task 0191 — indexer emits enrichment messages here after
-        // each ledger commit. When the env var is unset (local dev /
-        // tests) the publisher silently no-ops.
+        // each ledger commit. Required at Lambda init:
+        // `Publisher::from_env` hard-fails on missing/empty so a
+        // misconfig surfaces via CW Init Errors instead of silently
+        // dropping enrichment messages.
         ENRICHMENT_QUEUE_URL: enrichmentQueue.queueUrl,
       },
     });

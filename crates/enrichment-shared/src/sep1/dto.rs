@@ -102,10 +102,13 @@ display_decimals = 2
 "#;
         let parsed: Sep1TomlParsed = toml::from_str(toml_text).expect("parse");
         assert_eq!(parsed.currencies.len(), 1);
-        // `name`, `image`, `conditions`, `display_decimals` are intentionally
-        // not modelled — they are silently dropped.
+        // `name`, `conditions`, `display_decimals` are intentionally
+        // not modelled — they are silently dropped. `image` IS modelled
+        // (task 0191) and is asserted below alongside the other in-scope
+        // fields.
         let usdc = &parsed.currencies[0];
         assert_eq!(usdc.code.as_deref(), Some("USDC"));
+        assert_eq!(usdc.image.as_deref(), Some("https://example.com/usdc.png"));
         assert!(usdc.desc.is_none());
         assert!(parsed.documentation.is_none());
     }

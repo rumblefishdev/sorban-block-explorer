@@ -636,8 +636,10 @@ Design notes:
   duplicate or refresh messages overwrite, which keeps the worker stateless.
   Permanent fetch failures (missing `home_domain`, 4xx, malformed TOML, no
   matching `CURRENCIES[]` row, URL exceeding the column length) write an
-  empty-string sentinel `''` so re-runs short-circuit on
-  `WHERE icon_url IS NULL`. Distinct from **type-2 runtime enrichment** in
+  empty-string sentinel `''`. Because `''` is NOT NULL, the indexer's
+  un-enriched-asset producer query (`WHERE a.icon_url IS NULL`) excludes
+  these rows on subsequent ledgers — they are not re-emitted to the
+  enrichment queue. Distinct from **type-2 runtime enrichment** in
   `crates/api/src/runtime_enrichment` (task 0188), which fetches per-request
   for `description` / `home_page` and never writes to the DB.
 - asset-detail SEP-1 fields (`description`, `home_page`, `conditions`,

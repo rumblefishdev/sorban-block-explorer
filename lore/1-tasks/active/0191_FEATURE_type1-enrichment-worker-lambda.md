@@ -73,10 +73,12 @@ This task introduces the new shared lib `crates/enrichment-shared`
 `crates/indexer`, and the CDK changes for the queue + worker Lambda.
 **No DB migration is needed** — `assets.icon_url` already exists.
 
-## Status: Backlog
+## Status: Active
 
-**Current state:** Drafted. Open items listed under "Out of scope /
-Open questions" — none block kicking the task off.
+**Current state:** Implemented. Shared crate, worker Lambda, indexer
+producer, and CDK wiring landed in commit `25c93c9`. Open items: two
+operator-driven acceptance items remain unchecked (`cdk diff` clean +
+DLQ poison-message verification) — see Acceptance Criteria.
 
 ## Context
 
@@ -154,9 +156,10 @@ crates/enrichment-shared/
     │   ├── dto.rs
     │   ├── errors.rs
     │   └── validation.rs       ← validate_host (RFC 1035 + IP-literal reject)
-    └── enrich/
+    └── enrich_and_persist/
         ├── mod.rs
-        └── icon.rs             ← pub async fn enrich_asset_icon(pool, asset_id) -> Result
+        ├── error.rs
+        └── icon.rs             ← pub async fn enrich_asset_icon(pool, asset_id, fetcher) -> Result
 ```
 
 The `enrich_asset_icon` function is the **single source of truth** for
@@ -168,8 +171,8 @@ path for description / home_page only).
 
 Behaviour:
 
-1. `SELECT issuer, code, home_domain FROM assets WHERE id = $1`.
-2. If `home_domain IS NULL` → write `''` empty sentinel + `Ok(())` (asset has no issuer-published toml; nothing to fetch). Future re-run won't refetch.
+1. `SELECT a.asset_code, iss.account_id, iss.home_domain FROM assets a LEFT JOIN accounts iss ON iss.id = a.issuer_id WHERE a.id = $1` — `home_domain` lives on `accounts`, not `assets`.
+2. If `home_domain IS NULL` (or empty / whitespace-only after trim) → write `''` empty sentinel + `Ok(())` (asset has no issuer-published toml; nothing to fetch). Future re-run won't refetch.
 3. Otherwise fetch SEP-1 toml via the existing `Sep1Fetcher` (reuses 0188's HTTP+cache+validation).
 4. Walk `CURRENCIES[]`, find row where `(code, issuer)` matches; read `.image`.
 5. `UPDATE assets SET icon_url = $1 WHERE id = $2` — unconditional overwrite, no `IS NULL` filter.
@@ -191,7 +194,7 @@ crates/enrichment-worker/
 Behaviour per invocation:
 
 1. Receive `SqsEvent` (batch of N records, configured in CDK).
-2. For each record, parse JSON message body: `{ kind: "icon", asset_id: u64 }`.
+2. For each record, parse JSON message body: `{ kind: "icon", asset_id: i32 }`.
 3. Match `kind`:
    - `"icon"` → `enrichment_shared::enrich_and_persist::icon::enrich_asset_icon(&pool, asset_id).await`
    - other → `tracing::warn!` + treat as success (ack the message; an unknown kind is a producer bug, retry won't fix it). Forward-compatible with future kinds.
@@ -208,7 +211,7 @@ Extend the live indexer Lambda. Wherever the indexer commits a new
 asset row (`INSERT INTO assets ...`), also publish an SQS message:
 
 ```jsonc
-{ "kind": "icon", "asset_id": 12345 }
+{ "kind": "icon", "asset_id": 12345 } // asset_id is i32 (assets.id SERIAL)
 ```
 
 **Open design point** (see Open Questions): publish inside the same
@@ -362,10 +365,14 @@ status`. Reuses `enrichment_shared::enrich_and_persist::icon::enrich_asset_icon`
 ## Notes
 
 - **Branching**: cut from `develop` _after_ PR #157 (the 0188 SEP-1
-  type-2 fetcher) merges. There is no code dependency between 0188 and
-  0191 once 0188 lands. Branch name:
+  type-2 fetcher) merged. No code dependency between 0188 and 0191
+  once 0188 landed. Branch:
   `feat/0191_type1-enrichment-worker-lambda`.
-- **No commits / stages / pushes from the drafting session.** Per
-  Karol's standing rule, the task md is written but not committed.
-  Promotion to `active/` and any branch creation are explicit
-  follow-up steps the operator drives.
+- **Implementation status**: shared crate, worker Lambda binary,
+  indexer SQS producer, and CDK queue/worker/alarm wiring landed in
+  a single squashed commit (`25c93c9`). Detailed module-level shape
+  is captured under the "Implementation Notes", "Tests", "Design
+  Decisions", and "Issues Encountered" sections above. Two operator-
+  driven acceptance items remain — `cdk diff` clean on synth and
+  DLQ poison-message verification in non-prod — see Acceptance
+  Criteria.

@@ -409,7 +409,7 @@ export class CloudWatchStack extends cdk.Stack {
                 label: 'Errors',
               }),
             ],
-            width: 8,
+            width: 6,
             height: 6,
           }),
           new cloudwatch.GraphWidget({
@@ -424,7 +424,7 @@ export class CloudWatchStack extends cdk.Stack {
                 label: 'DLQ depth',
               }),
             ],
-            width: 8,
+            width: 6,
             height: 6,
           }),
           new cloudwatch.GraphWidget({
@@ -439,7 +439,7 @@ export class CloudWatchStack extends cdk.Stack {
                 label: 'Enrichment DLQ depth',
               }),
             ],
-            width: 8,
+            width: 6,
             height: 6,
           }),
           new cloudwatch.GraphWidget({
@@ -464,7 +464,7 @@ export class CloudWatchStack extends cdk.Stack {
                 label: 'API',
               }),
             ],
-            width: 8,
+            width: 6,
             height: 6,
           }),
         ],

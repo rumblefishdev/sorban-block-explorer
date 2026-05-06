@@ -69,11 +69,11 @@ The two enrichment paths share the same architectural shape — per-request, in-
 Replace the skeleton with a real implementation:
 
 - `client.rs` — `Sep1Fetcher` struct wrapping `reqwest::Client` and a `moka::sync::Cache<String, Arc<Sep1TomlParsed>>` (project already uses `moka` in `contracts::cache` and `network::cache`). Methods: `fetch(home_domain: &str) -> Result<Arc<Sep1TomlParsed>, Sep1Error>`. Cache key = lowercased home_domain. TTL: 24 h (warm-Lambda LRU, cold start drops it).
-- `dto.rs` — `Sep1TomlParsed` struct mapping only the fields the API consumes. Two top-level groups: `currencies: Vec<Sep1Currency>` and `documentation: Sep1Organization`. All fields `Option<String>` / `Option<bool>` / `Option<i32>` so a partial / oddly-formatted toml degrades to `None` rather than failing the whole parse.
+- `dto.rs` — `Sep1TomlParsed` struct mapping only the fields the API consumes. Two top-level groups: `currencies: Vec<Sep1Currency>` and `documentation: Sep1Documentation`. All fields `Option<String>` / `Option<bool>` / `Option<i32>` so a partial / oddly-formatted toml degrades to `None` rather than failing the whole parse.
 - `errors.rs` — `Sep1Error` enum: `MissingHomeDomain`, `Http`, `Timeout`, `BodyTooLarge { limit }`, `MalformedToml`. All map to `enrichment_status: "unavailable"` on the consumer side, never to a 5xx.
 - `size_cap.rs` (or inline) — bound the response body at 100 KB using `Response::bytes_stream()` + a manual byte counter; reject early without buffering the rest. Per SEP-1 max file size.
 - `timeouts.rs` (or inline) — connect-timeout 1 s, total-request-timeout 2 s. Whole budget below the API Gateway 29 s ceiling with margin.
-- `mod.rs` — re-exports the public surface: `Sep1Fetcher`, `Sep1TomlParsed`, `Sep1Currency`, `Sep1Organization`, `Sep1Error`.
+- `mod.rs` — re-exports the public surface: `Sep1Fetcher`, `Sep1TomlParsed`, `Sep1Currency`, `Sep1Documentation`, `Sep1Error`.
 
 ### Step 3: Wire fetchers into `AppState` via a `RuntimeEnrichment` bundle
 
@@ -136,7 +136,7 @@ In `crates/api/src/assets/handlers.rs::get_asset`:
 1. Run the existing DB query (now joining `iss.home_domain AS issuer_home_domain`
    so the fetch key arrives on `AssetRow` without an extra round-trip).
 2. If the resolved asset has a non-empty `issuer_home_domain`, call
-   `state.sep1.fetch(home_domain).await`.
+   `state.runtime_enrichment.sep1.fetch(home_domain).await`.
 3. On success, find the matching `(code, issuer)` row in `parsed.currencies`
    and read `desc` → `description`. Read `parsed.documentation.org_url` →
    `home_page` regardless of whether the currency match succeeded (issuer

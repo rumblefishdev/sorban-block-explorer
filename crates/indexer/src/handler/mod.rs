@@ -156,7 +156,11 @@ async fn process_s3_object(
     // Step 3: Deserialize batch
     let batch = xdr_parser::deserialize_batch(&xdr_bytes)?;
 
-    // Step 4: Process each ledger in the batch
+    // Step 4: Process each ledger in the batch. Aggregate every
+    // ledger's `ExtractedAsset` slice into a single per-batch publish
+    // so we pay the SQS lookup + SendMessageBatch round-trips once per
+    // S3 record rather than once per ledger.
+    let mut batch_extracted_assets = Vec::new();
     for ledger_meta in batch.ledger_close_metas.iter() {
         let extracted_assets = match process::process_ledger(
             ledger_meta,
@@ -176,17 +180,18 @@ async fn process_s3_object(
                 return Err(e);
             }
         };
-
-        // Type-1 enrichment SQS publish (task 0191). Galaxy Lambda
-        // concern only — kept here in handler/mod.rs (Lambda-specific
-        // orchestration) so the shared `process_ledger` stays free of
-        // SQS coupling. Fail-soft: publish errors do not abort the
-        // S3 record because the persistence has already committed.
-        state
-            .enrichment_publisher
-            .publish_for_extracted_assets(&state.db_pool, &extracted_assets)
-            .await;
+        batch_extracted_assets.extend(extracted_assets);
     }
+
+    // Type-1 enrichment SQS publish (task 0191). Galaxy Lambda
+    // concern only — kept here in handler/mod.rs (Lambda-specific
+    // orchestration) so the shared `process_ledger` stays free of
+    // SQS coupling. Fail-soft: publish errors do not abort the
+    // S3 record because the persistence has already committed.
+    state
+        .enrichment_publisher
+        .publish_for_extracted_assets(&state.db_pool, &batch_extracted_assets)
+        .await;
 
     Ok(())
 }
