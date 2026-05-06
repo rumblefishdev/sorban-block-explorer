@@ -809,6 +809,19 @@ Design notes:
 - current reserves and total shares are **not** persisted on the parent row; the most
   recent `liquidity_pool_snapshots` row is the authoritative current-state source
   (pool transaction history itself is derived from `operations_appearances` + `soroban_events_appearances`)
+- **Sentinel placeholder rows** ([ADR 0041](../../../lore/2-adrs/0041_lp-positions-orphan-handling-state-filter-and-sentinel-pool.md)):
+  during partial / mid-stream backfills, an `lp_positions` row may reference a pool
+  whose `LedgerEntry` is not in the current ledger and not previously persisted (the
+  pool was created in a pre-window ledger and untouched in the current one). To satisfy
+  the FK without losing the position, the persist layer emits a placeholder pool row
+  with marker convention **`created_at_ledger = 0`** (no real Stellar pool can carry
+  this value — pubnet genesis seq is 1) and minimum-data sentinel fields
+  (`asset_a_type=0, asset_a_code=NULL, asset_a_issuer_id=NULL`,
+  `asset_b_type=0, asset_b_code=NULL, asset_b_issuer_id=NULL`, `fee_bps=0`). Sentinels
+  self-heal: the next time the pool surfaces as `created/updated/restored/state` in
+  any subsequent ledger, the 13a UPSERT replaces every dimension field with real
+  data. Detection: `WHERE created_at_ledger = 0`. Audit-harness invariant
+  `15_liquidity_pools.sql:I6` reports the count as a partial-backfill thermometer.
 
 ### 4.15 Liquidity Pool Snapshots
 
