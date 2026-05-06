@@ -1231,6 +1231,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "db-merge"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "db-migrate"
 version = "0.1.0"
 dependencies = [
