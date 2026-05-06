@@ -44,6 +44,9 @@ futures = "0.3"
 hex = { workspace = true }
 bytes = "1"
 moka = { version = "0.12", features = ["sync", "future"] }
+# `reqwest` and `toml` are pulled in transitively via `enrichment-shared`'s
+# `Sep1Fetcher`; nothing in `crates/api/src/**` uses them directly, so they
+# are intentionally not re-declared here.
 
 [dev-dependencies]
 tower = "0.5"
