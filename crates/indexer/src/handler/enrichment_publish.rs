@@ -156,10 +156,12 @@ async fn select_unenriched_asset_ids(
     .fetch_all(pool)
     .await?;
 
-    Ok(rows
-        .into_iter()
-        .filter_map(|r| r.try_get::<i32, _>("id").ok())
-        .collect())
+    // Propagate decode errors instead of silently dropping rows. A schema
+    // drift on `assets.id` (column rename, type change, unexpected NULL)
+    // would otherwise hide enrichment misses behind a clean log.
+    rows.into_iter()
+        .map(|r| r.try_get::<i32, _>("id"))
+        .collect()
 }
 
 async fn publish_icon_messages(client: &SqsClient, queue_url: &str, asset_ids: &[i32]) {

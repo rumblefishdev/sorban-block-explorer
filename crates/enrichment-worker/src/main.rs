@@ -91,10 +91,17 @@ async fn handle_event(
     let mut failures = Vec::new();
 
     for record in event.payload.records {
-        let message_id = record
-            .message_id
-            .clone()
-            .unwrap_or_else(|| "<unknown>".to_owned());
+        // SQS partial-batch reporting requires `item_identifier` to match
+        // the record's messageId exactly — a wrong / synthetic value is
+        // treated as "successfully processed" by the broker and the
+        // record is silently deleted. A missing `message_id` is a Lambda
+        // event-shape contract violation (AWS always sets it); fail the
+        // whole invocation so the entire batch is redriven by SQS instead
+        // of risking lost enrichment attempts.
+        let Some(message_id) = record.message_id.clone() else {
+            error!("SQS record missing message_id; failing invocation to force batch redrive");
+            return Err("SQS record missing message_id".into());
+        };
 
         match handle_record(&record, &state).await {
             Ok(()) => {}
