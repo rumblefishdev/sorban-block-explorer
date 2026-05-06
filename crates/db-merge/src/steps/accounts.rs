@@ -41,9 +41,15 @@ pub async fn run(conn: &mut PgConnection) -> Result<MergeStats, MergeError> {
         updated AS (
             UPDATE accounts a SET
                 last_seen_ledger = GREATEST(a.last_seen_ledger, i.last_seen_ledger),
+                -- Source's sequence_number is post-COALESCE (the indexer
+                -- ran NULLIF($, -1)→0 on insert). The indexer's own UPDATE
+                -- clause checks `sq <> -1` because it sees raw input;
+                -- here we see the converted form, so check `> 0` instead.
+                -- 0 means "no real sequence ever observed" — never overwrite
+                -- a real value with that sentinel.
                 sequence_number  = CASE
                     WHEN i.last_seen_ledger >= a.last_seen_ledger
-                     AND i.sequence_number <> -1
+                     AND i.sequence_number > 0
                     THEN i.sequence_number
                     ELSE a.sequence_number
                 END,
