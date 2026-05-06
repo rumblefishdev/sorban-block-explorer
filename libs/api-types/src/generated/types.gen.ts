@@ -176,7 +176,6 @@ export type ContractDetailResponse = {
   deployed_at_ledger?: number | null;
   deployer?: string | null;
   is_sac: boolean;
-  metadata?: unknown;
   stats: ContractStats;
   wasm_hash?: string | null;
   wasm_uploaded_at_ledger?: number | null;

@@ -380,7 +380,7 @@ pub(super) async fn upsert_contracts_returning_id(
 ) -> Result<HashMap<String, i64>, HandlerError> {
     let mut out: HashMap<String, i64> = HashMap::new();
 
-    // Pass 1 — rich rows with metadata.
+    // Pass 1 — rich rows with name (per ADR 0042 typed column).
     for chunk in staged.contract_rows.chunks(CHUNK_SIZE) {
         let mut contract_ids: Vec<String> = Vec::with_capacity(chunk.len());
         let mut wasm_hashes: Vec<Option<Vec<u8>>> = Vec::with_capacity(chunk.len());
@@ -390,7 +390,7 @@ pub(super) async fn upsert_contracts_returning_id(
         // ADR 0031: contract_type is SMALLINT (Rust ContractType enum).
         let mut types: Vec<Option<ContractType>> = Vec::with_capacity(chunk.len());
         let mut sacs: Vec<bool> = Vec::with_capacity(chunk.len());
-        let mut metadatas: Vec<Option<Value>> = Vec::with_capacity(chunk.len());
+        let mut names: Vec<Option<String>> = Vec::with_capacity(chunk.len());
 
         for r in chunk {
             contract_ids.push(r.contract_id.clone());
@@ -404,18 +404,18 @@ pub(super) async fn upsert_contracts_returning_id(
             deployed.push(r.deployed_at_ledger);
             types.push(Some(r.contract_type));
             sacs.push(r.is_sac);
-            metadatas.push(r.metadata.clone());
+            names.push(r.name.clone());
         }
 
         let rows: Vec<(i64, String)> = sqlx::query_as(
             r#"
             INSERT INTO soroban_contracts (
                 contract_id, wasm_hash, wasm_uploaded_at_ledger, deployer_id,
-                deployed_at_ledger, contract_type, is_sac, metadata
+                deployed_at_ledger, contract_type, is_sac, name
             )
             SELECT * FROM UNNEST(
                 $1::VARCHAR[], $2::BYTEA[], $3::BIGINT[], $4::BIGINT[],
-                $5::BIGINT[], $6::SMALLINT[], $7::BOOL[], $8::JSONB[]
+                $5::BIGINT[], $6::SMALLINT[], $7::BOOL[], $8::VARCHAR[]
             )
             ON CONFLICT (contract_id) DO UPDATE SET
                 wasm_hash = COALESCE(EXCLUDED.wasm_hash, soroban_contracts.wasm_hash),
@@ -423,7 +423,7 @@ pub(super) async fn upsert_contracts_returning_id(
                 deployed_at_ledger = COALESCE(EXCLUDED.deployed_at_ledger, soroban_contracts.deployed_at_ledger),
                 contract_type = COALESCE(EXCLUDED.contract_type, soroban_contracts.contract_type),
                 is_sac = soroban_contracts.is_sac OR EXCLUDED.is_sac,
-                metadata = COALESCE(EXCLUDED.metadata, soroban_contracts.metadata)
+                name = COALESCE(EXCLUDED.name, soroban_contracts.name)
             RETURNING id, contract_id
             "#,
         )
@@ -434,7 +434,7 @@ pub(super) async fn upsert_contracts_returning_id(
         .bind(&deployed)
         .bind(&types)
         .bind(&sacs)
-        .bind(&metadatas)
+        .bind(&names)
         .fetch_all(&mut **db_tx)
         .await?;
 
@@ -501,6 +501,86 @@ pub(super) async fn upsert_contracts_returning_id(
         }
     }
     Ok(out)
+}
+
+/// Apply late-init / re-init `Symbol("name")` storage writes to
+/// `soroban_contracts.name`.
+///
+/// Per ADR 0042 + task 0156, the constructor pattern (deploy + storage
+/// init in the same ledger) is handled by `extract_contract_deployments`
+/// populating `name` directly. This helper covers the orthogonal cases:
+///
+/// * **Late-init** — contract deployed in an earlier ledger, the
+///   `Symbol("name")` storage entry is created by a subsequent `init()`
+///   invocation. The contract row already exists with `name = NULL`.
+/// * **Re-init / name update** — a contract overwrites its previous
+///   `Symbol("name")` storage entry. The new value should win.
+///
+/// Both cases are handled by an unconditional SET (no `name IS NULL`
+/// guard), because the on-chain storage event IS the source of truth:
+/// if we observed a write, the chain wants that value persisted.
+///
+/// Contracts not present in the table (referenced-only StrKeys whose
+/// upsert ran in pass 2 of `upsert_contracts_returning_id` and produced
+/// a bare row, OR contracts that have not yet appeared at all) match
+/// the `WHERE sc.contract_id = c.contract_id` predicate the same way
+/// once their row exists; until then this UPDATE is a no-op for them.
+pub(super) async fn apply_contract_name_writes(
+    db_tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    name_writes: &[(String, String)],
+) -> Result<(), super::HandlerError> {
+    if name_writes.is_empty() {
+        return Ok(());
+    }
+
+    for chunk in name_writes.chunks(CHUNK_SIZE) {
+        let mut contract_ids: Vec<String> = Vec::with_capacity(chunk.len());
+        let mut names: Vec<String> = Vec::with_capacity(chunk.len());
+        for (cid, name) in chunk {
+            contract_ids.push(cid.clone());
+            names.push(name.clone());
+        }
+        // Pass 1 — `soroban_contracts.name`. Always applied; this is the
+        // primary target and the source for the GENERATED `search_vector`.
+        sqlx::query(
+            r#"
+            UPDATE soroban_contracts sc
+               SET name = c.name
+              FROM UNNEST($1::VARCHAR[], $2::VARCHAR[]) AS c(contract_id, name)
+             WHERE sc.contract_id = c.contract_id
+            "#,
+        )
+        .bind(&contract_ids)
+        .bind(&names)
+        .execute(&mut **db_tx)
+        .await?;
+
+        // Pass 2 — mirror the name onto `assets.name` for Soroban-native
+        // Fungible tokens (`asset_type = 3` per ADR 0031 / TokenAssetType).
+        // The asset row keys on the `soroban_contracts.id` surrogate FK
+        // (ADR 0030), so we resolve via the StrKey → id JOIN. SAC rows
+        // (`asset_type = 2`) and classic rows (0/1) carry name from
+        // `asset_code` or SEP-1 enrichment, not from on-chain
+        // `Symbol("name")` storage; the `asset_type = 3` filter excludes
+        // them. Same atomic transaction as Pass 1 — `assets.name` and
+        // `soroban_contracts.name` cannot diverge.
+        sqlx::query(
+            r#"
+            UPDATE assets a
+               SET name = c.name
+              FROM UNNEST($1::VARCHAR[], $2::VARCHAR[]) AS c(contract_id, name),
+                   soroban_contracts sc
+             WHERE sc.contract_id = c.contract_id
+               AND a.contract_id = sc.id
+               AND a.asset_type = 3
+            "#,
+        )
+        .bind(&contract_ids)
+        .bind(&names)
+        .execute(&mut **db_tx)
+        .await?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

@@ -48,7 +48,6 @@ mod tests {
             contract_type_name: None,
             contract_type: None,
             is_sac: false,
-            metadata: None,
             stats: super::super::dto::ContractStats {
                 recent_invocations: 0,
                 recent_unique_callers: 0,

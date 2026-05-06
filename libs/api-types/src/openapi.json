@@ -2061,7 +2061,6 @@
           "is_sac": {
             "type": "boolean"
           },
-          "metadata": {},
           "stats": {
             "$ref": "#/components/schemas/ContractStats"
           },

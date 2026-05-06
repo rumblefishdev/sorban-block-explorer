@@ -164,7 +164,7 @@ pub async fn get_contract(
         contract_type_name: contract.contract_type_name,
         contract_type: contract.contract_type,
         is_sac: contract.is_sac,
-        metadata: contract.metadata,
+        // `metadata` field removed per ADR 0042 / task 0156.
         stats: ContractStats {
             recent_invocations,
             recent_unique_callers,

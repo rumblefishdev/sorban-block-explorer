@@ -184,7 +184,7 @@ pub async fn fetch_search(
             SELECT
                 'contract'::text          AS entity_type,
                 sc.contract_id            AS identifier,
-                COALESCE(sc.metadata->>'name', '')  AS label,
+                COALESCE(sc.name, '')              AS label,
                 sc.id                     AS surrogate_id
             FROM soroban_contracts sc
             WHERE $6 = TRUE

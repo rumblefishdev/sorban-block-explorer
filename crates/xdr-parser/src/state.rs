@@ -92,12 +92,141 @@ pub fn extract_contract_deployments(
             deployed_at_ledger: change.ledger_sequence,
             contract_type,
             is_sac,
-            metadata: serde_json::json!({}),
+            name: None,
             sac_asset,
         });
     }
 
+    // Second pass — populate `name` for the constructor pattern (deploy
+    // tx writes the standard `Symbol("name")` storage entry in the same
+    // ledger). For deploy-then-init contracts where the storage write
+    // lands in a later ledger, the indexer's
+    // `extract_contract_data_name_writes` path fills the column then.
+    // Per ADR 0042 + task 0156.
+    for deployment in deployments.iter_mut() {
+        for change in changes {
+            if change.entry_type != "contract_data" || change.change_type != "created" {
+                continue;
+            }
+            if !is_symbol_name_key(&change.key, &deployment.contract_id) {
+                continue;
+            }
+            let Some(ref data) = change.data else {
+                continue;
+            };
+            if let Some(name) = decode_scval_string(data) {
+                deployment.name = Some(name);
+                break;
+            }
+        }
+    }
+
     deployments
+}
+
+/// Extract `(contract_id, name)` pairs from `Symbol("name")` ContractData
+/// `created` or `updated` entries, independently of any deployment in the
+/// same ledger.
+///
+/// Used for two scenarios that `extract_contract_deployments`'s
+/// constructor-pattern second pass cannot cover:
+///
+/// 1. **Late-init pattern** — contract deployed in ledger N (storage
+///    empty at deploy time), `init()` invocation in ledger N+k writes
+///    `Symbol("name")` to persistent storage. `extract_contract_deployments`
+///    in ledger N+k produces no deployment for this contract (it was
+///    already deployed), so the second pass there sees no deployment to
+///    populate. The indexer applies a retroactive UPDATE on
+///    `soroban_contracts.name` for each pair returned here, gated by
+///    `name IS NULL` to keep the write idempotent.
+///
+/// 2. **Re-init / name update** — a contract updates its `Symbol("name")`
+///    storage entry. The `change_type == "updated"` filter catches this
+///    case as well; the indexer overwrites the existing name.
+///
+/// Per ADR 0042 + task 0156.
+pub fn extract_contract_data_name_writes(
+    changes: &[ExtractedLedgerEntryChange],
+) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for change in changes {
+        if change.entry_type != "contract_data" {
+            continue;
+        }
+        if change.change_type != "created" && change.change_type != "updated" {
+            continue;
+        }
+        let Some(contract_id) = extract_contract_id_from_key(&change.key) else {
+            continue;
+        };
+        if !is_symbol_name_key(&change.key, &contract_id) {
+            continue;
+        }
+        let Some(ref data) = change.data else {
+            continue;
+        };
+        if let Some(name) = decode_scval_string(data) {
+            out.push((contract_id, name));
+        }
+    }
+    out
+}
+
+/// True when `key` is the persistent storage entry for `Symbol("name")` on
+/// `contract_id` (the standard slot used by SEP-41 / OpenZeppelin Soroban
+/// FungibleToken implementations to store the human-readable token name).
+///
+/// Match shape: `key.contract == contract_id` AND
+/// `key.key.type == "sym"` AND `key.key.value == "name"`.
+fn is_symbol_name_key(key: &Value, contract_id: &str) -> bool {
+    let key_contract = key.get("contract").and_then(|v| v.as_str());
+    if key_contract != Some(contract_id) {
+        return false;
+    }
+    key.get("key")
+        .and_then(|k| {
+            let ty = k.get("type")?.as_str()?;
+            let val = k.get("value")?.as_str()?;
+            Some(ty == "sym" && val == "name")
+        })
+        .unwrap_or(false)
+}
+
+/// Pull the `contract` StrKey from a ContractData ledger key. Used by
+/// `extract_contract_data_name_writes` to dispatch storage writes to
+/// the right contract row when there is no enclosing deployment.
+fn extract_contract_id_from_key(key: &Value) -> Option<String> {
+    key.get("contract")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+}
+
+/// Decode `data.val` as a UTF-8 string for SCVal types that legally
+/// represent a name (`string`, `sym`, `bytes`).
+///
+/// Returns `None` for any other SCVal variant (Vec/Map/Bool/numeric/etc.) —
+/// the standard `Symbol("name")` slot is always one of the three string-y
+/// shapes in conforming SEP-41 implementations, so a non-matching variant
+/// is treated as "no extractable name" rather than a parse failure.
+///
+/// Robustness rationale: silently returning `None` for unsupported shapes
+/// keeps a misbehaving contract from poisoning the parser. The caller's
+/// caller (the indexer) treats `None` the same as an absent storage entry.
+fn decode_scval_string(data: &Value) -> Option<String> {
+    let val = data.get("val")?;
+    let ty = val.get("type")?.as_str()?;
+    let v = val.get("value")?;
+    match ty {
+        "string" | "sym" => v.as_str().map(String::from),
+        "bytes" => {
+            // Stellar XDR JSON intermediate encodes BytesM as hex string.
+            let hex_str = v.as_str()?;
+            let bytes = hex::decode(hex_str).ok()?;
+            String::from_utf8(bytes).ok()
+        }
+        _ => None,
+    }
 }
 
 fn is_contract_instance_key(key: &Value) -> bool {
@@ -689,6 +818,9 @@ pub fn detect_assets(
                 asset_code,
                 issuer_address,
                 contract_id: Some(deployment.contract_id.clone()),
+                // SAC assets do not carry an on-chain `Symbol("name")` storage
+                // entry (they wrap a classic asset; name is derived from
+                // `asset_code` / SEP-1 metadata). Leave NULL for SAC rows.
                 name: None,
                 total_supply: None,
                 holder_count: None,
@@ -709,7 +841,12 @@ pub fn detect_assets(
                 asset_code: None,
                 issuer_address: None,
                 contract_id: Some(deployment.contract_id.clone()),
-                name: None,
+                // Per ADR 0042 / task 0156: thread the on-chain
+                // `Symbol("name")` extracted at deploy time into the
+                // asset row. Late-init / re-init paths land via the
+                // indexer's `apply_contract_name_writes` helper; that
+                // path also covers `assets.name` follow-up updates.
+                name: deployment.name.clone(),
                 total_supply: None,
                 holder_count: None,
             });
@@ -909,6 +1046,234 @@ mod tests {
 
         let deployments = extract_contract_deployments(&changes, "GDEPLOYER", &HashMap::new());
         assert!(deployments.is_empty());
+    }
+
+    // -- Symbol("name") extraction tests (ADR 0042 / task 0156) --
+
+    /// Helper — build a `contract_data` change carrying a `Symbol("name")`
+    /// key and a string SCVal value. Mirrors the JSON intermediate shape
+    /// that `ledger_entry_changes::extract_ledger_entry_changes`
+    /// produces for the standard token-name storage entry.
+    fn make_name_change(
+        contract_id: &str,
+        change_type: &str,
+        scval_type: &str,
+        scval_value: &serde_json::Value,
+    ) -> ExtractedLedgerEntryChange {
+        make_change(
+            "contract_data",
+            change_type,
+            json!({
+                "contract": contract_id,
+                "key":      { "type": "sym", "value": "name" },
+                "durability": "persistent",
+            }),
+            Some(json!({
+                "contract": contract_id,
+                "key":      { "type": "sym", "value": "name" },
+                "durability": "persistent",
+                "val":      { "type": scval_type, "value": scval_value },
+            })),
+        )
+    }
+
+    fn make_wasm_deploy_change(contract_id: &str) -> ExtractedLedgerEntryChange {
+        make_change(
+            "contract_data",
+            "created",
+            json!({
+                "contract": contract_id,
+                "key": { "type": "ledger_key_contract_instance", "value": null },
+                "durability": "persistent",
+            }),
+            Some(json!({
+                "contract": contract_id,
+                "key": { "type": "ledger_key_contract_instance", "value": null },
+                "durability": "persistent",
+                "val": { "type": "contract_instance", "value": {
+                    "executable": { "type": "wasm", "hash": "aa".repeat(32) }
+                }},
+            })),
+        )
+    }
+
+    /// Constructor pattern — deploy and `Symbol("name")` storage init in
+    /// the same ledger. The deployment second pass should populate
+    /// `deployment.name` with the decoded String.
+    #[test]
+    fn extract_constructor_pattern_with_name() {
+        let changes = vec![
+            make_wasm_deploy_change("CABC123"),
+            make_name_change("CABC123", "created", "string", &json!("USD Coin")),
+        ];
+
+        let deployments = extract_contract_deployments(&changes, "GDEPLOYER", &HashMap::new());
+        assert_eq!(deployments.len(), 1);
+        assert_eq!(deployments[0].contract_id, "CABC123");
+        assert_eq!(deployments[0].name.as_deref(), Some("USD Coin"));
+    }
+
+    /// Constructor-pattern deploy without an accompanying `Symbol("name")`
+    /// entry — `deployment.name` should stay `None`. Frontend renders the
+    /// contract id then; the late-init pass may fill the column later.
+    #[test]
+    fn extract_constructor_pattern_without_name() {
+        let changes = vec![make_wasm_deploy_change("CABC123")];
+
+        let deployments = extract_contract_deployments(&changes, "GDEPLOYER", &HashMap::new());
+        assert_eq!(deployments.len(), 1);
+        assert!(deployments[0].name.is_none());
+    }
+
+    /// Cross-contract isolation — a `Symbol("name")` entry on a different
+    /// contract id must not leak into the deployment.
+    #[test]
+    fn extract_constructor_pattern_skips_other_contract_name() {
+        let changes = vec![
+            make_wasm_deploy_change("CABC123"),
+            // Name belongs to a DIFFERENT contract; should be ignored.
+            make_name_change("COTHER", "created", "string", &json!("Other Token")),
+        ];
+
+        let deployments = extract_contract_deployments(&changes, "GDEPLOYER", &HashMap::new());
+        assert_eq!(deployments.len(), 1);
+        assert!(deployments[0].name.is_none());
+    }
+
+    /// Late-init pattern — contract was deployed in a prior ledger; only
+    /// the `Symbol("name")` storage entry lands in the current ledger.
+    /// `extract_contract_data_name_writes` returns the `(contract_id, name)`
+    /// pair so the indexer can apply a retroactive UPDATE.
+    #[test]
+    fn name_writes_late_init_created() {
+        let changes = vec![make_name_change(
+            "CABC123",
+            "created",
+            "string",
+            &json!("USD Coin"),
+        )];
+
+        let writes = extract_contract_data_name_writes(&changes);
+        assert_eq!(
+            writes,
+            vec![("CABC123".to_string(), "USD Coin".to_string())]
+        );
+    }
+
+    /// Re-init pattern — an existing `Symbol("name")` storage entry is
+    /// updated post-deploy. `change_type == "updated"` must also be
+    /// captured so the indexer can overwrite the previous value.
+    #[test]
+    fn name_writes_re_init_updated() {
+        let changes = vec![make_name_change(
+            "CABC123",
+            "updated",
+            "string",
+            &json!("Renamed Token"),
+        )];
+
+        let writes = extract_contract_data_name_writes(&changes);
+        assert_eq!(
+            writes,
+            vec![("CABC123".to_string(), "Renamed Token".to_string())]
+        );
+    }
+
+    /// `Symbol("name")` written via Symbol SCVal (uncommon but legal —
+    /// some SDK builders emit short tokens this way). Helper must accept it.
+    #[test]
+    fn name_writes_decodes_symbol_scval() {
+        let changes = vec![make_name_change(
+            "CABC123",
+            "created",
+            "sym",
+            &json!("USDC"),
+        )];
+
+        let writes = extract_contract_data_name_writes(&changes);
+        assert_eq!(writes, vec![("CABC123".to_string(), "USDC".to_string())]);
+    }
+
+    /// `Symbol("name")` written via Bytes SCVal (UTF-8 encoded). Stellar
+    /// XDR JSON intermediate uses lowercase hex for binary payloads.
+    /// "USDC" → 55534443 hex.
+    #[test]
+    fn name_writes_decodes_bytes_scval_utf8() {
+        // "USDC" as UTF-8 bytes → hex.
+        let changes = vec![make_name_change(
+            "CABC123",
+            "created",
+            "bytes",
+            &json!("55534443"),
+        )];
+
+        let writes = extract_contract_data_name_writes(&changes);
+        assert_eq!(writes, vec![("CABC123".to_string(), "USDC".to_string())]);
+    }
+
+    /// Non-string SCVal variants (numeric, bool, vec, map) return `None`
+    /// without panicking. Misbehaving contracts should not poison the
+    /// parser.
+    #[test]
+    fn name_writes_rejects_non_string_scval_variants() {
+        let cases = vec![
+            ("u64", json!(42)),
+            ("bool", json!(true)),
+            ("vec", json!([1, 2, 3])),
+            ("map", json!({"a": 1})),
+        ];
+
+        for (ty, value) in cases {
+            let changes = vec![make_name_change("CABC123", "created", ty, &value)];
+            let writes = extract_contract_data_name_writes(&changes);
+            assert!(
+                writes.is_empty(),
+                "expected no writes for SCVal type {ty}, got {writes:?}"
+            );
+        }
+    }
+
+    /// `Symbol("name")` keys on `change_type = "deleted"` are NOT captured.
+    /// Deletion semantics for the name column are out of scope for 0156;
+    /// the existing value stays. (If a contract ever needs name removal,
+    /// a follow-up task can extend the helper.)
+    #[test]
+    fn name_writes_skips_deleted_changes() {
+        let changes = vec![make_name_change(
+            "CABC123",
+            "deleted",
+            "string",
+            &json!("USD Coin"),
+        )];
+
+        let writes = extract_contract_data_name_writes(&changes);
+        assert!(writes.is_empty());
+    }
+
+    /// Other Symbol(...) keys (decimals, symbol, etc.) on a contract are
+    /// not extracted by `extract_contract_data_name_writes` — the helper
+    /// is name-specific. A follow-up task adding `decimals` (etc.) would
+    /// introduce its own helper.
+    #[test]
+    fn name_writes_skips_non_name_symbol_keys() {
+        let changes = vec![make_change(
+            "contract_data",
+            "created",
+            json!({
+                "contract":  "CABC123",
+                "key":       { "type": "sym", "value": "decimals" },
+                "durability": "persistent",
+            }),
+            Some(json!({
+                "contract":  "CABC123",
+                "key":       { "type": "sym", "value": "decimals" },
+                "durability": "persistent",
+                "val":       { "type": "u32", "value": 7 },
+            })),
+        )];
+
+        let writes = extract_contract_data_name_writes(&changes);
+        assert!(writes.is_empty());
     }
 
     // -- Account State Tests --
@@ -1528,7 +1893,7 @@ mod tests {
             deployed_at_ledger: 100,
             contract_type: ContractType::Token,
             is_sac: true,
-            metadata: json!({}),
+            name: None,
             sac_asset: Some(SacAssetIdentity::Credit {
                 code: "USDC".into(),
                 issuer: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN".into(),
@@ -1559,7 +1924,7 @@ mod tests {
             deployed_at_ledger: 100,
             contract_type: ContractType::Token,
             is_sac: true,
-            metadata: json!({}),
+            name: None,
             sac_asset: Some(SacAssetIdentity::Native),
         }];
 
@@ -1583,7 +1948,7 @@ mod tests {
             deployed_at_ledger: 100,
             contract_type: ContractType::Token,
             is_sac: true,
-            metadata: json!({}),
+            name: None,
             sac_asset: None,
         }];
 
@@ -1602,7 +1967,7 @@ mod tests {
             deployed_at_ledger: 100,
             contract_type: ContractType::Other,
             is_sac: false,
-            metadata: json!({}),
+            name: None,
             sac_asset: None,
         }];
 
@@ -1621,7 +1986,7 @@ mod tests {
             deployed_at_ledger: 100,
             contract_type: ContractType::Fungible,
             is_sac: false,
-            metadata: json!({}),
+            name: None,
             sac_asset: None,
         }];
         let interfaces = vec![iface(
@@ -1649,7 +2014,7 @@ mod tests {
             deployed_at_ledger: 100,
             contract_type: ContractType::Nft,
             is_sac: false,
-            metadata: json!({}),
+            name: None,
             sac_asset: None,
         }];
         let interfaces = vec![iface(&wasm, &["owner_of", "token_uri", "transfer"])];
@@ -1670,7 +2035,7 @@ mod tests {
             deployed_at_ledger: 100,
             contract_type: ContractType::Other,
             is_sac: false,
-            metadata: json!({}),
+            name: None,
             sac_asset: None,
         }];
         let interfaces = vec![iface(&wasm, &["execute", "admin", "init"])];
@@ -1692,7 +2057,7 @@ mod tests {
             deployed_at_ledger: 100,
             contract_type: ContractType::Nft,
             is_sac: false,
-            metadata: json!({}),
+            name: None,
             sac_asset: None,
         }];
         let interfaces = vec![iface(&wasm, &["owner_of", "decimals", "transfer"])];
@@ -1712,7 +2077,7 @@ mod tests {
                 deployed_at_ledger: 100,
                 contract_type: ContractType::Token,
                 is_sac: true,
-                metadata: json!({}),
+                name: None,
                 sac_asset: Some(SacAssetIdentity::Credit {
                     code: "USDC".into(),
                     issuer: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN".into(),
@@ -1725,7 +2090,7 @@ mod tests {
                 deployed_at_ledger: 100,
                 contract_type: ContractType::Fungible,
                 is_sac: false,
-                metadata: json!({}),
+                name: None,
                 sac_asset: None,
             },
         ];
