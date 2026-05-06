@@ -18,19 +18,24 @@ pub struct ContractRow {
     pub contract_type_name: Option<String>,
     pub contract_type: Option<i16>,
     pub is_sac: bool,
-    pub metadata: Option<serde_json::Value>,
 }
 
 pub async fn fetch_contract(
     pool: &PgPool,
     contract_id: &str,
 ) -> Result<Option<ContractRow>, sqlx::Error> {
+    // Per ADR 0042 / task 0156: `soroban_contracts.metadata JSONB` was
+    // replaced by typed `name VARCHAR(256)`. The detail response no
+    // longer projects a `metadata` field (was always `{}` in practice
+    // and added no value). The `name` column is consumed only by the
+    // search query (`COALESCE(sc.name, '')`); detail page does not
+    // surface it as a separate field.
     let row: Option<PgRow> = sqlx::query(
         "SELECT sc.id, sc.contract_id, encode(sc.wasm_hash, 'hex') AS wasm_hash, \
          sc.wasm_uploaded_at_ledger, \
          a.account_id AS deployer, sc.deployed_at_ledger, \
          contract_type_name(sc.contract_type) AS contract_type_name, \
-         sc.contract_type, sc.is_sac, sc.metadata \
+         sc.contract_type, sc.is_sac \
          FROM soroban_contracts sc \
          LEFT JOIN accounts a ON a.id = sc.deployer_id \
          WHERE sc.contract_id = $1",
@@ -49,7 +54,6 @@ pub async fn fetch_contract(
         contract_type_name: r.get("contract_type_name"),
         contract_type: r.get("contract_type"),
         is_sac: r.get("is_sac"),
-        metadata: r.get("metadata"),
     }))
 }
 

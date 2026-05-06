@@ -289,7 +289,17 @@ pub struct ExtractedContractDeployment {
     /// but always set when the parser produces a deployment).
     pub contract_type: ContractType,
     pub is_sac: bool,
-    pub metadata: serde_json::Value,
+    /// Human-readable contract name extracted from the standard
+    /// `Symbol("name")` ContractData persistent storage entry, when
+    /// present in the same ledger as the deployment (constructor
+    /// pattern). For deploy-then-init contracts where storage writes
+    /// land in a later ledger, this is `None` at deployment time and
+    /// the indexer's retroactive UPDATE path
+    /// (`extract_contract_data_name_writes`) populates the column on
+    /// the next ledger that emits the storage entry.
+    ///
+    /// Maps to `soroban_contracts.name VARCHAR(256)` per ADR 0042.
+    pub name: Option<String>,
     /// Task 0160 — SAC underlying asset identity resolved from
     /// `ContractIdPreimage::FromAsset` (top-level op OR auth-entry
     /// `CreateContractHostFn`), correlated by the preimage-derived

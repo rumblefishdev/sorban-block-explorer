@@ -22,7 +22,12 @@ pub struct ContractDetailResponse {
     pub contract_type_name: Option<String>,
     pub contract_type: Option<i16>,
     pub is_sac: bool,
-    pub metadata: Option<serde_json::Value>,
+    // `metadata` field removed per ADR 0042 / task 0156. The
+    // underlying `soroban_contracts.metadata JSONB` was replaced by
+    // typed `name VARCHAR(256)`; the field was always `{}` in
+    // practice and carried no information for the detail view.
+    // Frontend already handled the empty-object case as "no
+    // metadata"; absent field has the same effect.
     pub stats: ContractStats,
 }
 

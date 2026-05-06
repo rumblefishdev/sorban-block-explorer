@@ -190,7 +190,13 @@ pub(super) struct ContractRow {
     pub deployed_at_ledger: Option<i64>,
     pub contract_type: ContractType,
     pub is_sac: bool,
-    pub metadata: Option<Value>,
+    /// Per ADR 0042 — replaces previous `metadata: Option<Value>` JSONB
+    /// blob with a typed `name VARCHAR(256)` column. Populated by the
+    /// xdr-parser's constructor-pattern second pass (deploy + storage
+    /// init in the same ledger). Late-init / re-init updates land via
+    /// `extract_contract_data_name_writes` + a separate retroactive
+    /// UPDATE in the write path.
+    pub name: Option<String>,
 }
 
 /// Either a native-XLM balance (all identifying cols NULL) or a credit-asset
@@ -237,6 +243,13 @@ pub(super) struct Staged {
 
     pub wasm_rows: Vec<WasmRow>,
     pub contract_rows: Vec<ContractRow>,
+    /// Per ADR 0042 / task 0156 — late-init and re-init `Symbol("name")`
+    /// writes captured by `xdr_parser::extract_contract_data_name_writes`.
+    /// Each `(contract_id, name)` pair triggers a retroactive
+    /// `UPDATE soroban_contracts SET name = …` after the contract upsert,
+    /// covering the deploy-then-init pattern that the deployment
+    /// extraction's same-ledger second pass cannot see.
+    pub contract_name_writes: Vec<(String, String)>,
     /// Task 0118 Phase 2 — classification derived from every wasm spec
     /// observed this ledger. Keyed by `wasm_hash`. Non-`Other` values drive
     /// the post-wasm `soroban_contracts.contract_type` UPDATE and the
@@ -284,6 +297,7 @@ impl Staged {
         nfts: &[ExtractedNft],
         nft_events: &[ExtractedNftEvent],
         lp_positions: &[ExtractedLpPosition],
+        contract_name_writes: &[(String, String)],
     ) -> Result<Self, HandlerError> {
         let ledger_hash = decode_hash(&ledger.hash, "ledger.hash")?;
         let ledger_closed_at = ts_from_unix(ledger.closed_at)?;
@@ -533,13 +547,13 @@ impl Staged {
                 deployed_at_ledger: Some(i64::from(dep.deployed_at_ledger)),
                 contract_type,
                 is_sac: dep.is_sac,
-                metadata: Some(dep.metadata.clone()),
+                name: dep.name.clone(),
             });
         }
         // Also register any contracts referenced by ops/events/invocations that
         // weren't deployed in this ledger — they may already exist in the DB, so
         // the UNNEST upsert will be a DO NOTHING. We skip these here because we
-        // can't fabricate metadata; the FK is already satisfied by prior rows.
+        // can't fabricate name; the FK is already satisfied by prior rows.
 
         // --- transactions rows ---------------------------------------------
         let mut tx_rows: Vec<TxRow> = Vec::with_capacity(transactions.len());
@@ -1136,6 +1150,7 @@ impl Staged {
             account_state_overrides,
             wasm_rows,
             contract_rows,
+            contract_name_writes: contract_name_writes.to_vec(),
             wasm_classification,
             tx_rows,
             participant_rows,

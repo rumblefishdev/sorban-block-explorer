@@ -325,7 +325,7 @@ Soroban-native assets while still serving all through a unified explorer API.
 
 #### Contracts
 
-**`GET /contracts/:contract_id`** - Contract metadata, deployer, WASM hash, stats.
+**`GET /contracts/:contract_id`** - Contract identity (id, contract_id, deployer, WASM hash, deployed_at_ledger), classification (`contract_type`, `is_sac`), and per-contract activity stats. Per ADR 0042 / task 0156 the response no longer carries a `metadata` field — the underlying `soroban_contracts.metadata JSONB` was replaced with typed `name VARCHAR(256)` consumed only by the search query (`COALESCE(sc.name, '')` in `22_get_search.sql`); the detail page previously returned `{}` for every row and lost no information when the field was dropped.
 
 **`GET /contracts/:contract_id/interface`** - Public function signatures (names, parameter
 types, return types).
