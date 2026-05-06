@@ -774,11 +774,15 @@ pub(super) async fn insert_operations(
             continue;
         }
 
-        // `operations_appearances.pool_id` → `liquidity_pools.pool_id` FK must
-        // hold, but a backfill starting mid-stream can see DEPOSIT/WITHDRAW ops
-        // targeting pools created in un-indexed earlier ledgers. Nullify
-        // pool_id when the referenced pool is not present; the op row stays,
-        // only the FK link turns NULL for historical references.
+        // `operations_appearances.pool_id` → `liquidity_pools.pool_id` FK
+        // is now satisfied unconditionally — `upsert_pools_and_snapshots`
+        // (called earlier in this transaction; see persist/mod.rs ordering)
+        // runs Pass 2 which stub-inserts any pool_id referenced by these
+        // op rows that isn't yet in `liquidity_pools`. So the historical
+        // defensive `CASE WHEN EXISTS...` (which previously NULL'd
+        // pool_id for cross-range references and silently lost data —
+        // the gap that surfaced in task 0186 multi-laptop merge) is no
+        // longer needed.
         sqlx::query(
             r#"
             INSERT INTO operations_appearances (
@@ -788,12 +792,7 @@ pub(super) async fn insert_operations(
             )
             SELECT
                 t.tx_id, t.op_type, t.source_id, t.dest_id,
-                t.contract_id, t.asset_code, t.asset_issuer_id,
-                CASE
-                    WHEN t.pool_id IS NULL THEN NULL
-                    WHEN EXISTS (SELECT 1 FROM liquidity_pools lp WHERE lp.pool_id = t.pool_id) THEN t.pool_id
-                    ELSE NULL
-                END,
+                t.contract_id, t.asset_code, t.asset_issuer_id, t.pool_id,
                 t.amount, t.ledger_sequence, t.created_at
               FROM UNNEST(
                 $1::BIGINT[], $2::SMALLINT[], $3::BIGINT[], $4::BIGINT[],
@@ -1628,6 +1627,18 @@ pub(super) async fn upsert_pools_and_snapshots(
                 created_ledgers.push(r.created_at_ledger.unwrap_or(r.last_updated_ledger));
             }
 
+            // ON CONFLICT clause has TWO regimes:
+            //   (a) replay (existing row already a fully-populated pool):
+            //       no-op-ish; keep existing asset_a_type, LEAST the
+            //       created_at_ledger so a later replay can't push it
+            //       forward (mirrors original semantics).
+            //   (b) stub-promotion (existing row was a Pass 2 stub from
+            //       an earlier batch — fee_bps=0 sentinel; see Pass 2
+            //       below): overwrite asset_*_type/code/issuer/fee_bps
+            //       with the now-known real values, take LEAST(created_at).
+            //       Stellar AMM pools always carry fee_bps=30 (CAP-38
+            //       hard-coded), so fee_bps=0 unambiguously identifies a
+            //       stub — never a real pool.
             sqlx::query(
                 r#"
                 INSERT INTO liquidity_pools (
@@ -1641,7 +1652,15 @@ pub(super) async fn upsert_pools_and_snapshots(
                     $8::INTEGER[], $9::BIGINT[]
                 )
                 ON CONFLICT (pool_id) DO UPDATE SET
-                    asset_a_type = liquidity_pools.asset_a_type,
+                    asset_a_type      = CASE WHEN liquidity_pools.fee_bps = 0 AND EXCLUDED.fee_bps > 0
+                                             THEN EXCLUDED.asset_a_type ELSE liquidity_pools.asset_a_type END,
+                    asset_a_code      = COALESCE(liquidity_pools.asset_a_code, EXCLUDED.asset_a_code),
+                    asset_a_issuer_id = COALESCE(liquidity_pools.asset_a_issuer_id, EXCLUDED.asset_a_issuer_id),
+                    asset_b_type      = CASE WHEN liquidity_pools.fee_bps = 0 AND EXCLUDED.fee_bps > 0
+                                             THEN EXCLUDED.asset_b_type ELSE liquidity_pools.asset_b_type END,
+                    asset_b_code      = COALESCE(liquidity_pools.asset_b_code, EXCLUDED.asset_b_code),
+                    asset_b_issuer_id = COALESCE(liquidity_pools.asset_b_issuer_id, EXCLUDED.asset_b_issuer_id),
+                    fee_bps           = GREATEST(liquidity_pools.fee_bps, EXCLUDED.fee_bps),
                     created_at_ledger = LEAST(liquidity_pools.created_at_ledger, EXCLUDED.created_at_ledger)
                 "#,
             )
@@ -1657,6 +1676,42 @@ pub(super) async fn upsert_pools_and_snapshots(
             .execute(&mut **db_tx)
             .await?;
         }
+    }
+
+    // 13a-bis. Pass 2 — stub-now-fill-later for liquidity_pools
+    // referenced by ops in this batch but NOT created in any earlier
+    // ledger we've indexed. Mirrors the soroban_contracts Pass 2 pattern
+    // (`upsert_contracts_returning_id` ~line 444). Without this stub,
+    // `insert_operations` below NULLs out `pool_id` to keep the FK
+    // satisfied (see CASE clause in that function) — losing data the
+    // multi-laptop merger can never recover. The stub fills the FK with
+    // bare-minimum sentinel values (asset_*_type=0, fee_bps=0,
+    // created_at_ledger=this ledger as approximation); a later batch
+    // that actually carries CREATE_POOL_OP for the same pool_id will
+    // promote the stub to real values via the ON CONFLICT clause above
+    // (fee_bps=0 detection).
+    let referenced_pool_ids: Vec<Vec<u8>> = staged
+        .op_rows
+        .iter()
+        .filter_map(|r| r.pool_id.as_ref().map(|h| h.to_vec()))
+        .collect();
+    if !referenced_pool_ids.is_empty() {
+        sqlx::query(
+            r#"
+            INSERT INTO liquidity_pools (
+                pool_id, asset_a_type, asset_a_code, asset_a_issuer_id,
+                asset_b_type, asset_b_code, asset_b_issuer_id,
+                fee_bps, created_at_ledger
+            )
+            SELECT pid, 0, NULL, NULL, 0, NULL, NULL, 0, $2
+              FROM UNNEST($1::BYTEA[]) AS t(pid)
+            ON CONFLICT (pool_id) DO NOTHING
+            "#,
+        )
+        .bind(&referenced_pool_ids)
+        .bind(staged.ledger_sequence_i64)
+        .execute(&mut **db_tx)
+        .await?;
     }
 
     // 13b. liquidity_pool_snapshots
