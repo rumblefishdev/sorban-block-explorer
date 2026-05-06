@@ -84,25 +84,49 @@ Auxiliary columns trivially satisfy "indexer-written, on-chain-derived" by const
 
 **Description:** Drop the third tier. Anything not derivable from XDR goes to Lambda 2 and gets a typed column.
 
-**Pros:** Simpler — two paths instead of three.
+**Pros:**
 
-**Cons:** Forces unnecessary persistence for detail-only fields (e.g. `assets.description`). Schema bloat, indexer write amplification on rarely-read fields, and an invalidation problem for fields that mutate off-chain (issuer edits SEP-1 TOML, NFT metadata gateway changes). Runtime type-2 sidesteps invalidation entirely by fetching on demand.
+- Simpler — two paths instead of three.
+
+**Cons:**
+
+- Forces unnecessary persistence for detail-only fields (e.g. `assets.description`).
+- Schema bloat + indexer write amplification on rarely-read fields.
+- Invalidation problem for fields that mutate off-chain (issuer edits SEP-1 TOML, NFT metadata gateway changes). Runtime type-2 sidesteps invalidation entirely by fetching on demand.
+
+**Decision:** REJECTED — detail-only persistence costs more than runtime fetch with cache buys back.
 
 ### Alternative 2: Universal runtime type-2 enrichment
 
 **Description:** Drop typed columns for off-chain data. Resolve every off-chain field at request time, with caching.
 
-**Pros:** No write-side enrichment infra (no Lambda 2, no SQS, no backfill crate). Single fetch path for all off-chain data.
+**Pros:**
 
-**Cons:** Breaks list endpoints. A `/v1/assets` list of 50 rows would issue 50 SEP-1 fetches per request — even with caching, the cold-cache p95 is unacceptable. Filtering and sorting on off-chain fields (e.g. sort by USD price) becomes impossible without a column.
+- No write-side enrichment infra (no Lambda 2, no SQS, no backfill crate).
+- Single fetch path for all off-chain data.
+
+**Cons:**
+
+- Breaks list endpoints. `/v1/assets` list of 50 rows would issue 50 SEP-1 fetches per request — cold-cache p95 unacceptable.
+- Filtering and sorting on off-chain fields (e.g. sort by USD price) becomes impossible without a column.
+
+**Decision:** REJECTED — list endpoints cannot tolerate per-row HTTP latency.
 
 ### Alternative 3: Cron-based off-chain enrichment
 
 **Description:** Replace SQS-driven Lambda 2 with a scheduled cron that scans tables and fills NULL columns.
 
-**Pros:** Simpler trigger model — no producer hook in indexer.
+**Pros:**
 
-**Cons:** Latency: a cron interval (5–15 min) means freshly indexed assets show NULL list-endpoint fields until the next cron tick. SQS delivery is sub-second. Scan cost: cron either re-scans the whole table or maintains a "last seen" watermark, both more expensive than the SQS push model. SQS-driven also gives natural backpressure (per-message visibility timeout, DLQ).
+- Simpler trigger model — no producer hook in indexer.
+
+**Cons:**
+
+- Latency: 5–15 min cron interval means freshly indexed assets show NULL list-endpoint fields until the next tick. SQS delivery is sub-second.
+- Scan cost: cron either re-scans the whole table or maintains a "last seen" watermark, both more expensive than the SQS push model.
+- SQS-driven also gives natural backpressure (per-message visibility timeout, DLQ).
+
+**Decision:** REJECTED — freshness gap and scan cost outweigh trigger-model simplicity.
 
 ---
 
@@ -137,7 +161,6 @@ Snapshot of current allocations under this rule. Updated by tasks 0194 / 0195 / 
 | `assets.icon_url` | Lambda 2 (SEP-1 TOML `CURRENCIES[].image`) | 0191 |
 | `assets.holder_count` | indexer (trustline delta) | 0194 §1c |
 | `assets.total_supply` (classic credit) | indexer (SUM of trustline balances) | 0194 §1b |
-| `assets.usd_price` + `usd_price_updated_at` | Lambda 2 (CoinGecko / StellarExpert) | 0194 §1a (column) + 0195 §2c (population) |
 | `assets.description`, `assets.home_page` | runtime type-2 (`runtime_enrichment::sep1`) | 0188 |
 | `liquidity_pool_snapshots.tvl` | Lambda 2 (Reflector / StellarExpert oracle) | 0195 §2b |
 | `liquidity_pool_snapshots.volume`, `fee_revenue` | indexer (PathPayment delta + arithmetic) | 0194 §1d |
@@ -151,3 +174,26 @@ Snapshot of current allocations under this rule. Updated by tasks 0194 / 0195 / 
 
 - **Independence from tasks:** this ADR lands directly on develop as a standalone commit, before tasks 0194 / 0195 / 0196 / 0197 start implementation. Governance docs land independently of the code that references them so the rule is canonical at the time of code review.
 - **ADR 0029 boundary:** ADR 0029 covers the *read-time XDR fetch* path (E3 / E14 heavy fields from S3). It is a sibling of this ADR's runtime type-2 case, sharing the in-process LRU + fail-soft pattern. ADR 0029 does not need amendment for type-1 write-side concerns; this ADR is the home for those.
+
+---
+
+## Delivery Checklist
+
+Per [ADR 0032](./0032_docs-architecture-evergreen-maintenance.md), any ADR that changes the shape of the system MUST be landed together with the corresponding updates to `docs/architecture/**`. This ADR is **governance / process** — it codifies an allocation rule for future fields without itself adding, removing, or reshaping any column, endpoint, or pipeline step. The first concrete consumers (tasks 0194 / 0195 / 0196 / 0197) carry their own per-PR `docs/architecture/**` updates as those changes land.
+
+- [ ] `docs/architecture/technical-design-general-overview.md` updated — N/A — this ADR adds no new top-level system component; the existing three write paths (indexer / Lambda 2 / runtime enrichment) are already described.
+- [ ] `docs/architecture/database-schema/database-schema-overview.md` updated — N/A — no schema change in this ADR. Tasks 0194/0195 carry the per-column attribution updates.
+- [ ] `docs/architecture/backend/backend-overview.md` updated — N/A — no backend behaviour change. The runtime type-2 path is already documented (`runtime_enrichment::sep1` per task 0188).
+- [ ] `docs/architecture/frontend/frontend-overview.md` updated — N/A — no frontend contract change.
+- [ ] `docs/architecture/indexing-pipeline/indexing-pipeline-overview.md` updated — N/A — pipeline step inventory unchanged. Tasks 0194/0195 carry per-step attribution.
+- [ ] `docs/architecture/infrastructure/infrastructure-overview.md` updated — N/A — no new infra surface (SQS queue + worker Lambda already from task 0191).
+- [ ] `docs/architecture/xdr-parsing/xdr-parsing-overview.md` updated — N/A — parser responsibility split unchanged.
+- [ ] This ADR linked from each updated doc at the relevant section — N/A — see above; first task PRs that touch per-doc attribution will add the link.
+
+---
+
+## References
+
+- [SEP-1: stellar.toml](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md) — issuer-published off-chain metadata source for asset icon / name / description / home page.
+- [Pipeline data audit, 2026-04-10](../../docs/audits/2026-04-10-pipeline-data-audit.md) — Section 9.3 originally proposed the cron-based off-chain enrichment that this ADR overrides for on-chain-derivable fields (LP volume / fee_revenue → indexer, not cron).
+- [Migration `20260424000000_drop_assets_sep1_detail_cols.up.sql`](../../crates/db/migrations/20260424000000_drop_assets_sep1_detail_cols.up.sql) — the precedent migration that removed `assets.description` / `assets.home_page` columns in favour of runtime type-2 fetch (task 0188).
