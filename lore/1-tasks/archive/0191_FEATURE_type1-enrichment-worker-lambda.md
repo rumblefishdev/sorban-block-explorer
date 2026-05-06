@@ -2,7 +2,7 @@
 id: '0191'
 title: 'Type-1 enrichment live path (icon only): SQS-driven worker for assets.icon_url'
 type: FEATURE
-status: active
+status: completed
 related_adr: ['0029']
 related_tasks: ['0124', '0187', '0188']
 tags:
@@ -28,6 +28,22 @@ history:
     status: active
     who: karolkow
     note: 'Activated for implementation. Branch feat/0191_type1-enrichment-worker-lambda cut from develop with feat/0188 merged in for the SEP-1 fetcher base.'
+  - date: '2026-05-06'
+    status: completed
+    who: karolkow
+    note: >
+      Shipped in commit `25c93c9`. New crates: `enrichment-shared` (lib,
+      ~250 lines, 14 unit tests), `enrichment-worker` (Lambda binary,
+      ~160 lines). Indexer producer + post-commit SQS publish, batch
+      aggregated across S3 record. CDK queue + DLQ + worker Lambda +
+      depth/error-rate alarms + dashboard widget. 7/9 acceptance
+      checked; 2 operator-driven items (`cdk diff` clean + DLQ
+      poison-message verification) explicitly deferred to deploy. 0124
+      superseded + archived. Post-commit review fixes (CodeRabbit +
+      manual): batch-level publish refactor, CDK comment realigned with
+      hard-fail Rust behaviour, dashboard widget widths corrected,
+      unused `aws-config` dep removed, spec drift on asset_id type +
+      module path + status heading fixed.
 ---
 
 # Type-1 enrichment live path (icon only): SQS-driven worker for `assets.icon_url`
@@ -73,12 +89,12 @@ This task introduces the new shared lib `crates/enrichment-shared`
 `crates/indexer`, and the CDK changes for the queue + worker Lambda.
 **No DB migration is needed** — `assets.icon_url` already exists.
 
-## Status: Active
+## Status: Completed
 
-**Current state:** Implemented. Shared crate, worker Lambda, indexer
-producer, and CDK wiring landed in commit `25c93c9`. Open items: two
-operator-driven acceptance items remain unchecked (`cdk diff` clean +
-DLQ poison-message verification) — see Acceptance Criteria.
+**Current state:** Shipped 2026-05-06 in commit `25c93c9` plus a
+follow-up review-fixes commit. Two operator-driven acceptance items
+deferred to deploy time (`cdk diff` clean + DLQ poison-message
+verification) — see Acceptance Criteria.
 
 ## Context
 
