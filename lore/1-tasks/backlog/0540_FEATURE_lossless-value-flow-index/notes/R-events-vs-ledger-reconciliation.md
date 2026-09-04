@@ -27,15 +27,14 @@ Two of those windows predate CAP-67 (Protocol 23 activates at ledger 58 762 517,
 confirmed from the `ledgers` table's own `protocol_version`). Classic events are
 present there anyway.
 
-**Why.** `xdr_parser::event::extract_events` returns nothing for a `TransactionMeta::V3`
-without `soroban_meta`, and a classic transaction has none — yet classic
-transactions at ledger 55 000 022 carry transfer events. So the meta reaching us
-is **V4 across the whole range**. Corroborated: `signature = 'fee'` events (a
-CAP-67 construct) exist at the ingest floor — 18 995 classic transactions in a
-76-ledger window. The likely cause is that the upstream export is produced by a
-Protocol-23+ core with classic-event emission enabled; **this has not been
-confirmed against the exporter's own documentation** and should be before the
-phase-1 backfill is trusted.
+**Why — now proven, not inferred.** Three archive ledgers were decoded directly
+from the public `aws-public-blockchain` dataset (§9): **1 265 of 1 265
+transactions carry `TransactionMeta::V4`**, at protocol 20, 22 and 27 — including
+the ingest floor itself. The export we consume is produced by a Protocol-23+ core
+with classic-event emission on. (The remaining unknown is only _why_ upstream does
+this, i.e. whether it is a stable guarantee of the dataset or an artifact of when
+it was generated. Worth one look at the dataset's own documentation before the
+phase-1 backfill is trusted, but the data is unambiguous.)
 
 > Corrects the note in task 0393 ("classic did not emit events before CAP-67").
 > True of the protocol; not true of the data we hold.
@@ -126,9 +125,9 @@ per-column pass 0536 ran, and no size figure should be quoted until it exists.
 `DESCRIBE`. The parser does carry it (`ExtractedEvent.op_index`), and `stage.rs`
 drops it when building `SorobanEventRow`.
 
-`op_index` is `Option<u32>`: only the CAP-67 V4 per-operation container sets it. §1
-argues our meta is V4 throughout, so it is recoverable for the whole range — but
-only by re-reading S3.
+`op_index` is `Option<u32>`: only the CAP-67 V4 per-operation container sets it.
+§1 and §9 prove our meta is V4 throughout, so it is recoverable for the whole
+range — but only by re-reading S3.
 
 Where it would actually disambiguate, ledgers 64 260 000–64 260 100:
 
@@ -299,3 +298,52 @@ account-leading companion carrying only the keys — is not costed here and is
 > Everything in this section is arithmetic over measured analogues. No figure here
 > was measured on the edge table, because the edge table does not exist. Treat the
 > ranges as sizing input for a decision, not as a result.
+
+## 9. Is the official event identity usable as a key? — decided
+
+The edge table needs a row identity. Two candidates: our own `event_index` (a flat
+per-transaction counter, already stored) and Stellar's official one — `op_index`
+plus the event's position within that operation, which is what `getEvents` returns.
+
+`init.sql` rejected the official identity for `soroban_events` on the grounds that
+it is **not expressible**: no operation exists for tx-level events (fee charge and
+refund), for diagnostic events, or — it claims — for any pre-Protocol-23 event.
+
+That objection is about the whole events table. The **edge table holds only
+`transfer` / `mint` / `burn` / `clawback`**, so the question had to be re-asked for
+that subset. Harness: `crates/xdr-parser/examples/event_op_index_audit.rs`.
+
+### Result
+
+| Source                           | Protocol | Txs       | Meta           | Token events (non-diagnostic) | At tx level | Without `op_index` |
+| -------------------------------- | -------- | --------- | -------------- | ----------------------------- | ----------- | ------------------ |
+| ledger 50 457 424 (ingest floor) | 20       | 343       | V4 × 343       | 933                           | **0**       | **0**              |
+| ledger 55 000 022                | 22       | 587       | V4 × 587       | 365                           | **0**       | **0**              |
+| ledger 64 249 000                | 27       | 335       | V4 × 335       | 456                           | **0**       | **0**              |
+| RPC fixture corpus (9 metas)     | —        | 9         | V4 × 9         | 16                            | **0**       | **0**              |
+| **Total**                        |          | **1 274** | **V4 × 1 274** | **1 770**                     | **0**       | **0**              |
+
+**The official identity is TOTAL for this table's verbs.** In every ledger the
+transaction-level container held nothing but `fee`. Token movements are emitted
+during operation application and therefore always land in the per-operation
+container, which is the only one that carries an operation index.
+
+### Two corrections this forces
+
+1. **`init.sql` is stale.** Its claim that `op_index` is absent for _every_
+   pre-Protocol-23 event is false for the data we actually hold — the archive
+   hands us V4 meta at protocol 20. The comment describes the protocol, not our
+   input. Corrected in the schema.
+2. **The first pass of §7 was over-stated** and is already corrected there; this
+   section is the evidence that settles the surrounding question.
+
+### What it does and does not decide
+
+It removes the risk from _choosing_ the official identity — it is expressible for
+every row this table will ever hold. It does **not** make it free: `op_index` is
+in no ClickHouse column, only in the archive, so keying on it still costs an S3
+pass. The phase question is unchanged by this result; only the uncertainty is gone.
+
+Note also that the diagnostic container carries byte-identical copies of the same
+token events. Staging drops it today; if that ever changes, every transfer counts
+twice.

@@ -986,10 +986,26 @@ CREATE TABLE IF NOT EXISTS soroban_events (
     --    official key would change what counts as the same row.
     -- 2. The official key is NOT EXPRESSIBLE for much of this table. It needs
     --    an operation position, and `op_index` is absent for tx-level events
-    --    (fee charge and refund, always), for every diagnostic event, and for
-    --    EVERY pre-Protocol-23 event — the V3 meta carries no per-operation
-    --    attribution at all. Adopting it would trade a total key for one that
-    --    is null-bearing across years of history.
+    --    (fee charge and refund, always) and for every diagnostic event, both
+    --    of which this table stores. Adopting it would trade a total key for
+    --    one that is null-bearing.
+    --
+    --    CORRECTION (task 0540, 2026-09-04): this bullet also claimed the same
+    --    of "EVERY pre-Protocol-23 event", on the reasoning that V3 meta has no
+    --    per-operation container. True of the protocol, FALSE of our input —
+    --    the archive hands us `TransactionMeta::V4` across the whole ingested
+    --    range. Measured by decoding three archive ledgers end to end
+    --    (`xdr-parser/examples/event_op_index_audit.rs`): 1 265 of 1 265
+    --    transactions are V4, at protocols 20, 22 and 27, the first being the
+    --    ingest floor. So the operation position IS recoverable for all history
+    --    — from S3, never from this table, which does not store it.
+    --
+    --    The narrower claim still holds and is why OUR index stays: for
+    --    `soroban_events` as a whole the official key is null-bearing, because
+    --    fee and diagnostic events have no operation. For the subset that is
+    --    only token movements it is TOTAL (1 770 events audited, none at
+    --    transaction level) — which is why task 0540's edge table can consider
+    --    it and this table cannot.
     --
     -- So: ours is the better INTERNAL key, theirs is the better key for
     -- exchanging data with the outside world. Different jobs, not a defect.
