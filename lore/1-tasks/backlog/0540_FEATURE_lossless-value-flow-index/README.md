@@ -67,6 +67,13 @@ Measurements behind both, with method:
 - **`event_index` is part of row identity.** Identical transfers repeat inside a
   single transaction, and — proven on production — inside a single **operation**.
   Nothing coarser than the event ordinal can tell them apart.
+- **Row identity: `event_index`, permanently** (2026-09-04). Stellar's official
+  identity (`op_index` + position within the operation) was proven **available** —
+  1 274 transactions decoded across protocols 20, 22 and 27, 1 770 non-diagnostic
+  token events, none lacking an operation index — and then deliberately not made
+  the sort key: a portable identity earns its keep as a column, since reconciling
+  against `getEvents` is a read-time join. It rides along as nullable columns the
+  phase-2 S3 pass fills, so phase 2 never rewrites a row.
 - **The ledger reader gets fixed** (option A, task owner, 2026-09-04):
   `LiquidityPoolEntry` and `ClaimableBalanceEntry` are added to
   `ledger_value.rs`, so the reconciliation witness is complete rather than
@@ -83,6 +90,8 @@ committed record of the work it plans.
 
 - [ ] Edge table exists, keyed so that identical transfers in one operation stay
       distinct rows — verified against the measured cases, not by argument
+- [ ] `event_index` proven stable across a re-ingest BEFORE the backfill runs —
+      it is row identity now, and its determinism is so far only asserted
 - [ ] `ledger_value.rs` reads `LiquidityPoolEntry` and `ClaimableBalanceEntry`;
       the 7.6% discrepancy is re-measured and accounted for
 - [ ] Reconciliation flag written at ingest; a transaction that does not

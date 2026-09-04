@@ -153,6 +153,12 @@ fn audit_archive_ledger(path: &str) {
     let mut token_total = 0usize;
     let mut token_without_op = 0usize;
     let mut tx_level_token = 0usize;
+    let mut all_events = 0usize;
+    let mut diagnostic_events = 0usize;
+    let mut diagnostic_token = 0usize;
+    let mut orphan_no_contract = 0usize;
+    let mut orphan_token = 0usize;
+    let mut diag_token_without_twin = 0usize;
     let mut meta_versions: std::collections::BTreeMap<&str, usize> = Default::default();
     let mut tx_seen = 0usize;
 
@@ -162,11 +168,51 @@ fn audit_archive_ledger(path: &str) {
         for meta in metas {
             tx_seen += 1;
             *meta_versions.entry(meta_version(&meta)).or_default() += 1;
-            for ev in extract_events(&meta, "0".repeat(64).as_str(), seq, 0) {
-                if ev.source == EventSource::Diagnostic {
+            // Per transaction: does every DIAGNOSTIC token event have a
+            // byte-identical twin in the consensus per-op container? If not,
+            // dropping the diagnostic container loses a real transfer.
+            let evs = extract_events(&meta, "0".repeat(64).as_str(), seq, 0);
+            let consensus: Vec<String> = evs
+                .iter()
+                .filter(|e| e.source != EventSource::Diagnostic)
+                .filter(|e| {
+                    signature(&e.topics)
+                        .as_deref()
+                        .is_some_and(|s| TOKEN_VERBS.contains(&s))
+                })
+                .map(|e| format!("{:?}|{}|{}", e.contract_id, e.topics, e.data))
+                .collect();
+            for e in evs.iter().filter(|e| e.source == EventSource::Diagnostic) {
+                if !signature(&e.topics)
+                    .as_deref()
+                    .is_some_and(|s| TOKEN_VERBS.contains(&s))
+                {
                     continue;
                 }
-                let Some(sig) = signature(&ev.topics) else {
+                let fp = format!("{:?}|{}|{}", e.contract_id, e.topics, e.data);
+                if !consensus.contains(&fp) {
+                    diag_token_without_twin += 1;
+                }
+            }
+            for ev in &evs {
+                all_events += 1;
+                let sig_opt = signature(&ev.topics);
+                let is_token = sig_opt.as_deref().is_some_and(|s| TOKEN_VERBS.contains(&s));
+                if ev.source == EventSource::Diagnostic {
+                    diagnostic_events += 1;
+                    if is_token {
+                        diagnostic_token += 1;
+                    }
+                    continue;
+                }
+                // Staging drops any event with no emitting contract, silently.
+                if ev.contract_id.is_none() {
+                    orphan_no_contract += 1;
+                    if is_token {
+                        orphan_token += 1;
+                    }
+                }
+                let Some(sig) = sig_opt else {
                     continue;
                 };
                 if !TOKEN_VERBS.contains(&sig.as_str()) {
@@ -189,6 +235,14 @@ fn audit_archive_ledger(path: &str) {
 
     println!("\n---------------------------------------------");
     println!("transactions audited          : {tx_seen}");
+    println!("events, all containers        : {all_events}");
+    println!(
+        "  DROPPED as diagnostic       : {diagnostic_events}  (of which token verbs: {diagnostic_token})"
+    );
+    println!(
+        "  DROPPED, no contract id     : {orphan_no_contract}  (of which token verbs: {orphan_token})"
+    );
+    println!("  diagnostic token verbs with NO consensus twin : {diag_token_without_twin}");
     println!("meta versions                 : {meta_versions:?}");
     println!("token events (non-diagnostic) : {token_total}");
     println!("…at TRANSACTION level         : {tx_level_token}");
