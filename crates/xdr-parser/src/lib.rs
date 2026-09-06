@@ -50,7 +50,7 @@ pub use event_filters::{EventAsset, TokenEvent, TokenEventKind, parse_token_even
 pub use invocation::{InvocationResult, extract_invocations, extract_invocations_from_diagnostics};
 pub use ledger::extract_ledger;
 pub use ledger_entry_changes::extract_ledger_entry_changes;
-pub use ledger_value::{LedgerAsset, LedgerDelta, ledger_balance_deltas};
+pub use ledger_value::{LedgerAsset, LedgerDelta, ledger_balance_deltas, operation_balance_deltas};
 pub use net_settled::{AccountDelta, NetSettled, net_settled};
 pub use nft::{detect_nft_events, detect_undeployed_sac_overrides};
 pub use op_source::extract_op_source_per_contract;
