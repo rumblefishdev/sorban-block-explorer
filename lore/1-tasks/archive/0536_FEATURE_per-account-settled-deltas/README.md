@@ -2,7 +2,7 @@
 id: '0536'
 title: 'FEATURE: per-account settled deltas — direction (received / sent) on the transaction lists'
 type: FEATURE
-status: backlog
+status: superseded
 related_adr: []
 related_tasks: ['0393', '0411', '0538', '0419']
 tags:
@@ -31,6 +31,12 @@ history:
       filing — 19.3 bn rows, 153 GB on the natural key, 249 GB with the
       surrogate id. Hard-ordered after [[0538]]: without the natural key the
       same table costs 96 GB more.
+  - date: 2026-09-06
+    status: superseded
+    who: karolkow
+    by: ['0540']
+    note: >
+      Superseded by 0540. Edges (one row per transfer) contain the node grain this task proposed at 0.28× the rows, and every measurement here — the per-column method, the `lp_operation_amounts` precedent, the free-space warning — was carried into 0540's research note and tickets. The `values[]` API question moved with it.
 ---
 
 # FEATURE: per-account settled deltas

@@ -2,7 +2,7 @@
 id: '0413'
 title: "BUG: net-settled understates issuer-side claimable-balance / LP of the issuer's own asset"
 type: BUG
-status: backlog
+status: superseded
 related_adr: []
 related_tasks: ['0393']
 tags:
@@ -13,6 +13,12 @@ history:
     status: backlog
     who: karolkow
     note: 'Spawned from 0393 deep review (finding #9). Low: issuer-of-own-asset niche.'
+  - date: 2026-09-06
+    status: superseded
+    who: karolkow
+    by: ['0540']
+    note: >
+      Superseded by 0540. The `net_settled` column was removed on 2026-09-04; the issuer-side claimable-balance and pool understatement is closed by 0540's reader fix — the claimable balance (`B…`) and the pool (`L…`) are holders now, and the real-corpus test that was named after this gap sees the `B…` balance receive its dSTARDUST.
 ---
 
 # BUG: net-settled understates issuer-side claimable-balance / LP of the issuer's own asset
