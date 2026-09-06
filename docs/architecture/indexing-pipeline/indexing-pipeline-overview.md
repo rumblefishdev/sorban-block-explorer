@@ -226,7 +226,12 @@ duplicate `ledgers` rows for those sequences (see §5.3 note).
 1. download and decompress the XDR file from S3
 2. parse `LedgerCloseMeta` using the Rust `stellar-xdr` crate (ADR 0004) and
    extract the shared canonical data via `crates/xdr-parser` —
-   `parse_ledger()` is pure and shared with the backfill path
+   `parse_ledger()` is pure and shared with the backfill path. Since task
+   0540 it also decodes every token movement into edges
+   (`xdr_parser::extract_asset_transfers`, emitter-gated, payload-checked)
+   for `asset_transfers`; a token event the decoder rejects is logged as an
+   `error!` for the ledger (per-event detail on the
+   `xdr_parser::asset_transfers` target) and never becomes a row
 3. for each ledger in the batch: call
    `db_clickhouse::persist::persist_ledger_clickhouse(&client, &parsed.*)`
    — the same wrapper backfill's `Sink::persist_ledger` fallback drives.

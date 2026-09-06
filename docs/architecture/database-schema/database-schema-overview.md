@@ -229,7 +229,10 @@ ledgers
        ├─ operation_asset_appearances (partitioned)
        ├─ operation_pools (partitioned)
        ├─ lp_operation_amounts (partitioned)
+       ├─ asset_transfers (partitioned)          # one row per token movement (0540)
+       ├─ transaction_memos (partitioned)        # memo per transaction (0540)
        ├─ soroban_events_appearances (partitioned)
+       ├─ soroban_event_ops (partitioned)        # op attribution per event (0541)
        └─ soroban_invocations_appearances (partitioned)
 
 soroban_contracts
@@ -672,6 +675,94 @@ operation_pools`), ~20.6% of history. Additive: no existing table is touched, th
   this table's per-op grain and is a known, legitimate mismatch.
 - No skip index: every read is a `pool_id` PK-prefix seek.
 
+### 4.5.4 Asset Transfers (task 0540)
+
+ClickHouse-only. **One row per token movement** — `from`, `to`, `asset`,
+`amount`, verb — decoded from the consensus per-operation token events
+(`transfer` / `mint` / `burn` / `clawback`), classic and Soroban alike. The
+lossless replacement for the retired per-(transaction, asset) `net_settled`
+aggregate, which carried no direction and no account. Backs the account page's
+signed **`Balance change`** column: the reader sums this table for the account
+in context.
+
+```sql
+CREATE TABLE asset_transfers (
+    ledger_sequence    Int64                   CODEC(ZSTD(3)),
+    application_order  Int16                   CODEC(ZSTD(3)),
+    op_index           Int16                   CODEC(ZSTD(3)),  -- official identity…
+    event_pos_in_op    Int16                   CODEC(ZSTD(3)),  -- …(op, event-in-op)
+    event_index        Int16                   CODEC(ZSTD(3)),  -- ours; joins soroban_events
+    asset_id           Int64                   CODEC(ZSTD(3)),  -- emitter-gated; bespoke = contract id
+    amount             Nullable(Int128)        CODEC(ZSTD(3)),  -- NULL = non-fungible, nothing else
+    from_id            Nullable(Int64)         CODEC(ZSTD(3)),  -- NULL for mint
+    from_kind          LowCardinality(String)  CODEC(ZSTD(3)),  -- G | C | L | B
+    from_muxed_id      Nullable(UInt64)        CODEC(ZSTD(3)),  -- from the envelope
+    to_id              Nullable(Int64)         CODEC(ZSTD(3)),  -- NULL for burn / clawback
+    to_kind            LowCardinality(String)  CODEC(ZSTD(3)),
+    to_muxed_id        Nullable(UInt64)        CODEC(ZSTD(3)),
+    verb               LowCardinality(String)  CODEC(ZSTD(3))
+)
+ENGINE = ReplacingMergeTree
+PARTITION BY intDiv(ledger_sequence, 500000)
+ORDER BY (ledger_sequence, application_order, op_index, event_pos_in_op)
+SETTINGS index_granularity = 512;
+```
+
+Design notes (every figure measured — lore task 0540 and its research note):
+
+- **Sort key = Stellar's official event identity.** The `getEvents` cursor is
+  `(ledger, tx, op, event)` with `event` reset per operation (stellar-rpc
+  `db/event.go`). It is defined by the XDR, so a re-parse cannot renumber it;
+  our flat `event_index` rides along only to join `soroban_events`. Identical
+  transfers really do repeat inside one operation (a path payment crossing two
+  offers from one maker at one price) — `event_pos_in_op` keeps them two rows
+  where any coarser key would let the RMT collapse them and under-report.
+- **The asset is the emitter, not the label.** A labelled event is stored only
+  if its emitting contract IS the asset's Stellar Asset Contract
+  (`emitter == derive_sac(asset)`); a bespoke token's id is its contract
+  surrogate. The protocol validates the emitter, never the content, so this is
+  what stops a foreign contract from appearing as USDC on an account page.
+- **`amount` NULL means non-fungible** (`{token_id}`), and nothing else: an
+  unrecognised payload never becomes a row — it is rejected, counted and raised
+  as an ingest error (`xdr_parser::asset_transfers`).
+- **Endpoints are the underlying `G…`** even when the envelope named an `M…`;
+  the multiplexing id goes to `*_muxed_id` so the account page finds the row and
+  the exchange sub-account survives. `*_kind` says which table resolves the id
+  (measured: 84% `G`, 11–16% `L` classic pools, up to 5.8% `B` claimable
+  balances, up to 1.2% `C` contracts).
+- **Reads must be `FINAL` or `GROUP BY`** — this table sums, and an unmerged
+  RMT duplicate doubles a balance change on screen.
+- **Storage**: ~5.47 bn rows at 7.6–8.9 B/row (ZSTD(3) everywhere; the schema
+  otherwise inherits LZ4 by default). `index_granularity = 512` so the
+  account-page read touches ~14 k rows, not ~147 k (outages 0243/0386 were this
+  read shape). `LowCardinality` on the id columns measured −11.6% at 16.5 M rows
+  and is deliberately not applied; it can be added per column later via
+  `ALTER … MODIFY COLUMN` after the driver-vs-`DESCRIBE` check on a local
+  instance (task 0310).
+- **Backfill**: one from-S3 re-parse with `--only asset_transfers,transaction_memos,soroban_event_ops`
+  — additive, no Tier-1 column touched, rollback is `DROP TABLE`. Coverage is
+  proven three ways before the column ships (README 0540, rollout gate 7).
+
+### 4.5.5 Transaction Memos (task 0540)
+
+ClickHouse-only. One row per transaction that **carries a memo**. A memo is a
+property of the envelope, not of a transfer, so it lives here once rather than
+repeated on every `asset_transfers` row. Measured on 30 archive ledgers: 6.0% of
+transactions, 8.4 bytes average. Until this table, a memo was reachable only by
+fetching the transaction's XDR on the detail page.
+
+```sql
+CREATE TABLE transaction_memos (
+    ledger_sequence    Int64                   CODEC(ZSTD(3)),
+    application_order  Int16                   CODEC(ZSTD(3)),
+    memo_type          LowCardinality(String)  CODEC(ZSTD(3)),  -- text | id | hash | return
+    memo               String                  CODEC(ZSTD(3))   -- id as decimal, hash/return as hex
+)
+ENGINE = ReplacingMergeTree
+PARTITION BY intDiv(ledger_sequence, 500000)
+ORDER BY (ledger_sequence, application_order);
+```
+
 ### 4.6 Soroban Contracts
 
 ```sql
@@ -851,6 +942,31 @@ Design notes:
 - partitioned on `created_at` mirroring `transactions`; cascade via composite FK
 - diagnostic events are filtered on ingest (they are not counted in `amount` and do
   not produce appearance rows); the detail view re-derives them on demand if needed
+
+### 4.8.1 Soroban Event Ops — operation attribution (task 0541)
+
+ClickHouse-only. **Which operation emitted each event**, as a narrow side
+table keyed like `soroban_events`. `soroban_events` itself is never given the
+column: 10.4 bn rows on a version-less `ReplacingMergeTree`, where filling a
+new column means re-inserting whole rows that then compete with the old ones on
+the same key, and a rebuild needs both copies on disk. Only per-operation
+events have a row — a transaction-level (fee) or diagnostic event has no
+operation, and absence is the honest encoding. Retires the read-time XDR decode
+the transaction-detail page paid on every render (task 0453). Written by the
+same S3 pass as `asset_transfers`.
+
+```sql
+CREATE TABLE soroban_event_ops (
+    ledger_sequence    Int64   CODEC(ZSTD(3)),
+    transaction_id     Int64   CODEC(ZSTD(3)),
+    event_index        Int16   CODEC(ZSTD(3)),  -- joins soroban_events
+    op_index           Int16   CODEC(ZSTD(3)),  -- envelope position, 0-based
+    event_pos_in_op    Int16   CODEC(ZSTD(3))   -- position inside that op's event list
+)
+ENGINE = ReplacingMergeTree
+PARTITION BY intDiv(ledger_sequence, 500000)
+ORDER BY (ledger_sequence, transaction_id, event_index);
+```
 
 ### 4.9 Soroban Invocations — Appearance Index
 

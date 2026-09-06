@@ -105,11 +105,16 @@ did this with a bespoke harness ("targeted write only — do NOT run the full
 persist pipeline"); task 0279 turned it into a flag:
 
 ```bash
-backfill-runner run --start <A> --end <B> --lp-amounts-only
+backfill-runner run --start <A> --end <B> --only lp_operation_amounts
 ```
 
-It parses exactly as a normal run does and persists only
-`lp_operation_amounts`, so **no Tier-1 column is touched and no `repair-tier1`
+Task 0540 generalised the flag to a list — `--only asset_transfers,transaction_memos,soroban_event_ops`
+writes its three tables in one pass; only tables that are additive (deterministic
+from the XDR, no Tier-1 column, `DROP TABLE` rollback) are accepted, and the
+list is closed in code (`TargetedTables::TARGETABLE`).
+
+It parses exactly as a normal run does and persists only the named tables,
+so **no Tier-1 column is touched and no `repair-tier1`
 is owed**. The trade is that it writes no `ledgers` commit marker (the marker
 means "fully ingested", which a targeted pass has not done), so resume cannot
 read progress from the DB: on a crash, restart with a narrowed `--start`.
@@ -337,14 +342,14 @@ new binary.
 
 **Flags — with the traps:**
 
-| Flag                | Reality                                                                                                                                                                                                  |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--start` / `--end` | u32, inclusive. This is also how you parallelise (disjoint ranges).                                                                                                                                      |
-| `--reindex`         | Bypasses the resume-skip so an already-ingested range is re-parsed. Without it, re-parsing history is a silent **0-row no-op** — `run` skips whatever is already in `ledgers`.                           |
-| `--lp-amounts-only` | Persists **only** `lp_operation_amounts` (task 0279). Implies `--reindex`. Writes no `ledgers` marker, so resume is manual — narrow `--start`; re-running a range is a no-op. See the rule-3 note below. |
-| `--keep-partitions` | **Debug only.** "Do not pass this for a real backfill — disk grows linearly."                                                                                                                            |
-| `--target`          | **Does not exist.** Survives only in stale doc comments; PG was retired (0244), CH is the sole target.                                                                                                   |
-| `--workers`         | **Does not exist.** Run K processes instead.                                                                                                                                                             |
+| Flag                | Reality                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--start` / `--end` | u32, inclusive. This is also how you parallelise (disjoint ranges).                                                                                                                                                                                                                                                                                                                      |
+| `--reindex`         | Bypasses the resume-skip so an already-ingested range is re-parsed. Without it, re-parsing history is a silent **0-row no-op** — `run` skips whatever is already in `ledgers`.                                                                                                                                                                                                           |
+| `--only <t,…>`      | Persists **only** the named additive tables — `lp_operation_amounts` (task 0279, formerly `--lp-amounts-only`), `asset_transfers`, `transaction_memos`, `soroban_event_ops` (task 0540/0541); anything else is refused at parse time. Implies `--reindex`. Writes no `ledgers` marker, so resume is manual — narrow `--start`; re-running a range is a no-op. See the rule-3 note below. |
+| `--keep-partitions` | **Debug only.** "Do not pass this for a real backfill — disk grows linearly."                                                                                                                                                                                                                                                                                                            |
+| `--target`          | **Does not exist.** Survives only in stale doc comments; PG was retired (0244), CH is the sole target.                                                                                                                                                                                                                                                                                   |
+| `--workers`         | **Does not exist.** Run K processes instead.                                                                                                                                                                                                                                                                                                                                             |
 
 **Config** (flag-or-env): `CLICKHOUSE_URL`, `CLICKHOUSE_USER`,
 `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DATABASE`; `CLICKHOUSE_CERT` / `_KEY` / `_CA`

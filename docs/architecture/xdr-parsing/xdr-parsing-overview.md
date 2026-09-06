@@ -424,6 +424,21 @@ Surrogate resolution and the net reduction run at ingest
 (`db_clickhouse::persist::stage`), which writes the result to
 memory only — since 2026-09-04 there is no storage column for it.
 
+Task 0540 (T03) extended the reader to two more holders: a `LiquidityPoolEntry`
+yields the pool (`L…`) as holder of each of its two reserves, and a
+`ClaimableBalanceEntry` yields the balance (`B…`) as holder of its asset;
+removing either zeroes every balance of that holder. Pool-share trustlines stay
+unread on purpose — CAP-67 emits no token event for pool shares (measured), so
+there is nothing on the event side to reconcile a share balance against.
+
+Two functions now: `ledger_balance_deltas` reads the whole meta;
+`operation_balance_deltas` reads `tx_changes_before` + the operations' changes
+only. The difference is the Soroban unused-resource-fee **refund**, which sits
+in `tx_changes_after` before Protocol 23 and outside `TransactionMeta` from 23
+on — found by the events-vs-ledger oracle (`tests/value_flow_oracle.rs`), which
+reconciles the edge decode of §5.8 against the operations-only reader bit-exact
+per (holder, asset): 0 contradictions on 33 archive ledgers.
+
 ## 5. Soroban-Specific Handling
 
 ### 5.1 CAP-67 Events
@@ -680,6 +695,53 @@ reserves only once a read pairs it with the plane the pool itself declares.
 Both feed `persist::stage`, which writes the `liquidity_pools` registry rows
 (`pool_kind = 1`), `pool_state_changes` and `pool_instance_state` (see the
 database-schema overview and ADR 0058).
+
+### 5.8 Token Movements — the `asset_transfers` decode (task 0540)
+
+`xdr_parser::extract_asset_transfers` (`crates/xdr-parser/src/asset_transfers.rs`)
+turns one transaction's events into **edges**: one `ExtractedAssetTransfer` per
+token movement, built on `parse_token_event` (§5.6) and shared by the live
+indexer and the S3 backfill so both write byte-identical rows. Three rules,
+each measured before it was written:
+
+1. **Only the per-operation container.** Diagnostic events are byte-identical
+   copies or the trace of a rolled-back call (measured: 6 twin-less diagnostic
+   token events in 30 ledgers — 2 in a failed transaction, 4 pre-Protocol-23 SAC
+   mints whose consensus copy is already in the CAP-67 shape without the
+   `admin` topic). A token verb at transaction level has never been observed
+   (0 of 12 237) and is a **reject**, not a row with a null operation.
+2. **The asset is the emitter.** A labelled event (`"CODE:ISSUER"` or
+   `"native"` last topic) is accepted only if `emitter == derive_sac(asset)`
+   (`sac_override_from_event_topics`); otherwise it is rejected as
+   `EmitterNotSac` — the spoofing shape, measured absent on 60 000 ledgers
+   (25 912 of 25 912 pairs pass). A bespoke token (no asset topic) IS its
+   emitter.
+3. **The amount is a scalar `i128`/`u128`, or the `amount` key of a map;
+   `token_id` means non-fungible** (`token_event_amount`). The map is read by
+   key, never positionally — `{amount, to_muxed_id}` is 30–47% of transfers,
+   and `{amount, amount0, amount1, …}` is a position mint whose `amount0/1` are
+   components, not movements. Anything else (`{mint_amount, mint_tokens}`, a
+   protocol restating its own mint) is `UnrecognisedPayload`: rejected AND
+   counted, so a new shape shows up as a number, never as a silent zero.
+
+Rejects go back to the caller (`ParseOutput` → an `error!` per ledger in
+`parse_ledger`, per-event detail on the `xdr_parser::asset_transfers` target).
+They are a developer's problem, never drawn in the UI.
+
+Two identity fields were added for this table:
+
+- `ExtractedEvent.event_pos_in_op` — the event's position inside its
+  operation's own event list. With `op_index` this is Stellar's official event
+  identity (the `getEvents` cursor `(ledger, tx, op, event)`, `event` reset per
+  operation), and it keys `asset_transfers`. `None` outside the per-op container.
+- `ExtractedTransaction.source_muxed_id`, `ExtractedOperation.source_muxed_id`
+  / `destination_muxed_id` — the 64-bit id of an `M…` address (`envelope::muxed_id`).
+  ADR 0026 reduces every `M…` to its `G…` at the parser boundary; these fields
+  keep the id that reduction dropped, so the persistence layer can store an
+  exchange sub-account losslessly (`*_muxed_id` columns) while the surrogate
+  stays the `G…`'s. CAP-67 puts the id in the event **merged with the memo**
+  (`to_muxed_id` is 98.5% memo text on mainnet), which is why it is taken from
+  the envelope instead.
 
 ## 6. Storage Contract
 
