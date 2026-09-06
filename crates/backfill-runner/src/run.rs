@@ -67,7 +67,7 @@ pub async fn execute(
     // re-parse an ALREADY-ingested range for one new derived table, and it
     // writes no `ledgers` marker of its own, so the resume filter would skip
     // every ledger and the run would do nothing (task 0279).
-    let completed = if reindex || sink.lp_amounts_only() {
+    let completed = if reindex || sink.targeted() {
         std::collections::HashSet::new()
     } else {
         sink.load_completed(start, end).await?

@@ -59,6 +59,7 @@ fn parse_ledger_surfaces_pool_state() {
                 prior_wasm_verdicts: &std::collections::HashMap::new(),
                 prior_contract_verdicts: &std::collections::HashMap::new(),
                 prior_contract_rows: &std::collections::HashMap::new(),
+                asset_transfers: &parsed.asset_transfers,
             },
         )
         .expect("staging");

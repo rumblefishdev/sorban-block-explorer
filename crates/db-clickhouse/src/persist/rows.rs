@@ -480,6 +480,57 @@ pub struct LpOperationAmountRow {
     pub amount: i64,
 }
 
+/// `asset_transfers` — fact, one row per token movement (task 0540). Keyed
+/// by Stellar's official event identity `(ledger, tx, op, event-in-op)`;
+/// `event_index` is our flat counter and only joins `soroban_events`.
+/// `amount` is `NULL` for exactly one reason: a non-fungible movement.
+/// `from_id`/`to_id` are `NULL` for mint / burn+clawback respectively, and
+/// always the surrogate of the underlying `G…` (an `M…` is split into
+/// `*_id` + `*_muxed_id`). Column order matches `init.sql` byte-for-byte.
+#[derive(Debug, Clone, PartialEq, Eq, Row, Serialize)]
+pub struct AssetTransferRow {
+    pub ledger_sequence: i64,
+    pub application_order: i16,
+    pub op_index: i16,
+    pub event_pos_in_op: i16,
+    pub event_index: i16,
+    pub asset_id: i64,
+    pub amount: Option<i128>,
+    pub from_id: Option<i64>,
+    pub from_kind: String,
+    pub from_muxed_id: Option<u64>,
+    pub to_id: Option<i64>,
+    pub to_kind: String,
+    pub to_muxed_id: Option<u64>,
+    pub verb: String,
+}
+
+/// `transaction_memos` — fact, one row per transaction that carries a memo
+/// (task 0540). A memo belongs to the envelope, not to a transfer, so it is
+/// stored once per transaction rather than on every edge row. `memo` is the
+/// text, the id as decimal, or the hash/return as hex — the same rendering
+/// `ExtractedTransaction.memo` already uses.
+#[derive(Debug, Clone, PartialEq, Eq, Row, Serialize)]
+pub struct TransactionMemoRow {
+    pub ledger_sequence: i64,
+    pub application_order: i16,
+    pub memo_type: String,
+    pub memo: String,
+}
+
+/// `soroban_event_ops` — narrow side table (task 0541): which operation
+/// emitted each event, keyed like `soroban_events`. Only per-operation
+/// events have a row; tx-level and diagnostic events have no operation and
+/// are absent rather than null.
+#[derive(Debug, Clone, PartialEq, Eq, Row, Serialize)]
+pub struct SorobanEventOpRow {
+    pub ledger_sequence: i64,
+    pub transaction_id: i64,
+    pub event_index: i16,
+    pub op_index: i16,
+    pub event_pos_in_op: i16,
+}
+
 /// `soroban_events` — fact, full-content per-event row (ADR 0044
 /// §4a unfold). `signature` is the lifted first-topic Symbol.
 #[derive(Debug, Clone, Row, Serialize)]

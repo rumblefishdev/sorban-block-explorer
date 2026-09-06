@@ -52,12 +52,13 @@ pub mod enrichment;
 pub mod ids;
 pub mod rows;
 pub mod stage;
+pub mod value_flow;
 pub mod writer;
 
 #[cfg(test)]
 mod tests_cross;
 
-pub use writer::PartitionWriter;
+pub use writer::{PartitionWriter, TargetedTables};
 
 /// Per-ledger persist entrypoint kept for legacy callers and one-shot
 /// use cases (tests, the single-ledger path on the `Sink` enum). Wraps
@@ -91,6 +92,7 @@ pub async fn persist_ledger_clickhouse(
     plane_pool_data: &[xdr_parser::pool_state::ExtractedPlanePoolData],
     pool_instances: &[xdr_parser::pool_state::ExtractedPoolInstance],
     sac_overrides: &[SacOverride],
+    asset_transfers: &[xdr_parser::ExtractedAssetTransfer],
     classification_cache: &ClassificationCache,
 ) -> Result<(), SchemaError> {
     // Task 0283 live cross-ledger verdict resolution. Two independent lookups
@@ -151,6 +153,7 @@ pub async fn persist_ledger_clickhouse(
         prior_wasm_verdicts: &prior_wasm_verdicts,
         prior_contract_verdicts: &prior_contract_verdicts,
         prior_contract_rows: &prior_contract_rows,
+        asset_transfers,
     })?;
     let mut pw = PartitionWriter::open(client.clone());
     if let Err(err) = pw.write_ledger(staged).await {
@@ -581,6 +584,7 @@ mod tests {
         let res = persist_ledger_clickhouse(
             &client,
             &ledger,
+            &[],
             &[],
             &[],
             &[],

@@ -1028,6 +1028,109 @@ ENGINE = ReplacingMergeTree
 PARTITION BY intDiv(ledger_sequence, 500000)
 ORDER BY (contract_id, ledger_sequence, transaction_id, event_index);
 
+-- asset_transfers: one row per token movement (task 0540), the lossless
+-- replacement for the retired per-(tx, asset) `net_settled` aggregate.
+--
+-- Built from the CONSENSUS per-operation token events (transfer / mint /
+-- burn / clawback), classic and Soroban alike, by
+-- `xdr_parser::extract_asset_transfers` — the same decode for live ingest and
+-- the S3 backfill, so the two write byte-identical rows.
+--
+-- Identity. The sort key is Stellar's OFFICIAL event identity: the
+-- `getEvents` cursor is `(ledger, tx, op, event)` with `event` reset per
+-- operation (stellar-rpc `db/event.go`). It is defined by the XDR itself, so
+-- a re-parse can never renumber it; our flat `event_index` is carried only to
+-- join `soroban_events`. Identical transfers DO repeat inside one operation
+-- (ledger 64 249 110: a single path payment crossing two offers from one
+-- maker at one price) — `event_pos_in_op` is what keeps them two rows.
+--
+-- Asset. `asset_id` is the emitter's identity, never the topic string alone:
+-- a labelled event (`"USDC:G…"`) is stored only if its emitter IS that asset's
+-- Stellar Asset Contract (`emitter == derive_sac(asset)`); a bespoke token's
+-- id is its contract surrogate (`ids::asset_id` type 3). NOT NULL by
+-- construction.
+--
+-- Amount. `NULL` has exactly one meaning: a non-fungible movement
+-- (`{token_id}`), where no amount exists by nature. An unrecognised payload
+-- never becomes a row — it is rejected and raised as an ingest error.
+--
+-- Endpoints. `from_id` NULL for mint, `to_id` NULL for burn/clawback. The
+-- ids are surrogates of the underlying `G…` even when the envelope named an
+-- `M…`: the multiplexing id goes to `*_muxed_id` (from the envelope, matched
+-- through `op_index`), so the account page finds the row AND the sub-account
+-- survives. `*_kind` is the StrKey's first letter — G account, C contract,
+-- L classic pool, B claimable balance — i.e. which table resolves the id;
+-- measured 84% G, 11–16% L, up to 5.8% B, up to 1.2% C.
+--
+-- Reads MUST be `FINAL` or `GROUP BY`: this table SUMS, and a version-less
+-- ReplacingMergeTree carries duplicate rows until merged — a duplicate here
+-- doubles a balance change on screen.
+--
+-- Storage, measured (README 0540): ZSTD(3) on every column (13.4 → 8.9 B/row
+-- against the default LZ4, which nobody chose); `index_granularity = 512` so
+-- the account-page read touches ~14 k rows instead of ~147 k (+2.3% size;
+-- outages 0243/0386 were this read shape). `LowCardinality` on the id
+-- columns measured −11.6% at 16.5 M rows and is deliberately NOT applied;
+-- it can be added per column later with `ALTER … MODIFY COLUMN`.
+--
+-- PROD: created by hand BEFORE the indexer that writes it deploys — the
+-- driver validates the row struct against `DESCRIBE`, and a missing table
+-- fails every insert client-side (task 0310).
+CREATE TABLE IF NOT EXISTS asset_transfers (
+    ledger_sequence    Int64                   CODEC(ZSTD(3)),
+    application_order  Int16                   CODEC(ZSTD(3)),
+    op_index           Int16                   CODEC(ZSTD(3)),
+    event_pos_in_op    Int16                   CODEC(ZSTD(3)),
+    event_index        Int16                   CODEC(ZSTD(3)),
+    asset_id           Int64                   CODEC(ZSTD(3)),
+    amount             Nullable(Int128)        CODEC(ZSTD(3)),
+    from_id            Nullable(Int64)         CODEC(ZSTD(3)),
+    from_kind          LowCardinality(String)  CODEC(ZSTD(3)),
+    from_muxed_id      Nullable(UInt64)        CODEC(ZSTD(3)),
+    to_id              Nullable(Int64)         CODEC(ZSTD(3)),
+    to_kind            LowCardinality(String)  CODEC(ZSTD(3)),
+    to_muxed_id        Nullable(UInt64)        CODEC(ZSTD(3)),
+    verb               LowCardinality(String)  CODEC(ZSTD(3))
+)
+ENGINE = ReplacingMergeTree
+PARTITION BY intDiv(ledger_sequence, 500000)
+ORDER BY (ledger_sequence, application_order, op_index, event_pos_in_op)
+SETTINGS index_granularity = 512;
+
+-- transaction_memos: one row per transaction that carries a memo (task 0540).
+-- A memo belongs to the envelope, not to a transfer — storing it here once
+-- instead of on every `asset_transfers` row is what keeps that table honest.
+-- Measured on 30 archive ledgers: 6.0% of transactions, 8.4 B average.
+-- `memo` is the text, the id as decimal, or the hash/return as hex (the
+-- rendering `xdr_parser::memo::extract_memo` already produces).
+CREATE TABLE IF NOT EXISTS transaction_memos (
+    ledger_sequence    Int64                   CODEC(ZSTD(3)),
+    application_order  Int16                   CODEC(ZSTD(3)),
+    memo_type          LowCardinality(String)  CODEC(ZSTD(3)),
+    memo               String                  CODEC(ZSTD(3))
+)
+ENGINE = ReplacingMergeTree
+PARTITION BY intDiv(ledger_sequence, 500000)
+ORDER BY (ledger_sequence, application_order);
+
+-- soroban_event_ops: which operation emitted each event (task 0541), as a
+-- narrow side table keyed like `soroban_events`. `soroban_events` itself is
+-- never given the column: 10.4 bn rows on a version-less RMT, and a rebuild
+-- needs both copies on disk. Only per-operation events have a row — a
+-- tx-level (fee) or diagnostic event has no operation, and absence is the
+-- honest encoding of that. Retires the read-time XDR decode task 0453 pays on
+-- every transaction-detail render.
+CREATE TABLE IF NOT EXISTS soroban_event_ops (
+    ledger_sequence    Int64                   CODEC(ZSTD(3)),
+    transaction_id     Int64                   CODEC(ZSTD(3)),
+    event_index        Int16                   CODEC(ZSTD(3)),
+    op_index           Int16                   CODEC(ZSTD(3)),
+    event_pos_in_op    Int16                   CODEC(ZSTD(3))
+)
+ENGINE = ReplacingMergeTree
+PARTITION BY intDiv(ledger_sequence, 500000)
+ORDER BY (ledger_sequence, transaction_id, event_index);
+
 -- `amount` is a **fold count of invocation-tree nodes** aggregated into
 -- this (contract, transaction, ledger) trio (per ADR 0034 PG-side
 -- convention; CH inherits same semantic). Multiple invocations of the

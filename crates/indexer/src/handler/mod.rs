@@ -413,6 +413,7 @@ async fn persist_with_retry(
                 &parsed.plane_pool_data,
                 &parsed.pool_instances,
                 &parsed.sac_overrides,
+                &parsed.asset_transfers,
                 classification_cache,
             )
             .await

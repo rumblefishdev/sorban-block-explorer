@@ -43,6 +43,7 @@ use std::collections::{HashMap, HashSet};
 
 use domain::{AssetType, ContractEventType, ContractType, OperationType};
 use serde_json::Value;
+use xdr_parser::ExtractedAssetTransfer;
 use xdr_parser::ExtractedContractMetadata;
 use xdr_parser::ExtractedSorobanBalance;
 use xdr_parser::SacOverride;
@@ -261,6 +262,14 @@ pub struct StagedLedger {
     /// balances are appended straight from `account_states` (single-write — the
     /// legacy `account_balances_current` staging was removed).
     pub unified_balance_rows: Vec<BalanceRow>,
+    /// Task 0540 — one row per token movement → `asset_transfers`. Built in
+    /// [`prepare_with_sac_overrides`] by [`super::value_flow::build_value_flow_rows`]
+    /// from `StageInputs.asset_transfers` (the parser's decoded edges).
+    pub asset_transfer_rows: Vec<AssetTransferRow>,
+    /// Task 0540 — one row per transaction that carries a memo → `transaction_memos`.
+    pub transaction_memo_rows: Vec<TransactionMemoRow>,
+    /// Task 0541 — operation attribution per event → `soroban_event_ops`.
+    pub event_op_rows: Vec<SorobanEventOpRow>,
 }
 
 /// Named, borrowed inputs to [`prepare_with_sac_overrides`].
@@ -322,6 +331,10 @@ pub struct StageInputs<'a> {
     /// so [`build_wasm_upgrade_rows`] can carry identity forward when it rewrites
     /// `wasm_hash`. Empty map for legacy callers (no upgrade rows emitted).
     pub prior_contract_rows: &'a HashMap<String, SorobanContractRow>,
+    /// Task 0540 — token movements decoded by
+    /// `xdr_parser::extract_asset_transfers` (per-op consensus events only,
+    /// emitter-gated, payload-checked). Empty for legacy callers.
+    pub asset_transfers: &'a [ExtractedAssetTransfer],
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -367,6 +380,7 @@ pub fn prepare(
         prior_wasm_verdicts: &HashMap::new(),
         prior_contract_verdicts: &HashMap::new(),
         prior_contract_rows: &HashMap::new(),
+        asset_transfers: &[],
     })
 }
 
@@ -557,6 +571,7 @@ pub fn prepare_with_sac_overrides(input: &StageInputs<'_>) -> Result<StagedLedge
         prior_wasm_verdicts,
         prior_contract_verdicts,
         prior_contract_rows,
+        asset_transfers,
     } = *input;
 
     let ledger_sequence_i64 = i64::from(ledger.sequence);
@@ -2233,6 +2248,18 @@ pub fn prepare_with_sac_overrides(input: &StageInputs<'_>) -> Result<StagedLedge
         ledger_sequence_i64,
     ));
 
+    // ---- asset_transfers + transaction_memos + soroban_event_ops (0540/0541) --
+    let value_flow = super::value_flow::build_value_flow_rows(
+        ledger_sequence_i64,
+        transactions,
+        operations,
+        events,
+        asset_transfers,
+    )?;
+    out.asset_transfer_rows = value_flow.transfers;
+    out.transaction_memo_rows = value_flow.memos;
+    out.event_op_rows = value_flow.event_ops;
+
     Ok(out)
 }
 
@@ -2240,7 +2267,7 @@ pub fn prepare_with_sac_overrides(input: &StageInputs<'_>) -> Result<StagedLedge
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn decode_hash(hex_str: &str, field: &'static str) -> Result<[u8; 32], SchemaError> {
+pub(crate) fn decode_hash(hex_str: &str, field: &'static str) -> Result<[u8; 32], SchemaError> {
     let bytes = hex::decode(hex_str)
         .map_err(|e| staging_err(&format!("hex decode {field}: {e} (value={hex_str})")))?;
     <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| {
@@ -2799,7 +2826,10 @@ pub struct DerivedTokenEvent {
 /// value. (Before task 0393 this returned `None` for bespoke, since arm B —
 /// `soroban_invocations_appearances` — already covered their asset page; 0393
 /// needs the amount, which arm B has no concept of, so bespoke now writes arm A.)
-fn event_asset_surrogate(asset: &EventAsset, emitting_contract_id: Option<i64>) -> Option<i64> {
+pub(crate) fn event_asset_surrogate(
+    asset: &EventAsset,
+    emitting_contract_id: Option<i64>,
+) -> Option<i64> {
     match asset {
         EventAsset::Native => Some(ids::NATIVE_ASSET_ID),
         EventAsset::Credit { code, issuer } => Some(ids::credit_asset_id(code, issuer)),

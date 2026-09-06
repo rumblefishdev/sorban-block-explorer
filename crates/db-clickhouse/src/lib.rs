@@ -177,10 +177,15 @@ mod tests {
         // table: what a pool declares about itself) and pool_state_changes
         // (step 7, plane-state reserves).
         // 34 → 35.
+        // task 0540 / 0541: added `asset_transfers` (one row per token
+        // movement, the lossless replacement for `net_settled`),
+        // `transaction_memos` (memo per transaction, from the envelope) and
+        // `soroban_event_ops` (operation attribution per event, the side table
+        // `soroban_events` cannot take). 35 → 38.
         assert_eq!(
             stmts.len(),
-            35,
-            "expected 31 tables + 2 materialized views + 1 dictionary, got {}",
+            38,
+            "expected 34 tables + 2 materialized views + 1 dictionary, got {}",
             stmts.len()
         );
     }
