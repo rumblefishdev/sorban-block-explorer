@@ -16,34 +16,82 @@ history:
       snapshot), 5 (ship the binary) and 6 (the targeted backfill), plus the
       gate-7a coverage queries. Adapted from the Hetzner re-parse runbook; the
       only differences are the three tables and `--only`.
+  - date: 2026-09-06
+    status: developing
+    who: karolkow
+    note: >
+      Revised after a devil's-advocate pass against 0488, 0310 and
+      docs/backups.md: no local snapshot (a full copy is ~760 GiB against
+      ~459 GiB free — it would reproduce 0488), scratch on /srv/bf-scratch
+      with 3 workers and no -v, the deploy window spelled out as pause →
+      ALTER → deploy → container recycle, tables created from the laptop, and
+      the binary rebuilt from the merged commit.
 ---
 
 # Rollout commands (task 0540)
 
 Follows `docs/runbooks/backfill_derived_table_reparse_hetzner.md`, flavour B
-(from-S3 re-parse). Every command below is the **map owner's** to run on the
-box; nothing here is run by an agent. Order is the T08 sequence: 2 → 3 → 4 → 5
-→ 6 → 7.
+(from-S3 re-parse), corrected by what task 0488 learned the hard way. Every
+command below is the **map owner's**; nothing here is run by an agent. Order:
+1 (merge) → 2 (checks) → 3 (tables) → 4 (deploy window) → 5 (binary) → 6
+(backfill) → 7 (gates).
 
-## Step 2 — before anything
+## Step 1 — merge and release first
+
+The branch is reviewed and merged to `develop`, then released `develop →
+master` per `docs/deployment.md` (a release is a tag). Nothing below happens
+from a feature branch. The backfill binary is rebuilt from **the commit that
+was deployed** (step 5) — the overlap around L₀ is only safe because both
+writers are the same code.
+
+## Step 2 — before anything (the 0488 checklist)
+
+Task 0488 (2026-08-13): eight backfill workers with scratch on `/` plus a
+351 GB `tmux -v` log filled the only filesystem; ClickHouse refused writes and
+live ingestion stopped for 10 hours, while the watchdog wrote alerts to a file
+nobody read. What exists today against a repeat: the scratch image
+`/srv/bf-scratch` (89 GB loopback, ENOSPC inside it never touches `/`) and
+per-ledger file deletion. What does NOT exist: disk/lag alarms, a runner
+budget. So the human is the alarm.
 
 ```bash
 # BOX
-df -h / | tail -1                       # do not start under ~300 GB free (runbook §2)
-pgrep -af 'bf-loop|backfill-runner' | wc -l   # 0 = no other backfill running
+df -h / | tail -1                              # do not start under ~300 GB free
+mount | grep bf-scratch                        # /srv/bf-scratch MUST be mounted (the box had a pending reboot;
+                                               # the fstab line may not have landed) — if absent, remount per 0488 step 1
+df -h /srv/bf-scratch | tail -1                # ~89 GB, empty
+ps -o args= -p "$(pgrep -x tmux | head -1)"    # MUST NOT contain -v
+du -sh /home/deploy/*.log 2>/dev/null          # nothing growing
+pgrep -af 'bf-loop|backfill-runner' | wc -l    # 0 = no other backfill (0419) running
 ```
 
-New tables are ~56–73 GB (estimate) plus s5cmd scratch ≈ 2 × 11.6 GB per worker.
+New tables are ~56–73 GB (estimate) on `/`; s5cmd scratch (~13.6 GB per
+partition, two per worker) lives on `/srv/bf-scratch`, which bounds the run
+to **3 workers** — that is the constraint, not a tuning choice.
 
-## Step 3 — create the three tables, then snapshot
+## Step 3 — create the three tables (no snapshot)
 
 Created **before** the indexer that writes them deploys (the driver validates
 the row struct against `DESCRIBE`; a missing table fails every insert
 client-side — task 0310). `CREATE TABLE IF NOT EXISTS`, so re-running is safe.
 Verbatim from `crates/db-clickhouse/schema/init.sql` at commit `c62d12dd`.
 
+From the **laptop**, in your own ClickHouse client session: the `dev_read`
+user carries `CREATE`/`ALTER`/`DROP` despite its name (checked with
+`SHOW GRANTS`), but `chq` runs on a read-only profile, so not through `chq`.
+No SSH needed for this step. The `docker exec` form below is the box
+equivalent if you prefer it.
+
+**No pre-op snapshot.** `BACKUP DATABASE … TO Disk('backups')` is a full local
+copy — the last one was 760 GiB — on the same volume, against ~459 GiB free:
+it would fill the disk, which is exactly the 0488 failure. It would also
+protect nothing: this change is additive (the targeted write touches no other
+table — proven by `lp_amounts_targeted_write_e2e`), rollback is `DROP TABLE`
+×3, and the weekly Borg cron runs regardless. If a pinned copy is wanted
+anyway, use the off-box Borg archive (`docs/backups.md`, option B, 0 GB local).
+
 ```bash
-# BOX
+# BOX form (or paste the SQL into your laptop client)
 docker exec -i app-clickhouse-1 clickhouse-client --multiquery <<'SQL'
 CREATE TABLE IF NOT EXISTS asset_transfers (
     ledger_sequence    Int64                   CODEC(ZSTD(3)),
@@ -92,34 +140,43 @@ SQL
 docker exec app-clickhouse-1 clickhouse-client -q "DESCRIBE asset_transfers" | head -20
 ```
 
-```bash
-# BOX — pre-backfill snapshot (ASYNC dodges the 300 s client receive_timeout)
-docker exec app-clickhouse-1 clickhouse-client -q \
-  "BACKUP DATABASE default TO Disk('backups', 'snapshot_pre_0540_backfill_$(date +%Y%m%d)') ASYNC"
-docker exec app-clickhouse-1 clickhouse-client -q \
-  "SELECT name, status, error, formatReadableSize(total_size) FROM system.backups ORDER BY start_time DESC LIMIT 1"
-```
+## Step 4 — the deploy window: pause → ALTER → deploy → recycle
 
-## Step 4 — deploy the indexer, same window as the `ALTER`
-
-From the laptop, per `docs/deployment.md`:
+The `clickhouse` 0.15 driver validates the row struct against `DESCRIBE` **in
+both directions** and warm Lambda containers cache that `DESCRIBE`. So: old
+indexer + dropped column fails; new indexer + column still there fails; new
+indexer + missing tables fails. Task 0310 lost 9 minutes of ingest to "deploy
+first, ALTER whenever". One window, in this order, nothing lost (the S3→SQS
+notification keeps queuing while the Lambda is paused):
 
 ```bash
-make -C infra diff-production
-make -C infra deploy-production-compute
+# LAPTOP — (a) pause the indexer (takes effect in under a minute)
+aws lambda list-event-source-mappings \
+  --function-name production-soroban-explorer-indexer \
+  --query 'EventSourceMappings[].UUID' --output text
+aws lambda update-event-source-mapping --uuid <uuid> --no-enabled
 ```
 
-and in the **same window**, because the `net_settled` struct field is gone
-since `a2f8c5a7`:
+```sql
+-- LAPTOP client or BOX — (b) drop the column the new struct no longer has (a2f8c5a7)
+ALTER TABLE operation_asset_appearances DROP COLUMN net_settled
+```
 
 ```bash
-# BOX
-docker exec app-clickhouse-1 clickhouse-client -q \
-  "ALTER TABLE operation_asset_appearances DROP COLUMN net_settled"
+# LAPTOP — (c) deploy Compute per docs/deployment.md (diff first, then the
+# Compute deploy target); CDK reconciles the ESM back to enabled
+
+# LAPTOP — (d) recycle warm containers so no cached DESCRIBE survives (0310's fix)
+aws lambda update-function-configuration \
+  --function-name production-soroban-explorer-indexer \
+  --description "0540 rollout $(date -u +%FT%TZ)"
+
+# (e) confirm the ESM is enabled again and ledgers flow
+aws lambda list-event-source-mappings --function-name production-soroban-explorer-indexer \
+  --query 'EventSourceMappings[].State' --output text
 ```
 
-Note the ledger the new indexer first writes — call it **L₀** — from the
-Lambda logs or:
+Note the ledger the new indexer first writes — call it **L₀**:
 
 ```bash
 docker exec app-clickhouse-1 clickhouse-client -q \
@@ -129,14 +186,14 @@ docker exec app-clickhouse-1 clickhouse-client -q \
 `L₀` is the backfill's `END`. The overlap around it is safe: both writers are
 the same commit, rows are byte-identical, the RMT collapses them.
 
-## Step 5 — ship the binary
-
-Built on the laptop with `cargo zigbuild --release -p backfill-runner --bin
-backfill-runner --target x86_64-unknown-linux-gnu.2.31` from the same commit
-as the deployed indexer (`c62d12dd` or later on the branch).
+## Step 5 — build and ship the binary, from the deployed commit
 
 ```bash
-# LAPTOP
+# LAPTOP — on the merged commit that step 4 deployed (git log -1 on master)
+ulimit -n 65536
+cargo zigbuild --release -p backfill-runner --bin backfill-runner \
+  --target x86_64-unknown-linux-gnu.2.31
+strings target/x86_64-unknown-linux-gnu/release/backfill-runner | grep -c 'GLIBC_2.3[2-9]'   # must print 0 (box is glibc 2.31)
 scp target/x86_64-unknown-linux-gnu/release/backfill-runner deploy@ch-prod-01:~/backfill-runner
 ```
 
@@ -152,7 +209,8 @@ chmod +x ~/backfill-runner
 `~/meta.env` as in the runbook (`CLICKHOUSE_URL=http://localhost:8123`,
 user, password from `/srv/app/.env`, `BIN`, `S5CMD`). The worker script is
 the runbook's `bf-loop16.sh` with one change — the global `--only` flag
-before `run`:
+before `run`. **No `-v` anywhere** (0488: verbose workers through a verbose
+tmux wrote 385 GB/day):
 
 ```bash
 #!/usr/bin/env bash
@@ -216,30 +274,42 @@ docker exec app-clickhouse-1 clickhouse-client -q \
 # re-run the same slice → k must stay identical (RMT idempotent); c may shrink toward k on merge.
 ```
 
-Fan-out. `END` is `L₀` from step 4; worker count is decision 20's (runbook
-§6.4 says start at ~6):
+Fan-out. `END` is `L₀` from step 4. **Scratch on `/srv/bf-scratch`, three
+workers** — the 89 GB image holds ~2 partitions per worker and no more (0488
+step 1; the runbook's "start at 6" predates the isolation). Logs go to `/`
+but are bounded: no `-v`.
 
 ```bash
 # BOX
 set -a; source ~/meta.env; set +a
 rm -rf ~/bf-540; mkdir -p ~/bf-540
-S=50457424; E=<L0>; N=6
+S=50457424; E=<L0>; N=3
 STEP=$(( (E-S)/N ))
 for i in $(seq 0 $((N-1))); do
   Si=$(( S + i*STEP )); Ei=$(( i==N-1 ? E : S + (i+1)*STEP ))
-  DATA=~/bf-540/w$i nohup ~/bf-loop-0540.sh $Si $Ei ~/bf-540/wm$i.txt > ~/bf-540/w$i.log 2>&1 &
+  DATA=/srv/bf-scratch/w$i nohup ~/bf-loop-0540.sh $Si $Ei ~/bf-540/wm$i.txt > ~/bf-540/w$i.log 2>&1 &
 done
 jobs
 ```
 
-Disk governance (runbook §7) applies with one difference: the targeted write
-rewrites **no** other table, so the `OPTIMIZE` loop is only ever needed on the
-three new tables, and `repair-tier1` is **not** owed.
+The targeted write rewrites **no** other table, so the runbook's `OPTIMIZE`
+loop (§7) is only ever needed on the three new tables, and `repair-tier1` is
+**not** owed.
 
-Monitor from the laptop:
+**The human is the alarm** (0488's alarms are not built). Every ~30 minutes
+while it runs, from the laptop:
 
 ```bash
-ssh sorban-prod 'df -h / | tail -1; pgrep -af bf-loop-0540 | wc -l; for f in ~/bf-540/wm*.txt; do echo "$f -> $(cat "$f")"; done'
+ssh sorban-prod 'df -h / /srv/bf-scratch | tail -2; pgrep -af bf-loop-0540 | wc -l; \
+  for f in ~/bf-540/wm*.txt; do echo "$f -> $(cat "$f")"; done; \
+  du -sh ~/bf-540/*.log /home/deploy/*.log 2>/dev/null | sort -h | tail -3'
+```
+
+Hard rule: **free space on `/` below ~150 GB → `pkill -f bf-loop-0540` first,
+ask questions after.** Ingestion lag (should stay minutes, not hours):
+
+```sql
+SELECT now() - max(closed_at) FROM ledgers
 ```
 
 ## Gate 7a — coverage per partition (read-only, agent runs it via `chq`)
