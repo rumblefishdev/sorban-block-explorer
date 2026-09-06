@@ -4,7 +4,7 @@
 //! INVOKE_HOST_FUNCTION operations get enriched extraction: contractId,
 //! functionName, functionArgs (ScVal decoded), and returnValue.
 
-use crate::envelope::{InnerTxRef, muxed_to_g_strkey};
+use crate::envelope::{InnerTxRef, muxed_id, muxed_to_g_strkey};
 use crate::scval::scval_to_typed_json;
 use crate::types::ExtractedOperation;
 use domain::OperationType;
@@ -79,9 +79,25 @@ pub fn extract_operations(
                 details,
                 asset_appearances,
                 counterparties,
+                source_muxed_id: op.source_account.as_ref().and_then(muxed_id),
+                destination_muxed_id: destination_muxed_id(&op.body),
             }
         })
         .collect()
+}
+
+/// The multiplexing id of an operation's destination when it is an `M…`
+/// address. Only the four classic operations whose destination is a
+/// `MuxedAccount` can carry one (CAP-27); everything else → `None`. The `G…`
+/// half is what `details.destination` already records.
+fn destination_muxed_id(body: &OperationBody) -> Option<u64> {
+    match body {
+        OperationBody::Payment(op) => muxed_id(&op.destination),
+        OperationBody::PathPaymentStrictReceive(op) => muxed_id(&op.destination),
+        OperationBody::PathPaymentStrictSend(op) => muxed_id(&op.destination),
+        OperationBody::AccountMerge(destination) => muxed_id(destination),
+        _ => None,
+    }
 }
 
 /// Per-operation results of a **successful** transaction.

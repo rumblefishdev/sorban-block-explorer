@@ -125,25 +125,41 @@ fn extract_single_transaction(
     let result_xdr = encode_xdr(info.result, limits, ledger_sequence, tx_index);
     let result_meta_xdr = encode_xdr_opt(info.meta, limits, ledger_sequence, tx_index);
 
-    let (source_account, fee_source, envelope_xdr, memo_type, memo_value, inner_tx_hash_hex) =
-        match envelope {
-            Some(env) => {
-                let source = envelope::envelope_source(env);
-                let fee_source = envelope::envelope_fee_source(env);
-                let env_xdr = encode_xdr(env, limits, ledger_sequence, tx_index);
-                let inner = inner_transaction(env);
-                let (mt, mv) = memo::extract_memo(inner.memo());
-                let inner_hash = inner_tx_hash(env, network_id).map(hex::encode);
-                (source, fee_source, env_xdr, mt, mv, inner_hash)
-            }
-            None => {
-                warn!(
-                    ledger_sequence,
-                    tx_index, "envelope missing for transaction — parse_error"
-                );
-                (String::new(), None, String::new(), None, None, None)
-            }
-        };
+    let (
+        source_account,
+        source_muxed_id,
+        fee_source,
+        envelope_xdr,
+        memo_type,
+        memo_value,
+        inner_tx_hash_hex,
+    ) = match envelope {
+        Some(env) => {
+            let source = envelope::envelope_source(env);
+            let fee_source = envelope::envelope_fee_source(env);
+            let env_xdr = encode_xdr(env, limits, ledger_sequence, tx_index);
+            let inner = inner_transaction(env);
+            let source_muxed_id = inner.source_muxed_id();
+            let (mt, mv) = memo::extract_memo(inner.memo());
+            let inner_hash = inner_tx_hash(env, network_id).map(hex::encode);
+            (
+                source,
+                source_muxed_id,
+                fee_source,
+                env_xdr,
+                mt,
+                mv,
+                inner_hash,
+            )
+        }
+        None => {
+            warn!(
+                ledger_sequence,
+                tx_index, "envelope missing for transaction — parse_error"
+            );
+            (String::new(), None, None, String::new(), None, None, None)
+        }
+    };
 
     let parse_error = envelope.is_none() || envelope_xdr.is_empty() || result_xdr.is_empty();
 
@@ -152,6 +168,7 @@ fn extract_single_transaction(
         inner_tx_hash: inner_tx_hash_hex,
         ledger_sequence,
         source_account,
+        source_muxed_id,
         fee_source,
         fee_charged,
         successful,

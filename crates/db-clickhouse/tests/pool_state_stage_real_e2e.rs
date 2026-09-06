@@ -98,6 +98,7 @@ fn raw_registration_ledger_stages_the_exact_rows() {
         prior_wasm_verdicts: &std::collections::HashMap::new(),
         prior_contract_verdicts: &std::collections::HashMap::new(),
         prior_contract_rows: &std::collections::HashMap::new(),
+        asset_transfers: &[],
     })
     .expect("staging the raw ledger succeeds");
 
@@ -163,6 +164,7 @@ fn synthetic_tx(hash: &str, seq: u32) -> ExtractedTransaction {
         operation_tree: None,
         memo_type: None,
         memo: None,
+        source_muxed_id: None,
         created_at: 0,
         parse_error: false,
         ledger_deltas: Vec::new(),

@@ -33,9 +33,14 @@ pub mod token_metadata;
 pub mod transaction;
 pub mod types;
 
+pub mod asset_transfers;
 pub mod envelope;
 mod xdr_limits;
 
+pub use asset_transfers::{
+    AssetTransferExtraction, ExtractedAssetTransfer, TokenAmount, TransferReject,
+    extract_asset_transfers, token_event_amount,
+};
 pub use classification::{ContractClassification, classify_contract_from_wasm_spec};
 pub use contract::extract_contract_interfaces;
 pub use envelope::InnerTxRef;

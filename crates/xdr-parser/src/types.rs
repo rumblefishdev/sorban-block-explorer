@@ -69,8 +69,13 @@ pub struct ExtractedTransaction {
     pub inner_tx_hash: Option<String>,
     /// Parent ledger sequence number (FK to ledgers.sequence).
     pub ledger_sequence: u32,
-    /// Transaction source account (G... or M... address, max 56 chars).
+    /// Transaction source account as a `G…` StrKey (a muxed `M…` source is
+    /// reduced to its underlying account here, ADR 0026; the id it dropped is
+    /// `source_muxed_id`).
     pub source_account: String,
+    /// Multiplexing id of the source when the envelope named an `M…` address,
+    /// `None` for a plain `G…`. Task 0540 keeps it for `from_muxed_id`.
+    pub source_muxed_id: Option<u64>,
     /// Fee-bump payer account (`fee_source`), G-StrKey. `Some` only for a
     /// fee-bump envelope, where the payer funds the fee but is neither the inner
     /// `source_account` nor an op participant — registered separately into
@@ -165,6 +170,13 @@ pub struct ExtractedEvent {
     /// Only the CAP-67 V4 per-operation container carries the attribution —
     /// `None` for tx-level, diagnostic and V3 events (task 0453 D7).
     pub op_index: Option<u32>,
+    /// Zero-based position of this event within its operation's own event
+    /// list (`v4.operations[op_index].events`). Together with `op_index` this
+    /// is Stellar's official event identity — the `getEvents` cursor is
+    /// `(ledger, tx, op, event)` with `event` reset per operation (stellar-rpc
+    /// `db/event.go`) — and it is what keys the edge table (task 0540).
+    /// `None` whenever `op_index` is `None`.
+    pub event_pos_in_op: Option<u32>,
     /// CAP-67 `TransactionEvent.stage` — when in ledger application the event
     /// fired. Measured on mainnet (`tests/tx_event_stage_real_meta.rs`): the
     /// fee charge is `BeforeAllTxs` and the refund is `AfterAllTxs` — settled
@@ -595,4 +607,13 @@ pub struct ExtractedOperation {
     /// G-StrKeys, staged into `transaction_participants` (deduped there).
     /// Deterministic between live ingest and the backfill re-parse.
     pub counterparties: Vec<String>,
+    /// Multiplexing id of the per-op source when it is an `M…` address; the
+    /// `G…` half is `source_account`. `None` when the op inherits the tx source
+    /// or the source is a plain account. Task 0540 (`from_muxed_id`).
+    pub source_muxed_id: Option<u64>,
+    /// Multiplexing id of the op's destination when it is an `M…` address —
+    /// `Payment`, both path payments and `AccountMerge` are the only classic
+    /// operations CAP-27 lets address a muxed account. The `G…` half is
+    /// `details.destination`. Task 0540 (`to_muxed_id`).
+    pub destination_muxed_id: Option<u64>,
 }

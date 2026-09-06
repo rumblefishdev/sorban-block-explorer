@@ -465,6 +465,7 @@ fn synthetic_tx(hash_seed: u8) -> ExtractedTransaction {
         operation_tree: None,
         memo_type: None,
         memo: None,
+        source_muxed_id: None,
         created_at: 1_700_000_000,
         parse_error: false,
         ledger_deltas: vec![],
@@ -612,6 +613,7 @@ fn prepare_extracts_signature_from_first_symbol_topic() {
         data: serde_json::json!({}),
         event_index: 0,
         op_index: None,
+        event_pos_in_op: None,
         stage: None,
         ledger_sequence: 10,
         created_at: 1_700_000_000,
@@ -676,6 +678,7 @@ fn prepare_drops_diagnostic_events_and_orphans() {
         data: serde_json::json!({}),
         event_index: 0,
         op_index: None,
+        event_pos_in_op: None,
         stage: None,
         ledger_sequence: 10,
         created_at: 1_700_000_000,
@@ -731,6 +734,8 @@ fn prepare_folds_identical_operations() {
         source_account: None,
         asset_appearances: vec![],
         counterparties: vec![],
+        source_muxed_id: None,
+        destination_muxed_id: None,
         details: serde_json::json!({
             "destination": dest,
             "asset": "native",
@@ -822,6 +827,8 @@ fn prepare_registers_op_counterparties_as_participants() {
         source_account: None,
         asset_appearances: vec![],
         counterparties: vec![seller.clone()],
+        source_muxed_id: None,
+        destination_muxed_id: None,
         details: serde_json::json!({ "selling": "native", "buying": "native" }),
     };
     let ops = vec![(tx.hash.clone(), vec![op])];
@@ -881,6 +888,8 @@ fn prepare_stages_operation_asset_appearances() {
             },
         ],
         counterparties: vec![],
+        source_muxed_id: None,
+        destination_muxed_id: None,
         details: serde_json::json!({ "selling": "native", "buying": format!("USDC:{issuer}") }),
     };
     let ops = vec![(tx.hash.clone(), vec![op])];
@@ -950,6 +959,8 @@ fn op_asset_appearances_dedup_same_asset_across_ops_in_one_tx() {
             },
         ],
         counterparties: vec![],
+        source_muxed_id: None,
+        destination_muxed_id: None,
         details: serde_json::json!({ "selling": "native", "buying": format!("USDC:{issuer}") }),
     };
     let ops = vec![(tx.hash.clone(), vec![mk(1), mk(2)])];
@@ -997,6 +1008,8 @@ fn prepare_path_payment_pool_ids_split_fold_and_sort() {
         source_account: None,
         asset_appearances: vec![],
         counterparties: vec![],
+        source_muxed_id: None,
+        destination_muxed_id: None,
         details: serde_json::json!({
             "destination": dest,
             "destAsset": "native",
@@ -1061,6 +1074,8 @@ fn prepare_sets_gross_volume_a_on_traded_pool_snapshot() {
         source_account: None,
         asset_appearances: vec![],
         counterparties: vec![],
+        source_muxed_id: None,
+        destination_muxed_id: None,
         details: serde_json::json!({
             "poolIds": [traded],
             "claimedAtoms": [
@@ -1130,6 +1145,8 @@ fn prepare_lp_deposit_single_element_pool_ids() {
         source_account: None,
         asset_appearances: vec![],
         counterparties: vec![],
+        source_muxed_id: None,
+        destination_muxed_id: None,
         details: serde_json::json!({ "liquidityPoolId": pool }),
     };
     let ops = vec![(tx.hash.clone(), vec![op])];
@@ -1178,6 +1195,8 @@ fn prepare_offer_op_pool_ids_from_details() {
         source_account: None,
         asset_appearances: vec![],
         counterparties: vec![],
+        source_muxed_id: None,
+        destination_muxed_id: None,
         details: serde_json::json!({
             "offerId": 0,
             "poolIds": [pool],
@@ -1222,6 +1241,8 @@ fn op_pool_rows_dedup_same_pool_across_ops_in_one_tx() {
         source_account: None,
         asset_appearances: vec![],
         counterparties: vec![],
+        source_muxed_id: None,
+        destination_muxed_id: None,
         details: serde_json::json!({ "liquidityPoolId": pool }),
     };
     let ops = vec![(tx.hash.clone(), vec![mk(1), mk(2)])];
@@ -1311,6 +1332,7 @@ fn prepare_emits_stub_soroban_contract_rows_for_referenced_only() {
         data: serde_json::json!({}),
         event_index: 0,
         op_index: None,
+        event_pos_in_op: None,
         stage: None,
         ledger_sequence: 10,
         created_at: 1_700_000_000,
@@ -1370,6 +1392,7 @@ fn prepare_does_not_duplicate_when_contract_both_deployed_and_referenced() {
         data: serde_json::json!({}),
         event_index: 0,
         op_index: None,
+        event_pos_in_op: None,
         stage: None,
         ledger_sequence: 10,
         created_at: 1_700_000_000,
@@ -2347,6 +2370,7 @@ fn executable_update_event(contract: &str) -> ExtractedEvent {
         data: serde_json::json!({"type":"vec","value":[]}),
         event_index: 0,
         op_index: None,
+        event_pos_in_op: None,
         stage: None,
         ledger_sequence: 555,
         created_at: 1_700_000_000,
@@ -3025,6 +3049,7 @@ fn prepare_registers_a_pool_from_a_real_add_pool_event() {
         ]}),
         event_index: 0,
         op_index: None,
+        event_pos_in_op: None,
         stage: None,
         ledger_sequence: 10,
         created_at: 1_700_000_000,
@@ -3081,6 +3106,7 @@ fn prepare_ignores_non_registrations_and_labelled_topics() {
         data: serde_json::json!({"type": "vec", "value": []}),
         event_index: 0,
         op_index: None,
+        event_pos_in_op: None,
         stage: None,
         ledger_sequence: 10,
         created_at: 1_700_000_000,
@@ -3149,6 +3175,7 @@ fn prepare_refuses_a_registration_with_an_unparseable_fee() {
         ]}),
         event_index: 0,
         op_index: None,
+        event_pos_in_op: None,
         stage: None,
         ledger_sequence: 10,
         created_at: 1_700_000_000,
@@ -3229,6 +3256,7 @@ fn add_pool_event(tx_hash: &str, router: &str, pool: &str, source: EventSource) 
         ]}),
         event_index: 0,
         op_index: None,
+        event_pos_in_op: None,
         stage: None,
         ledger_sequence: 10,
         created_at: 1_700_000_000,
