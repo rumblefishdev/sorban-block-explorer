@@ -347,3 +347,100 @@ pass. The phase question is unchanged by this result; only the uncertainty is go
 Note also that the diagnostic container carries byte-identical copies of the same
 token events. Staging drops it today; if that ever changes, every transfer counts
 twice.
+
+## 10. V4 across the whole archive — measured on 30 ledgers (2026-09-05)
+
+§9 rested on three ledgers. The second-pass review made `TransactionMeta::V4`
+load-bearing for the sort key (the official event identity needs `op_index`,
+which only the V4 per-operation container carries), so the sample was widened:
+**30 ledgers spread evenly over 50 457 424 – 64 268 152** (step 476 232), covering
+protocols 20 through 27 (checked against `ledgers.protocol_version`). Same
+harness, `event_op_index_audit`, one archive file each.
+
+|                               |                                                        |
+| ----------------------------- | ------------------------------------------------------ |
+| Ledgers                       | 30 / 30 `TransactionMeta::V4` only — no V0–V3 anywhere |
+| Transactions                  | 8 782                                                  |
+| Token events, non-diagnostic  | 12 237                                                 |
+| …at transaction level         | **0**                                                  |
+| …without `op_index`           | **0**                                                  |
+| Orphan drops (no contract id) | **0**                                                  |
+
+**The precondition holds for the archive.** The live path is a different source
+(self-hosted Galexie on ECS, `docs/architecture/indexing-pipeline`) but runs at
+Protocol 23+, where V4 is the only meta version, so it needs no measurement.
+
+### A correction to §9's "byte-identical twin" claim
+
+§9 (three ledgers) found every diagnostic token event had a byte-identical twin in
+the consensus container. Over 30 ledgers, **6 diagnostic token events have no
+byte-identical twin.** All six explained:
+
+| Ledger     | Tx  | Successful | What it is                                                                                                                                                                                                                             |
+| ---------- | --- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 59 505 832 | 347 | **no**     | two `transfer`s from a failed call — consensus has only the fee events. Nothing moved; dropping them is correct                                                                                                                        |
+| 58 077 136 | 181 | yes        | two SAC `mint`s (KALE) whose diagnostic copy carries the **pre-Protocol-23 topic shape** `[mint, admin, to, asset]`, while the consensus copy is already in the CAP-67 shape `[mint, to, asset]`. Same emitter, same `to`, same amount |
+| 56 648 440 | 353 | yes        | one such `mint`                                                                                                                                                                                                                        |
+| 56 172 208 | 115 | yes        | one such `mint`                                                                                                                                                                                                                        |
+
+The second kind is a property of the dataset, not of our parser: the archive is
+produced by a Protocol-23+ core replaying history with CAP-67's "emit [V20,V22]
+events in the V23 format" flag, which rewrites the **consensus** SAC events but
+leaves the **diagnostic** container as originally emitted (CAP-67: diagnostics are
+"unchanged from their previous behavior"). Consequences:
+
+- Dropping the diagnostic container still loses nothing — every real movement has
+  a consensus event; the twin is there, just not byte-identical.
+- The consensus container for pre-P23 ledgers is already in the unified shape,
+  which is why [[T06]]'s survey saw no 4-topic `mint`. The decoder needs only the
+  CAP-67 shapes.
+- The harness's twin check compares bytes and is therefore too strict for pre-P23
+  SAC `mint`/`clawback`; it now prints the diagnostic trace and both topic lists
+  for any twin-less event so the next reader can classify it in seconds.
+
+## 11. The events-vs-ledger oracle — first runs (2026-09-06)
+
+`crates/xdr-parser/tests/value_flow_oracle.rs` (T04). Both readers on the same
+`TransactionMeta`, per (holder, asset), bit-exact. Sample: the thirty spread
+ledgers of §10 plus 64 249 110 (identical transfers in one operation),
+64 260 088 (the six-hop pool arbitrage), 60 000 138 (86 payment operations).
+
+|                                                            |            |
+| ---------------------------------------------------------- | ---------- |
+| Ledgers                                                    | 33         |
+| Transactions                                               | 9 475      |
+| Edges decoded                                              | 13 717     |
+| Rejects (emitter gate, unrecognised payload, no operation) | **0**      |
+| (holder, asset) keys reconciled                            | **14 408** |
+| `no_witness`                                               | **0**      |
+| Contradicted                                               | **0**      |
+
+Two things the oracle taught before it passed — both protocol facts, neither
+in the design:
+
+1. **The Soroban fee refund is inside `TransactionMeta` before Protocol 23.**
+   The first run reported 277 contradictions, every one `G…` / native, events
+   `None`, ledger a small credit (57 184, 51 250, 9 457 807 stroops): the
+   unused-resource-fee refund in `tx_changes_after`. Crediting it from the
+   tx-level `fee` event (negative amount, CAP-67) made things worse — 1 907
+   contradictions, now post-P23 refunds with the event present and NO ledger
+   change, because Protocol 23 moved the refund to
+   `TransactionResultMetaV1.post_tx_apply_fee_processing`, outside
+   `TransactionMeta`. So the rule "fees are on neither side" holds only if the
+   witness reads the **operations'** changes and not `tx_changes_after`:
+   `xdr_parser::operation_balance_deltas` (new) vs `ledger_balance_deltas`
+   (unchanged, still includes the after-changes). The retired `net_settled`
+   reducer used the latter and therefore counted pre-P23 refunds as value — a
+   latent defect nobody had measured.
+2. **Pool shares have no token events.** Measured on 60 000 ledgers: not one
+   `mint`/`burn`/`transfer` labelled with a pool share; a classic LP deposit is
+   two `transfer`s to the `L…` address. So the reader (T03) takes the pool as
+   the holder of its two reserves and keeps pool-share trustlines unread — a
+   share balance has nothing on the event side to reconcile against.
+
+The T03 fix itself (pool reserves, claimable balances as holders) changed two
+real-corpus expectations in `net_settled_real_corpus.rs` — intentionally: the
+path-payment fixture now shows the three pools the route crossed (six reserve
+legs, ten rows instead of four), and the claimable-balance fixture, whose test
+was literally named after the 0413 gap, now sees the `B…` balance receive
+52 222 151 490 373 dSTARDUST from its issuer.

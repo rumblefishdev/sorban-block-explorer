@@ -28,6 +28,15 @@ history:
       `TransactionMeta::V4` at protocols 20, 22 and 27, and all 1 770
       non-diagnostic token events carry an operation index. Three tasks already
       pay for the gap. Rides 0540's S3 pass.
+  - date: 2026-09-06
+    status: backlog
+    who: karolkow
+    note: >
+      Parser (`event_pos_in_op`), `SorobanEventOpRow`, staging
+      (`persist/value_flow.rs`), the `soroban_event_ops` DDL and the `--only`
+      targeted write all landed on 0540's branch. Left here: the backfill run
+      itself (0540 rollout step 6), coverage proof, and retiring 0453's
+      read-time decode.
 ---
 
 # soroban_event_ops
