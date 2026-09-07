@@ -78,8 +78,6 @@ impl TargetedTables {
         "transaction_memos",
         "soroban_event_ops",
     ];
-    pub const LP_AMOUNTS: TargetedTables = TargetedTables(vec![]);
-
     /// Parse a comma-separated list; rejects unknown or duplicate names.
     pub fn parse(spec: &str) -> Result<Self, String> {
         let mut out: Vec<&'static str> = Vec::new();
@@ -106,12 +104,6 @@ impl TargetedTables {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &'static str> + '_ {
-        if self.0.is_empty() {
-            // The `LP_AMOUNTS` constant cannot allocate; it means exactly that.
-            return std::slice::from_ref(&"lp_operation_amounts")
-                .iter()
-                .copied();
-        }
         self.0.iter().copied()
     }
 }
@@ -278,14 +270,6 @@ impl PartitionWriter {
             }
         }
         Ok(())
-    }
-
-    /// Task 0279's original single-table form of [`Self::write_only`].
-    pub async fn write_lp_amounts_only(
-        &mut self,
-        staged: &StagedLedger,
-    ) -> Result<(), SchemaError> {
-        self.write_only(staged, &TargetedTables::LP_AMOUNTS).await
     }
 
     pub async fn write_ledger(&mut self, mut staged: StagedLedger) -> Result<(), SchemaError> {

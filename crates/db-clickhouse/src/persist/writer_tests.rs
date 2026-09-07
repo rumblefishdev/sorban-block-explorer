@@ -13,10 +13,6 @@ fn parses_a_list_of_targetable_tables_in_order() {
 fn the_old_single_table_form_still_parses() {
     let t = TargetedTables::parse("lp_operation_amounts").unwrap();
     assert_eq!(t.iter().collect::<Vec<_>>(), vec!["lp_operation_amounts"]);
-    assert_eq!(
-        TargetedTables::LP_AMOUNTS.iter().collect::<Vec<_>>(),
-        vec!["lp_operation_amounts"]
-    );
 }
 
 #[test]

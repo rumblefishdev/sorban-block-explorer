@@ -16,9 +16,9 @@
 //!     cargo test -p db-clickhouse --test lp_amounts_targeted_write_e2e
 //! ```
 
-use db_clickhouse::persist::PartitionWriter;
 use db_clickhouse::persist::rows::{LedgerRow, LpOperationAmountRow};
 use db_clickhouse::persist::stage::StagedLedger;
+use db_clickhouse::persist::{PartitionWriter, TargetedTables};
 use db_clickhouse::{Config, apply_init_sql, client};
 
 /// Out-of-band sentinel, same convention as `smoke.rs`.
@@ -77,8 +77,9 @@ async fn targeted_write_persists_only_lp_operation_amounts() {
     };
 
     let mut writer = PartitionWriter::open(ch.clone());
+    let only = TargetedTables::parse("lp_operation_amounts").expect("targetable");
     writer
-        .write_lp_amounts_only(&staged)
+        .write_only(&staged, &only)
         .await
         .expect("targeted write");
     writer.commit().await.expect("commit");
@@ -129,7 +130,6 @@ async fn targeted_write_persists_only_lp_operation_amounts() {
 /// us to run before a deploy, not after.
 #[tokio::test]
 async fn write_only_persists_the_value_flow_tables_and_nothing_else() {
-    use db_clickhouse::persist::TargetedTables;
     use db_clickhouse::persist::rows::{AssetTransferRow, SorobanEventOpRow, TransactionMemoRow};
 
     let Some(url) = std::env::var("CLICKHOUSE_URL").ok() else {

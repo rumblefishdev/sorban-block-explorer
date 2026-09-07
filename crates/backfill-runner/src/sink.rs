@@ -55,7 +55,7 @@ impl Sink {
     ///
     /// Consequence to plan for: no `ledgers` commit marker is written, so
     /// resume cannot read progress from the DB — see
-    /// [`db_clickhouse::persist::PartitionWriter::write_lp_amounts_only`].
+    /// [`db_clickhouse::persist::PartitionWriter::write_only`].
     pub fn with_only(mut self, only: Option<TargetedTables>) -> Self {
         self.only = only;
         self
@@ -181,10 +181,15 @@ impl PartitionWriterHandle {
             // `Run` path is the rarely-used heavy fallback, so no cross-ledger
             // cache. Add one if a full reprocess ever makes this hot.
             //
-            // Skipped entirely under the 0279 targeted write: the map only
-            // re-keys BALANCE rows, which that mode does not persist, so the
-            // query would be a per-ledger round-trip bought for nothing —
-            // 13.16M of them across the run.
+            // Skipped entirely under the targeted write (`--only`): the map's
+            // ONLY consumer is `build_balance_rows` (the `balances` table),
+            // which is not targetable — `TargetedTables::TARGETABLE` is a
+            // closed list and none of its four tables reads `sac_classic`
+            // (`asset_transfers` resolves a SAC through
+            // `event_asset_surrogate`, not this map). So the query would be a
+            // per-ledger round-trip bought for nothing — 13.16M of them
+            // across the run. If a future targetable table needs the map,
+            // this branch must key on the table list, not on `targeted`.
             let sac_classic = if targeted {
                 std::collections::HashMap::new()
             } else {
