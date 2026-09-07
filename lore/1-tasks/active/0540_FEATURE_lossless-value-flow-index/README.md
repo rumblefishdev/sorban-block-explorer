@@ -4,7 +4,19 @@ title: 'FEATURE: lossless value-flow index — per-transfer edges replacing the 
 type: FEATURE
 status: active
 related_adr: []
-related_tasks: ['0393', '0411', '0412', '0413', '0419', '0536', '0538', '0541']
+related_tasks:
+  [
+    '0393',
+    '0411',
+    '0412',
+    '0413',
+    '0419',
+    '0536',
+    '0538',
+    '0541',
+    '0542',
+    '0543',
+  ]
 tags:
   [
     'clickhouse',
@@ -356,7 +368,7 @@ branch:
   says where `application_order` really comes from; decision 1 above says
   where the gate actually landed.
 
-Deferred, with reasons, to two follow-up tasks: the SAC gate in
+Deferred, with reasons, to two follow-up tasks (0542 decoder shape inventory & trust policy, 0543 value-flow read prerequisites): the SAC gate in
 `derive_token_event` (Tier-2 presence tables, two 10 bn-row re-emissions), the
 same admin-shape bug in `nft.rs` (`nfts.current_owner_id`), a `parser_version`
 column for every decoder-fed ReplacingMergeTree (13 tables), the reject
