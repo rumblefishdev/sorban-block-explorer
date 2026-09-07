@@ -61,6 +61,12 @@ through `transactions`. Precedent both ways: `lp_operation_amounts` carries
 both. Decide before the table exists on production — adding a column to
 5.47 bn rows later is a rewrite.
 
+**Decided 2026-09-07 (task owner): no `transaction_id` on `asset_transfers`.**
+The join hops through `transactions` on `(ledger_sequence, application_order)`
+— the page already has both, and `soroban_event_ops` was re-keyed the same
+way the same day. Measured cost of carrying the id: ~4.7 B/row (a random hash
+does not compress), ≈26 GB on 5.47 bn rows, for a hop the page pays anyway.
+
 ### Step 1: resolving side table for `L…` and `B…`
 
 `(address_id, strkey)` for every pool and claimable-balance address that
@@ -97,8 +103,8 @@ witness only.
 
 ## Acceptance Criteria
 
-- [ ] `transaction_id` on `asset_transfers` decided and recorded before the
-      table is created on production
+- [x] `transaction_id` on `asset_transfers` decided and recorded before the
+      table is created on production — not added (2026-09-07, see Step 0)
 - [ ] Every `L…` / `B…` endpoint on the account page renders as its StrKey
 - [ ] Contract-authored rows are visibly marked; no rendering by symbol alone
 - [ ] Read benchmark on production-shaped parts recorded, with the dedup
