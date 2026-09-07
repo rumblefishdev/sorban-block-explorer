@@ -218,8 +218,12 @@ impl PartitionWriter {
     /// - **No `ledgers` commit marker** — the marker means "fully ingested",
     ///   which a targeted pass has not done. The cost is that resume cannot
     ///   read progress from the DB: a crashed targeted run resumes by
-    ///   narrowing `--start`, and re-running a range is a no-op (the rows are
-    ///   deterministic and the RMT collapses them).
+    ///   narrowing `--start`, and re-running a range is a no-op **for one
+    ///   decoder version** (identical rows collapse in the RMT). After a
+    ///   decoder change the old and new rows share a key and differ in
+    ///   content, and no column says which is which — run the 0503 tie
+    ///   query (`docs/backfills.md`, "keys with more than one distinct
+    ///   content") before trusting a re-run.
     ///
     /// Table names are validated by [`TargetedTables::parse`] before a run
     /// starts, so an unknown name never reaches this method.

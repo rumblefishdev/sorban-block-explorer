@@ -43,9 +43,11 @@ history:
 
 ## Summary
 
-Store which operation emitted each Soroban event, in a **narrow side table**
-keyed like `soroban_events` — never as a column added to `soroban_events`
-itself.
+Store which operation emitted each Soroban event. First as a **narrow side
+table** written by 0540's S3 pass (the only additive write available), then
+folded into two columns on `soroban_events` itself — see "Target shape" below
+(decided 2026-09-07, reversing the "never as a column" stance this task was
+filed with).
 
 ## Context
 
@@ -62,10 +64,10 @@ Three consumers pay for that today:
 | **0457** (Effects) | Will need the same attribution, for every event and not only token verbs                                                                         |
 | **0540**           | Needs an S3 pass rather than a ClickHouse-local transform                                                                                        |
 
-## Why a side table, not a column
+## Why a side table, not a column (original reasoning — superseded by "Target shape")
 
-The obvious fix — `ALTER TABLE soroban_events ADD COLUMN op_index` — is wrong
-here, and the reason is the one [[0540]] hit first:
+The obvious fix — `ALTER TABLE soroban_events ADD COLUMN op_index` — looked
+wrong here, for the reason [[0540]] hit first:
 
 - `soroban_events` is **10.4 bn rows / 223 GiB**, a version-less
   `ReplacingMergeTree`. Filling a new column means re-inserting **whole rows**,
@@ -79,17 +81,18 @@ A side table avoids both: nothing competes, nothing is rewritten.
 
 ```
 soroban_event_ops(
-    ledger_sequence  Int64,
-    transaction_id   Int64,
-    event_index      Int16,
-    op_index         Int16,      -- envelope position of the emitting operation
-    event_pos_in_op  Int16       -- position within that operation's container
+    ledger_sequence    Int64,
+    application_order  Int16,    -- tx position in the ledger → transactions.id → soroban_events
+    event_index        Int16,
+    op_index           Int16,    -- envelope position of the emitting operation
+    event_pos_in_op    Int16     -- position within that operation's container
 )
 ```
 
-Same key as `soroban_events`, so the join is a seek. Projected **~10.4 bn rows
-at roughly 1 B/row ≈ 10 GB** — an estimate from neighbouring narrow columns,
-not a measurement; size it properly before the run.
+Keyed by the transaction's position, not its id (see "Why now" for the
+measurement: the id was 92% of the row). The join to `soroban_events` goes
+through `transactions` on `(ledger_sequence, application_order)`, the same hop
+`asset_transfers` makes.
 
 Together, `(op_index, event_pos_in_op)` is Stellar's **official** event identity
 (TOID plus position within the operation), which 0540 measured as total for
@@ -101,12 +104,64 @@ question "which operation emitted the fee charge" has no answer.
 ## Why now
 
 0540's S3 re-parse decodes every event of every ledger anyway. Writing this
-table on the same pass costs the extra ~10 GB of inserts and nothing else. Done
+table on the same pass costs the extra inserts and nothing else. Done
 separately it costs a second ~1-day pass over ~1 TB of XDR.
 
-Note `event_pos_in_op` needs a one-line parser change first: the per-operation
-loop in `event.rs` records `op_index` but does not `enumerate()` the events
-within the operation, so the position is not currently captured.
+**Size, measured 2026-09-07** on 39.5 M local events with the final DDL: the
+first DDL keyed the table like `soroban_events` (`ledger_sequence,
+transaction_id, event_index`) and cost **5.07 B/row — 4.66 of them the
+`transaction_id`**, a random hash that does not compress; the two payload
+columns cost 0.24. Re-keyed by the transaction's position
+(`ledger_sequence, application_order, event_index`, the join going through
+`transactions` as `asset_transfers` does) it is **0.63 B/row → ~3.6 GB** on
+~5.7 bn rows, instead of ~29 GB. The same two columns inside `soroban_events`
+would cost 0.24 B/row (ZSTD) — ~2.5 GB on 10.4 bn rows — which is the target
+shape above.
+
+`event_pos_in_op` needed a one-line parser change (the per-operation loop in
+`event.rs` did not `enumerate()` the events within the operation) — landed on
+0540's branch.
+
+## Target shape — a column on `soroban_events`, the side table as the vehicle (decided 2026-09-07)
+
+The deep review of 0540 asked the principled question: where does the
+operation index of an event belong? Canonically **on the event**. stellar-rpc
+identifies an event by the cursor `(ledger, tx, op, event)` and, since
+Protocol 23, returns the operation index as an attribute of each event in
+`getEvents` (per the RPC docs — verify the field name when implementing). A
+separate table keyed like `soroban_events` is the right data in the wrong
+place; it exists only because filling a column on a 10.4 bn-row table looked
+like a rewrite.
+
+It is not. The reasoning above ("re-inserting whole rows", "`EXCHANGE TABLES`
+needs both copies") misses ClickHouse mutations: `ALTER TABLE … ADD COLUMN` is
+metadata-only and instant, and `ALTER TABLE … UPDATE col = …` rewrites **only
+the mutated column's files** — every other column of the part is hard-linked
+into the new part. Filling two `Int16` columns over 10.4 bn rows costs one
+narrow column-write on the box, no S3, no second copy of the table.
+
+So the side table is kept for 0540's pass — it is what the S3 pass can write
+additively today, and it is the **source** for the fold — and the target is:
+
+1. `ALTER TABLE soroban_events ADD COLUMN op_index Nullable(Int16), ADD COLUMN
+event_pos_in_op Nullable(Int16)` — instant; NULL = "not yet folded, or a
+   tx-level / diagnostic event" (the two must be told apart by the fold's
+   completion, not by the value).
+2. Live indexer writes both from the deploy on (`SorobanEventRow` gains two
+   fields — same deploy-window rule as any struct change, driver validates
+   against `DESCRIBE`).
+3. History: one mutation **per partition**, sourced from `soroban_event_ops`
+   joined to `transactions` on `(ledger_sequence, application_order)` to
+   recover `transaction_id`, loaded into a `Join`-engine table for that
+   partition (~200 M rows, ~5 GB in memory — fits; 125 GB box), `WHERE` on
+   the partition key so each mutation touches one partition's parts.
+4. Coverage gate: per partition, `countIf(op_index IS NULL)` on
+   `soroban_events` equals the partition's tx-level + diagnostic event count.
+5. `DROP TABLE soroban_event_ops`; 0453/0457 read the columns.
+
+Why not do the column now: the live path change and the ALTER need their own
+deploy window, and 0540's window is already carrying `DROP COLUMN
+net_settled` plus three new tables. One schema change per window (0310).
 
 ## Implementation Plan
 
@@ -121,7 +176,9 @@ within the operation, so the position is not currently captured.
 
 - [ ] `soroban_event_ops` created, keyed like `soroban_events`
 - [ ] Written by the same pass as 0540 — no second re-parse
-- [ ] `soroban_events` itself is **not** rewritten, and carries no new column
+- [ ] `soroban_events` is **not** re-inserted; the two columns are added by
+      `ALTER` and filled by per-partition mutations from the side table (see
+      "Target shape"), then the side table is dropped
 - [ ] Coverage proven against the source: for a sampled range, every per-op
       event in the archive meta has a row, and no row exists for a tx-level or
       diagnostic event

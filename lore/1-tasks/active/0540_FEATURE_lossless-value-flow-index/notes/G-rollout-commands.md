@@ -36,13 +36,17 @@ command below is the **map owner's**; nothing here is run by an agent. Order:
 1 (merge) → 2 (checks) → 3 (tables) → 4 (deploy window) → 5 (binary) → 6
 (backfill) → 7 (gates).
 
-## Step 1 — merge and release first
+## Step 1 — merge first, do NOT tag
 
-The branch is reviewed and merged to `develop`, then released `develop →
-master` per `docs/deployment.md` (a release is a tag). Nothing below happens
-from a feature branch. The backfill binary is rebuilt from **the commit that
-was deployed** (step 5) — the overlap around L₀ is only safe because both
-writers are the same code.
+The branch is reviewed and merged to `develop`, then merged `develop →
+master` — **without a release tag**. In this repo a tag IS the deploy
+(`docs/deployment.md`: pushing `production-…` runs `cdk deploy` of the Compute
+stack), and the new indexer must not reach production before the three tables
+exist (step 3) and `net_settled` is dropped (step 4b) — "deploy first, ALTER
+whenever" is the 0310 outage. The tag is pushed inside the deploy window, as
+step 4c. Nothing below happens from a feature branch. The backfill binary is
+rebuilt from **the commit that was deployed** (step 5) — the overlap around L₀
+is only safe because both writers are the same code.
 
 ## Step 2 — before anything (the 0488 checklist)
 
@@ -65,9 +69,17 @@ du -sh /home/deploy/*.log 2>/dev/null          # nothing growing
 pgrep -af 'bf-loop|backfill-runner' | wc -l    # 0 = no other backfill (0419) running
 ```
 
-New tables are ~56–73 GB (estimate) on `/`; s5cmd scratch (~13.6 GB per
-partition, two per worker) lives on `/srv/bf-scratch`, which bounds the run
-to **3 workers** — that is the constraint, not a tuning choice.
+New tables on `/` (all estimates, floor after merges; add 10–23% unmerged):
+`asset_transfers` 41–49 GB, `transaction_memos` 1–3 GB, and
+`soroban_event_ops` **~3.6 GB** — ~5.7 bn rows (measured 281 / 496 / 464
+non-fee non-diagnostic events per ledger in three 10 001-ledger windows) at
+**0.63 B/row**, measured 2026-09-07 on the local 39.5 M-row window with the
+final DDL. The first DDL keyed the table by `transaction_id` and measured
+5.07 B/row (~29 GB): 4.66 of those bytes were the id, a random hash that does
+not compress; re-keying by `application_order` removed it. Total
+**~46–56 GB** before the unmerged overhead. s5cmd scratch
+(~13.6 GB per partition, two per worker) lives on `/srv/bf-scratch`, which
+bounds the run to **3 workers** — that is the constraint, not a tuning choice.
 
 ## Step 3 — create the three tables (no snapshot)
 
@@ -244,6 +256,10 @@ for (( f0=fstart; f0<=END; f0+=F )); do
         run --reindex --start "$slo" --end "$shi" && { echo "$shi" > "$WM"; break; }
       sleep 30
     done
+    # Three failures must FAIL the run: without this the next sub-window's
+    # success would move the watermark past the hole, and a resume would
+    # skip it forever (the runbook this loop was copied from has the same gap).
+    [ "$(cat "$WM" 2>/dev/null || echo 0)" -ge "$shi" ] || { echo "FAILED $slo..$shi after 3 tries"; exit 1; }
   done
   rm -rf "$dir"                                                    # after all sub-windows
 done
@@ -350,4 +366,11 @@ DROP TABLE asset_transfers; DROP TABLE transaction_memos; DROP TABLE soroban_eve
 ```
 
 Nothing else was written. If the indexer must be rolled back while the tables
-exist, redeploy the previous Compute **first**, then drop.
+exist, redeploy the previous Compute **first**, then drop. If step 4b already
+ran, the previous binary's row struct still has `net_settled` and the driver
+will reject every `operation_asset_appearances` insert against a table
+without it — so **before** the redeploy:
+
+```sql
+ALTER TABLE operation_asset_appearances ADD COLUMN net_settled Nullable(Int128);
+```

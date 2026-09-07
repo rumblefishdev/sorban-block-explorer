@@ -212,9 +212,15 @@ implementation. Four decisions came out of it, all the task owner's:
    asset's registered SAC**, the one exception being `native` (no issuer to join
    on). Nobody has done it yet; the gate costs nothing because
    `sac_override_from_event_topics` (task 0323) already computes
-   `emitter == derive_sac(asset)` for these events. **Decision:** the gate goes
-   into `derive_token_event`; a labelled event whose emitter is not the asset's
-   SAC never becomes a row, is counted, and raises an ingest error.
+   `emitter == derive_sac(asset)` for these events. **Decision:** a labelled
+   event whose emitter is not the asset's SAC never becomes a row, is counted,
+   and raises an ingest error. **Where it landed (corrected 2026-09-07 by the
+   deep review):** in `extract_asset_transfers`, the decoder that feeds
+   `asset_transfers` — NOT in `derive_token_event`, which still feeds the
+   Tier-2 presence tables (`operation_asset_appearances`,
+   `transaction_participants`) ungated. The asset page therefore still lists a
+   foreign contract's `"USDC:…"` event under real USDC; closing that means
+   re-emitting two 10 bn-row tables and is a follow-up task, not this one.
 2. **No reconciliation flag in the database.** Who authors what: for classic and
    SAC assets stellar-core writes both the event and the balance, so they agree
    by construction; for a bespoke token the contract writes both, so agreement
@@ -310,14 +316,122 @@ rollout gate 7, because it reads `asset_transfers` rows and RPC ledger state
 and cannot be exercised before the backfill; and the API/frontend read path
 (steps 8–10).
 
+### Deep review, seven lenses + judge (2026-09-07)
+
+Reviewed by fresh-context agents (correctness, simplify, security, devil's
+advocate, prod readiness, architect, pattern generalisation; a separate judge
+re-verified every P0/P1 in code and on production). Verdict: foundation
+holds — every named decision above survived; **request changes** on one root
+cause with three symptoms: the inherited `parse_token_event` assumed **one
+topic shape per verb**, while mainnet has three for `mint`. Fixed in this
+branch:
+
+- **`[mint, admin, to]` (SEP-41 / `soroban-token-sdk`) credited the admin.**
+  Measured: 3 169 such events, 54 emitters, in ledgers 64 000 000–64 100 000
+  (versus 13.27 M CAP-67-shaped mints); e.g. tx 7850558829833248568, whose
+  own `deposit` event names the recipient the decoder was dropping. Now
+  decoded by shape: a second address topic selects the admin shape, the
+  operand is the second address, the asset (if any) follows. Same for
+  `clawback` (SEP-41 shape, not yet seen on mainnet). **Consequence**: the
+  fix is in the shared parser, so from the deploy on the recipient of such a
+  mint also becomes a `transaction_participants` row — a gap the presence
+  index had before this task; history stays as it was until a re-parse.
+- **A token verb in an unknown topic shape was dropped silently** (the
+  1-topic `mint`/`burn` of concentrated-liquidity position contracts, ~120
+  per 100 000 ledgers) against the module's own promise. Now
+  `TransferReject::UnrecognisedTopics`, counted.
+- **No emitting contract** produced a row with `asset_id = hash64("")` while
+  the comment said "rejected". Now `TransferReject::NoEmitter`.
+- **Per-event `warn!` → `debug!`**, one `error!` per ledger with
+  `RejectCounts` by cause: a wrong passphrase would otherwise have rejected
+  every labelled event at hundreds of GB of log per day on the ClickHouse box
+  (the 0488 shape). An alarm needs a threshold (baseline ~150 rejects per
+  500 000 ledgers on production), so it is a follow-up.
+- Docs: rollout step 1 no longer tags (a tag is a deploy — 0310 order);
+  rollback adds `net_settled` back before redeploying the old binary; the
+  backfill loop fails the run after three failed tries instead of letting
+  the watermark skip the hole; `soroban_event_ops` sized (5.07 B/row
+  measured, ~29 GB); `*_kind` no longer claims a resolving table for `L`/`B`;
+  "re-run is a no-op" qualified to one decoder version; the read benchmark
+  says where `application_order` really comes from; decision 1 above says
+  where the gate actually landed.
+
+Deferred, with reasons, to two follow-up tasks: the SAC gate in
+`derive_token_event` (Tier-2 presence tables, two 10 bn-row re-emissions), the
+same admin-shape bug in `nft.rs` (`nfts.current_owner_id`), a `parser_version`
+column for every decoder-fed ReplacingMergeTree (13 tables), the reject
+alarm with a threshold, `<invalid-utf8>` in eight other decoders, a
+resolving side table for `L…`/`B…`, and the dead `net_settled` chain
+(~587 LOC, pre-existing). Before rollout step 6: MEMO_TEXT that is not UTF-8
+must be stored as bytes, and `to_muxed_id` must be inherited only by the
+transfer whose asset matches the operation's.
+
+### Storage knobs re-challenged by the task owner (2026-09-07)
+
+Three settings looked like overkill from the outside — "if they were that
+good the whole database would use them" — so each was re-measured on the
+local 16.5 M-row table with the final DDL, same data, one merged part:
+
+**Codec.** LZ4 (the default every older table inherited) 10.96 B/row;
+ZSTD(1) 7.71; **ZSTD(3) 7.57**; ZSTD(9) 7.09; `Delta`/`T64` in front of
+ZSTD(3) 7.49. So ZSTD(3) is −31% against the default, ZSTD(9) buys a further
+6% for much slower writes (the backfill pays that CPU), and the specialised
+codecs buy 1%. The rest of the schema is LZ4 because nobody chose otherwise
+at creation — except the three columns the ClickHouse pilot measured
+(`soroban_events.topics_xdr` / `data_xdr`, `wasm_interface_metadata`), which
+already carry ZSTD(3). Kept: ZSTD(3).
+
+**`index_granularity`.** The account-page query (25 pairs) on three copies of
+the table, rows read reported by `system.query_log`:
+
+| Granularity     | 25 adjacent pairs | 25 spread pairs (worst) | B/row | Marks in RAM at 5.47 bn (est.) |
+| --------------- | ----------------- | ----------------------- | ----- | ------------------------------ |
+| 8 192 (default) | 40 960            | 188 416                 | 7.46  | ~5 MB                          |
+| 2 048           | 36 864            | 65 536                  | 7.57  | ~20 MB                         |
+| **512**         | 25 088            | **20 480**              | 7.57  | ~80 MB                         |
+
+Latency barely moves locally (58 vs 66 ms); the point is the read quota
+(2 bn rows per server-hour): 188 k rows per page load is ~10 k loads an hour
+before the quota, 20 k rows is ~100 k. Cost of 512: +1.5% size, ~80 MB of
+marks. The rest of the schema sits at 8 192 because tables were created with
+defaults; range-scanned tables would gain nothing, `transaction_participants`
+(the same point-read shape) probably would — a separate follow-up. Kept: 512.
+
+**`soroban_event_ops` key.** The first DDL keyed the side table like
+`soroban_events` (`ledger_sequence, transaction_id, event_index`) and measured
+5.07 B/row — **4.66 of them the `transaction_id`**, a random hash that does
+not compress, for 0.24 bytes of payload: ~29 GB to carry ~1.4 GB of
+information. Re-keyed by the transaction's position (`ledger_sequence,
+application_order, event_index`, the join going through `transactions` as
+`asset_transfers` does): **0.63 B/row, ~3.6 GB**. The same two columns inside
+`soroban_events` would cost 0.24 B/row (~2.5 GB on 10.4 bn rows) — the
+canonical home, recorded as the target shape in task 0541; the side table is
+the vehicle the S3 pass can write additively and the source of the later
+per-partition fold (`ALTER … UPDATE` rewrites only the mutated columns).
+Doing the fold's first half now (ALTER + row struct) would add a second
+struct change to a deploy window that already carries `DROP COLUMN
+net_settled` and three new tables; decision (task owner): the cheaper key
+now, the fold as 0541.
+
+Revised disk budget (estimates; floor after merges, +10–23% unmerged):
+`asset_transfers` 41–49 GB (7.57 B/row at 5.47 bn — better than the
+schema's existing narrow fact tables at 9.2–12.9 B/row on LZ4, and 90% of it
+is two random account hashes plus the amount), `soroban_event_ops` ~3.6 GB,
+`transaction_memos` 1–3 GB: **~46–56 GB**.
+
 ### The account-page read, checked before the backfill (2026-09-06)
 
 The table's shape is the API's contract, and a wrong key would cost a rewrite
 of 5.47 bn rows — so the read was run before any production row exists, on the
 local 16.5 M-row table with the final DDL. The query is the one the page will
-issue: 25 `(ledger_sequence, application_order)` pairs from
-`transaction_participants`, signed per-asset sum for the account in context,
-deduplicated against unmerged RMT duplicates by grouping on the full sort key.
+issue: 25 `(ledger_sequence, application_order)` pairs — the page already has
+them: `transaction_participants` holds `(account_id, ledger_sequence,
+transaction_id)` and the account list query joins `transactions` for
+`application_order` today (`accounts/queries.rs`) — then a signed per-asset
+sum for the account in context, deduplicated against unmerged RMT duplicates
+by grouping on the full sort key. The measurement below covers the
+`asset_transfers` leg only; the `transactions` hop is the page's existing
+cost, re-measured end to end in rollout step 8.
 
 | Case                                              | Granules | Rows read | Time                                       |
 | ------------------------------------------------- | -------- | --------- | ------------------------------------------ |

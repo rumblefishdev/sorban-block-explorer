@@ -727,9 +727,12 @@ Design notes (every figure measured — lore task 0540 and its research note):
   as an ingest error (`xdr_parser::asset_transfers`).
 - **Endpoints are the underlying `G…`** even when the envelope named an `M…`;
   the multiplexing id goes to `*_muxed_id` so the account page finds the row and
-  the exchange sub-account survives. `*_kind` says which table resolves the id
+  the exchange sub-account survives. `*_kind` is the StrKey's first letter
   (measured: 84% `G`, 11–16% `L` classic pools, up to 5.8% `B` claimable
-  balances, up to 1.2% `C` contracts).
+  balances, up to 1.2% `C` contracts). `G` resolves through `accounts`, `C`
+  through `soroban_contracts`; `L` and `B` have no resolving table today — the
+  id is a one-way hash, a comparison key only, until a side table is built
+  (follow-up, from `soroban_events`, no S3 pass needed).
 - **Reads must be `FINAL` or `GROUP BY`** — this table sums, and an unmerged
   RMT duplicate doubles a balance change on screen.
 - **Storage**: ~5.47 bn rows at 7.6–8.9 B/row (ZSTD(3) everywhere; the schema
@@ -946,10 +949,11 @@ Design notes:
 ### 4.8.1 Soroban Event Ops — operation attribution (task 0541)
 
 ClickHouse-only. **Which operation emitted each event**, as a narrow side
-table keyed like `soroban_events`. `soroban_events` itself is never given the
-column: 10.4 bn rows on a version-less `ReplacingMergeTree`, where filling a
-new column means re-inserting whole rows that then compete with the old ones on
-the same key, and a rebuild needs both copies on disk. Only per-operation
+table. The column belongs on `soroban_events` and will end up there (task
+0541 "Target shape": `ALTER … ADD COLUMN`, then a per-partition
+`ALTER … UPDATE` sourced from this table — a mutation rewrites only the
+mutated columns, so no re-insert of 10.4 bn rows and no second copy on disk);
+until that fold this table is what the S3 pass can write additively. Only per-operation
 events have a row — a transaction-level (fee) or diagnostic event has no
 operation, and absence is the honest encoding. Retires the read-time XDR decode
 the transaction-detail page paid on every render (task 0453). Written by the
@@ -958,15 +962,23 @@ same S3 pass as `asset_transfers`.
 ```sql
 CREATE TABLE soroban_event_ops (
     ledger_sequence    Int64   CODEC(ZSTD(3)),
-    transaction_id     Int64   CODEC(ZSTD(3)),
+    application_order  Int16   CODEC(ZSTD(3)),  -- tx position in the ledger → transactions.id → soroban_events
     event_index        Int16   CODEC(ZSTD(3)),  -- joins soroban_events
     op_index           Int16   CODEC(ZSTD(3)),  -- envelope position, 0-based
     event_pos_in_op    Int16   CODEC(ZSTD(3))   -- position inside that op's event list
 )
 ENGINE = ReplacingMergeTree
 PARTITION BY intDiv(ledger_sequence, 500000)
-ORDER BY (ledger_sequence, transaction_id, event_index);
+ORDER BY (ledger_sequence, application_order, event_index);
 ```
+
+Keyed by the transaction's position, not its id, on purpose: `transaction_id`
+is a random hash and cost 4.66 of a 5.07-byte row (measured 2026-09-07 on
+39.5 M events), while the position compresses to nothing — 0.63 B/row, ~3.6 GB
+on ~5.7 bn rows instead of ~29 GB. The canonical home of the two numbers is a
+column on `soroban_events` itself; this table is the vehicle the S3 pass can
+write additively and the source of the later per-partition fold (task 0541,
+"Target shape").
 
 ### 4.9 Soroban Invocations — Appearance Index
 
