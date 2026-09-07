@@ -1712,6 +1712,12 @@ pub async fn fetch_pool_list(
     // issuer StrKeys — clickhouse-rs escapes them). Each `?` appears in the
     // `page` CTE WHERE in this exact push order. Issuer StrKey → surrogate id
     // resolves via an `accounts` PK seek (`ORDER BY (account_id)`), cheap.
+    // NO relevance ranking anywhere on the pools path, by decision (task
+    // 0485). Measured on production, the first page of
+    // `filter[asset_codes]=XLM` is already 20 of 25 real native-leg pools —
+    // they are the busiest on the network, so activity surfaces them without
+    // a rule. A tier over the legs was built and taken back out: 46 lines of
+    // the densest SQL in the change, for five look-alikes on page one.
     let mut binds: Vec<String> = Vec::new();
     let mut filters = String::new();
     if let Some(code) = params.asset_a_code.as_ref() {
@@ -1809,7 +1815,8 @@ pub async fn fetch_pool_list(
         "WITH \
          page AS ( \
              SELECT lp.pool_id AS pool_id, lp.asset_a_type AS asset_a_type, \
-                    lp.asset_a_code AS asset_a_code, lp.asset_a_issuer_id AS asset_a_issuer_id, \
+                    lp.asset_a_code AS asset_a_code, \
+                    lp.asset_a_issuer_id AS asset_a_issuer_id, \
                     lp.asset_b_type AS asset_b_type, lp.asset_b_code AS asset_b_code, \
                     lp.asset_b_issuer_id AS asset_b_issuer_id, lp.fee_bps AS fee_bps, \
                     lp.last_updated_ledger AS last_updated_ledger \
@@ -2479,6 +2486,7 @@ mod decode_smoke {
     /// empty stored code, so a plain column match silently returns only the
     /// credit assets minted under the code `XLM` — a wrong answer that looks
     /// like a right one. Guards the `if(asset_type = 0, 'XLM', code)` alias.
+
     #[tokio::test]
     async fn asset_code_filter_finds_native_xlm() {
         let Some(ch) = client() else {

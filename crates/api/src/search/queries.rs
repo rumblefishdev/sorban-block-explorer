@@ -383,7 +383,6 @@ async fn search_pools_by_asset_code(
     let Some((clause, binds)) = asset_codes_predicate(&codes) else {
         return Ok(Vec::new());
     };
-
     let sql = format!(
         "SELECT pool_hex, {POOL_LABEL_SQL} \
          FROM ( \
@@ -709,9 +708,14 @@ struct IssuerRow {
 /// never be a substring of a ≤12-char asset code, so hash mode is provably
 /// empty). Step 1 pages matching assets — `asset_code` substring or the
 /// `native`/`xlm` special-case — joining the smaller `soroban_contracts` for the
-/// contract StrKey. Step 2 resolves the page's issuer surrogates → G-StrKey via
-/// a bloom-pruned `accounts WHERE id IN (...)` seek (NEVER a full-table
+/// contract StrKey, RANKED by match tier then holder count (task 0485; see the
+/// statement comment). Step 2 resolves the page's issuer surrogates → G-StrKey
+/// via a bloom-pruned `accounts WHERE id IN (...)` seek (NEVER a full-table
 /// `accounts` join — the Code 241 trap). `route_token` is then composed in Rust.
+/// The displayed code of an asset row — native's `XLM` standing in for its
+/// empty stored code. See the note in the function body before changing it.
+const SHOWN: &str = "lower(if(a.asset_type = 0, 'XLM', toString(a.asset_code)))";
+
 async fn search_assets(
     client: &clickhouse::Client,
     q: &str,
@@ -741,14 +745,44 @@ async fn search_assets(
     // 1,118,154 rows / 28.5 MiB — cheaper even than the un-deduped original
     // (1,151,738 / 32.0 MiB).
     //
-    // A fully-qualified `CODE:ISSUER` (task 0485) takes a different arm: the pair
+    // A fully-qualified `CODE:ISSUER` (task 0534) takes a different arm: the pair
     // names exactly one asset, so it is an equality lookup and needs no ranking —
     // the most precise query is also the cheapest one. The issuer StrKey resolves
     // through `accounts`, whose `ORDER BY account_id` primary key makes it a point
     // seek rather than the ~23M-row hash join that OOMs (Code 241).
     //
-    // The substring arm below still has no `ORDER BY`, so its `LIMIT` cuts scan
-    // order — that is the relevance-ranking half of 0485 and it lands separately.
+    // The substring arm below is where relevance lives (task 0485). Before it,
+    // that arm ended in a bare `LIMIT` with NO `ORDER BY`, so it returned
+    // whichever rows the scan reached first — `q=USDC` answered with ten `IUSDC`
+    // rows and no USDC at all, and two identical calls could disagree.
+    //
+    // `SHOWN` is the code a row DISPLAYS as, and both the match and the tier
+    // compare it — never the stored value. Native XLM stores an EMPTY code and
+    // renders as `XLM`, so comparing what is stored returned thousands of
+    // impostor codes and missed the one asset everybody meant. That is also why
+    // there is no `native` arm: the alias IS the comparison.
+    //
+    // The same expression appears in `assets::queries` (the list) and in
+    // `common::pool_asset_codes` (the legs). It was briefly a shared builder;
+    // three literal copies read better than the indirection, so if you change
+    // the shape here, change it there — `native_is_matched_by_type_not_by_
+    // stored_code` in each module is the test that fails when you do not.
+    //
+    // Ranking is a tier (exact > prefix > substring anywhere) rather than a
+    // scoring formula: the order follows from what matched, not from a weighting
+    // we invented. Within a tier the tie-break is holder count — 441 assets carry
+    // the code `USDC` and the signal separates them cleanly (691,713 holders for
+    // Circle's, 3,093 for the runner-up). It lives in `balance_aggregates` (task
+    // 0331) — `assets` has no holder column any more (task 0310). Joined bare:
+    // the table is 1:1 on `asset_id`, so the usual `GROUP BY` collapse is pure
+    // cost (measured 93 ms -> 71 ms without it), and it cannot be page-scoped
+    // like the list's join because the ranking needs holders BEFORE the limit.
+    //
+    // The trailing PK columns make the order total: holder counts are NULL for
+    // most rows, and "same query, same answer" is half of what this fixes.
+    //
+    // The exact arm deliberately takes none of this: a qualified pair names one
+    // row, so there is nothing to rank and nothing to pay the join for.
     const ASSET_HEAD: &str = "SELECT \
             a.asset_type AS asset_type, \
             nullIf(a.asset_code, '') AS asset_code, \
@@ -775,11 +809,16 @@ async fn search_assets(
     } else {
         let sql = format!(
             "{ASSET_HEAD} \
-             WHERE (length(a.asset_code) > 0 \
-                    AND positionCaseInsensitive(toString(a.asset_code), ?) > 0) \
-                OR (a.asset_type = 0 AND (lower(?) = 'xlm' OR lower(?) = 'native')) \
+             LEFT JOIN balance_aggregates bagg ON bagg.asset_id = a.id \
+             WHERE position({SHOWN}, lower(?)) > 0 \
+             ORDER BY multiIf({SHOWN} = lower(?), 0, \
+                              startsWith({SHOWN}, lower(?)), 1, \
+                              2) ASC, \
+                 bagg.holder_count DESC NULLS LAST, \
+                 a.asset_type ASC, a.asset_code ASC, a.issuer_id ASC \
              LIMIT {per_group_limit}"
         );
+        // One bind for the match, two for the tier — left to right, same needle.
         client
             .query(&sql)
             .bind(q)
@@ -1069,6 +1108,46 @@ mod decode_smoke {
         )
         .await
         .expect("transaction/pool bucket rows must decode");
+    }
+
+    /// Task 0485. The tier ranking is only visible in the ORDER of the rows,
+    /// so the SQL-shape tests cannot see it — this runs the real read and
+    /// looks at the first asset hit. It also exercises the statement's 7
+    /// placeholders against the 7 `.bind(q)` calls; a mismatch is a runtime
+    /// failure no offline test reaches.
+    #[tokio::test]
+    async fn native_xlm_is_the_first_asset_hit_for_xlm() {
+        let Some(ch) = client() else {
+            eprintln!("CH_URL unset — skipping asset ranking smoke");
+            return;
+        };
+        let has_native: u64 = ch
+            .query("SELECT count() FROM assets WHERE asset_type = 0")
+            .fetch_one()
+            .await
+            .expect("native probe must run");
+        if has_native == 0 {
+            eprintln!("no native row in this CH — ranking smoke not exercised");
+            return;
+        }
+
+        let all = IncludeFlags::all();
+        let hits = fetch_search(&ch, "xlm", &classifier::classify("xlm"), &all, 20)
+            .await
+            .expect("ranked asset search decodes");
+
+        let first = hits
+            .iter()
+            .find(|(bucket, _)| bucket == "asset")
+            .map(|(_, hit)| hit)
+            .expect("a corpus with native XLM must yield an asset hit for `xlm`");
+        assert_eq!(
+            first.label, "native",
+            "`xlm` answered with {:?} first — before the ranking this bucket \
+             returned whichever look-alike codes the scan reached first and \
+             native XLM never made the page",
+            first.identifier
+        );
     }
 
     /// A needle longer than a Stellar asset code cannot match a pool, so the

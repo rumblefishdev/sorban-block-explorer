@@ -52,7 +52,7 @@ use serde::Deserialize;
 use chrono::{DateTime, Utc};
 
 use crate::common::ch::{self, millis_to_utc, resolve_accounts};
-use crate::common::cursor::{Direction, keyset_sql_desc};
+use crate::common::cursor::{Direction, SortOrder, keyset_sql, keyset_sql_desc};
 use crate::transactions::dto::TxListCursor;
 
 use super::dto::AssetKeyCursor;
@@ -667,8 +667,28 @@ const SEEK_OVERFETCH: i64 = 8;
 /// count stay unit-testable: `code_clause` (0 or **3**), then `cursor_clause`
 /// (0 or 4). The trailing `LIMIT` is inlined. Only `sac_only` / search pull side
 /// tables into the seek; the default page is a pure `assets` PK walk.
+/// The displayed code of an asset row — native's `XLM` standing in for its
+/// empty stored code. Mirrored in `search::queries` and `pool_asset_codes`.
+const SHOWN: &str = "lower(if(a.asset_type = 0, 'XLM', toString(a.asset_code)))";
+
 fn build_list_seek_sql(params: &ResolvedListParams, direction: Direction) -> String {
-    let (op, order) = keyset_sql_desc(direction);
+    // ASC, both paths (task 0485). Native XLM is `asset_type = 0` with an EMPTY
+    // code — the MINIMUM of the identity 4-tuple this keyset walks — so under
+    // DESC it sorts onto the LAST page: `filter[code]=xlm` answered with
+    // `zXLMr, zXLM, …`, and the unfiltered list opened on six codeless Soroban
+    // contracts instead of XLM.
+    //
+    // The old DESC was not a decision. It came from `keyset_sql_desc`, whose
+    // own doc calls it the helper for endpoints with a single NEWEST-FIRST
+    // order — but this key holds no time. It read "newest first" and delivered
+    // reverse-alphabetical. Nothing pinned it: no `?order=` param, no sort
+    // control in the frontend, no claim in `docs/architecture/**`.
+    //
+    // Same cost either way — the order is still the `assets` primary key, so
+    // the unfiltered page stays a PK-prefix walk. `op` comes from the same
+    // call as `order`, so the cursor comparator always points into the walk;
+    // that pairing is what a keyset needs and why they are never chosen apart.
+    let (op, order) = keyset_sql(SortOrder::Asc, direction);
     let lim_over = params.limit * SEEK_OVERFETCH;
 
     let type_clause = params
@@ -711,18 +731,36 @@ fn build_list_seek_sql(params: &ResolvedListParams, direction: Direction) -> Str
     // deduping via `GROUP BY id` measured +30ms on EVERY search (44→78ms) to fix a
     // near-unreachable edge (assets max versions = 4). Revisit (dedup, or a search
     // over-fetch bump) if version bloat grows (task 0364 audit F1).
+    // The needle is matched against the code the row DISPLAYS, never the one it
+    // stores: native XLM stores an EMPTY code and renders as `XLM` (task 0485).
+    // Name and symbol stay separate — they are free text from on-chain
+    // metadata, not asset codes, so the native alias has nothing to say there.
+    //
+    // The same expression appears in `search::queries` and in
+    // `common::pool_asset_codes`; `native_is_matched_by_type_not_by_stored_code`
+    // below is the test that fails if this copy drifts from them.
     let (search_join, code_clause) = if params.asset_code.is_some() {
         (
             " LEFT JOIN soroban_contracts sc ON sc.id = a.contract_id \
               LEFT JOIN (SELECT contract_id, name, symbol FROM soroban_contract_metadata FINAL) m \
                   ON m.contract_id = sc.contract_id",
-            " AND (positionCaseInsensitive(if(a.asset_type = 0, 'XLM', toString(a.asset_code)), ?) > 0 \
-               OR positionCaseInsensitive(coalesce(m.name, ''), ?) > 0 \
-               OR positionCaseInsensitive(coalesce(m.symbol, ''), ?) > 0)",
+            format!(
+                " AND (position({SHOWN}, lower(?)) > 0 \
+                   OR positionCaseInsensitive(coalesce(m.name, ''), ?) > 0 \
+                   OR positionCaseInsensitive(coalesce(m.symbol, ''), ?) > 0)"
+            ),
         )
     } else {
-        ("", "")
+        ("", String::new())
     };
+    // NO relevance ranking here, deliberately (task 0485). A tier order would
+    // have to be carried IN THE CURSOR — a keyset must resume in the order it
+    // walked — which drags in a rank column, a second copy of the tier rule in
+    // Rust to mint that cursor, and a page-walk test to catch the two drifting.
+    // That machinery was built, measured and taken back out: this is a browse
+    // list with a filter, and the ask was "native first", which the walk
+    // direction already gives on its own. Relevance lives in `/v1/search`,
+    // which has no pagination and therefore pays none of it.
     let cursor_clause = if params.cursor.is_some() {
         format!(" AND (a.asset_type, a.asset_code, a.issuer_id, a.contract_id) {op} (?, ?, ?, ?)")
     } else {
@@ -753,7 +791,8 @@ pub async fn fetch_list(
 
     let mut query = client.query(&sql);
     if let Some(code) = &params.asset_code {
-        // Three placeholders in `code_clause`: asset_code, m.name, m.symbol.
+        // Three placeholders in `code_clause`: the shared code test, m.name,
+        // m.symbol. All take the same needle.
         query = query.bind(code).bind(code).bind(code);
     }
     if let Some(c) = &params.cursor {
@@ -1243,8 +1282,9 @@ mod tests {
         // Classic enrichment names (ae.name) are intentionally NOT matched —
         // substring-matching them adds noise ("Opulent Insolvent" ~ "solv").
         assert!(!sql.contains("coalesce(ae.name, '')"));
-        // 3 needle placeholders (code + m.name + m.symbol); the LIMIT is now
-        // inlined, so MUST equal the 3×`.bind(code)` in `fetch_list`.
+        // 3 needle placeholders (the shared code test + m.name + m.symbol);
+        // the LIMIT is inlined, so this MUST equal the 3×`.bind(code)` in
+        // `fetch_list`. A drift here is a runtime-only failure.
         assert_eq!(sql.matches('?').count(), 3);
     }
 
@@ -1268,12 +1308,46 @@ mod tests {
         };
         let sql = build_list_seek_sql(&params, Direction::Next);
         assert!(
-            sql.contains("if(a.asset_type = 0, 'XLM', toString(a.asset_code))"),
+            sql.contains(SHOWN),
             "the needle must be matched against the DISPLAYED code, so native \
              XLM is reachable; got: {sql}"
         );
         // The bare form is what made native unfindable — it must not come back.
         assert!(!sql.contains("positionCaseInsensitive(a.asset_code, ?)"));
+    }
+
+    #[test]
+    fn the_walk_is_ascending_so_native_opens_the_list() {
+        // Task 0485. Native XLM is `asset_type = 0` with an empty code — the
+        // MINIMUM of the identity 4-tuple this keyset walks — so the old DESC
+        // order buried it on the LAST page (measured on production: page 1 of
+        // `filter[code]=xlm` was `zXLMr, zXLMr, zXLM, zXLM, zXLM`, and the
+        // unfiltered list opened on codeless Soroban contracts).
+        let mut params = ResolvedListParams {
+            limit: 10,
+            cursor: Some(AssetKeyCursor {
+                asset_type: 1,
+                asset_code: "XLM".to_string(),
+                issuer_id: 1,
+                contract_id: 0,
+            }),
+            asset_type: None,
+            asset_code: Some("xlm".to_string()),
+            sac_only: false,
+        };
+        for sql in [build_list_seek_sql(&params, Direction::Next), {
+            params.asset_code = None;
+            build_list_seek_sql(&params, Direction::Next)
+        }] {
+            assert!(sql.contains("ORDER BY a.asset_type ASC"), "{sql}");
+            // The comparator must point INTO the walk, or the cursor pages
+            // backwards on every "next".
+            assert!(sql.contains(") > (?, ?, ?, ?)"), "{sql}");
+            // No relevance machinery on this surface, by decision: ranking it
+            // means carrying the rank in the cursor.
+            assert!(!sql.contains("rank_tier"), "{sql}");
+            assert!(!sql.contains("balance_aggregates"), "{sql}");
+        }
     }
 
     #[test]
@@ -1322,6 +1396,61 @@ mod decode_smoke {
     struct BootAssetRow {
         id: i64,
         contract_surrogate: i64,
+    }
+
+    /// Task 0485. The ranking that puts native XLM first is a SORT DIRECTION,
+    /// and a direction is invisible to the SQL-shape tests — they pin the
+    /// string, not what comes back. This runs the real read and looks at row 1.
+    #[tokio::test]
+    async fn code_search_returns_native_first() {
+        let Some(ch) = crate::common::ch::test_client_from_env() else {
+            eprintln!("CH_URL unset — skipping assets native-first smoke");
+            return;
+        };
+        let has_native: u64 = ch
+            .query("SELECT count() FROM assets WHERE asset_type = 0")
+            .fetch_one()
+            .await
+            .expect("native probe must run");
+        if has_native == 0 {
+            eprintln!("no native row in this CH — native-first smoke not exercised");
+            return;
+        }
+
+        let mut params = ResolvedListParams {
+            limit: 10,
+            cursor: None,
+            asset_type: None,
+            asset_code: Some("xlm".to_string()),
+            sac_only: false,
+        };
+        let page = fetch_list(&ch, &params, Direction::Next)
+            .await
+            .expect("code-search page decodes");
+
+        let first = page
+            .first()
+            .expect("a corpus with native XLM cannot be empty");
+        assert_eq!(
+            first.asset_type, 0,
+            "`xlm` answered with {:?} first — native XLM is the MINIMUM of the \
+             identity 4-tuple, so a DESC walk buries it on the last page",
+            first.asset_code
+        );
+
+        // And with NO filter at all: the asset list of a Stellar explorer
+        // opening on anything other than XLM was the same defect wearing a
+        // different hat (it opened on codeless Soroban contracts).
+        params.asset_code = None;
+        let browse = fetch_list(&ch, &params, Direction::Next)
+            .await
+            .expect("unfiltered page decodes");
+        assert_eq!(
+            browse.first().map(|r| r.asset_type),
+            Some(0),
+            "the unfiltered list must open on native XLM; got {:?}",
+            browse.first().map(|r| r.asset_code.clone())
+        );
     }
 
     #[tokio::test]

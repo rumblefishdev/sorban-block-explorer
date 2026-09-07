@@ -181,3 +181,108 @@ Making hits distinguishable (441 rows all displaying `USDC`) — split to
 others apart. It turned out to be frontend-only: the issuer already ships
 inside `route_token`. Options 2-3 there (TOML domain, holder count) would
 need this task's backend work and can ride along with it.
+
+---
+
+## Implementation — buckets 1 and 4, 2026-09-02
+
+Two commits, one file each, no wire change (`extract_openapi` output is
+byte-identical to the committed spec, so the api-types gate stays green).
+
+**Bucket 1** — `aea53f01` reverse-applied onto `crates/api/src/search/queries.rs`,
+unchanged except the task number in its comments. 7 placeholders now (3 in the
+`WHERE`, 4 in the `multiIf` tier), matched by 7 `.bind(q)`.
+
+**Bucket 4** — `build_list_seek_sql` picks `SortOrder::Asc` when a code filter
+is present, `Desc` otherwise. One test (`code_search_walks_ascending_so_native_
+is_first`) pins both arms AND the comparator, because an order that flips
+without its comparator pages backwards silently.
+
+### Verified
+
+Against production ClickHouse, running the exact `ORDER BY` the code emits:
+
+| needle                    | first row                                                                               |
+| ------------------------- | --------------------------------------------------------------------------------------- |
+| `xlm`                     | native XLM, 9,943,802 holders — ahead of seven credit assets minted under the same code |
+| `usdc`                    | Circle's USDC, 690,936 holders vs 3,093 for the runner-up                               |
+| `AqUa`                    | AQUA — case-insensitive both ways                                                       |
+| `filter[code]=xlm` (list) | the native row, where page 1 previously started `zXLMr, zXLMr, zXLM`                    |
+
+`cargo test -p api --lib` 261 passed, clippy clean.
+
+### Verified on a real read, not only on the SQL
+
+The remaining risk was that the SQL and the Rust were checked separately —
+and the search statement's 7 placeholders against its 7 `.bind(q)` calls is
+exactly the class of defect that split misses. Closed WITHOUT production
+credentials: the repo's own dockerised ClickHouse already carries 3,726
+assets including native, and the CH-gated smokes run `fetch_search` /
+`fetch_list` end to end against it.
+
+Two smokes added, one per surface. Each was shown to fail for the right
+reason by putting the defect back:
+
+| surface | defect restored     | first row then |
+| ------- | ------------------- | -------------- |
+| search  | tier order inverted | `UltraXLM`     |
+| list    | walk back to DESC   | `yXLMFISH`     |
+
+Full suite against that CH: 263 passed, clippy clean.
+
+The mTLS run against production CH is therefore NOT needed for this change —
+the local corpus exercises the same code path, and the ranking itself is
+already measured on production data.
+
+### Deliberately not done
+
+Extracting the tests out of the two touched files, which both exceed the
+~800-line limit (`assets/queries.rs` 1,385, `search/queries.rs` 1,167). No
+`*_tests.rs` file exists anywhere in the repo yet, so doing it here would
+introduce a new file convention inside a 46-line bugfix. Belongs to the
+incremental god-file backlog, not to this PR.
+
+### Bucket 4 went from a direction flip to a real ranking (2026-09-03)
+
+The ASC flip was correct but partial: it put native XLM at row 1 and left
+everything behind it alphabetical, so `filter[code]=usdc` still answered with
+whichever `USDC` sorted first rather than the one 691,439 people hold. The
+list now carries the SAME tier ranking as bucket 1, so the two surfaces agree
+on what "best match" means.
+
+Two consequences worth recording:
+
+- **The cursor grew.** A keyset must resume in the order it walked, so
+  `AssetKeyCursor` carries `rank_tier` + `holders_neg` (both
+  `#[serde(default)]`, so older cursors still decode). `holders_neg` is
+  NEGATED rather than sorted DESC — a mixed-direction keyset is not one tuple
+  comparison, and hand-expanding it is how page-boundary bugs get written.
+- **The tier now exists in two languages** (`multiIf` in SQL, `match_tier` in
+  Rust for the cursor). That drift is silent: it skips rows at a page
+  boundary. Guard is `code_search_page_walk_equals_one_shot` — three pages of
+  thirty must equal one page of ninety. The weaker invariants (no repeats,
+  tier never decreasing) were tried FIRST and passed with a deliberately
+  broken `match_tier`; they are recorded here as insufficient so nobody
+  re-invents them. The page size is load-bearing too: the exact-code set for
+  `xlm` is 36 rows locally, so a short walk never leaves tier 0 and sees
+  nothing.
+
+Cost on production, ranked vs the plain PK walk: `xlm` 240 ms vs 174 ms,
+`a` (171,048 matching rows) 222 ms vs 171 ms, against a ~330 ms endpoint
+baseline. Only the search path pays; the unfiltered browse list keeps its bare
+`assets` PK walk untouched.
+
+### Liquidity pools: measured, NOT needed (2026-09-03)
+
+Checked whether the same defect hides in `/liquidity-pools`, which takes the
+same kind of asset-code filter. It does not, and the reason is structural: a
+pool has two or more legs, so there is no single "the native pool" to bury.
+The list orders by `last_updated_ledger DESC` (activity), and measured on
+production, page 1 of `filter[asset_codes]=XLM` is **20 of 25 real
+native-leg pools**, 5 substring look-alikes — the native pools are the busiest
+ones, so activity already surfaces them. The search endpoint's pool bucket
+reads the same table with the same order, so it inherits the same answer.
+
+A tier ranking there (exact leg beats substring leg) is still a coherent idea
+and 0485's original text asks for it, but nothing user-visible is broken
+today, so it is not being built.
