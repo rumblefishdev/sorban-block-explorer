@@ -175,7 +175,7 @@ pub fn parse_ledger(meta: &LedgerCloseMeta) -> ParseOutput {
     let mut all_ledger_entry_changes = Vec::new();
     let mut all_nft_events = Vec::new();
     let mut all_asset_transfers = Vec::new();
-    let mut transfer_rejects = 0usize;
+    let mut transfer_rejects = xdr_parser::RejectCounts::default();
     let mut tx_parse_errors = Vec::new();
 
     for (tx_index, ext_tx) in extracted_transactions.iter().enumerate() {
@@ -214,7 +214,7 @@ pub fn parse_ledger(meta: &LedgerCloseMeta) -> ParseOutput {
             let nft_events = xdr_parser::detect_nft_events(&events, net_id);
             all_nft_events.extend(nft_events);
             let edges = xdr_parser::extract_asset_transfers(&events, net_id);
-            transfer_rejects += edges.rejects.len();
+            transfer_rejects.absorb(edges.reject_counts());
             all_asset_transfers.extend(edges.transfers);
             all_events.push((ext_tx.hash.clone(), events));
 
@@ -345,12 +345,22 @@ pub fn parse_ledger(meta: &LedgerCloseMeta) -> ParseOutput {
 
     // Task 0540: a token verb the decoder could not turn into a movement is a
     // developer's problem, raised here where it can be fixed — never drawn in
-    // the UI. Per-event detail is on the `xdr_parser::asset_transfers` target.
-    if transfer_rejects > 0 {
+    // the UI. One line per ledger, broken down by cause; per-event detail is
+    // at `debug` on the `xdr_parser::asset_transfers` target (a systematic
+    // reject must not flood the log — task 0488). Baseline on production is
+    // not zero (~150 per 500 000 ledgers, mostly restated mints and
+    // concentrated-liquidity position events), so an alarm needs a threshold
+    // — a follow-up, not `> 0`.
+    if transfer_rejects.total() > 0 {
         tracing::error!(
             ledger_sequence,
-            rejected = transfer_rejects,
-            "token events rejected by the asset_transfers decoder — see xdr_parser::asset_transfers warnings"
+            rejected = transfer_rejects.total(),
+            emitter_not_sac = transfer_rejects.emitter_not_sac,
+            unrecognised_payload = transfer_rejects.unrecognised_payload,
+            unrecognised_topics = transfer_rejects.unrecognised_topics,
+            no_operation = transfer_rejects.no_operation,
+            no_emitter = transfer_rejects.no_emitter,
+            "token events rejected by the asset_transfers decoder"
         );
     }
 

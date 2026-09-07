@@ -319,3 +319,77 @@ fn a_token_verb_outside_an_operation_is_a_reject() {
         [TransferReject::NoOperation { event_index: 3, .. }]
     ));
 }
+
+// ---- deep-review fixes (2026-09-07) --------------------------------------
+
+/// The SEP-41 / `soroban-token-sdk` mint shape `[mint, admin, to]`, measured
+/// on mainnet (3 169 events in ledgers 64 000 000–64 100 000): the emitter is
+/// its own admin and the recipient is the SECOND address. Before the fix the
+/// row credited the admin contract and the recipient vanished.
+#[test]
+fn sep41_mint_with_admin_credits_the_recipient_not_the_admin() {
+    let ev = event(
+        Some(OTHER_CONTRACT),
+        vec![sym("mint"), addr(OTHER_CONTRACT), addr(G1)],
+        i128v("11368693905"),
+        EventSource::PerOp,
+        Some((0, 3)),
+    );
+    let out = extract_asset_transfers(&[ev], &net());
+    assert!(out.rejects.is_empty());
+    let [t] = out.transfers.as_slice() else {
+        panic!("expected one transfer, got {:?}", out.transfers);
+    };
+    assert_eq!(t.kind, TokenEventKind::Mint);
+    assert_eq!(t.from, None);
+    assert_eq!(t.to.as_deref(), Some(G1));
+    assert_eq!(t.asset, EventAsset::Bespoke);
+    assert_eq!(t.emitter, OTHER_CONTRACT);
+    assert_eq!(t.amount, Some(11_368_693_905));
+}
+
+/// A token verb in a topic shape the decoder does not know (the 1-topic
+/// `mint` of a concentrated-liquidity position contract) is a counted reject,
+/// never silence — the module doc promises exactly that.
+#[test]
+fn a_token_verb_in_an_unknown_topic_shape_is_a_reject_not_silence() {
+    let ev = event(
+        Some(OTHER_CONTRACT),
+        vec![sym("mint")],
+        map(vec![("amount", i128v("5")), ("amount0", i128v("1"))]),
+        EventSource::PerOp,
+        Some((0, 0)),
+    );
+    let out = extract_asset_transfers(&[ev], &net());
+    assert!(out.transfers.is_empty());
+    assert!(matches!(
+        out.rejects.as_slice(),
+        [TransferReject::UnrecognisedTopics {
+            kind: TokenEventKind::Mint,
+            topic_count: 1,
+            ..
+        }]
+    ));
+    assert_eq!(out.reject_counts().unrecognised_topics, 1);
+    assert_eq!(out.reject_counts().total(), 1);
+}
+
+/// No emitting contract → no asset identity → a reject, not a row with
+/// `hash64("")` as its asset.
+#[test]
+fn a_token_verb_without_an_emitter_is_a_reject() {
+    let ev = event(
+        None,
+        vec![sym("transfer"), addr(G1), addr(G2)],
+        i128v("500"),
+        EventSource::PerOp,
+        Some((0, 0)),
+    );
+    let out = extract_asset_transfers(&[ev], &net());
+    assert!(out.transfers.is_empty());
+    assert!(matches!(
+        out.rejects.as_slice(),
+        [TransferReject::NoEmitter { event_index: 3, .. }]
+    ));
+    assert_eq!(out.reject_counts().no_emitter, 1);
+}

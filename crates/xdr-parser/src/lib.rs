@@ -38,7 +38,7 @@ pub mod envelope;
 mod xdr_limits;
 
 pub use asset_transfers::{
-    AssetTransferExtraction, ExtractedAssetTransfer, TokenAmount, TransferReject,
+    AssetTransferExtraction, ExtractedAssetTransfer, RejectCounts, TokenAmount, TransferReject,
     extract_asset_transfers, token_event_amount,
 };
 pub use classification::{ContractClassification, classify_contract_from_wasm_spec};
@@ -46,7 +46,7 @@ pub use contract::extract_contract_interfaces;
 pub use envelope::InnerTxRef;
 pub use error::{ParseError, ParseErrorKind};
 pub use event::extract_events;
-pub use event_filters::{EventAsset, TokenEvent, TokenEventKind, parse_token_event};
+pub use event_filters::{EventAsset, TokenEvent, TokenEventKind, parse_token_event, token_verb};
 pub use invocation::{InvocationResult, extract_invocations, extract_invocations_from_diagnostics};
 pub use ledger::extract_ledger;
 pub use ledger_entry_changes::extract_ledger_entry_changes;

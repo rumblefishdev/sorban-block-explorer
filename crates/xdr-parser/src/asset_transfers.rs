@@ -24,12 +24,16 @@
 //!
 //! Rejects are returned to the caller, which raises them as ingest errors;
 //! they are a developer's problem, not something a reader of the account page
-//! can act on, so they never become rows.
+//! can act on, so they never become rows. Per-event detail is logged at
+//! `debug` only: a systematic reject (a wrong network passphrase fails the
+//! SAC gate for every labelled event) must not become gigabytes of `warn`
+//! lines on the box that also hosts ClickHouse (task 0488). The caller logs
+//! one line per ledger with [`RejectCounts`].
 
 use serde_json::Value;
-use tracing::warn;
+use tracing::debug;
 
-use crate::event_filters::{EventAsset, TokenEventKind, parse_token_event};
+use crate::event_filters::{EventAsset, TokenEventKind, parse_token_event, token_verb};
 use crate::sac::sac_override_from_event_topics;
 use crate::types::{EventSource, ExtractedEvent};
 
@@ -146,12 +150,77 @@ pub enum TransferReject {
         event_index: u32,
         emitter: String,
     },
+    /// A token verb whose topics are not one of the decoded shapes (measured:
+    /// the 1-topic `mint` / `burn` of concentrated-liquidity position
+    /// contracts, 123 in 100 000 ledgers). Counted so that a new shape shows
+    /// up as a number, never as silence.
+    UnrecognisedTopics {
+        transaction_hash: String,
+        event_index: u32,
+        emitter: String,
+        kind: TokenEventKind,
+        topic_count: usize,
+    },
+    /// A token verb with no emitting contract — never observed (0 of 12 237);
+    /// without an emitter there is no asset identity to write.
+    NoEmitter {
+        transaction_hash: String,
+        event_index: u32,
+    },
+}
+
+/// How many rejects of each kind — what the caller logs once per ledger.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RejectCounts {
+    pub emitter_not_sac: usize,
+    pub unrecognised_payload: usize,
+    pub no_operation: usize,
+    pub unrecognised_topics: usize,
+    pub no_emitter: usize,
+}
+
+impl RejectCounts {
+    pub fn total(&self) -> usize {
+        self.emitter_not_sac
+            + self.unrecognised_payload
+            + self.no_operation
+            + self.unrecognised_topics
+            + self.no_emitter
+    }
+
+    pub fn add(&mut self, reject: &TransferReject) {
+        match reject {
+            TransferReject::EmitterNotSac { .. } => self.emitter_not_sac += 1,
+            TransferReject::UnrecognisedPayload { .. } => self.unrecognised_payload += 1,
+            TransferReject::NoOperation { .. } => self.no_operation += 1,
+            TransferReject::UnrecognisedTopics { .. } => self.unrecognised_topics += 1,
+            TransferReject::NoEmitter { .. } => self.no_emitter += 1,
+        }
+    }
+
+    pub fn absorb(&mut self, other: RejectCounts) {
+        self.emitter_not_sac += other.emitter_not_sac;
+        self.unrecognised_payload += other.unrecognised_payload;
+        self.no_operation += other.no_operation;
+        self.unrecognised_topics += other.unrecognised_topics;
+        self.no_emitter += other.no_emitter;
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct AssetTransferExtraction {
     pub transfers: Vec<ExtractedAssetTransfer>,
     pub rejects: Vec<TransferReject>,
+}
+
+impl AssetTransferExtraction {
+    pub fn reject_counts(&self) -> RejectCounts {
+        let mut counts = RejectCounts::default();
+        for r in &self.rejects {
+            counts.add(r);
+        }
+        counts
+    }
 }
 
 /// Decode every token movement in one transaction's events.
@@ -170,16 +239,45 @@ pub fn extract_asset_transfers(
         if ev.source == EventSource::Diagnostic {
             continue;
         }
-        let Some(token) = parse_token_event(&ev.topics) else {
+        // Not a token event at all: skipped silently. A token verb from here
+        // on either becomes a row or a reject.
+        let Some(kind) = token_verb(&ev.topics) else {
             continue;
         };
-        // Staging drops events with no emitting contract; a token verb without
-        // one has never been observed (0 of 12 237). Treat it like a missing
-        // operation: it cannot be a row, and it must not vanish.
-        let emitter = ev.contract_id.clone().unwrap_or_default();
+        // A token verb without an emitting contract has never been observed
+        // (0 of 12 237); without one there is no asset identity to write.
+        let Some(emitter) = ev.contract_id.clone() else {
+            debug!(
+                target: "xdr_parser::asset_transfers",
+                tx = %ev.transaction_hash, event_index = ev.event_index,
+                "token verb with no emitting contract — rejected"
+            );
+            out.rejects.push(TransferReject::NoEmitter {
+                transaction_hash: ev.transaction_hash.clone(),
+                event_index: ev.event_index,
+            });
+            continue;
+        };
+        let Some(token) = parse_token_event(&ev.topics) else {
+            let topic_count = ev.topics.as_array().map_or(0, Vec::len);
+            debug!(
+                target: "xdr_parser::asset_transfers",
+                tx = %ev.transaction_hash, event_index = ev.event_index, %emitter,
+                kind = ?kind, topic_count,
+                "token verb in a topic shape the decoder does not know — rejected"
+            );
+            out.rejects.push(TransferReject::UnrecognisedTopics {
+                transaction_hash: ev.transaction_hash.clone(),
+                event_index: ev.event_index,
+                emitter,
+                kind,
+                topic_count,
+            });
+            continue;
+        };
 
         let (Some(op_index), Some(event_pos_in_op)) = (ev.op_index, ev.event_pos_in_op) else {
-            warn!(
+            debug!(
                 target: "xdr_parser::asset_transfers",
                 tx = %ev.transaction_hash, event_index = ev.event_index, %emitter,
                 "token verb outside the per-operation container — rejected"
@@ -204,7 +302,7 @@ pub fn extract_asset_transfers(
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string();
-            warn!(
+            debug!(
                 target: "xdr_parser::asset_transfers",
                 tx = %ev.transaction_hash, event_index = ev.event_index, %emitter, %asset,
                 "labelled token event whose emitter is not the asset's SAC — rejected"
@@ -229,7 +327,7 @@ pub fn extract_asset_transfers(
                     .and_then(Value::as_str)
                     .unwrap_or("?")
                     .to_string();
-                warn!(
+                debug!(
                     target: "xdr_parser::asset_transfers",
                     tx = %ev.transaction_hash, event_index = ev.event_index, %emitter,
                     kind = ?token.kind, %data_type,
