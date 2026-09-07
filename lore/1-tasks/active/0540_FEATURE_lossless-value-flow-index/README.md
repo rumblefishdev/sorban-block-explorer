@@ -517,6 +517,17 @@ rows within minutes; ingest lag 3 s; zero Lambda errors across 265 indexer and
 21 API invocations; and no ledger carrying Soroban events since L₀ is missing
 its `soroban_event_ops` rows, so the deploy boundary has no hole.
 
+**Gate 7a passed on the live tail before the backfill started** (2026-09-07).
+The coverage query the gate runs on the full range was run against the ledgers
+the new indexer had already written, from L₀ onward: **1 546 984 token events
+in `soroban_events` against 1 546 984 distinct edges in `asset_transfers`** —
+exact, zero rejects and zero drops on 1.5 M real mainnet events. Both sides
+counted by their own key (`(transaction_id, event_index)` there, the official
+identity here) so unmerged duplicates cannot flatter either. This is the
+cheapest possible proof that the decoder is total on live traffic, and it is
+worth running before committing days of machine time to the historical pass —
+a disagreement here would have repeated itself across 13.9 M ledgers.
+
 **The window needed neither a pause nor a schema change** (task owner, option
 B, reversing step 4 as written above). Two findings drove it:
 
