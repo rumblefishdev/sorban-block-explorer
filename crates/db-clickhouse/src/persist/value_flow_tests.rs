@@ -357,3 +357,56 @@ fn a_transfer_for_an_unknown_transaction_is_a_staging_error_not_a_dropped_row() 
     let err = build_value_flow_rows(64_259_660, &[], &[], &[], &t).unwrap_err();
     assert!(matches!(err, SchemaError::Staging(_)));
 }
+
+// ---- deep-review fix J13 (2026-09-07): the sub-account id follows the asset
+
+/// A path payment to a muxed recipient can also move ANOTHER asset to the
+/// same `G…` inside the same operation (the recipient's own offer crossed on
+/// the path). Only the transfer of the op's `destAsset` is the deposit the
+/// sub-account id names; the other keeps `to_muxed_id = NULL`.
+#[test]
+fn muxed_id_follows_only_the_transfer_of_the_ops_delivered_asset() {
+    const USDC_ISSUER: &str = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+    let txs = [tx(None, None)];
+    let mut path = payment_op(1, G_RECEIVER, Some(3_539_365_402), None);
+    path.op_type = OperationType::PathPaymentStrictSend;
+    path.details = json!({
+        "destination": G_RECEIVER,
+        "sendAsset": "native",
+        "destAsset": format!("USDC:{USDC_ISSUER}"),
+    });
+    let ops = [(TX.to_string(), vec![path])];
+
+    let mut usdc = transfer(
+        0,
+        0,
+        2,
+        Some(G_SENDER),
+        Some(G_RECEIVER),
+        TokenEventKind::Transfer,
+    );
+    usdc.asset = EventAsset::Credit {
+        code: "USDC".into(),
+        issuer: USDC_ISSUER.into(),
+    };
+    // The recipient's own XLM offer, crossed on the path: native to the same G.
+    let xlm = transfer(
+        0,
+        1,
+        3,
+        Some(G_SENDER),
+        Some(G_RECEIVER),
+        TokenEventKind::Transfer,
+    );
+
+    let out = build_value_flow_rows(64_259_660, &txs, &ops, &[], &[usdc, xlm]).unwrap();
+    assert_eq!(
+        out.transfers[0].to_muxed_id,
+        Some(3_539_365_402),
+        "the delivered asset"
+    );
+    assert_eq!(
+        out.transfers[1].to_muxed_id, None,
+        "the crossed offer is not the deposit"
+    );
+}

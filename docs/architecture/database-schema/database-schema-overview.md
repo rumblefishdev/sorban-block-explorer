@@ -775,7 +775,7 @@ fetching the transaction's XDR on the detail page.
 CREATE TABLE transaction_memos (
     ledger_sequence    Int64                   CODEC(ZSTD(3)),
     application_order  Int16                   CODEC(ZSTD(3)),
-    memo_type          LowCardinality(String)  CODEC(ZSTD(3)),  -- text | id | hash | return
+    memo_type          LowCardinality(String)  CODEC(ZSTD(3)),  -- text | text_hex (non-UTF-8 bytes) | id | hash | return
     memo               String                  CODEC(ZSTD(3))   -- id as decimal, hash/return as hex
 )
 ENGINE = ReplacingMergeTree

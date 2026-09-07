@@ -20,7 +20,7 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 use xdr_parser::types::{ExtractedEvent, ExtractedOperation, ExtractedTransaction};
-use xdr_parser::{EventSource, ExtractedAssetTransfer, TokenEventKind};
+use xdr_parser::{EventAsset, EventSource, ExtractedAssetTransfer, TokenEventKind};
 
 use super::ids;
 use super::rows::{AssetTransferRow, SorobanEventOpRow, TransactionMemoRow};
@@ -102,7 +102,14 @@ pub fn build_value_flow_rows(
             .flatten()
         });
         let (to_id, to_kind, to_muxed_id) = endpoint(t.to.as_deref(), |g| {
+            // Recipient: the op's own destination — and only for the transfer
+            // that delivers the op's asset to it. A path payment that crosses
+            // the recipient's own offer moves other assets to the same address
+            // inside the same op, and an arbitrage with source == destination
+            // moves several; none of those is the exchange deposit the
+            // sub-account id names (deep review, 2026-09-07).
             op.filter(|op| op.details.get("destination").and_then(Value::as_str) == Some(g))
+                .filter(|op| op_delivers(op, &t.asset))
                 .and_then(|op| op.destination_muxed_id)
         });
 
@@ -154,6 +161,25 @@ pub fn build_value_flow_rows(
     }
 
     Ok(out)
+}
+
+/// Does this operation deliver `asset` to its destination? Payment: `asset`;
+/// path payments: `destAsset`; AccountMerge carries no asset in its details
+/// and moves native. A bespoke token is never what a classic operation
+/// delivers.
+fn op_delivers(op: &ExtractedOperation, asset: &EventAsset) -> bool {
+    let delivered = op
+        .details
+        .get("destAsset")
+        .or_else(|| op.details.get("asset"))
+        .and_then(Value::as_str);
+    match (delivered, asset) {
+        (None | Some("native"), EventAsset::Native) => true,
+        (Some(s), EventAsset::Credit { code, issuer }) => {
+            s.split_once(':') == Some((code.as_str(), issuer.as_str()))
+        }
+        _ => false,
+    }
 }
 
 /// Resolve one end of a transfer: `(surrogate, kind, muxed id)`.

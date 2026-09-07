@@ -1107,7 +1107,10 @@ SETTINGS index_granularity = 512;
 -- instead of on every `asset_transfers` row is what keeps that table honest.
 -- Measured on 30 archive ledgers: 6.0% of transactions, 8.4 B average.
 -- `memo` is the text, the id as decimal, or the hash/return as hex (the
--- rendering `xdr_parser::memo::extract_memo` already produces).
+-- rendering `xdr_parser::memo::extract_memo` already produces). A MEMO_TEXT
+-- that is not valid UTF-8 (28 arbitrary bytes by protocol) is stored as hex
+-- under `memo_type = 'text_hex'` — never a placeholder that a real memo
+-- could equal.
 CREATE TABLE IF NOT EXISTS transaction_memos (
     ledger_sequence    Int64                   CODEC(ZSTD(3)),
     application_order  Int16                   CODEC(ZSTD(3)),
