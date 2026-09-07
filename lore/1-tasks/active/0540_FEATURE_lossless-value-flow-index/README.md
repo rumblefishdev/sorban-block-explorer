@@ -425,6 +425,12 @@ struct change to a deploy window that already carries `DROP COLUMN
 net_settled` and three new tables; decision (task owner): the cheaper key
 now, the fold as 0541.
 
+**No `transaction_id` on `asset_transfers`** (task owner, 2026-09-07,
+0543 step 0): the same measurement — a random hash costs ~4.7 B/row,
+≈26 GB on 5.47 bn rows — for a hop through `transactions` that the account
+page makes anyway. Decided before the table exists on production, because
+adding a column to 5.47 bn rows afterwards is a rewrite.
+
 Revised disk budget (estimates; floor after merges, +10–23% unmerged):
 `asset_transfers` 41–49 GB (7.57 B/row at 5.47 bn — better than the
 schema's existing narrow fact tables at 9.2–12.9 B/row on LZ4, and 90% of it
