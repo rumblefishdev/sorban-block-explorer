@@ -1602,8 +1602,7 @@ fn prepare_applies_prior_wasm_verdict_when_wasm_uploaded_earlier_ledger() {
         lp_positions: &[],
         contract_metadata_writes: &[],
         soroban_token_balances: &[],
-        plane_pool_data: &[],
-        pool_instances: &[],
+        pool_family_writes: &[],
         sac_classic: &std::collections::HashMap::new(),
         sac_overrides: &[],
         prior_wasm_verdicts: &prior,
@@ -1763,8 +1762,7 @@ fn prepare_routes_event_to_hot_via_prior_contract_verdict() {
         lp_positions: &[],
         contract_metadata_writes: &[],
         soroban_token_balances: &[],
-        plane_pool_data: &[],
-        pool_instances: &[],
+        pool_family_writes: &[],
         sac_classic: &std::collections::HashMap::new(),
         sac_overrides: &[],
         prior_wasm_verdicts: &std::collections::HashMap::new(),
@@ -1806,8 +1804,7 @@ fn prepare_drops_event_when_prior_contract_verdict_is_sac() {
         lp_positions: &[],
         contract_metadata_writes: &[],
         soroban_token_balances: &[],
-        plane_pool_data: &[],
-        pool_instances: &[],
+        pool_family_writes: &[],
         sac_classic: &std::collections::HashMap::new(),
         sac_overrides: &[],
         prior_wasm_verdicts: &std::collections::HashMap::new(),
@@ -1851,8 +1848,7 @@ fn prepare_routes_event_to_pending_without_prior_verdict() {
         lp_positions: &[],
         contract_metadata_writes: &[],
         soroban_token_balances: &[],
-        plane_pool_data: &[],
-        pool_instances: &[],
+        pool_family_writes: &[],
         sac_classic: &std::collections::HashMap::new(),
         sac_overrides: &[],
         prior_wasm_verdicts: &std::collections::HashMap::new(),
@@ -1908,8 +1904,7 @@ fn prepare_prior_wasm_verdict_leaves_sac_untouched() {
         lp_positions: &[],
         contract_metadata_writes: &[],
         soroban_token_balances: &[],
-        plane_pool_data: &[],
-        pool_instances: &[],
+        pool_family_writes: &[],
         sac_classic: &std::collections::HashMap::new(),
         sac_overrides: &[],
         prior_wasm_verdicts: &prior,
@@ -1963,8 +1958,7 @@ fn prepare_keeps_other_when_no_prior_verdict() {
         lp_positions: &[],
         contract_metadata_writes: &[],
         soroban_token_balances: &[],
-        plane_pool_data: &[],
-        pool_instances: &[],
+        pool_family_writes: &[],
         sac_classic: &std::collections::HashMap::new(),
         sac_overrides: &[],
         prior_wasm_verdicts: &std::collections::HashMap::new(),
@@ -2117,8 +2111,7 @@ fn prepare_models_undeployed_sac_override_as_asset_not_contract() {
         lp_positions: &[],
         contract_metadata_writes: &[],
         soroban_token_balances: &[],
-        plane_pool_data: &[],
-        pool_instances: &[],
+        pool_family_writes: &[],
         sac_classic: &std::collections::HashMap::new(),
         sac_overrides: &overrides,
         prior_wasm_verdicts: &std::collections::HashMap::new(),
@@ -2225,8 +2218,7 @@ fn prepare_skips_sac_override_when_contract_deployed_same_ledger() {
         lp_positions: &[],
         contract_metadata_writes: &[],
         soroban_token_balances: &[],
-        plane_pool_data: &[],
-        pool_instances: &[],
+        pool_family_writes: &[],
         sac_classic: &std::collections::HashMap::new(),
         sac_overrides: &overrides,
         prior_wasm_verdicts: &std::collections::HashMap::new(),
@@ -2304,8 +2296,7 @@ fn prepare_trustline_only_ledger_emits_no_sac_facet() {
         lp_positions: &[],
         contract_metadata_writes: &[],
         soroban_token_balances: &[],
-        plane_pool_data: &[],
-        pool_instances: &[],
+        pool_family_writes: &[],
         sac_classic: &std::collections::HashMap::new(),
         sac_overrides: &[],
         prior_wasm_verdicts: &std::collections::HashMap::new(),
@@ -3188,8 +3179,9 @@ fn prepare_refuses_a_registration_with_an_unparseable_fee() {
         lp_positions: &[],
         contract_metadata_writes: &[],
         soroban_token_balances: &[],
-        plane_pool_data: &[],
-        pool_instances: std::slice::from_ref(&instance),
+        pool_family_writes: &[xdr_parser::pool_family::PoolFamilyWrite::RouterPool(
+            instance.clone(),
+        )],
         sac_classic: &std::collections::HashMap::new(),
         sac_overrides: &[],
         prior_wasm_verdicts: &std::collections::HashMap::new(),
@@ -3261,6 +3253,11 @@ fn stage_registration(
     events: &[(String, Vec<ExtractedEvent>)],
     instances: &[xdr_parser::pool_state::ExtractedPoolInstance],
 ) -> stage::StagedLedger {
+    let writes: Vec<xdr_parser::pool_family::PoolFamilyWrite> = instances
+        .iter()
+        .cloned()
+        .map(xdr_parser::pool_family::PoolFamilyWrite::RouterPool)
+        .collect();
     stage::prepare_with_sac_overrides(&stage::StageInputs {
         ledger,
         transactions: std::slice::from_ref(tx),
@@ -3278,8 +3275,7 @@ fn stage_registration(
         lp_positions: &[],
         contract_metadata_writes: &[],
         soroban_token_balances: &[],
-        plane_pool_data: &[],
-        pool_instances: instances,
+        pool_family_writes: &writes,
         sac_classic: &std::collections::HashMap::new(),
         sac_overrides: &[],
         prior_wasm_verdicts: &std::collections::HashMap::new(),
@@ -3345,8 +3341,10 @@ fn two_writers_for_one_pool_and_ledger_fold_to_one_row() {
         lp_positions: &[],
         contract_metadata_writes: &[],
         soroban_token_balances: &[],
-        plane_pool_data: std::slice::from_ref(&plane_write),
-        pool_instances: std::slice::from_ref(&instance),
+        pool_family_writes: &[
+            xdr_parser::pool_family::PoolFamilyWrite::RouterPlane(plane_write.clone()),
+            xdr_parser::pool_family::PoolFamilyWrite::RouterPool(instance.clone()),
+        ],
         sac_classic: &std::collections::HashMap::new(),
         sac_overrides: &[],
         prior_wasm_verdicts: &std::collections::HashMap::new(),
@@ -3608,8 +3606,11 @@ fn prepare_stages_plane_writes_and_instance_share_tokens() {
         lp_positions: &[],
         contract_metadata_writes: &[],
         soroban_token_balances: &[],
-        plane_pool_data: std::slice::from_ref(&plane_write),
-        pool_instances: &[instance, conc],
+        pool_family_writes: &[
+            xdr_parser::pool_family::PoolFamilyWrite::RouterPlane(plane_write.clone()),
+            xdr_parser::pool_family::PoolFamilyWrite::RouterPool(instance),
+            xdr_parser::pool_family::PoolFamilyWrite::RouterPool(conc),
+        ],
         sac_classic: &std::collections::HashMap::new(),
         sac_overrides: &[],
         prior_wasm_verdicts: &std::collections::HashMap::new(),
@@ -3661,5 +3662,535 @@ fn prepare_stages_plane_writes_and_instance_share_tokens() {
             .iter()
             .all(|r| r.plane_id != 0),
         "plane_id is load-bearing for reserve provenance — never 0"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Soroswap staging (task 0518): new_pair corroboration + the pair's own
+// instance as reserve source and declaration. Addresses are real mainnet
+// ones (the first pair in history + the documented factory).
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+const SORO_FACTORY: &str = "CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2";
+#[cfg(test)]
+const SORO_PAIR: &str = "CDMC44BMEGF5GMJHNP6NQA3LLBMWLONQFV37E2J5NWYYBBEXNMYMKRBO";
+#[cfg(test)]
+const SORO_T0: &str = "CAINX4EAMVB5DJLM3TP7Z5AZIKEYBA6LKURSBF75C6MS35NDY3FYLV6Y";
+#[cfg(test)]
+const SORO_T1: &str = "CAVXDPJ2M6BWRVTJ3VOVSE3U7QISFS4ET3XA3ONS3UD47X6TA54PIXFJ";
+
+#[cfg(test)]
+fn new_pair_event(tx_hash: &str, factory: &str, pair: &str) -> ExtractedEvent {
+    ExtractedEvent {
+        transaction_hash: tx_hash.to_string(),
+        event_type: ContractEventType::Contract,
+        source: EventSource::TxLevel,
+        contract_id: Some(factory.to_string()),
+        topics: serde_json::json!([
+            {"type": "string", "value": "SoroswapFactory"},
+            {"type": "sym", "value": "new_pair"}
+        ]),
+        data: serde_json::json!({"type": "map", "value": [
+            {"key": {"type": "sym", "value": "new_pairs_length"},
+             "value": {"type": "u32", "value": 1}},
+            {"key": {"type": "sym", "value": "pair"}, "value": {"type": "address", "value": pair}},
+            {"key": {"type": "sym", "value": "token_0"}, "value": {"type": "address", "value": SORO_T0}},
+            {"key": {"type": "sym", "value": "token_1"}, "value": {"type": "address", "value": SORO_T1}}
+        ]}),
+        ledger_sequence: 10,
+        event_index: 0,
+        op_index: None,
+        stage: None,
+        created_at: 1_700_000_000,
+    }
+}
+
+#[cfg(test)]
+fn factory_pair_instance(
+    reserves: Option<(&str, &str)>,
+    total_supply: Option<&str>,
+    created: bool,
+) -> xdr_parser::pool_pair_factory::ExtractedFactoryPair {
+    xdr_parser::pool_pair_factory::ExtractedFactoryPair {
+        state: xdr_parser::pool_pair_factory::FactoryPairState {
+            pair: SORO_PAIR.into(),
+            token_0: SORO_T0.into(),
+            token_1: SORO_T1.into(),
+            factory: SORO_FACTORY.into(),
+            reserves: reserves.map(|(a, b)| (a.to_string(), b.to_string())),
+            total_supply: total_supply.map(str::to_string),
+        },
+        ledger_sequence: 10,
+        created,
+    }
+}
+
+#[cfg(test)]
+fn stage_factory_pair(
+    ledger: &ExtractedLedger,
+    tx: &ExtractedTransaction,
+    events: &[(String, Vec<ExtractedEvent>)],
+    pairs: &[xdr_parser::pool_pair_factory::ExtractedFactoryPair],
+) -> stage::StagedLedger {
+    let writes: Vec<xdr_parser::pool_family::PoolFamilyWrite> = pairs
+        .iter()
+        .cloned()
+        .map(xdr_parser::pool_family::PoolFamilyWrite::FactoryPair)
+        .collect();
+    stage::prepare_with_sac_overrides(&stage::StageInputs {
+        ledger,
+        transactions: std::slice::from_ref(tx),
+        operations: &[(tx.hash.clone(), vec![])],
+        events,
+        invocations: &[],
+        contract_interfaces: &[],
+        contract_deployments: &[],
+        account_states: &[],
+        liquidity_pools: &[],
+        pool_snapshots: &[],
+        assets: &[],
+        nfts: &[],
+        nft_events: &[],
+        lp_positions: &[],
+        contract_metadata_writes: &[],
+        soroban_token_balances: &[],
+        pool_family_writes: &writes,
+        sac_classic: &std::collections::HashMap::new(),
+        sac_overrides: &[],
+        prior_wasm_verdicts: &std::collections::HashMap::new(),
+        prior_contract_verdicts: &std::collections::HashMap::new(),
+        prior_contract_rows: &std::collections::HashMap::new(),
+    })
+    .expect("prepare")
+}
+
+/// A corroborated, created-in-ledger registration stages the full registry
+/// row: kind 1, both leg tokens, the factory as deployment, the vendor's
+/// compiled-in 30 bps fee, and an EMPTY pool_type_raw (decision 64).
+#[test]
+fn a_corroborated_new_pair_registers_with_the_pairs_own_facts() {
+    let ledger = synthetic_ledger();
+    let tx = synthetic_tx(0x81);
+    let events = vec![(
+        tx.hash.clone(),
+        vec![new_pair_event(&tx.hash, SORO_FACTORY, SORO_PAIR)],
+    )];
+    let pairs = [factory_pair_instance(None, None, true)];
+
+    let staged = stage_factory_pair(&ledger, &tx, &events, &pairs);
+
+    let row = staged
+        .pool_rows
+        .iter()
+        .find(|r| r.pool_kind == 1)
+        .expect("the corroborated registration stages a registry row");
+    assert_eq!(row.deployment_id, ids::contract_id(SORO_FACTORY));
+    assert_eq!(
+        row.legs,
+        vec![ids::contract_id(SORO_T0), ids::contract_id(SORO_T1)]
+    );
+    assert_eq!(row.fee_bps, 30);
+    assert_eq!(row.pool_type_raw, "");
+    // A newborn pair has no reserves yet — no state row, but the
+    // declaration (self plane, self share token) MUST stage.
+    assert!(staged.pool_state_change_rows.is_empty());
+    let decl = staged
+        .pool_instance_state_rows
+        .first()
+        .expect("the declaration stages at birth");
+    assert_eq!(decl.plane_id, ids::contract_id(SORO_PAIR));
+    assert_eq!(decl.share_token_id, ids::contract_id(SORO_PAIR));
+    assert_eq!(decl.total_shares, 0);
+}
+
+/// The two forgery signatures: an emitter the pair does not declare, and a
+/// pair instance that was merely TOUCHED (not created) this ledger.
+#[test]
+fn uncorroborated_or_touched_new_pairs_are_refused() {
+    const ATTACKER: &str = "CDTSSTLKVVPWJZXVCGJJNGWKH5MY7OMINVXTB7DGFMDJTCCDBCSRG52O";
+    let ledger = synthetic_ledger();
+    let tx = synthetic_tx(0x82);
+    let events = vec![(
+        tx.hash.clone(),
+        vec![new_pair_event(&tx.hash, ATTACKER, SORO_PAIR)],
+    )];
+    // The pair's instance names the REAL factory — the attacker's event
+    // must not become a row.
+    let pairs = [factory_pair_instance(None, None, true)];
+    let staged = stage_factory_pair(&ledger, &tx, &events, &pairs);
+    assert!(staged.pool_rows.iter().all(|r| r.pool_kind == 0));
+
+    // Genuine factory as emitter, but the instance was only touched — the
+    // induced-forgery signature. Refused the same way.
+    let tx2 = synthetic_tx(0x83);
+    let events2 = vec![(
+        tx2.hash.clone(),
+        vec![new_pair_event(&tx2.hash, SORO_FACTORY, SORO_PAIR)],
+    )];
+    let touched = [factory_pair_instance(None, None, false)];
+    let staged2 = stage_factory_pair(&ledger, &tx2, &events2, &touched);
+    assert!(staged2.pool_rows.iter().all(|r| r.pool_kind == 0));
+}
+
+/// A live pair write stages the reserve row stamped with the pair's OWN id
+/// as plane (owner, stamp and declaration coincide) plus the refreshed
+/// declaration carrying the LP-token supply.
+#[test]
+fn a_pair_write_stages_self_stamped_reserves_and_supply() {
+    let ledger = synthetic_ledger();
+    let tx = synthetic_tx(0x84);
+    let pairs = [factory_pair_instance(
+        Some(("3362421101426", "585980063616")),
+        Some("1387420389"),
+        false,
+    )];
+
+    let staged = stage_factory_pair(&ledger, &tx, &[], &pairs);
+
+    let state = staged
+        .pool_state_change_rows
+        .first()
+        .expect("reserves stage from the pair's own instance");
+    assert_eq!(
+        state.reserves,
+        vec![3_362_421_101_426_i128, 585_980_063_616]
+    );
+    assert_eq!(
+        state.plane_id,
+        ids::contract_id(SORO_PAIR),
+        "the stamp is the pair itself — the provenance filter passes by construction"
+    );
+    let decl = staged
+        .pool_instance_state_rows
+        .first()
+        .expect("declaration");
+    assert_eq!(decl.total_shares, 1_387_420_389);
+    assert_eq!(decl.share_token_id, ids::contract_id(SORO_PAIR));
+}
+
+// ---------------------------------------------------------------------------
+// Config-factory staging (task 0518, third adapter): create/liquidity_pool
+// corroboration via the pool's OWN full CONFIG + created gate, keyed
+// persistent entries as reserve source, and the instance-row-only-on-config
+// clobber protection. Addresses are real mainnet ones (the Phoenix-family
+// factory + its newest pool, creation ledger 64,030,567).
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+const CFG_FACTORY: &str = "CB4SVAWJA6TSRNOJZ7W2AWFW46D5VR4ZMFZKDIKXEINZCZEGZCJZCKMI";
+#[cfg(test)]
+const CFG_POOL: &str = "CCPPPTDWJIWXQUQ2CN64S5JYQ7GYWVZIT7YWUUTH75HKIZX53Z2CE3XI";
+#[cfg(test)]
+const CFG_TA: &str = "CBZ7M5B3Y4WWBZ5XK5UZCAFOEZ23KSSZXYECYX3IXM6E2JOLQC52DK32";
+#[cfg(test)]
+const CFG_TB: &str = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75";
+#[cfg(test)]
+const CFG_SHARE: &str = "CA3KLIRAM6BKPN6BPPKTDX3CSY2DSM4YZAX54KZLER25X2QRK3FGDXR6";
+
+#[cfg(test)]
+fn liquidity_pool_created_event(tx_hash: &str, factory: &str, pool: &str) -> ExtractedEvent {
+    ExtractedEvent {
+        transaction_hash: tx_hash.to_string(),
+        event_type: ContractEventType::Contract,
+        source: EventSource::TxLevel,
+        contract_id: Some(factory.to_string()),
+        topics: serde_json::json!([
+            {"type": "string", "value": "create"},
+            {"type": "string", "value": "liquidity_pool"}
+        ]),
+        data: serde_json::json!({"type": "address", "value": pool}),
+        ledger_sequence: 10,
+        event_index: 0,
+        op_index: None,
+        stage: None,
+        created_at: 1_700_000_000,
+    }
+}
+
+#[cfg(test)]
+fn config_pool_write(
+    with_config: bool,
+    reserves: Option<(&str, &str)>,
+    total_shares: Option<&str>,
+    created: bool,
+) -> xdr_parser::pool_config_factory::ExtractedConfigPool {
+    xdr_parser::pool_config_factory::ExtractedConfigPool {
+        state: xdr_parser::pool_config_factory::ConfigPoolState {
+            pool: CFG_POOL.into(),
+            config: with_config.then(|| xdr_parser::pool_config_factory::PoolConfig {
+                token_a: CFG_TA.into(),
+                token_b: CFG_TB.into(),
+                share_token: CFG_SHARE.into(),
+                pool_type: 0,
+                total_fee_bps: 50,
+            }),
+            reserves: reserves.map(|(a, b)| (a.to_string(), b.to_string())),
+            total_shares: total_shares.map(str::to_string),
+        },
+        ledger_sequence: 10,
+        created,
+    }
+}
+
+#[cfg(test)]
+/// An emitter's own membership-list write — stage 1 of the registration
+/// gate.
+#[cfg(test)]
+fn address_list(
+    owner: &str,
+    members: &[&str],
+) -> xdr_parser::pool_config_factory::ExtractedAddressListWrite {
+    xdr_parser::pool_config_factory::ExtractedAddressListWrite {
+        owner: owner.into(),
+        members: members.iter().map(|m| m.to_string()).collect(),
+        ledger_sequence: 10,
+    }
+}
+
+#[cfg(test)]
+fn stage_config_pool(
+    ledger: &ExtractedLedger,
+    tx: &ExtractedTransaction,
+    events: &[(String, Vec<ExtractedEvent>)],
+    pools: &[xdr_parser::pool_config_factory::ExtractedConfigPool],
+    lists: &[xdr_parser::pool_config_factory::ExtractedAddressListWrite],
+) -> stage::StagedLedger {
+    let writes: Vec<xdr_parser::pool_family::PoolFamilyWrite> = pools
+        .iter()
+        .cloned()
+        .map(xdr_parser::pool_family::PoolFamilyWrite::ConfigPool)
+        .chain(
+            lists
+                .iter()
+                .cloned()
+                .map(xdr_parser::pool_family::PoolFamilyWrite::AddressList),
+        )
+        .collect();
+    stage::prepare_with_sac_overrides(&stage::StageInputs {
+        ledger,
+        transactions: std::slice::from_ref(tx),
+        operations: &[(tx.hash.clone(), vec![])],
+        events,
+        invocations: &[],
+        contract_interfaces: &[],
+        contract_deployments: &[],
+        account_states: &[],
+        liquidity_pools: &[],
+        pool_snapshots: &[],
+        assets: &[],
+        nfts: &[],
+        nft_events: &[],
+        lp_positions: &[],
+        contract_metadata_writes: &[],
+        soroban_token_balances: &[],
+        pool_family_writes: &writes,
+        sac_classic: &std::collections::HashMap::new(),
+        sac_overrides: &[],
+        prior_wasm_verdicts: &std::collections::HashMap::new(),
+        prior_contract_verdicts: &std::collections::HashMap::new(),
+        prior_contract_rows: &std::collections::HashMap::new(),
+    })
+    .expect("staging succeeds — refusals must not fail the ledger")
+}
+
+/// The genuine creation signature: event + the pool's own CONFIG + created
+/// instance, all in one ledger. Every registry fact comes from the CONFIG.
+#[test]
+fn a_corroborated_liquidity_pool_registers_with_the_pools_own_config() {
+    let ledger = synthetic_ledger();
+    let tx = synthetic_tx(0x85);
+    let events = vec![(
+        tx.hash.clone(),
+        vec![liquidity_pool_created_event(
+            &tx.hash,
+            CFG_FACTORY,
+            CFG_POOL,
+        )],
+    )];
+    // The creation transaction writes config, zero reserves and zero shares.
+    let pools = [config_pool_write(true, Some(("0", "0")), Some("0"), true)];
+
+    let lists = [address_list(CFG_FACTORY, &[CFG_POOL])];
+    let staged = stage_config_pool(&ledger, &tx, &events, &pools, &lists);
+
+    let row = staged
+        .pool_rows
+        .iter()
+        .find(|r| r.pool_kind == 1)
+        .expect("the corroborated registration stages a registry row");
+    assert_eq!(row.deployment_id, ids::contract_id(CFG_FACTORY));
+    assert_eq!(
+        row.legs,
+        vec![ids::contract_id(CFG_TA), ids::contract_id(CFG_TB)]
+    );
+    assert_eq!(row.fee_bps, 50, "the per-pool fee comes from CONFIG");
+    assert_eq!(
+        row.pool_type_raw, "0",
+        "the PairType discriminant, verbatim"
+    );
+    // Creation stages the TRUE-zero reserve pair and the declaration with
+    // the SEPARATE share token.
+    let state = staged.pool_state_change_rows.first().expect("reserve row");
+    assert_eq!(state.reserves, vec![0_i128, 0]);
+    assert_eq!(state.plane_id, ids::contract_id(CFG_POOL));
+    let decl = staged
+        .pool_instance_state_rows
+        .first()
+        .expect("the declaration stages at birth");
+    assert_eq!(decl.plane_id, ids::contract_id(CFG_POOL));
+    assert_eq!(decl.share_token_id, ids::contract_id(CFG_SHARE));
+    assert_eq!(decl.total_shares, 0);
+}
+
+/// The two refusal signatures: a named pool that never wrote its CONFIG
+/// this ledger, and one whose entries were written without an instance
+/// CREATION (the induced-forgery signature).
+#[test]
+fn unconfigured_or_touched_liquidity_pools_are_refused() {
+    let ledger = synthetic_ledger();
+    let tx = synthetic_tx(0x86);
+    let events = vec![(
+        tx.hash.clone(),
+        vec![liquidity_pool_created_event(
+            &tx.hash,
+            CFG_FACTORY,
+            CFG_POOL,
+        )],
+    )];
+    // Reserves only, no CONFIG — the shape never fully declared itself.
+    let unconfigured = [config_pool_write(false, Some(("1", "2")), None, true)];
+    let lists = [address_list(CFG_FACTORY, &[CFG_POOL])];
+    let staged = stage_config_pool(&ledger, &tx, &events, &unconfigured, &lists);
+    assert!(staged.pool_rows.iter().all(|r| r.pool_kind == 0));
+
+    // Full CONFIG but the instance was only TOUCHED, not created.
+    let tx2 = synthetic_tx(0x87);
+    let events2 = vec![(
+        tx2.hash.clone(),
+        vec![liquidity_pool_created_event(
+            &tx2.hash,
+            CFG_FACTORY,
+            CFG_POOL,
+        )],
+    )];
+    let touched = [config_pool_write(true, None, None, false)];
+    let staged2 = stage_config_pool(&ledger, &tx2, &events2, &touched, &lists);
+    assert!(staged2.pool_rows.iter().all(|r| r.pool_kind == 0));
+}
+
+/// A per-operation write (reserves + TotalShares, NO config) stages the
+/// self-stamped reserve row and NOTHING into `pool_instance_state` — the
+/// table is RMT whole-row keyed on pool_id, and a config-less row would
+/// clobber `share_token_id` to 0.
+#[test]
+fn a_config_pool_operation_stages_reserves_without_clobbering_the_declaration() {
+    let ledger = synthetic_ledger();
+    let tx = synthetic_tx(0x88);
+    let pools = [config_pool_write(
+        false,
+        Some(("123456789", "987654321")),
+        Some("55555"),
+        false,
+    )];
+
+    let staged = stage_config_pool(&ledger, &tx, &[], &pools, &[]);
+
+    let state = staged
+        .pool_state_change_rows
+        .first()
+        .expect("reserves stage from the pool's own keyed entries");
+    assert_eq!(state.reserves, vec![123_456_789_i128, 987_654_321]);
+    assert_eq!(
+        state.plane_id,
+        ids::contract_id(CFG_POOL),
+        "the stamp is the pool itself — the provenance filter passes by construction"
+    );
+    assert!(
+        staged.pool_instance_state_rows.is_empty(),
+        "a config-less write must NOT stage an instance row — RMT whole-row \
+         replace would zero the share token"
+    );
+}
+
+/// The third forgery shape (review #447), against the TWO-STAGE gate.
+///
+/// Stage 1 (membership list, pointwise): an event-only co-claimer is
+/// refused alone and the GENUINE registration survives. Stage 2
+/// (conflict): an attacker who also writes the pool into his OWN list
+/// leaves two corroborated claimants — no ledger fact arbitrates them, so
+/// BOTH refuse rather than let the RMT version tie pick one.
+#[test]
+fn config_pool_gate_is_pointwise_first_and_refuses_both_on_true_conflict() {
+    const ATTACKER: &str = "CDTSSTLKVVPWJZXVCGJJNGWKH5MY7OMINVXTB7DGFMDJTCCDBCSRG52O";
+    let ledger = synthetic_ledger();
+    // The pool itself is genuine: created, full CONFIG — the gate the
+    // attacker piggybacks on.
+    let pools = [config_pool_write(true, Some(("0", "0")), Some("0"), true)];
+
+    // Stage 1: attacker emits but records nothing in his own storage —
+    // refused alone, the genuine row STAGES with the genuine attribution.
+    let tx = synthetic_tx(0x89);
+    let events = vec![(
+        tx.hash.clone(),
+        vec![
+            liquidity_pool_created_event(&tx.hash, CFG_FACTORY, CFG_POOL),
+            liquidity_pool_created_event(&tx.hash, ATTACKER, CFG_POOL),
+        ],
+    )];
+    let genuine_list = [address_list(CFG_FACTORY, &[CFG_POOL])];
+    let staged = stage_config_pool(&ledger, &tx, &events, &pools, &genuine_list);
+    let rows: Vec<_> = staged
+        .pool_rows
+        .iter()
+        .filter(|r| r.pool_kind == 1)
+        .collect();
+    assert_eq!(rows.len(), 1, "the genuine registration survives pointwise");
+    assert_eq!(
+        rows[0].deployment_id,
+        ids::contract_id(CFG_FACTORY),
+        "attribution is the emitter that corroborated in its own storage"
+    );
+
+    // Stage 2: the attacker also writes the pool into HIS own list — two
+    // corroborated claimants, refuse BOTH.
+    let tx2 = synthetic_tx(0x8a);
+    let events2 = vec![(
+        tx2.hash.clone(),
+        vec![
+            liquidity_pool_created_event(&tx2.hash, CFG_FACTORY, CFG_POOL),
+            liquidity_pool_created_event(&tx2.hash, ATTACKER, CFG_POOL),
+        ],
+    )];
+    let both_lists = [
+        address_list(CFG_FACTORY, &[CFG_POOL]),
+        address_list(ATTACKER, &[CFG_POOL]),
+    ];
+    let staged2 = stage_config_pool(&ledger, &tx2, &events2, &pools, &both_lists);
+    assert!(
+        staged2.pool_rows.iter().all(|r| r.pool_kind == 0),
+        "two corroborated claimants must refuse BOTH rows — a nondeterministic \
+         deployment_id is worse than a loud gap"
+    );
+
+    // An identical duplicate from ONE corroborated emitter collapses to a
+    // single row.
+    let tx3 = synthetic_tx(0x8b);
+    let events3 = vec![(
+        tx3.hash.clone(),
+        vec![
+            liquidity_pool_created_event(&tx3.hash, CFG_FACTORY, CFG_POOL),
+            liquidity_pool_created_event(&tx3.hash, CFG_FACTORY, CFG_POOL),
+        ],
+    )];
+    let staged3 = stage_config_pool(&ledger, &tx3, &events3, &pools, &genuine_list);
+    assert_eq!(
+        staged3
+            .pool_rows
+            .iter()
+            .filter(|r| r.pool_kind == 1)
+            .count(),
+        1,
+        "one emitter announcing twice stages exactly one row"
     );
 }

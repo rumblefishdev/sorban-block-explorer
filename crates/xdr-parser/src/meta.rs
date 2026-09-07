@@ -42,7 +42,41 @@
 //! version carries changes (implement the arm) or not (extend the legacy arm) —
 //! never add a `_ =>` wildcard, never stub an empty return.
 
-use stellar_xdr::{LedgerEntryChange, LedgerEntryChanges, TransactionMeta};
+use stellar_xdr::{LedgerCloseMeta, LedgerEntryChange, LedgerEntryChanges, TransactionMeta};
+
+/// Visit every transaction's apply-time meta of one `LedgerCloseMeta`, in
+/// apply order, and return the ledger sequence. Same exhaustive-match
+/// philosophy as [`ledger_changes`]: a new close-meta version fails to
+/// compile HERE instead of being silently absorbed (review #447 — this
+/// V0/V1/V2 unroll was copy-pasted across the raw-ledger test harnesses).
+pub fn for_each_tx_meta(
+    lcm: &LedgerCloseMeta,
+    mut f: impl FnMut(u32, usize, &TransactionMeta),
+) -> u32 {
+    match lcm {
+        LedgerCloseMeta::V0(v0) => {
+            let seq = v0.ledger_header.header.ledger_seq;
+            for (i, tx) in v0.tx_processing.iter().enumerate() {
+                f(seq, i, &tx.tx_apply_processing);
+            }
+            seq
+        }
+        LedgerCloseMeta::V1(v1) => {
+            let seq = v1.ledger_header.header.ledger_seq;
+            for (i, tx) in v1.tx_processing.iter().enumerate() {
+                f(seq, i, &tx.tx_apply_processing);
+            }
+            seq
+        }
+        LedgerCloseMeta::V2(v2) => {
+            let seq = v2.ledger_header.header.ledger_seq;
+            for (i, tx) in v2.tx_processing.iter().enumerate() {
+                f(seq, i, &tx.tx_apply_processing);
+            }
+            seq
+        }
+    }
+}
 
 /// Every ledger entry change of a transaction, in canonical order:
 /// `tx_changes_before`, then each operation's changes in operation order, then

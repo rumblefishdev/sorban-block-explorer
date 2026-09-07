@@ -250,7 +250,6 @@ async fn g9_cross_ledger_verdict_routes_nft_events() {
         &[],
         &[],
         &[],
-        &[],
         &ClassificationCache::new(),
     )
     .await

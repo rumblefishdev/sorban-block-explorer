@@ -231,8 +231,7 @@ impl PartitionWriterHandle {
                     // `process.rs` extraction exactly like token balances
                     // above, so the historical re-parse emits
                     // `pool_state_changes` / `pool_instance_state` for free.
-                    plane_pool_data: &parsed.plane_pool_data,
-                    pool_instances: &parsed.pool_instances,
+                    pool_family_writes: &parsed.pool_family_writes,
                     sac_classic: &sac_classic,
                     sac_overrides: &parsed.sac_overrides,
                     // Task 0283 live G1/G9 are for the live indexer path only.

@@ -298,6 +298,19 @@ names its pool in a payload the emitter chooses freely:
   registration creates it there (497/497 measured), while a merely-touched
   instance is the induced-forgery signature and is refused. A missing key is
   an older contract version, not evidence of a forgery.
+  The Soroswap arm (task 0518) applies the same discipline with no
+  UNVERIFIED case at all: a `new_pair` stages only when the pair's own
+  instance names the emitting factory (DataKey 4) AND was created in the
+  registering ledger — validated on raw ledgers across three eras.
+  The config-factory arm (task 0518, third adapter) has no back-pointer to
+  check — the pool records no factory anywhere — so its corroboration is
+  the created gate plus the pool's own full `CONFIG` written in the
+  registering ledger (every registry fact comes from that CONFIG, none from
+  the event); validated on the family's entire registration population.
+  Its per-operation state rows are self-stamped like the pair family's, and
+  its `pool_instance_state` row stages ONLY when the transaction wrote
+  CONFIG: the table is RMT whole-row on `pool_id`, and a config-less
+  TotalShares write would clobber `share_token_id` to 0.
 - **Both reserve writers are folded together** before insert. The plane arm
   and the concentrated-instance arm can each emit a row for the same
   `(pool, ledger)`, and the parser-side folds cannot see each other; a

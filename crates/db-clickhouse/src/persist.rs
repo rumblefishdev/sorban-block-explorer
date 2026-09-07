@@ -88,8 +88,7 @@ pub async fn persist_ledger_clickhouse(
     lp_positions: &[ExtractedLpPosition],
     contract_metadata_writes: &[xdr_parser::ExtractedContractMetadata],
     soroban_token_balances: &[xdr_parser::ExtractedSorobanBalance],
-    plane_pool_data: &[xdr_parser::pool_state::ExtractedPlanePoolData],
-    pool_instances: &[xdr_parser::pool_state::ExtractedPoolInstance],
+    pool_family_writes: &[xdr_parser::pool_family::PoolFamilyWrite],
     sac_overrides: &[SacOverride],
     classification_cache: &ClassificationCache,
 ) -> Result<(), SchemaError> {
@@ -142,8 +141,7 @@ pub async fn persist_ledger_clickhouse(
         lp_positions,
         contract_metadata_writes,
         soroban_token_balances,
-        plane_pool_data,
-        pool_instances,
+        pool_family_writes,
         // ADR 0051: `build_balance_rows` keys contract-held SAC balances onto the
         // wrapped classic/native asset (the SAC has no `assets` row) via this map.
         sac_classic: &sac_classic,
@@ -581,7 +579,6 @@ mod tests {
         let res = persist_ledger_clickhouse(
             &client,
             &ledger,
-            &[],
             &[],
             &[],
             &[],

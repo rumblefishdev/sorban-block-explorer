@@ -410,8 +410,7 @@ async fn persist_with_retry(
                 &parsed.lp_positions,
                 &parsed.contract_metadata_writes,
                 &parsed.soroban_token_balances,
-                &parsed.plane_pool_data,
-                &parsed.pool_instances,
+                &parsed.pool_family_writes,
                 &parsed.sac_overrides,
                 classification_cache,
             )

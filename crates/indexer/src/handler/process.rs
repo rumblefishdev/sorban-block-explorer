@@ -50,8 +50,9 @@ pub struct ParseOutput {
     /// ledger entries, persisted into the unified `balances` table (task 0331; the
     /// field name is leftover Option-A naming — no `soroban_token_balances` table exists).
     pub soroban_token_balances: Vec<xdr_parser::ExtractedSorobanBalance>,
-    pub plane_pool_data: Vec<xdr_parser::pool_state::ExtractedPlanePoolData>,
-    pub pool_instances: Vec<xdr_parser::pool_state::ExtractedPoolInstance>,
+    /// Every pool family's state writes behind one seam (task 0518,
+    /// decision 4a) — staging partitions by variant.
+    pub pool_family_writes: Vec<xdr_parser::pool_family::PoolFamilyWrite>,
     /// Per-transaction operation tree JSON, collected by `extract_invocations`.
     /// Neither write path reads it today (CH writer skips it, PG flow
     /// took it as `_operation_trees`). Kept on `ParseOutput` so the
@@ -283,8 +284,7 @@ pub fn parse_ledger(meta: &LedgerCloseMeta) -> ParseOutput {
 
     let mut all_contract_metadata_writes: Vec<xdr_parser::ExtractedContractMetadata> = Vec::new();
     let mut all_soroban_token_balances: Vec<xdr_parser::ExtractedSorobanBalance> = Vec::new();
-    let mut all_plane_pool_data: Vec<xdr_parser::pool_state::ExtractedPlanePoolData> = Vec::new();
-    let mut all_pool_instances: Vec<xdr_parser::pool_state::ExtractedPoolInstance> = Vec::new();
+    let mut all_pool_family_writes: Vec<xdr_parser::pool_family::PoolFamilyWrite> = Vec::new();
     for (_tx_hash, tx_source, changes) in &all_ledger_entry_changes {
         let deployments = xdr_parser::extract_contract_deployments(
             changes,
@@ -299,8 +299,7 @@ pub fn parse_ledger(meta: &LedgerCloseMeta) -> ParseOutput {
         // them.
         let assets = xdr_parser::detect_assets(&deployments, &all_contract_interfaces);
         all_assets.extend(assets);
-        all_plane_pool_data.extend(xdr_parser::pool_state::extract_plane_pool_data(changes));
-        all_pool_instances.extend(xdr_parser::pool_state::extract_pool_instances(changes));
+        all_pool_family_writes.extend(xdr_parser::pool_family::extract_pool_family_writes(changes));
         let classic_credits = xdr_parser::detect_classic_credit_assets(changes);
         all_assets.extend(classic_credits);
         all_contract_deployments.extend(deployments);
@@ -362,8 +361,7 @@ pub fn parse_ledger(meta: &LedgerCloseMeta) -> ParseOutput {
         // Plane writes and instance images pass through unfolded: staging
         // owns the one fold per destination table
         // (`fold_pool_state_changes` / `fold_pool_instance_state`).
-        plane_pool_data: all_plane_pool_data,
-        pool_instances: all_pool_instances,
+        pool_family_writes: all_pool_family_writes,
         operation_trees: all_operation_trees,
         parse_ms,
         tx_parse_errors,
