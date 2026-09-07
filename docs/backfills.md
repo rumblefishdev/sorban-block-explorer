@@ -781,7 +781,7 @@ LEDGERS — but only a targeted, harvested list, fetched over public HTTPS
 `crates/db-clickhouse/tests/pair_factory_stage_real_e2e.rs` docs), never a
 full re-parse.
 
-1. **Pool registry + declarations** — exactly the **14 registration
+1. **Pool registry + declarations** — exactly the **20 registration
    ledgers** (the full population, listed in
    `crates/db-clickhouse/tests/config_pool_stage_real_e2e.rs`; harvest
    query in `crates/xdr-parser/tests/config_pool_real_corpus.rs`). One-off
@@ -789,7 +789,7 @@ full re-parse.
    (never the row builder directly — the two-stage registration gate,
    membership list + conflict, must hold for the backfill exactly as it
    does live): registry rows AND the `pool_instance_state` declarations
-   (share token) come from the same 14 files.
+   (share token) come from the same 20 files.
    **Closure check:** live `query_pools()` on the factory must be a
    **SUBSET of ours — never set-equality**: the factory's vector is
    mutable, and one real pool (`CAZ6W4WH…`, 25,873 events traded to
@@ -810,10 +810,19 @@ full re-parse.
    (chq exits 0 on server errors).
 2. **Reserve history** — one-off Rust pass over the **harvested activity
    ledgers**: `SELECT DISTINCT ledger_sequence FROM soroban_events WHERE
-contract_id IN (the 14 pool surrogates)` — 195,637 ledgers / 2.04M
-   events measured 2026-09-03 (≈40 GB of per-ledger `.xdr.zst` over
-   HTTPS). Fetch each, run `extract_config_pools`, emit
-   `pool_state_changes` rows (`plane_id` = the pool's own surrogate).
+contract_id IN (the pool surrogates)`. Derive that IN-list from the
+   registry pass 1 just wrote — never from a constant in this document:
+   the population grew from 14 to 20 once, and a stale list silently
+   gives the missing pools an incomplete reserve history that the pass-1
+   closure check cannot see (it counts registrations, not activity
+   ledgers). Size, re-measured 2026-09-07 over the exact 20 (the 19 the
+   sibling registry lists plus the newest, `CCPPPTDW…`): **195,871
+   ledgers / 2,045,022 events** (≈40 GB of per-ledger `.xdr.zst` over
+   HTTPS). The six dead-early pools add only 234 ledgers over the first
+   2026-09-03 measurement (+0.12%) — the correctness gap was real, the
+   download size is unchanged.
+   Fetch each, run `extract_config_pools`, emit `pool_state_changes` rows
+   (`plane_id` = the pool's own surrogate).
    Idempotent under the RMT key. Reserve co-occurrence (both keys per tx)
    is measured, era-proof — a half-pair in the output is a bug, not data.
    **Check:** per-pool spot comparison against raw creation values plus
