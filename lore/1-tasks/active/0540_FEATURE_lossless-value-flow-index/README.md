@@ -386,6 +386,22 @@ sub-account names. Also removed on the same pass: the `write_lp_amounts_only`
 delegate and the `LP_AMOUNTS` sentinel with its magic `iter()` (task owner:
 legacy; the e2e uses `TargetedTables::parse`).
 
+### Post-merge: NFT ids are not amounts (2026-09-07)
+
+Found after the merge while the task owner challenged `token_event_amount`
+against the specs: SEP-41 defines a standalone amount as `i128`, SEP-50
+defines an NFT's data as its token id, "an unsigned integer" of any width —
+so a `u32`/`u64`/`u128`/`u256` scalar on a token verb is a token id, and the
+first decoder had summed a `u128` id as a quantity (reproduced by test,
+`notes/S-nft-amount-regression.md`). Fixed on `develop` (`30753600`):
+unsigned scalars and valid `{token_id}` maps → `amount = NULL`, a map with
+both `amount` and `token_id` → counted reject. The oracle re-run on the fix:
+0 contradictions, 0 rejects on the 33 ledgers. The one shape no parser can
+tell apart — an NFT whose id is an `i128` — was measured at zero exposure on
+two 500 k-ledger windows and is bounded to the collection's own `asset_id`;
+it does not gate the backfill (policy and decision in
+`notes/T-nft-interpretation-policy.md`; implementation is 0542 step 6).
+
 ### Storage knobs re-challenged by the task owner (2026-09-07)
 
 Three settings looked like overkill from the outside — "if they were that

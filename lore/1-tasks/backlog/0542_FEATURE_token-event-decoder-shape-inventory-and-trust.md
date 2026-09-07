@@ -35,6 +35,16 @@ history:
 
 ## Summary
 
+Thread 99 interpretation decision (2026-09-07):
+[NFT interpretation policy](../active/0540_FEATURE_lossless-value-flow-index/notes/T-nft-interpretation-policy.md).
+Distinguish declared amount, NFT identity and unresolved payload; use
+event-specific, historical-version evidence rather than integer signedness
+or today's name-only contract classification. Measured 2026-09-07 (policy
+note, "Measured exposure"): zero bespoke `i128` token events from
+NFT-classified contracts in two 500 k-ledger windows, and the exposure is
+bounded to the collection's own `asset_id` — so it does **not** gate 0540's
+backfill (task owner, thread 114 A). Implementation is step 6 below.
+
 Post-merge 0540 correction (2026-09-07): unsigned scalar NFT IDs no longer
 become fungible amounts. The reproducible exploit and limits are recorded in
 [0540's regression note](../active/0540_FEATURE_lossless-value-flow-index/notes/S-nft-amount-regression.md).
@@ -102,6 +112,19 @@ tie query has something to resolve on. Repo-wide; needs a deploy window
 `alarm` field on the per-ledger `error!` + CloudWatch metric filter +
 `FILTER_MINTED_METRICS` entry, threshold from the measured baseline.
 
+### Step 6: `i128` token ids — semantic resolution for live and replay
+
+Resolve the one payload the parser cannot: a bespoke NFT whose token id is
+an `i128`. Evidence in this order: SEP-48 event specs from the executing
+WASM version (`ScSpecEntry` event entries — `contract.rs` keeps only
+`FunctionV0` today), then an evidence-backed legacy decoder for named
+implementations. Live and replay must apply the same immutable evidence to
+the same event or both return unresolved; never today's verdict applied
+backwards. Output: `amount = NULL` for a resolved NFT id, a counted reject
+for unresolved; no new column on `asset_transfers`. Tests per the policy
+note's list (same `i128` under FT / NFT / missing context, packed and batch
+shapes, self-transfer, executable upgrade mid-history).
+
 ### Step 5: `<invalid-utf8>` → bytes
 
 Same fix 0540 makes for `transaction_memos.memo`: keep the bytes (hex or a
@@ -119,6 +142,8 @@ typed column), never a literal indistinguishable from real content.
       provably resolvable
 - [ ] Reject alarm fires above the measured baseline, not at `> 0`
 - [ ] No `<invalid-utf8>` literal persisted anywhere
+- [ ] `i128` token ids resolved by event-spec or legacy-decoder evidence,
+      identically for live and replay; unresolved is a counted reject
 - [ ] **Docs updated** — `docs/architecture/xdr-parsing/**`,
       `database-schema/**` per ADR 0032
 - [ ] **API types regenerated** — N/A unless the API surface changes

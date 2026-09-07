@@ -83,6 +83,11 @@ bounds the run to **3 workers** — that is the constraint, not a tuning choice.
 
 ## Step 3 — create the three tables (no snapshot)
 
+**The DDL below is a copy for convenience; the source of truth is
+`crates/db-clickhouse/schema/init.sql` at the deployed commit — diff the two
+before running (`soroban_event_ops` was re-keyed on 2026-09-07 and this copy
+lagged a day).**
+
 Created **before** the indexer that writes them deploys (the driver validates
 the row struct against `DESCRIBE`; a missing table fails every insert
 client-side — task 0310). `CREATE TABLE IF NOT EXISTS`, so re-running is safe.
@@ -138,14 +143,14 @@ ORDER BY (ledger_sequence, application_order);
 
 CREATE TABLE IF NOT EXISTS soroban_event_ops (
     ledger_sequence    Int64                   CODEC(ZSTD(3)),
-    transaction_id     Int64                   CODEC(ZSTD(3)),
+    application_order  Int16                   CODEC(ZSTD(3)),
     event_index        Int16                   CODEC(ZSTD(3)),
     op_index           Int16                   CODEC(ZSTD(3)),
     event_pos_in_op    Int16                   CODEC(ZSTD(3))
 )
 ENGINE = ReplacingMergeTree
 PARTITION BY intDiv(ledger_sequence, 500000)
-ORDER BY (ledger_sequence, transaction_id, event_index);
+ORDER BY (ledger_sequence, application_order, event_index);
 SQL
 
 # confirm the DESCRIBE the driver will see
@@ -281,7 +286,7 @@ docker exec app-clickhouse-1 clickhouse-client -q "
   FROM asset_transfers WHERE ledger_sequence BETWEEN 50457424 AND 50457999
   UNION ALL SELECT 'transaction_memos', count(), uniqExact((ledger_sequence, application_order))
   FROM transaction_memos WHERE ledger_sequence BETWEEN 50457424 AND 50457999
-  UNION ALL SELECT 'soroban_event_ops', count(), uniqExact((ledger_sequence, transaction_id, event_index))
+  UNION ALL SELECT 'soroban_event_ops', count(), uniqExact((ledger_sequence, application_order, event_index))
   FROM soroban_event_ops WHERE ledger_sequence BETWEEN 50457424 AND 50457999"
 # expected for ledger 50457424 alone (harness, 2026-09-05): 933 token events → 933 asset_transfers rows
 # no ledgers marker must appear:
@@ -356,7 +361,7 @@ GROUP BY p ORDER BY p
 ```
 
 `soroban_events` carries unmerged duplicates too, so compare
-`uniqExact((transaction_id, event_index))` there if `diff` is not ~0 before
+`uniqExact((transaction_id, event_index))` there (its own key) if `diff` is not ~0 before
 reading anything into it. Gate 7b (archive re-decode diff) and 7c (T11) follow.
 
 ## Rollback at any point up to step 7
