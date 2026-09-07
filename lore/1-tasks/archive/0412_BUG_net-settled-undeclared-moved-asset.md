@@ -2,7 +2,7 @@
 id: '0412'
 title: 'BUG: net-settled drops value for an asset that moved but the op did not declare'
 type: BUG
-status: backlog
+status: superseded
 related_adr: []
 related_tasks: ['0393']
 tags:
@@ -24,6 +24,12 @@ history:
     status: backlog
     who: karolkow
     note: 'Widened: reach is broader than exotic classic ops — value is ledger-sourced but visibility is still op/event-GATED, so a Soroban invocation that moves value via ContractData with no parseable event and no op declaration also drops. Bumped low → medium.'
+  - date: 2026-09-06
+    status: superseded
+    who: karolkow
+    by: ['0540']
+    note: >
+      Superseded by 0540. The `net_settled` column was removed on 2026-09-04; the live half of this bug — the ledger reader blind to classic pools and claimable balances — is fixed there (`LiquidityPoolEntry` and `ClaimableBalanceEntry` as holders, reconciled by the events-vs-ledger oracle with 0 contradictions on 33 ledgers).
 ---
 
 # BUG: net-settled drops value for an asset that moved but the op did not declare

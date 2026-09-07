@@ -21,16 +21,27 @@ fn parse_ledger_surfaces_pool_state() {
     let batch = xdr_parser::deserialize_batch(&raw).expect("batch");
     for meta in batch.ledger_close_metas.iter() {
         let parsed = indexer::handler::process::parse_ledger(meta);
+        use xdr_parser::pool_family::PoolFamilyWrite;
+        let planes = parsed
+            .pool_family_writes
+            .iter()
+            .filter(|w| matches!(w, PoolFamilyWrite::RouterPlane(_)))
+            .count();
+        let instances = parsed
+            .pool_family_writes
+            .iter()
+            .filter(|w| matches!(w, PoolFamilyWrite::RouterPool(_)))
+            .count();
         eprintln!(
             "ledger {}: plane_pool_data={} pool_instances={} balances={} events={}",
             parsed.ledger.sequence,
-            parsed.plane_pool_data.len(),
-            parsed.pool_instances.len(),
+            planes,
+            instances,
             parsed.soroban_token_balances.len(),
             parsed.events.len(),
         );
         assert!(
-            parsed.plane_pool_data.len() + parsed.pool_instances.len() > 0,
+            planes + instances > 0,
             "hot-era ledger must surface pool state through parse_ledger"
         );
         // The exact seam the backfill sink drives: parsed → staging.
@@ -52,8 +63,7 @@ fn parse_ledger_surfaces_pool_state() {
                 lp_positions: &parsed.lp_positions,
                 contract_metadata_writes: &parsed.contract_metadata_writes,
                 soroban_token_balances: &parsed.soroban_token_balances,
-                plane_pool_data: &parsed.plane_pool_data,
-                pool_instances: &parsed.pool_instances,
+                pool_family_writes: &parsed.pool_family_writes,
                 sac_classic: &std::collections::HashMap::new(),
                 sac_overrides: &parsed.sac_overrides,
                 prior_wasm_verdicts: &std::collections::HashMap::new(),

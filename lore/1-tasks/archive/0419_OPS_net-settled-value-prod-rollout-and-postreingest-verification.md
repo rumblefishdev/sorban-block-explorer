@@ -2,7 +2,7 @@
 id: '0419'
 title: 'OPS: net-settled value column — prod rollout (ALTER → deploy → S3 re-ingest → assets.id → bloom) + post-reingest verification'
 type: OPS
-status: backlog
+status: superseded
 related_adr: ['0044']
 related_tasks: ['0393', '0417', '0383']
 tags:
@@ -67,6 +67,12 @@ history:
       hereby superseded - do not re-run it from this task.
       Also executed same day: DROP idx_oa_asset_issuer_id (the 0381
       decision), verified gone; ~97 MiB reclaimed.
+  - date: 2026-09-06
+    status: superseded
+    who: karolkow
+    by: ['0540']
+    note: >
+      Superseded by 0540. The column this rollout was for is gone; the S3 re-parse it owned is 0540's single targeted pass (`--only asset_transfers,transaction_memos,soroban_event_ops`), sequenced in that task's rollout plan with its own completion gate.
 ---
 
 # OPS: net-settled value column — prod rollout + post-reingest verification

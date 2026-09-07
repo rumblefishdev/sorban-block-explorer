@@ -629,12 +629,12 @@ CREATE TABLE IF NOT EXISTS liquidity_pools (
     asset_b_type         Int16,                  -- LEGACY pair shape
     asset_b_code         LowCardinality(String), -- LEGACY pair shape
     asset_b_issuer_id    Int64,                  -- LEGACY pair shape
-    fee_bps              Int32,                  -- both worlds; soroban: init_args[0] (u32 fee, the one arg every measured shape shares)
+    fee_bps              Int32,                  -- both worlds; soroban PER FAMILY: router = add_pool init_args[0] (u32, the one arg every measured shape shares); pair-factory = the vendor's compiled-in 30; config-factory = the pool's own CONFIG total_fee_bps (creation-time snapshot, mutable on chain)
     last_updated_ledger  Int64,
     pool_kind            UInt8                  DEFAULT 0,  -- 0=classic, 1=soroban contract
     legs                 Array(Int64)           DEFAULT [], -- PER-KIND id space (pool_kind says which): kind 1 = token-contract surrogates in emission order (= get_tokens(); == assets.id only for bespoke type-3 — SAC legs resolve via asset_sac); kind 0 = ASSET surrogates (pool_leg_asset_id, the lp_operation_amounts join key) — legs-migration step 2. 3- and 4-leg pools exist, so never a pair
     deployment_id        Int64                  DEFAULT 0,  -- soroban_contracts.id surrogate of the registering router; 0 = classic. Two live router deployments share Aquarius's code and only one is Aquarius (task 0374 T1) — labels resolve from this id at read time, so a new pool is labelled the moment it registers, with no editorial UPDATE to re-run
-    pool_type_raw        LowCardinality(String) DEFAULT ''  -- verbatim sym from add_pool (constant|stable|concentrated|...); un-normalised on purpose: three vocabularies exist for one shape and folding them is read-time interpretation
+    pool_type_raw        LowCardinality(String) DEFAULT ''  -- verbatim PER FAMILY, un-normalised on purpose (folding vocabularies is read-time interpretation): router = add_pool sym (constant|stable|concentrated|...); pair-factory = '' (the vendor emits no type); config-factory = the PairType u32 discriminant as text ("0" = XYK)
     -- share_token_id was removed from the write path before any deploy: the relation lives ONLY in pool_instance_state (a registry column would clobber the full row on RMT merge, and a permanent 0 misleads). Prod (which received the column via the registry backfill ALTER) drops it with: ALTER TABLE liquidity_pools DROP COLUMN share_token_id
 )
 ENGINE = ReplacingMergeTree(last_updated_ledger)
@@ -710,7 +710,7 @@ CREATE TABLE IF NOT EXISTS pool_instance_state (
     pool_id            FixedString(32),
     plane_id           Int64,
     share_token_id     Int64,
-    total_shares       Int128,  -- raw u128 from instance TotalShares; 0 = key absent (structural: concentrated + elastic). Read half of the soroban "Total shares" gap
+    total_shares       Int128,  -- raw u128 from instance TotalShares; 0 = key absent (structural: concentrated + elastic) — AND structurally 0 forever for the config-factory family (rows stage only on CONFIG writes; its live supply is the share token's own tracked supply, never this column). Read half of the soroban "Total shares" gap
     derived_at_ledger  Int64
 )
 ENGINE = ReplacingMergeTree(derived_at_ledger)
