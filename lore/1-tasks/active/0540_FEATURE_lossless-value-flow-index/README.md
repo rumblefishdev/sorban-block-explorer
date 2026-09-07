@@ -67,6 +67,21 @@ history:
       T09, T10; T05 waits only on the free-space check, T11 runs after rollout).
       Implementation starts at rollout step 1: parser, three row types and
       staging, the `--only` targeted write, DDL, tests, oracle, T11 check.
+  - date: '2026-09-07'
+    status: active
+    who: karolkow
+    note: >
+      Rollout steps 2-4 executed: release PR 452 merged (`098bef9d`), tag
+      `production-2026.09.07-1` deployed Compute + SPA in one combined window
+      with the pool adapters. L0 = 64 317 019, so the backfill range is
+      50 457 424 .. 64 317 019. The window ran with no pause and no downtime:
+      the four columns the new writer no longer sets were given DEFAULT NULL
+      first (metadata-only), which the driver accepts, so old and new writers
+      were simultaneously valid and the DROPs moved to after the backfills.
+      Found on the way: the deployed API read `net_settled` in the
+      transaction-list aggregate, so the runbook's drop-then-deploy order
+      would have 500'd every transaction list. Steps 5-7 (binary, backfill,
+      gates) remain.
 ---
 
 # Lossless value-flow index
@@ -485,6 +500,71 @@ per-pair cost (~740 rows) depends on `index_granularity`, not on table size,
 so production reads the same ~18 k rows per page against a 2 bn-row/hour
 quota. `FINAL` vs `GROUP BY` dedup is a step-8 choice on real parts (one part
 locally flatters `FINAL`).
+
+### Rollout steps 2–4 executed — deployed 2026-09-07
+
+Release PR #452 merged (`098bef9d`); tag `production-2026.09.07-1` deployed the
+Compute stack and the SPA. **L₀ = 64 317 019**, the first ledger the new
+indexer wrote to `asset_transfers` and therefore the backfill's `END`; the
+range left to backfill is `50 457 424 .. 64 317 019`.
+
+Verified from the surfaces that changed, not from a row count: the
+`Net settled` column is gone from the transaction lists (checked against the
+served bundle, 43 chunks, zero occurrences — the browser's own cache showed
+the old page first, the CloudFront invalidation had worked); `asset_transfers`,
+`soroban_event_ops`, `transaction_memos` and `pool_state_changes` all took live
+rows within minutes; ingest lag 3 s; zero Lambda errors across 265 indexer and
+21 API invocations; and no ledger carrying Soroban events since L₀ is missing
+its `soroban_event_ops` rows, so the deploy boundary has no hole.
+
+**The window needed neither a pause nor a schema change** (task owner, option
+B, reversing step 4 as written above). Two findings drove it:
+
+1. **The deployed API read the column step 4b drops.** `max(oaa.net_settled)`
+   sits in the transaction-list aggregate (`api/src/common/ch.rs`), joined with
+   `try_join!` and propagated with `?`, so dropping `net_settled` before the
+   deploy would have answered 500 on every transaction list — global, account,
+   asset and home — for the length of the deploy. The runbook did not flag it
+   because it reasoned about the writer only.
+2. **A default is enough.** The insert validation was read in the driver
+   source rather than recalled (`clickhouse-0.15.0`, `row_metadata.rs`,
+   `InsertMetadata::to_row`): a struct field with no matching column always
+   fails, but a **table column absent from the struct fails only when it has no
+   default**. The INSERT carries an explicit column list, so a defaulted extra
+   column is simply never mentioned.
+
+So the four columns the new writer no longer sets — `net_settled` and
+`liquidity_pool_snapshots.tvl` / `volume` / `fee_revenue` — were given
+`DEFAULT NULL` before the deploy. ClickHouse treats a default-only
+`MODIFY COLUMN` as metadata (confirmed after the fact: no mutation was
+created, the newest entry in `system.mutations` still predated the change by
+weeks). Old and new writers were then simultaneously valid against one schema,
+so the deploy ran with the indexer live, the read path unbroken and no ordering
+constraint at all. `liquidity_pools.share_token_id` already carried a default
+and was never window-critical.
+
+The five now-unwritten columns are dropped only **after** the backfills, which
+keeps a rollback to the previous binary free for the whole rollout:
+
+```sql
+ALTER TABLE operation_asset_appearances DROP COLUMN net_settled;
+ALTER TABLE liquidity_pool_snapshots DROP COLUMN tvl, DROP COLUMN volume, DROP COLUMN fee_revenue;
+ALTER TABLE liquidity_pools DROP COLUMN share_token_id;
+```
+
+Two pre-deploy checks worth repeating on any future window. A full schema audit
+compared all 35 tables in `init.sql` against `system.columns` on production —
+no column missing anywhere, and the five new tables byte-identical to the
+checked-in DDL. And the all-stack `cdk diff` in the tag's own run is the only
+place parked drift becomes visible: it showed `CloudWatch` differing and out of
+a plain tag's scope, shipped separately as
+`production-2026.09.07-2-CloudWatch`; every other stack matched.
+
+One process gap, recorded so it is not repeated: the post-merge fix
+`30753600` landed directly on `develop`, where no test workflow runs, so it
+reached the release PR without ever having been through CI. It was run locally
+first (420 parser tests, 135 persistence tests, clippy clean) and the release
+PR was its first full CI pass.
 
 ### Design decisions
 
