@@ -79,6 +79,7 @@ fn nft_real_corpus_invariants() {
             data,
             event_index: 0,
             op_index: None,
+            event_pos_in_op: None,
             stage: None,
             ledger_sequence: 1,
             created_at: 1_700_000_000,

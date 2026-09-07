@@ -69,6 +69,7 @@ fn main() {
                 prior_wasm_verdicts: &HashMap::new(),
                 prior_contract_verdicts: &HashMap::new(),
                 prior_contract_rows: &HashMap::new(),
+                asset_transfers: &parsed.asset_transfers,
             })
             .expect("stage");
             ledgers += 1;

@@ -61,6 +61,53 @@ use super::rows::*;
 use super::stage::StagedLedger;
 use crate::SchemaError;
 
+/// The set of tables a targeted (`--only`) re-parse persists.
+///
+/// Only tables that are **additive** may be targeted — a new derived table
+/// whose rows are deterministic from the XDR, carry no Tier-1 MIN-semantics
+/// column, and can be rolled back with `DROP TABLE`. The list is closed on
+/// purpose: adding a name here is a statement that the table meets those
+/// conditions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetedTables(Vec<&'static str>);
+
+impl TargetedTables {
+    pub const TARGETABLE: &'static [&'static str] = &[
+        "lp_operation_amounts",
+        "asset_transfers",
+        "transaction_memos",
+        "soroban_event_ops",
+    ];
+    /// Parse a comma-separated list; rejects unknown or duplicate names.
+    pub fn parse(spec: &str) -> Result<Self, String> {
+        let mut out: Vec<&'static str> = Vec::new();
+        for raw in spec.split(',') {
+            let name = raw.trim();
+            if name.is_empty() {
+                continue;
+            }
+            let Some(known) = Self::TARGETABLE.iter().copied().find(|t| *t == name) else {
+                return Err(format!(
+                    "`{name}` is not a targetable table (targetable: {})",
+                    Self::TARGETABLE.join(", ")
+                ));
+            };
+            if out.contains(&known) {
+                return Err(format!("`{name}` listed twice"));
+            }
+            out.push(known);
+        }
+        if out.is_empty() {
+            return Err("no table named".into());
+        }
+        Ok(Self(out))
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.0.iter().copied()
+    }
+}
+
 /// Lifecycle handle for a single 0204-schema partition write.
 ///
 /// Construct with [`PartitionWriter::open`]; stream ledgers through
@@ -113,6 +160,10 @@ struct TableInserts {
     /// Unified per-holder balances — ALL asset types (task 0331 Option A). The
     /// legacy `account_balances_current` insert was removed (single-write).
     unified_balances: Option<Insert<BalanceRow>>,
+    /// Task 0540 / 0541 — the value-flow tables.
+    asset_transfers: Option<Insert<AssetTransferRow>>,
+    transaction_memos: Option<Insert<TransactionMemoRow>>,
+    event_ops: Option<Insert<SorobanEventOpRow>>,
 }
 
 impl PartitionWriter {
@@ -144,10 +195,11 @@ impl PartitionWriter {
     /// crate chunk-sends them over HTTP transparently when the buffer
     /// fills. `ledgers` rows are **not** sent during this call;
     /// they're buffered as the partition's commit marker.
-    /// Stream ONLY this ledger's `lp_operation_amounts` rows — the targeted
-    /// write the 0279 backfill runs (task 0266 established the pattern: a
-    /// historical re-parse that needs one new derived table must not re-emit
-    /// every other one).
+    /// Stream ONLY the named tables' rows for this ledger — the targeted write
+    /// a historical re-parse for new derived tables runs (task 0279 set the
+    /// pattern with `lp_operation_amounts`; task 0540 generalised it to a list
+    /// so `asset_transfers`, `transaction_memos` and `soroban_event_ops` ride
+    /// one pass).
     ///
     /// Two things this deliberately does NOT do, both load-bearing:
     ///
@@ -158,19 +210,66 @@ impl PartitionWriter {
     /// - **No `ledgers` commit marker** — the marker means "fully ingested",
     ///   which a targeted pass has not done. The cost is that resume cannot
     ///   read progress from the DB: a crashed targeted run resumes by
-    ///   narrowing `--start`, and re-running a range is a no-op (the rows are
-    ///   deterministic and the RMT collapses them).
-    pub async fn write_lp_amounts_only(
+    ///   narrowing `--start`, and re-running a range is a no-op **for one
+    ///   decoder version** (identical rows collapse in the RMT). After a
+    ///   decoder change the old and new rows share a key and differ in
+    ///   content, and no column says which is which — run the 0503 tie
+    ///   query (`docs/backfills.md`, "keys with more than one distinct
+    ///   content") before trusting a re-run.
+    ///
+    /// Table names are validated by [`TargetedTables::parse`] before a run
+    /// starts, so an unknown name never reaches this method.
+    pub async fn write_only(
         &mut self,
         staged: &StagedLedger,
+        only: &TargetedTables,
     ) -> Result<(), SchemaError> {
-        write_rows(
-            &self.client,
-            &mut self.inserts.lp_amounts,
-            "lp_operation_amounts",
-            &staged.lp_amount_rows,
-        )
-        .await
+        for table in only.iter() {
+            match table {
+                "lp_operation_amounts" => {
+                    write_rows(
+                        &self.client,
+                        &mut self.inserts.lp_amounts,
+                        "lp_operation_amounts",
+                        &staged.lp_amount_rows,
+                    )
+                    .await?
+                }
+                "asset_transfers" => {
+                    write_rows(
+                        &self.client,
+                        &mut self.inserts.asset_transfers,
+                        "asset_transfers",
+                        &staged.asset_transfer_rows,
+                    )
+                    .await?
+                }
+                "transaction_memos" => {
+                    write_rows(
+                        &self.client,
+                        &mut self.inserts.transaction_memos,
+                        "transaction_memos",
+                        &staged.transaction_memo_rows,
+                    )
+                    .await?
+                }
+                "soroban_event_ops" => {
+                    write_rows(
+                        &self.client,
+                        &mut self.inserts.event_ops,
+                        "soroban_event_ops",
+                        &staged.event_op_rows,
+                    )
+                    .await?
+                }
+                other => {
+                    return Err(SchemaError::Staging(format!(
+                        "targeted write: table {other} is not targetable"
+                    )));
+                }
+            }
+        }
+        Ok(())
     }
 
     pub async fn write_ledger(&mut self, mut staged: StagedLedger) -> Result<(), SchemaError> {
@@ -211,6 +310,9 @@ impl PartitionWriter {
             nft_pending_rows,
             nft_ownership_pending_rows,
             unified_balance_rows,
+            asset_transfer_rows,
+            transaction_memo_rows,
+            event_op_rows,
         } = staged;
 
         write_rows(
@@ -394,6 +496,27 @@ impl PartitionWriter {
             &unified_balance_rows,
         )
         .await?;
+        write_rows(
+            &self.client,
+            &mut self.inserts.asset_transfers,
+            "asset_transfers",
+            &asset_transfer_rows,
+        )
+        .await?;
+        write_rows(
+            &self.client,
+            &mut self.inserts.transaction_memos,
+            "transaction_memos",
+            &transaction_memo_rows,
+        )
+        .await?;
+        write_rows(
+            &self.client,
+            &mut self.inserts.event_ops,
+            "soroban_event_ops",
+            &event_op_rows,
+        )
+        .await?;
 
         Ok(())
     }
@@ -451,6 +574,9 @@ impl PartitionWriter {
             nfts_pending,
             nft_ownership_pending,
             unified_balances,
+            asset_transfers,
+            transaction_memos,
+            event_ops,
         } = self.inserts;
         end(accounts).await?;
         end(account_entry_state).await?;
@@ -484,6 +610,9 @@ impl PartitionWriter {
         end(nfts_pending).await?;
         end(nft_ownership_pending).await?;
         end(unified_balances).await?;
+        end(asset_transfers).await?;
+        end(transaction_memos).await?;
+        end(event_ops).await?;
 
         // Step 2: commit marker. Open `ledgers` insert, write every
         // buffered row, end the request.
@@ -612,3 +741,7 @@ async fn end<T>(slot: Option<Insert<T>>) -> Result<(), SchemaError> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "writer_tests.rs"]
+mod tests;

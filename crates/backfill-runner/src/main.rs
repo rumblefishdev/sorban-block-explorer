@@ -25,6 +25,7 @@ mod util;
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
+use db_clickhouse::persist::TargetedTables;
 
 /// Default local scratch dir. CLI `--temp-dir` or `BACKFILL_TEMP_DIR`
 /// overrides. Single source of truth — `run` and `status` both receive
@@ -91,23 +92,27 @@ struct Cli {
     #[arg(long)]
     keep_partitions: bool,
 
-    /// Persist ONLY `lp_operation_amounts` — the targeted write a historical
-    /// re-parse for one new derived table needs (task 0279, pattern from
-    /// 0266).
+    /// Persist ONLY the named tables (comma-separated) — the targeted write a
+    /// historical re-parse for new derived tables needs. Task 0279 introduced
+    /// it as `--lp-amounts-only`; task 0540 generalised it so its three tables
+    /// ride one pass: `--only asset_transfers,transaction_memos,soroban_event_ops`.
+    /// `--only lp_operation_amounts` is the old behaviour.
     ///
     /// Without it, `run --reindex` re-emits EVERY table, which rewrites the 12
     /// Tier-1 columns that cannot survive parallel `ReplacingMergeTree`
     /// collapse and so owes a `repair-tier1` pass afterwards
-    /// (`docs/backfills.md` §3). With it the run is additive: one table, no
-    /// MIN-semantics column, indexer untouched, rollback is `DROP TABLE`.
+    /// (`docs/backfills.md` §3). With it the run is additive: named tables
+    /// only, no MIN-semantics column, indexer untouched, rollback is
+    /// `DROP TABLE`. Only tables that meet those conditions are accepted
+    /// (`TargetedTables::TARGETABLE`).
     ///
     /// Implies `--reindex` (the range is already ingested, so the resume
     /// filter would otherwise skip every ledger). No `ledgers` commit marker
     /// is written, so a crashed run resumes by narrowing `--start` — re-running
     /// a range is a no-op, the rows are deterministic and the RMT collapses
     /// them.
-    #[arg(long)]
-    lp_amounts_only: bool,
+    #[arg(long, value_parser = TargetedTables::parse)]
+    only: Option<TargetedTables>,
 
     /// Enable per-ledger and per-partition progress logs. Without this
     /// flag only warnings are shown during the run; the final summary
@@ -289,7 +294,7 @@ async fn main() {
         cli.ch_key.as_deref(),
         cli.ch_ca.as_deref(),
     )
-    .with_lp_amounts_only(cli.lp_amounts_only);
+    .with_only(cli.only.clone());
 
     match cli.command {
         Command::Run {

@@ -4,7 +4,7 @@
 //! INVOKE_HOST_FUNCTION operations get enriched extraction: contractId,
 //! functionName, functionArgs (ScVal decoded), and returnValue.
 
-use crate::envelope::{InnerTxRef, muxed_to_g_strkey};
+use crate::envelope::{InnerTxRef, muxed_id, muxed_to_g_strkey};
 use crate::scval::scval_to_typed_json;
 use crate::types::ExtractedOperation;
 use domain::OperationType;
@@ -79,9 +79,50 @@ pub fn extract_operations(
                 details,
                 asset_appearances,
                 counterparties,
+                source_muxed_id: op.source_account.as_ref().and_then(muxed_id),
+                destination_muxed_id: destination_muxed_id(&op.body),
             }
         })
         .collect()
+}
+
+/// The multiplexing id of an operation's destination when it is an `M…`
+/// address. Only the four classic operations whose destination is a
+/// `MuxedAccount` can carry one (CAP-27); everything else → `None`. The `G…`
+/// half is what `details.destination` already records.
+fn destination_muxed_id(body: &OperationBody) -> Option<u64> {
+    // Exhaustive on purpose: a future operation with a `MuxedAccount`
+    // destination must be a compile error here, not a silently NULL column.
+    match body {
+        OperationBody::Payment(op) => muxed_id(&op.destination),
+        OperationBody::PathPaymentStrictReceive(op) => muxed_id(&op.destination),
+        OperationBody::PathPaymentStrictSend(op) => muxed_id(&op.destination),
+        OperationBody::AccountMerge(destination) => muxed_id(destination),
+        // `CreateAccount.destination` is an `AccountId`, never muxed.
+        OperationBody::CreateAccount(_)
+        | OperationBody::ManageSellOffer(_)
+        | OperationBody::CreatePassiveSellOffer(_)
+        | OperationBody::SetOptions(_)
+        | OperationBody::ChangeTrust(_)
+        | OperationBody::AllowTrust(_)
+        | OperationBody::Inflation
+        | OperationBody::ManageData(_)
+        | OperationBody::BumpSequence(_)
+        | OperationBody::ManageBuyOffer(_)
+        | OperationBody::CreateClaimableBalance(_)
+        | OperationBody::ClaimClaimableBalance(_)
+        | OperationBody::BeginSponsoringFutureReserves(_)
+        | OperationBody::EndSponsoringFutureReserves
+        | OperationBody::RevokeSponsorship(_)
+        | OperationBody::Clawback(_)
+        | OperationBody::ClawbackClaimableBalance(_)
+        | OperationBody::SetTrustLineFlags(_)
+        | OperationBody::LiquidityPoolDeposit(_)
+        | OperationBody::LiquidityPoolWithdraw(_)
+        | OperationBody::InvokeHostFunction(_)
+        | OperationBody::ExtendFootprintTtl(_)
+        | OperationBody::RestoreFootprint(_) => None,
+    }
 }
 
 /// Per-operation results of a **successful** transaction.

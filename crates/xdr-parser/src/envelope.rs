@@ -41,6 +41,20 @@ pub fn muxed_to_g_strkey(m: &MuxedAccount) -> String {
     MuxedAccount::Ed25519(pk).to_string()
 }
 
+/// The 64-bit multiplexing id of an `M…` account, `None` for a plain `G…`.
+///
+/// The companion of [`muxed_to_g_strkey`]: that function keeps the account the
+/// ledger knows, this one keeps the id the ledger does not. Together they are
+/// the `M…` address, losslessly (SEP-23: `[type][32-byte key][8-byte id][crc]`).
+/// Task 0540 stores the id on the edge table (`from_muxed_id` / `to_muxed_id`)
+/// so a payment to an exchange's sub-account is not truncated to the exchange.
+pub fn muxed_id(m: &MuxedAccount) -> Option<u64> {
+    match m {
+        MuxedAccount::Ed25519(_) => None,
+        MuxedAccount::MuxedEd25519(med) => Some(med.id),
+    }
+}
+
 /// Extract envelopes in **apply order**, aligned 1:1 with `tx_processing`.
 ///
 /// Returned `Vec` length equals `tx_processing.len()`. Slot `i` carries the
@@ -289,6 +303,15 @@ impl<'a> InnerTxRef<'a> {
         match self {
             InnerTxRef::V0(tx) => MuxedAccount::from(&tx.source_account_ed25519).to_string(),
             InnerTxRef::V1(tx) => muxed_to_g_strkey(&tx.source_account),
+        }
+    }
+
+    /// The multiplexing id of the source account when it is an `M…` address
+    /// (see [`muxed_id`]). V0 envelopes predate muxed accounts → `None`.
+    pub fn source_muxed_id(&self) -> Option<u64> {
+        match self {
+            InnerTxRef::V0(_) => None,
+            InnerTxRef::V1(tx) => muxed_id(&tx.source_account),
         }
     }
 }

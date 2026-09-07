@@ -120,7 +120,25 @@ fn path_payment_two_accounts_net_not_gross() {
     assert_has(&ds, a, &credit("yXLM", yxlm), -1_181_030);
     assert_has(&ds, b, &LedgerAsset::Native, -1_189_541);
     assert_has(&ds, b, &credit("AFR", afr), 343_542_318);
-    assert_eq!(ds.len(), 4, "two accounts × two assets: {ds:#?}");
+    // Task 0540 / T03: the three classic pools the path crossed are holders now
+    // (reserve deltas, `L…` StrKey). Before, value routed through a pool
+    // netted to zero for the only holder the reader saw.
+    let pool_1 = "LA2JELY7IYLFR2DERYJR2W2TVHF6PKD4QWDDE5M2VARLEMAYDARTCEXX";
+    let pool_2 = "LA6FIZ2QNA4AXSTHBONIOV4IORFIYQISIAVMZFEVZRCBIWYHOFIRQEFA";
+    let xtroop = "GARPXWTVB4QAGDZDCKV7ERN5GJTTMBSLOGPQPHYRVLYOW24CFB2SWCR5";
+    let afrx = "GBDTAQDRSX3QOEAQQKYWRGOTFE5FHQTLIH5YAF2HGUY3PBKRXWDKBLHN";
+    assert_has(&ds, pool_1, &credit("yXLM", yxlm), 1_181_030);
+    assert_has(&ds, pool_1, &credit("XTROOP", xtroop), -428_489_993);
+    assert_has(&ds, pool_2, &credit("XTROOP", xtroop), 428_489_993);
+    assert_has(&ds, pool_2, &credit("AFRX", afrx), -21_667);
+    let pool_3 = "LCSP2WMRNLPDFJ3NQ5RX7IJEZLGACTVJ4FE7AMRBUONGNHLC5XIJGDOD";
+    assert_has(&ds, pool_3, &credit("AFRX", afrx), 21_667);
+    assert_has(&ds, pool_3, &credit("AFR", afr), -343_542_318);
+    assert_eq!(
+        ds.len(),
+        10,
+        "two accounts × two assets + three pools × two reserves: {ds:#?}"
+    );
 }
 
 #[test]
@@ -190,15 +208,15 @@ fn soroban_mint_credits_receiver_issuer_absent() {
 }
 
 #[test]
-fn claimable_balance_nets_passthrough_and_hits_0413_gap() {
+fn claimable_balance_nets_passthrough_and_sees_the_cb_holder() {
     // A complex create_claimable_balance tx. STARDUST flows GCPLNANL(issuer) →
     // GDHPJ6AC → GCUXCKRO (Horizon shows all 4 gross effects). Our reader NETS the
     // pass-through GDHPJ6AC to 0 (received then sent the same amount) and keeps only
     // GCUXCKRO's net +2_956_529.4 — matching the independent stellar-CLI decode 1:1.
-    // The dSTARDUST that GCUXCKRO (its issuer) minted into a claimable balance is NOT
-    // captured (an issuer has no trustline in its own asset; a `ClaimableBalanceEntry`
-    // is skipped) — the known **0413** issuer-side/CB understatement, which fails safe
-    // (blank, never a wrong figure).
+    // The dSTARDUST that GCUXCKRO (its issuer) minted into a claimable balance
+    // was the known **0413** understatement (an issuer has no trustline in its
+    // own asset, and the reader skipped `ClaimableBalanceEntry`). Task 0540 /
+    // T03 closed it: the claimable balance itself is the holder (`B…`).
     let Some(ds) = deltas("claimable_balance") else {
         eprintln!("skip claimable_balance");
         return;
@@ -216,14 +234,11 @@ fn claimable_balance_nets_passthrough_and_hits_0413_gap() {
         !ds.iter().any(|d| d.account == passthrough),
         "pass-through account must net to 0 → dropped: {ds:#?}"
     );
-    assert!(
-        !ds.iter()
-            .any(|d| matches!(&d.asset, LedgerAsset::Credit { code, .. } if code == "dSTARDUST")),
-        "issuer-side dSTARDUST into a CB is the known 0413 gap (not captured): {ds:#?}"
-    );
+    let cb = "BAALKCO6IRHEUHHXEXBQNI6ETZ3XPP5VMCJ475J5BQTIYAJ22VXMZPWH4M";
+    assert_has(&ds, cb, &credit("dSTARDUST", recv), 52_222_151_490_373);
     assert_eq!(
         ds.len(),
-        1,
-        "only the one net-settled leg survives: {ds:#?}"
+        2,
+        "the net-settled STARDUST leg and the claimable balance's dSTARDUST: {ds:#?}"
     );
 }

@@ -465,6 +465,7 @@ fn synthetic_tx(hash_seed: u8) -> ExtractedTransaction {
         operation_tree: None,
         memo_type: None,
         memo: None,
+        source_muxed_id: None,
         created_at: 1_700_000_000,
         parse_error: false,
         ledger_deltas: vec![],
@@ -612,6 +613,7 @@ fn prepare_extracts_signature_from_first_symbol_topic() {
         data: serde_json::json!({}),
         event_index: 0,
         op_index: None,
+        event_pos_in_op: None,
         stage: None,
         ledger_sequence: 10,
         created_at: 1_700_000_000,
@@ -676,6 +678,7 @@ fn prepare_drops_diagnostic_events_and_orphans() {
         data: serde_json::json!({}),
         event_index: 0,
         op_index: None,
+        event_pos_in_op: None,
         stage: None,
         ledger_sequence: 10,
         created_at: 1_700_000_000,
@@ -731,6 +734,8 @@ fn prepare_folds_identical_operations() {
         source_account: None,
         asset_appearances: vec![],
         counterparties: vec![],
+        source_muxed_id: None,
+        destination_muxed_id: None,
         details: serde_json::json!({
             "destination": dest,
             "asset": "native",
@@ -822,6 +827,8 @@ fn prepare_registers_op_counterparties_as_participants() {
         source_account: None,
         asset_appearances: vec![],
         counterparties: vec![seller.clone()],
+        source_muxed_id: None,
+        destination_muxed_id: None,
         details: serde_json::json!({ "selling": "native", "buying": "native" }),
     };
     let ops = vec![(tx.hash.clone(), vec![op])];
@@ -881,6 +888,8 @@ fn prepare_stages_operation_asset_appearances() {
             },
         ],
         counterparties: vec![],
+        source_muxed_id: None,
+        destination_muxed_id: None,
         details: serde_json::json!({ "selling": "native", "buying": format!("USDC:{issuer}") }),
     };
     let ops = vec![(tx.hash.clone(), vec![op])];
@@ -950,6 +959,8 @@ fn op_asset_appearances_dedup_same_asset_across_ops_in_one_tx() {
             },
         ],
         counterparties: vec![],
+        source_muxed_id: None,
+        destination_muxed_id: None,
         details: serde_json::json!({ "selling": "native", "buying": format!("USDC:{issuer}") }),
     };
     let ops = vec![(tx.hash.clone(), vec![mk(1), mk(2)])];
@@ -997,6 +1008,8 @@ fn prepare_path_payment_pool_ids_split_fold_and_sort() {
         source_account: None,
         asset_appearances: vec![],
         counterparties: vec![],
+        source_muxed_id: None,
+        destination_muxed_id: None,
         details: serde_json::json!({
             "destination": dest,
             "destAsset": "native",
@@ -1061,6 +1074,8 @@ fn prepare_sets_gross_volume_a_on_traded_pool_snapshot() {
         source_account: None,
         asset_appearances: vec![],
         counterparties: vec![],
+        source_muxed_id: None,
+        destination_muxed_id: None,
         details: serde_json::json!({
             "poolIds": [traded],
             "claimedAtoms": [
@@ -1130,6 +1145,8 @@ fn prepare_lp_deposit_single_element_pool_ids() {
         source_account: None,
         asset_appearances: vec![],
         counterparties: vec![],
+        source_muxed_id: None,
+        destination_muxed_id: None,
         details: serde_json::json!({ "liquidityPoolId": pool }),
     };
     let ops = vec![(tx.hash.clone(), vec![op])];
@@ -1178,6 +1195,8 @@ fn prepare_offer_op_pool_ids_from_details() {
         source_account: None,
         asset_appearances: vec![],
         counterparties: vec![],
+        source_muxed_id: None,
+        destination_muxed_id: None,
         details: serde_json::json!({
             "offerId": 0,
             "poolIds": [pool],
@@ -1222,6 +1241,8 @@ fn op_pool_rows_dedup_same_pool_across_ops_in_one_tx() {
         source_account: None,
         asset_appearances: vec![],
         counterparties: vec![],
+        source_muxed_id: None,
+        destination_muxed_id: None,
         details: serde_json::json!({ "liquidityPoolId": pool }),
     };
     let ops = vec![(tx.hash.clone(), vec![mk(1), mk(2)])];
@@ -1311,6 +1332,7 @@ fn prepare_emits_stub_soroban_contract_rows_for_referenced_only() {
         data: serde_json::json!({}),
         event_index: 0,
         op_index: None,
+        event_pos_in_op: None,
         stage: None,
         ledger_sequence: 10,
         created_at: 1_700_000_000,
@@ -1370,6 +1392,7 @@ fn prepare_does_not_duplicate_when_contract_both_deployed_and_referenced() {
         data: serde_json::json!({}),
         event_index: 0,
         op_index: None,
+        event_pos_in_op: None,
         stage: None,
         ledger_sequence: 10,
         created_at: 1_700_000_000,
@@ -1608,6 +1631,7 @@ fn prepare_applies_prior_wasm_verdict_when_wasm_uploaded_earlier_ledger() {
         prior_wasm_verdicts: &prior,
         prior_contract_verdicts: &std::collections::HashMap::new(),
         prior_contract_rows: &std::collections::HashMap::new(),
+        asset_transfers: &[],
     })
     .expect("prepare_with_sac_overrides");
 
@@ -1768,6 +1792,7 @@ fn prepare_routes_event_to_hot_via_prior_contract_verdict() {
         prior_wasm_verdicts: &std::collections::HashMap::new(),
         prior_contract_verdicts: &prior,
         prior_contract_rows: &std::collections::HashMap::new(),
+        asset_transfers: &[],
     })
     .expect("prepare_with_sac_overrides");
 
@@ -1810,6 +1835,7 @@ fn prepare_drops_event_when_prior_contract_verdict_is_sac() {
         prior_wasm_verdicts: &std::collections::HashMap::new(),
         prior_contract_verdicts: &prior,
         prior_contract_rows: &std::collections::HashMap::new(),
+        asset_transfers: &[],
     })
     .expect("prepare_with_sac_overrides");
 
@@ -1854,6 +1880,7 @@ fn prepare_routes_event_to_pending_without_prior_verdict() {
         prior_wasm_verdicts: &std::collections::HashMap::new(),
         prior_contract_verdicts: &std::collections::HashMap::new(),
         prior_contract_rows: &std::collections::HashMap::new(),
+        asset_transfers: &[],
     })
     .expect("prepare_with_sac_overrides");
 
@@ -1910,6 +1937,7 @@ fn prepare_prior_wasm_verdict_leaves_sac_untouched() {
         prior_wasm_verdicts: &prior,
         prior_contract_verdicts: &std::collections::HashMap::new(),
         prior_contract_rows: &std::collections::HashMap::new(),
+        asset_transfers: &[],
     })
     .expect("prepare_with_sac_overrides");
 
@@ -1964,6 +1992,7 @@ fn prepare_keeps_other_when_no_prior_verdict() {
         prior_wasm_verdicts: &std::collections::HashMap::new(),
         prior_contract_verdicts: &std::collections::HashMap::new(),
         prior_contract_rows: &std::collections::HashMap::new(),
+        asset_transfers: &[],
     })
     .expect("prepare_with_sac_overrides");
 
@@ -2117,6 +2146,7 @@ fn prepare_models_undeployed_sac_override_as_asset_not_contract() {
         prior_wasm_verdicts: &std::collections::HashMap::new(),
         prior_contract_verdicts: &std::collections::HashMap::new(),
         prior_contract_rows: &std::collections::HashMap::new(),
+        asset_transfers: &[],
     })
     .expect("prepare_with_sac_overrides");
 
@@ -2224,6 +2254,7 @@ fn prepare_skips_sac_override_when_contract_deployed_same_ledger() {
         prior_wasm_verdicts: &std::collections::HashMap::new(),
         prior_contract_verdicts: &std::collections::HashMap::new(),
         prior_contract_rows: &std::collections::HashMap::new(),
+        asset_transfers: &[],
     })
     .expect("prepare_with_sac_overrides");
 
@@ -2302,6 +2333,7 @@ fn prepare_trustline_only_ledger_emits_no_sac_facet() {
         prior_wasm_verdicts: &std::collections::HashMap::new(),
         prior_contract_verdicts: &std::collections::HashMap::new(),
         prior_contract_rows: &std::collections::HashMap::new(),
+        asset_transfers: &[],
     })
     .expect("prepare_with_sac_overrides");
 
@@ -2338,6 +2370,7 @@ fn executable_update_event(contract: &str) -> ExtractedEvent {
         data: serde_json::json!({"type":"vec","value":[]}),
         event_index: 0,
         op_index: None,
+        event_pos_in_op: None,
         stage: None,
         ledger_sequence: 555,
         created_at: 1_700_000_000,
@@ -3016,6 +3049,7 @@ fn prepare_registers_a_pool_from_a_real_add_pool_event() {
         ]}),
         event_index: 0,
         op_index: None,
+        event_pos_in_op: None,
         stage: None,
         ledger_sequence: 10,
         created_at: 1_700_000_000,
@@ -3072,6 +3106,7 @@ fn prepare_ignores_non_registrations_and_labelled_topics() {
         data: serde_json::json!({"type": "vec", "value": []}),
         event_index: 0,
         op_index: None,
+        event_pos_in_op: None,
         stage: None,
         ledger_sequence: 10,
         created_at: 1_700_000_000,
@@ -3140,6 +3175,7 @@ fn prepare_refuses_a_registration_with_an_unparseable_fee() {
         ]}),
         event_index: 0,
         op_index: None,
+        event_pos_in_op: None,
         stage: None,
         ledger_sequence: 10,
         created_at: 1_700_000_000,
@@ -3187,6 +3223,7 @@ fn prepare_refuses_a_registration_with_an_unparseable_fee() {
         prior_wasm_verdicts: &std::collections::HashMap::new(),
         prior_contract_verdicts: &std::collections::HashMap::new(),
         prior_contract_rows: &std::collections::HashMap::new(),
+        asset_transfers: &[],
     })
     .expect("prepare itself succeeds — one refused registration must not fail the ledger");
 
@@ -3221,6 +3258,7 @@ fn add_pool_event(tx_hash: &str, router: &str, pool: &str, source: EventSource) 
         ]}),
         event_index: 0,
         op_index: None,
+        event_pos_in_op: None,
         stage: None,
         ledger_sequence: 10,
         created_at: 1_700_000_000,
@@ -3281,6 +3319,7 @@ fn stage_registration(
         prior_wasm_verdicts: &std::collections::HashMap::new(),
         prior_contract_verdicts: &std::collections::HashMap::new(),
         prior_contract_rows: &std::collections::HashMap::new(),
+        asset_transfers: &[],
     })
     .expect("prepare")
 }
@@ -3350,6 +3389,7 @@ fn two_writers_for_one_pool_and_ledger_fold_to_one_row() {
         prior_wasm_verdicts: &std::collections::HashMap::new(),
         prior_contract_verdicts: &std::collections::HashMap::new(),
         prior_contract_rows: &std::collections::HashMap::new(),
+        asset_transfers: &[],
     })
     .expect("prepare");
 
@@ -3616,6 +3656,7 @@ fn prepare_stages_plane_writes_and_instance_share_tokens() {
         prior_wasm_verdicts: &std::collections::HashMap::new(),
         prior_contract_verdicts: &std::collections::HashMap::new(),
         prior_contract_rows: &std::collections::HashMap::new(),
+        asset_transfers: &[],
     })
     .expect("prepare");
 
@@ -3701,6 +3742,7 @@ fn new_pair_event(tx_hash: &str, factory: &str, pair: &str) -> ExtractedEvent {
         ledger_sequence: 10,
         event_index: 0,
         op_index: None,
+        event_pos_in_op: None,
         stage: None,
         created_at: 1_700_000_000,
     }
@@ -3758,6 +3800,7 @@ fn stage_factory_pair(
         pool_family_writes: &writes,
         sac_classic: &std::collections::HashMap::new(),
         sac_overrides: &[],
+        asset_transfers: &[],
         prior_wasm_verdicts: &std::collections::HashMap::new(),
         prior_contract_verdicts: &std::collections::HashMap::new(),
         prior_contract_rows: &std::collections::HashMap::new(),
@@ -3903,6 +3946,7 @@ fn liquidity_pool_created_event(tx_hash: &str, factory: &str, pool: &str) -> Ext
         ledger_sequence: 10,
         event_index: 0,
         op_index: None,
+        event_pos_in_op: None,
         stage: None,
         created_at: 1_700_000_000,
     }
@@ -3987,6 +4031,7 @@ fn stage_config_pool(
         pool_family_writes: &writes,
         sac_classic: &std::collections::HashMap::new(),
         sac_overrides: &[],
+        asset_transfers: &[],
         prior_wasm_verdicts: &std::collections::HashMap::new(),
         prior_contract_verdicts: &std::collections::HashMap::new(),
         prior_contract_rows: &std::collections::HashMap::new(),

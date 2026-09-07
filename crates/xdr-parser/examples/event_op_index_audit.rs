@@ -192,6 +192,40 @@ fn audit_archive_ledger(path: &str) {
                 let fp = format!("{:?}|{}|{}", e.contract_id, e.topics, e.data);
                 if !consensus.contains(&fp) {
                     diag_token_without_twin += 1;
+                    // Say which transaction and whether it produced ANY
+                    // consensus event — a failed Soroban call leaves only its
+                    // diagnostics behind, which is the benign explanation.
+                    let consensus_any = evs
+                        .iter()
+                        .filter(|x| x.source != EventSource::Diagnostic)
+                        .count();
+                    println!(
+                        "  TWINLESS diagnostic token: tx#{tx_seen} idx {} {} consensus_events={} consensus_token={} data={}",
+                        e.event_index,
+                        signature(&e.topics).unwrap_or_default(),
+                        consensus_any,
+                        consensus.len(),
+                        e.data
+                    );
+                    // The diagnostic trace in order (fn_call / fn_return /
+                    // error / token verbs) shows whether the twin-less event
+                    // sits inside a call that failed and was rolled back.
+                    let trace: Vec<String> = evs
+                        .iter()
+                        .filter(|x| x.source == EventSource::Diagnostic)
+                        .map(|x| {
+                            format!(
+                                "{}:{}",
+                                x.event_index,
+                                signature(&x.topics).unwrap_or_else(|| "?".into())
+                            )
+                        })
+                        .collect();
+                    println!("    diagnostic trace: {}", trace.join(" "));
+                    println!("    diagnostic topics : {}", e.topics);
+                    for c in &consensus {
+                        println!("    consensus token   : {c}");
+                    }
                 }
             }
             for ev in &evs {

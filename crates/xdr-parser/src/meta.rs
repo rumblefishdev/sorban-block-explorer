@@ -100,6 +100,32 @@ pub fn ledger_changes(meta: &TransactionMeta) -> Vec<&LedgerEntryChange> {
     }
 }
 
+/// The changes the transaction's OPERATIONS made: `tx_changes_before` and each
+/// operation's changes, in order — without `tx_changes_after`.
+///
+/// `tx_changes_after` is where a Soroban transaction's unused-resource-fee
+/// REFUND lands before Protocol 23 (from 23 on it moves to
+/// `TransactionResultMetaV1.post_tx_apply_fee_processing`, outside
+/// `TransactionMeta` altogether). A refund is a fee, not a movement, so a
+/// reader of value moved by the operations wants this view (task 0540 T04 —
+/// the events-vs-ledger oracle found the refund as 277 native credits with no
+/// transfer to explain them).
+pub fn operation_changes(meta: &TransactionMeta) -> Vec<&LedgerEntryChange> {
+    match meta {
+        TransactionMeta::V3(v3) => v3
+            .tx_changes_before
+            .iter()
+            .chain(v3.operations.iter().flat_map(|o| o.changes.iter()))
+            .collect(),
+        TransactionMeta::V4(v4) => v4
+            .tx_changes_before
+            .iter()
+            .chain(v4.operations.iter().flat_map(|o| o.changes.iter()))
+            .collect(),
+        TransactionMeta::V0(_) | TransactionMeta::V1(_) | TransactionMeta::V2(_) => Vec::new(),
+    }
+}
+
 fn collect<'a>(
     before: &'a LedgerEntryChanges,
     op_changes: impl Iterator<Item = &'a LedgerEntryChanges>,
