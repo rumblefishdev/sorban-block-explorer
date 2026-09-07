@@ -374,9 +374,17 @@ same admin-shape bug in `nft.rs` (`nfts.current_owner_id`), a `parser_version`
 column for every decoder-fed ReplacingMergeTree (13 tables), the reject
 alarm with a threshold, `<invalid-utf8>` in eight other decoders, a
 resolving side table for `L…`/`B…`, and the dead `net_settled` chain
-(~587 LOC, pre-existing). Before rollout step 6: MEMO_TEXT that is not UTF-8
-must be stored as bytes, and `to_muxed_id` must be inherited only by the
-transfer whose asset matches the operation's.
+(~587 LOC, pre-existing). Two more the judge put "before rollout step 6"
+landed the same day (task owner, option A): a MEMO_TEXT that is not valid
+UTF-8 is stored as hex under `memo_type = 'text_hex'` (never a placeholder
+a real memo could equal), and `to_muxed_id` is inherited only by the
+transfer that delivers the operation's own asset (`op_delivers`: Payment
+`asset`, path payments `destAsset`, AccountMerge native) — a path payment
+that crosses the recipient's own offer moves other assets to the same `G…`
+in the same operation, and those are not the exchange deposit the
+sub-account names. Also removed on the same pass: the `write_lp_amounts_only`
+delegate and the `LP_AMOUNTS` sentinel with its magic `iter()` (task owner:
+legacy; the e2e uses `TargetedTables::parse`).
 
 ### Storage knobs re-challenged by the task owner (2026-09-07)
 
