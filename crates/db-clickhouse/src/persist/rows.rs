@@ -519,13 +519,17 @@ pub struct TransactionMemoRow {
 }
 
 /// `soroban_event_ops` — narrow side table (task 0541): which operation
-/// emitted each event, keyed like `soroban_events`. Only per-operation
-/// events have a row; tx-level and diagnostic events have no operation and
-/// are absent rather than null.
+/// emitted each event. Keyed by the transaction's **position in the ledger**
+/// (`application_order`), not its id: a `transaction_id` is a random hash and
+/// cost 4.66 of the row's 5.07 bytes (measured), while the position
+/// compresses to ~0 — 0.63 B/row for the same information. The join to
+/// `soroban_events` goes through `transactions`, as `asset_transfers` does.
+/// Only per-operation events have a row; tx-level and diagnostic events have
+/// no operation and are absent rather than null.
 #[derive(Debug, Clone, PartialEq, Eq, Row, Serialize)]
 pub struct SorobanEventOpRow {
     pub ledger_sequence: i64,
-    pub transaction_id: i64,
+    pub application_order: i16,
     pub event_index: i16,
     pub op_index: i16,
     pub event_pos_in_op: i16,

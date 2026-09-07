@@ -1059,8 +1059,13 @@ ORDER BY (contract_id, ledger_sequence, transaction_id, event_index);
 -- `M…`: the multiplexing id goes to `*_muxed_id` (from the envelope, matched
 -- through `op_index`), so the account page finds the row AND the sub-account
 -- survives. `*_kind` is the StrKey's first letter — G account, C contract,
--- L classic pool, B claimable balance — i.e. which table resolves the id;
--- measured 84% G, 11–16% L, up to 5.8% B, up to 1.2% C.
+-- L classic pool, B claimable balance; measured 84% G, 11–16% L, up to
+-- 5.8% B, up to 1.2% C. G resolves through `accounts.id` and C through
+-- `soroban_contracts.id`; L and B have NO resolving table today (the id is
+-- `hash64(strkey)`, one-way; `liquidity_pools` is keyed by the raw 32-byte
+-- pool id, and claimable balances have no table), so for those the id is a
+-- comparison key only — a side table is a follow-up, buildable from
+-- `soroban_events` without another S3 pass.
 --
 -- Reads MUST be `FINAL` or `GROUP BY`: this table SUMS, and a version-less
 -- ReplacingMergeTree carries duplicate rows until merged — a duplicate here
@@ -1114,22 +1119,31 @@ PARTITION BY intDiv(ledger_sequence, 500000)
 ORDER BY (ledger_sequence, application_order);
 
 -- soroban_event_ops: which operation emitted each event (task 0541), as a
--- narrow side table keyed like `soroban_events`. `soroban_events` itself is
--- never given the column: 10.4 bn rows on a version-less RMT, and a rebuild
--- needs both copies on disk. Only per-operation events have a row — a
--- tx-level (fee) or diagnostic event has no operation, and absence is the
--- honest encoding of that. Retires the read-time XDR decode task 0453 pays on
--- every transaction-detail render.
+-- narrow side table. The canonical home of these two numbers is a column on
+-- `soroban_events` (stellar-rpc returns the operation index as an attribute
+-- of the event); this table is the VEHICLE that the S3 pass can write
+-- additively today and the SOURCE of the later per-partition fold into
+-- `soroban_events` (`ALTER … ADD COLUMN` + `ALTER … UPDATE`, which rewrites
+-- only the two new columns — task 0541 "Target shape"). Keyed by the
+-- transaction's position in the ledger, NOT by `transaction_id`: the id is a
+-- random hash that cost 4.66 of a 5.07-byte row (measured 2026-09-07), the
+-- position compresses to ~0 — 0.63 B/row, ~3.6 GB on 5.7 bn rows instead of
+-- ~29 GB. The join to `soroban_events` goes through `transactions`
+-- (`ledger_sequence, application_order` → `id`), as `asset_transfers` does.
+-- Only per-operation events have a row — a tx-level (fee) or diagnostic
+-- event has no operation, and absence is the honest encoding of that.
+-- Retires the read-time XDR decode task 0453 pays on every transaction-detail
+-- render.
 CREATE TABLE IF NOT EXISTS soroban_event_ops (
     ledger_sequence    Int64                   CODEC(ZSTD(3)),
-    transaction_id     Int64                   CODEC(ZSTD(3)),
+    application_order  Int16                   CODEC(ZSTD(3)),
     event_index        Int16                   CODEC(ZSTD(3)),
     op_index           Int16                   CODEC(ZSTD(3)),
     event_pos_in_op    Int16                   CODEC(ZSTD(3))
 )
 ENGINE = ReplacingMergeTree
 PARTITION BY intDiv(ledger_sequence, 500000)
-ORDER BY (ledger_sequence, transaction_id, event_index);
+ORDER BY (ledger_sequence, application_order, event_index);
 
 -- `amount` is a **fold count of invocation-tree nodes** aggregated into
 -- this (contract, transaction, ledger) trio (per ADR 0034 PG-side

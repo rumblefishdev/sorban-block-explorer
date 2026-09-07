@@ -323,20 +323,19 @@ fn event_ops_cover_per_op_events_only() {
         ],
     )];
     let out = build_value_flow_rows(64_259_660, &txs, &[], &evs, &[]).unwrap();
-    let hash = decode_hash(TX, "tx.hash").unwrap();
     assert_eq!(
         out.event_ops,
         vec![
             SorobanEventOpRow {
                 ledger_sequence: 64_259_660,
-                transaction_id: ids::transaction_id(&hash),
+                application_order: 1,
                 event_index: 1,
                 op_index: 0,
                 event_pos_in_op: 0
             },
             SorobanEventOpRow {
                 ledger_sequence: 64_259_660,
-                transaction_id: ids::transaction_id(&hash),
+                application_order: 1,
                 event_index: 2,
                 op_index: 1,
                 event_pos_in_op: 0

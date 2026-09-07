@@ -228,7 +228,7 @@ async fn write_only_persists_the_value_flow_tables_and_nothing_else() {
         }],
         event_op_rows: vec![SorobanEventOpRow {
             ledger_sequence: LEDGER,
-            transaction_id: 7,
+            application_order: 7,
             event_index: 2,
             op_index: 0,
             event_pos_in_op: 0,

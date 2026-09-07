@@ -24,7 +24,7 @@ use xdr_parser::{EventSource, ExtractedAssetTransfer, TokenEventKind};
 
 use super::ids;
 use super::rows::{AssetTransferRow, SorobanEventOpRow, TransactionMemoRow};
-use super::stage::{decode_hash, event_asset_surrogate};
+use super::stage::event_asset_surrogate;
 use crate::SchemaError;
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -37,7 +37,6 @@ pub struct ValueFlowRows {
 /// Per-transaction facts the edge rows borrow from the envelope.
 struct TxFacts<'a> {
     application_order: i16,
-    transaction_id: i64,
     source_account: &'a str,
     source_muxed_id: Option<u64>,
 }
@@ -55,12 +54,10 @@ pub fn build_value_flow_rows(
     for (idx, tx) in transactions.iter().enumerate() {
         let application_order = i16::try_from(idx + 1)
             .map_err(|_| SchemaError::Staging("application_order overflow (>i16)".into()))?;
-        let hash = decode_hash(&tx.hash, "tx.hash")?;
         tx_by_hash.insert(
             tx.hash.as_str(),
             TxFacts {
                 application_order,
-                transaction_id: ids::transaction_id(&hash),
                 source_account: &tx.source_account,
                 source_muxed_id: tx.source_muxed_id,
             },
@@ -148,7 +145,7 @@ pub fn build_value_flow_rows(
             };
             out.event_ops.push(SorobanEventOpRow {
                 ledger_sequence,
-                transaction_id: tx.transaction_id,
+                application_order: tx.application_order,
                 event_index: narrow(ev.event_index, "event_index")?,
                 op_index: narrow(op_index, "op_index")?,
                 event_pos_in_op: narrow(pos, "event_pos_in_op")?,
