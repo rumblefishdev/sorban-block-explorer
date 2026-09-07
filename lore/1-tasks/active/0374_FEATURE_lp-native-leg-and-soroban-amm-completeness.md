@@ -1441,3 +1441,15 @@ the pre-commit gate, not this branch).
 Production verification, in the order now written into the runbooks: DDL →
 indexer → three catch-up backfills → window-closure check → only then the read
 surfaces. Nothing here is verified on production yet.
+
+### Migration tiebreak chain-verified (2026-08-29)
+
+Karol challenged whether "highest event_index wins" was measured or assumed.
+Verified at the arbiter: the one dual-mint tx in history (ledger 53,552,533,
+pool `CDE57N…GX2HC`) minted the same amount to the same recipient from two
+different contracts — event_index 4 = `CA4J7OKJ…YMS4`, event_index 5 =
+`CBWYOO6A…RUMC`. Live instance storage via raw `getLedgerEntries` says
+`TokenShare -> CBWYOO6A…RUMC` — the **highest-index** candidate. Rule
+confirmed, not just plausible. Population of ties in the 85,586-tx corpus
+is exactly this one tx. The rule is a cross-check anyway: the primary
+share-token source is instance `TokenShare` state, which cannot tie.

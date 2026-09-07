@@ -82,7 +82,8 @@ pub async fn list_participants(
 
     // Soroban pool with no share-token relation: the relation is either not
     // yet derived (indexing lag) or structurally absent (a concentrated pool
-    // mints no share token — its positions are NFTs, not yet indexed). An
+    // mints no share token — its positions are (owner, tick-range) entries
+    // in its own storage, not yet indexed). An
     // empty 200 would read as "no participants" about a pool that HAS them,
     // so this refuses explicitly instead (same shape as the min_tvl refusal).
     if pool_kind == 1 && share_token_id == 0 {
