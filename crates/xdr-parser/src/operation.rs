@@ -91,12 +91,37 @@ pub fn extract_operations(
 /// `MuxedAccount` can carry one (CAP-27); everything else → `None`. The `G…`
 /// half is what `details.destination` already records.
 fn destination_muxed_id(body: &OperationBody) -> Option<u64> {
+    // Exhaustive on purpose: a future operation with a `MuxedAccount`
+    // destination must be a compile error here, not a silently NULL column.
     match body {
         OperationBody::Payment(op) => muxed_id(&op.destination),
         OperationBody::PathPaymentStrictReceive(op) => muxed_id(&op.destination),
         OperationBody::PathPaymentStrictSend(op) => muxed_id(&op.destination),
         OperationBody::AccountMerge(destination) => muxed_id(destination),
-        _ => None,
+        // `CreateAccount.destination` is an `AccountId`, never muxed.
+        OperationBody::CreateAccount(_)
+        | OperationBody::ManageSellOffer(_)
+        | OperationBody::CreatePassiveSellOffer(_)
+        | OperationBody::SetOptions(_)
+        | OperationBody::ChangeTrust(_)
+        | OperationBody::AllowTrust(_)
+        | OperationBody::Inflation
+        | OperationBody::ManageData(_)
+        | OperationBody::BumpSequence(_)
+        | OperationBody::ManageBuyOffer(_)
+        | OperationBody::CreateClaimableBalance(_)
+        | OperationBody::ClaimClaimableBalance(_)
+        | OperationBody::BeginSponsoringFutureReserves(_)
+        | OperationBody::EndSponsoringFutureReserves
+        | OperationBody::RevokeSponsorship(_)
+        | OperationBody::Clawback(_)
+        | OperationBody::ClawbackClaimableBalance(_)
+        | OperationBody::SetTrustLineFlags(_)
+        | OperationBody::LiquidityPoolDeposit(_)
+        | OperationBody::LiquidityPoolWithdraw(_)
+        | OperationBody::InvokeHostFunction(_)
+        | OperationBody::ExtendFootprintTtl(_)
+        | OperationBody::RestoreFootprint(_) => None,
     }
 }
 

@@ -210,7 +210,16 @@ fn record_removed(acc: &mut BTreeMap<(String, LedgerAsset), Balances>, key: &Led
         LedgerKey::ClaimableBalance(k) => {
             Some(ScAddress::ClaimableBalance(k.balance_id.clone()).to_string())
         }
-        _ => None,
+        // Accounts and trustlines keep their own (asset, holder) key in the
+        // map and are zeroed by the caller; the rest hold no balance.
+        LedgerKey::Account(_)
+        | LedgerKey::Trustline(_)
+        | LedgerKey::Offer(_)
+        | LedgerKey::Data(_)
+        | LedgerKey::ContractData(_)
+        | LedgerKey::ContractCode(_)
+        | LedgerKey::ConfigSetting(_)
+        | LedgerKey::Ttl(_) => None,
     };
     if let Some(holder) = holder {
         for ((account, _), b) in acc.iter_mut() {
@@ -275,7 +284,15 @@ fn entry_balances(entry: &LedgerEntry) -> Vec<(String, LedgerAsset, i128)> {
             classic_asset(&cb.asset),
             i128::from(cb.amount),
         )],
-        _ => Vec::new(),
+        // No balance lives in these; an offer's value surfaces as the maker's
+        // trustline change when it is crossed. Exhaustive so that a new entry
+        // type is a compile error here, not a silent blind spot (the pool and
+        // claimable-balance blind spots cost 7.6% of transactions — 0412/0413).
+        LedgerEntryData::Offer(_)
+        | LedgerEntryData::Data(_)
+        | LedgerEntryData::ContractCode(_)
+        | LedgerEntryData::ConfigSetting(_)
+        | LedgerEntryData::Ttl(_) => Vec::new(),
     }
 }
 
