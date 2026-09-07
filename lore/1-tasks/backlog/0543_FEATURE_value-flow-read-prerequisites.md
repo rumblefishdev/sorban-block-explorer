@@ -116,6 +116,7 @@ witness only.
 
 ## Notes
 
-Tracked here but owned by 0540's rollout (before step 6): MEMO_TEXT that is
-not valid UTF-8 stored as bytes (`memo_type = "text_hex"`); `to_muxed_id`
-inherited only by the transfer whose asset matches the operation's.
+Both "before step 6" items landed on 0540's branch on 2026-09-07: MEMO_TEXT
+that is not valid UTF-8 is stored as hex (`memo_type = "text_hex"`), and
+`to_muxed_id` is inherited only by the transfer that delivers the
+operation's own asset.
