@@ -157,25 +157,11 @@ fn event_asset(topic: Option<&Value>) -> EventAsset {
 }
 
 fn string_topic(topic: &Value) -> Option<String> {
-    if topic.get("type").and_then(Value::as_str)? != "string" {
-        return None;
-    }
-    topic
-        .get("value")
-        .and_then(Value::as_str)
-        .map(str::to_string)
+    crate::scval::typed_str(topic, "string").map(str::to_string)
 }
 
 fn address_topic(topic: &Value) -> Option<String> {
-    if topic.get("type").and_then(Value::as_str)? != "address" {
-        return None;
-    }
-    let s = topic.get("value").and_then(Value::as_str)?;
-    if s.is_empty() {
-        None
-    } else {
-        Some(s.to_string())
-    }
+    crate::scval::address(topic).map(str::to_string)
 }
 
 #[cfg(test)]

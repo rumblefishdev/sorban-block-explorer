@@ -41,8 +41,8 @@ pub mod envelope;
 mod xdr_limits;
 
 pub use asset_transfers::{
-    AssetTransferExtraction, ExtractedAssetTransfer, RejectCounts, TokenAmount, TransferReject,
-    extract_asset_transfers, token_event_amount,
+    AssetTransferExtraction, ExtractedAssetTransfer, RejectCounts, RejectKind, TokenAmount,
+    TransferReject, extract_asset_transfers, token_event_amount,
 };
 pub use classification::{ContractClassification, classify_contract_from_wasm_spec};
 pub use contract::extract_contract_interfaces;

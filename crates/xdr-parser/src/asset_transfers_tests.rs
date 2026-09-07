@@ -216,11 +216,13 @@ fn a_foreign_contract_claiming_a_labelled_asset_is_rejected_not_stored() {
     assert!(out.transfers.is_empty());
     assert_eq!(
         out.rejects,
-        vec![TransferReject::EmitterNotSac {
+        vec![TransferReject {
             transaction_hash: "ab".repeat(32),
             event_index: 3,
-            emitter: OTHER_CONTRACT.into(),
-            asset: format!("KALE:{KALE_ISSUER}"),
+            emitter: Some(OTHER_CONTRACT.into()),
+            kind: RejectKind::EmitterNotSac {
+                asset: format!("KALE:{KALE_ISSUER}"),
+            },
         }]
     );
 }
@@ -277,7 +279,7 @@ fn restated_mint_is_rejected_and_counted_never_a_phantom_row() {
     assert!(out.transfers.is_empty());
     assert!(matches!(
         out.rejects.as_slice(),
-        [TransferReject::UnrecognisedPayload { kind: TokenEventKind::Mint, data_type, .. }]
+        [TransferReject { kind: RejectKind::UnrecognisedPayload { verb: TokenEventKind::Mint, data_type }, .. }]
             if data_type == "map"
     ));
 }
@@ -316,7 +318,11 @@ fn a_token_verb_outside_an_operation_is_a_reject() {
     assert!(out.transfers.is_empty());
     assert!(matches!(
         out.rejects.as_slice(),
-        [TransferReject::NoOperation { event_index: 3, .. }]
+        [TransferReject {
+            event_index: 3,
+            kind: RejectKind::NoOperation,
+            ..
+        }]
     ));
 }
 
@@ -364,9 +370,11 @@ fn a_token_verb_in_an_unknown_topic_shape_is_a_reject_not_silence() {
     assert!(out.transfers.is_empty());
     assert!(matches!(
         out.rejects.as_slice(),
-        [TransferReject::UnrecognisedTopics {
-            kind: TokenEventKind::Mint,
-            topic_count: 1,
+        [TransferReject {
+            kind: RejectKind::UnrecognisedTopics {
+                verb: TokenEventKind::Mint,
+                topic_count: 1
+            },
             ..
         }]
     ));
@@ -389,7 +397,12 @@ fn a_token_verb_without_an_emitter_is_a_reject() {
     assert!(out.transfers.is_empty());
     assert!(matches!(
         out.rejects.as_slice(),
-        [TransferReject::NoEmitter { event_index: 3, .. }]
+        [TransferReject {
+            event_index: 3,
+            emitter: None,
+            kind: RejectKind::NoEmitter,
+            ..
+        }]
     ));
     assert_eq!(out.reject_counts().no_emitter, 1);
 }

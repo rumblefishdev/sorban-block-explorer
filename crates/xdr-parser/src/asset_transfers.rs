@@ -35,6 +35,7 @@ use tracing::debug;
 
 use crate::event_filters::{EventAsset, TokenEventKind, parse_token_event, token_verb};
 use crate::sac::sac_override_from_event_topics;
+use crate::scval::{map_get, typed_str};
 use crate::types::{EventSource, ExtractedEvent};
 
 /// What a token event's `data` payload says about the amount.
@@ -57,50 +58,35 @@ pub enum TokenAmount {
 /// not movements), `map{token_id}` (non-fungible). The map is read **by key**,
 /// never positionally.
 pub fn token_event_amount(data: &Value) -> TokenAmount {
-    match data.get("type").and_then(Value::as_str) {
-        Some("i128") | Some("u128") => match scalar_i128(data) {
+    if let Some(n) = scalar_i128(data) {
+        return TokenAmount::Fungible(n);
+    }
+    if typed_str(data, "i128").is_some() || typed_str(data, "u128").is_some() {
+        // A scalar of the right type whose value does not parse (a `u128`
+        // above `i128::MAX`): not storable, so not a movement we recognise.
+        return TokenAmount::Unrecognised;
+    }
+    if let Some(amount) = map_get(data, "amount") {
+        return match scalar_i128(amount) {
             Some(n) => TokenAmount::Fungible(n),
             None => TokenAmount::Unrecognised,
-        },
-        Some("map") => {
-            let entries = data.get("value").and_then(Value::as_array);
-            let Some(entries) = entries else {
-                return TokenAmount::Unrecognised;
-            };
-            let field = |name: &str| {
-                entries.iter().find_map(|e| {
-                    let key = e.get("key")?;
-                    (key.get("type").and_then(Value::as_str) == Some("sym")
-                        && key.get("value").and_then(Value::as_str) == Some(name))
-                    .then(|| e.get("value"))
-                    .flatten()
-                })
-            };
-            if let Some(amount) = field("amount") {
-                return match scalar_i128(amount) {
-                    Some(n) => TokenAmount::Fungible(n),
-                    None => TokenAmount::Unrecognised,
-                };
-            }
-            if field("token_id").is_some() {
-                return TokenAmount::NonFungible;
-            }
-            TokenAmount::Unrecognised
-        }
-        _ => TokenAmount::Unrecognised,
+        };
     }
+    if map_get(data, "token_id").is_some() {
+        return TokenAmount::NonFungible;
+    }
+    TokenAmount::Unrecognised
 }
 
 /// An `i128` / `u128` typed-JSON scalar (`{"type":"i128","value":"123"}`).
-/// A `u128` above `i128::MAX` cannot be stored and reads as unrecognised.
+/// A `u128` above `i128::MAX` cannot be stored and reads as `None`.
 fn scalar_i128(v: &Value) -> Option<i128> {
-    match v.get("type").and_then(Value::as_str)? {
-        "i128" | "u128" => v.get("value").and_then(Value::as_str)?.parse::<i128>().ok(),
-        _ => None,
-    }
+    typed_str(v, "i128")
+        .or_else(|| typed_str(v, "u128"))?
+        .parse::<i128>()
+        .ok()
 }
 
-/// One token movement, decoded — the parser-side row of `asset_transfers`.
 /// Addresses are the StrKeys the event carried; the persistence layer resolves
 /// them to surrogates and splits an `M…` into its `G…` and id.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,49 +110,40 @@ pub struct ExtractedAssetTransfer {
     pub amount: Option<i128>,
 }
 
-/// Why an event with a token verb did not become a row.
+/// An event with a token verb that did not become a row, and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TransferReject {
+pub struct TransferReject {
+    pub transaction_hash: String,
+    pub event_index: u32,
+    /// `None` only for [`RejectKind::NoEmitter`].
+    pub emitter: Option<String>,
+    pub kind: RejectKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RejectKind {
     /// A labelled event whose emitter is not the asset's derived SAC — the
     /// spoofing shape. `asset` is the label the event claimed.
-    EmitterNotSac {
-        transaction_hash: String,
-        event_index: u32,
-        emitter: String,
-        asset: String,
-    },
+    EmitterNotSac { asset: String },
     /// A token verb with a payload that is neither an amount nor a token id.
     UnrecognisedPayload {
-        transaction_hash: String,
-        event_index: u32,
-        emitter: String,
-        kind: TokenEventKind,
+        verb: TokenEventKind,
         data_type: String,
     },
     /// A token verb outside the per-operation container — measured never to
     /// happen; if it does, the official identity is undefined for it.
-    NoOperation {
-        transaction_hash: String,
-        event_index: u32,
-        emitter: String,
-    },
+    NoOperation,
     /// A token verb whose topics are not one of the decoded shapes (measured:
     /// the 1-topic `mint` / `burn` of concentrated-liquidity position
     /// contracts, 123 in 100 000 ledgers). Counted so that a new shape shows
     /// up as a number, never as silence.
     UnrecognisedTopics {
-        transaction_hash: String,
-        event_index: u32,
-        emitter: String,
-        kind: TokenEventKind,
+        verb: TokenEventKind,
         topic_count: usize,
     },
     /// A token verb with no emitting contract — never observed (0 of 12 237);
     /// without an emitter there is no asset identity to write.
-    NoEmitter {
-        transaction_hash: String,
-        event_index: u32,
-    },
+    NoEmitter,
 }
 
 /// How many rejects of each kind — what the caller logs once per ledger.
@@ -189,12 +166,12 @@ impl RejectCounts {
     }
 
     pub fn add(&mut self, reject: &TransferReject) {
-        match reject {
-            TransferReject::EmitterNotSac { .. } => self.emitter_not_sac += 1,
-            TransferReject::UnrecognisedPayload { .. } => self.unrecognised_payload += 1,
-            TransferReject::NoOperation { .. } => self.no_operation += 1,
-            TransferReject::UnrecognisedTopics { .. } => self.unrecognised_topics += 1,
-            TransferReject::NoEmitter { .. } => self.no_emitter += 1,
+        match reject.kind {
+            RejectKind::EmitterNotSac { .. } => self.emitter_not_sac += 1,
+            RejectKind::UnrecognisedPayload { .. } => self.unrecognised_payload += 1,
+            RejectKind::NoOperation => self.no_operation += 1,
+            RejectKind::UnrecognisedTopics { .. } => self.unrecognised_topics += 1,
+            RejectKind::NoEmitter => self.no_emitter += 1,
         }
     }
 
@@ -246,16 +223,21 @@ pub fn extract_asset_transfers(
         };
         // A token verb without an emitting contract has never been observed
         // (0 of 12 237); without one there is no asset identity to write.
+        let reject = |emitter: Option<&str>, kind: RejectKind| TransferReject {
+            transaction_hash: ev.transaction_hash.clone(),
+            event_index: ev.event_index,
+            emitter: emitter.map(str::to_string),
+            kind,
+        };
+        // A token verb without an emitting contract has never been observed
+        // (0 of 12 237); without one there is no asset identity to write.
         let Some(emitter) = ev.contract_id.clone() else {
             debug!(
                 target: "xdr_parser::asset_transfers",
                 tx = %ev.transaction_hash, event_index = ev.event_index,
                 "token verb with no emitting contract — rejected"
             );
-            out.rejects.push(TransferReject::NoEmitter {
-                transaction_hash: ev.transaction_hash.clone(),
-                event_index: ev.event_index,
-            });
+            out.rejects.push(reject(None, RejectKind::NoEmitter));
             continue;
         };
         let Some(token) = parse_token_event(&ev.topics) else {
@@ -263,16 +245,16 @@ pub fn extract_asset_transfers(
             debug!(
                 target: "xdr_parser::asset_transfers",
                 tx = %ev.transaction_hash, event_index = ev.event_index, %emitter,
-                kind = ?kind, topic_count,
+                verb = ?kind, topic_count,
                 "token verb in a topic shape the decoder does not know — rejected"
             );
-            out.rejects.push(TransferReject::UnrecognisedTopics {
-                transaction_hash: ev.transaction_hash.clone(),
-                event_index: ev.event_index,
-                emitter,
-                kind,
-                topic_count,
-            });
+            out.rejects.push(reject(
+                Some(&emitter),
+                RejectKind::UnrecognisedTopics {
+                    verb: kind,
+                    topic_count,
+                },
+            ));
             continue;
         };
 
@@ -282,11 +264,8 @@ pub fn extract_asset_transfers(
                 tx = %ev.transaction_hash, event_index = ev.event_index, %emitter,
                 "token verb outside the per-operation container — rejected"
             );
-            out.rejects.push(TransferReject::NoOperation {
-                transaction_hash: ev.transaction_hash.clone(),
-                event_index: ev.event_index,
-                emitter,
-            });
+            out.rejects
+                .push(reject(Some(&emitter), RejectKind::NoOperation));
             continue;
         };
 
@@ -307,12 +286,8 @@ pub fn extract_asset_transfers(
                 tx = %ev.transaction_hash, event_index = ev.event_index, %emitter, %asset,
                 "labelled token event whose emitter is not the asset's SAC — rejected"
             );
-            out.rejects.push(TransferReject::EmitterNotSac {
-                transaction_hash: ev.transaction_hash.clone(),
-                event_index: ev.event_index,
-                emitter,
-                asset,
-            });
+            out.rejects
+                .push(reject(Some(&emitter), RejectKind::EmitterNotSac { asset }));
             continue;
         }
 
@@ -330,16 +305,16 @@ pub fn extract_asset_transfers(
                 debug!(
                     target: "xdr_parser::asset_transfers",
                     tx = %ev.transaction_hash, event_index = ev.event_index, %emitter,
-                    kind = ?token.kind, %data_type,
+                    verb = ?token.kind, %data_type,
                     "token verb with an unrecognised payload — rejected, not a movement"
                 );
-                out.rejects.push(TransferReject::UnrecognisedPayload {
-                    transaction_hash: ev.transaction_hash.clone(),
-                    event_index: ev.event_index,
-                    emitter,
-                    kind: token.kind,
-                    data_type,
-                });
+                out.rejects.push(reject(
+                    Some(&emitter),
+                    RejectKind::UnrecognisedPayload {
+                        verb: token.kind,
+                        data_type,
+                    },
+                ));
                 continue;
             }
         };
