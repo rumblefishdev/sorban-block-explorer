@@ -2,7 +2,7 @@
 id: '0518'
 title: 'Soroswap pool adapter — reserves from sync, volume from swap'
 type: FEATURE
-status: active
+status: done
 related_adr: []
 related_tasks: ['0516', '0517', '0374', '0008']
 tags:
@@ -24,6 +24,25 @@ history:
       Activated after 0517's rule landed (PR #443) and the pre-adapter
       probes settled every architecture seam. Ordering re-reversed to
       Soroswap-first on the per-swap re-measurement (see 0516).
+  - date: '2026-09-07'
+    status: done
+    who: karolkow
+    note: >
+      Write half SHIPPED in PR #447 (merged to develop): pair-factory
+      adapter, the decision-4a PoolFamilyWrite seam, AND the third
+      (config-factory / Phoenix-family) adapter with the two-stage
+      registration gate. Evidence: 664 unit/cross tests; whole-population
+      corpora (Soroswap 235/235 with gapless vendor counters, config
+      family 20/20 across 6 factory deployments); zero-FP sieves on raw
+      ledgers; full-runner e2es into a fresh DB cross-checked against
+      production, raw ledgers and live RPC on all three families; an
+      external cross-verification against the sibling project's registry
+      (theirs ⊆ ours on every venue) which also caught and closed the
+      config-family early-era gap. Six-agent deep review: APPROVE WITH
+      CHANGES, architecture BETTER — every finding executed. Read-half
+      ACs stay deferred to the end of the roadmap by owner decision
+      (tracked in 0374/0516); deploy + runbook backfills ride the
+      deferred deploy window.
 ---
 
 # Soroswap pool adapter

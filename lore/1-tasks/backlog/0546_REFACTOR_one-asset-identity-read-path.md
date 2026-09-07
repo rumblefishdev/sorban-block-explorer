@@ -1,5 +1,5 @@
 ---
-id: '0522'
+id: '0546'
 title: 'REFACTOR: one asset-identity read path (surrogate → display identity)'
 type: REFACTOR
 status: backlog

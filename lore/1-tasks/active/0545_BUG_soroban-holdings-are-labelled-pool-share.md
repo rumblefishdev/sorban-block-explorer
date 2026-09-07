@@ -1,5 +1,5 @@
 ---
-id: '0496'
+id: '0545'
 title: 'BUG: every Soroban holding is labelled `pool_share` — two asset-type enums collided'
 type: BUG
 status: active

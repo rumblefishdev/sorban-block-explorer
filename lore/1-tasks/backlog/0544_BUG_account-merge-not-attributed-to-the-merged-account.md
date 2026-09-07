@@ -1,5 +1,5 @@
 ---
-id: '0516'
+id: '0544'
 title: 'BUG: account_merge is not attributed to the account being merged'
 type: BUG
 status: backlog
