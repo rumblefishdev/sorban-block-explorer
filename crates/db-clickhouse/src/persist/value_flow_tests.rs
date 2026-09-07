@@ -11,6 +11,33 @@ const M_RECEIVER: &str = "MD5SL5RIC5STHGDDOJGSIIZHZZQPA4HIYFEPIQ3FF7M3H2F5VQ7K2A
 const POOL_L: &str = "LA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ";
 const XLM_SAC: &str = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
 
+#[test]
+fn sep50_token_number_does_not_become_a_persisted_amount() {
+    const NFT_CONTRACT: &str = "CDL74RF5BLYR2YBLCCI7F5FB6TPSCLKEJUBSD2RSVWZ4YHF3VMFAIGWA";
+    let mut ev = event(EventSource::PerOp, 0, Some((0, 0)));
+    ev.contract_id = Some(NFT_CONTRACT.into());
+    // No asset label: this event is attributed to its own emitter, never USDC.
+    ev.topics = json!([
+        {"type":"sym", "value":"mint"},
+        {"type":"address", "value":G_RECEIVER}
+    ]);
+    ev.data = xdr_parser::scval::scval_to_typed_json(&stellar_xdr::ScVal::U128(
+        stellar_xdr::UInt128Parts {
+            hi: 0,
+            lo: 1_000_000_000,
+        },
+    ));
+    let net = xdr_parser::network_id(xdr_parser::sac::MAINNET_PASSPHRASE);
+    let decoded = xdr_parser::extract_asset_transfers(&[ev], &net);
+    assert!(decoded.rejects.is_empty());
+    let out =
+        build_value_flow_rows(64_259_660, &[tx(None, None)], &[], &[], &decoded.transfers).unwrap();
+    assert_eq!(out.transfers.len(), 1);
+    assert_eq!(out.transfers[0].amount, None);
+    assert_eq!(out.transfers[0].to_id, Some(ids::account_id(G_RECEIVER)));
+    assert_eq!(out.transfers[0].asset_id, ids::contract_id(NFT_CONTRACT));
+}
+
 fn tx(memo: Option<(&str, &str)>, source_muxed_id: Option<u64>) -> ExtractedTransaction {
     ExtractedTransaction {
         hash: TX.into(),

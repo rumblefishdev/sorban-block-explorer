@@ -35,6 +35,14 @@ history:
 
 ## Summary
 
+Post-merge 0540 correction (2026-09-07): unsigned scalar NFT IDs no longer
+become fungible amounts. The reproducible exploit and limits are recorded in
+[0540's regression note](../active/0540_FEATURE_lossless-value-flow-index/notes/S-nft-amount-regression.md).
+**Still required before claiming NFT-safe numeric aggregation:** resolve
+bespoke i128 token-ID ambiguity consistently for live and historical replay.
+The existing NFT classifier is not yet part of the value-flow decision, and
+current database verdicts must not silently classify pre-upgrade events.
+
 Make the token-event decoder the single place that knows (a) which topic
 shapes exist on mainnet and (b) who is allowed to label an event with an
 asset — and make every decoder-fed table re-runnable after a decoder fix.

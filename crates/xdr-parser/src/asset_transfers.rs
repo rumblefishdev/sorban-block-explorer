@@ -12,10 +12,9 @@
 //!    The protocol validates the emitter, never the content, so without this
 //!    gate any contract could put "USDC" on a victim's account page. Measured
 //!    on 60 000 ledgers: 25 912 of 25 912 labelled (emitter, asset) pairs pass.
-//! 2. **An amount is a scalar `i128`/`u128`, or the `amount` key of a map;
-//!    `token_id` means non-fungible.** Anything else is a protocol annotation
-//!    (`{mint_amount, mint_tokens}` restating a mint that has its own event),
-//!    never a movement: it is rejected AND counted, so a new shape surfaces as
+//! 2. **An amount is a scalar `i128`, or the `amount` key of a map;
+//!    unsigned scalar ids and valid `token_id` maps mean non-fungible.**
+//!    Unknown or ambiguous payloads are rejected AND counted, so a new shape surfaces as
 //!    a number rather than a silent zero.
 //! 3. **Only the per-operation container.** Diagnostics are byte-identical
 //!    copies (or rolled-back calls), and token verbs never appear at
@@ -35,7 +34,7 @@ use tracing::debug;
 
 use crate::event_filters::{EventAsset, TokenEventKind, parse_token_event, token_verb};
 use crate::sac::sac_override_from_event_topics;
-use crate::scval::{map_get, typed_str};
+use crate::scval::{map_get, typed, typed_str};
 use crate::types::{EventSource, ExtractedEvent};
 
 /// What a token event's `data` payload says about the amount.
@@ -43,7 +42,7 @@ use crate::types::{EventSource, ExtractedEvent};
 pub enum TokenAmount {
     /// A fungible amount in the token's own base units.
     Fungible(i128),
-    /// A non-fungible movement (`{token_id}`): complete, and has no amount.
+    /// A non-fungible movement (unsigned id or `{token_id}`), with no amount.
     NonFungible,
     /// Not a movement we recognise — rejected and counted by the caller.
     Unrecognised,
@@ -57,34 +56,58 @@ pub enum TokenAmount {
 /// position mint — `amount` is the position, the other two are components,
 /// not movements), `map{token_id}` (non-fungible). The map is read **by key**,
 /// never positionally.
+///
+/// SEP-41 defines a standalone amount as i128; SEP-50 uses an unsigned
+/// TokenID for NFT events (https://github.com/stellar/stellar-protocol/tree/master/ecosystem).
+/// An unsigned scalar is therefore never summed as an amount. The measured
+/// map{amount: u128} extension remains supported because the field names its
+/// meaning. This is format decoding, not contract authentication: a bespoke
+/// NFT using i128 as its id remains indistinguishable here from SEP-41.
 pub fn token_event_amount(data: &Value) -> TokenAmount {
-    if let Some(n) = scalar_i128(data) {
+    if let Some(n) = typed_str(data, "i128").and_then(|s| s.parse::<i128>().ok()) {
         return TokenAmount::Fungible(n);
     }
-    if typed_str(data, "i128").is_some() || typed_str(data, "u128").is_some() {
-        // A scalar of the right type whose value does not parse (a `u128`
-        // above `i128::MAX`): not storable, so not a movement we recognise.
-        return TokenAmount::Unrecognised;
+    if unsigned_token_id(data) {
+        return TokenAmount::NonFungible;
     }
-    if let Some(amount) = map_get(data, "amount") {
+    let amount = map_get(data, "amount");
+    if let Some(token_id) = map_get(data, "token_id") {
+        return if amount.is_none() && unsigned_token_id(token_id) {
+            TokenAmount::NonFungible
+        } else {
+            TokenAmount::Unrecognised
+        };
+    }
+    if let Some(amount) = amount {
         return match scalar_i128(amount) {
             Some(n) => TokenAmount::Fungible(n),
             None => TokenAmount::Unrecognised,
         };
     }
-    if map_get(data, "token_id").is_some() {
-        return TokenAmount::NonFungible;
-    }
     TokenAmount::Unrecognised
+}
+
+fn unsigned_token_id(v: &Value) -> bool {
+    match v.get("type").and_then(Value::as_str) {
+        Some("u32") => typed(v, "u32")
+            .and_then(Value::as_u64)
+            .is_some_and(|n| u32::try_from(n).is_ok()),
+        Some("u64") => typed(v, "u64").and_then(Value::as_u64).is_some(),
+        Some("u128") => typed_str(v, "u128").is_some_and(|s| s.parse::<u128>().is_ok()),
+        // scval_to_typed_json encodes U256 as exactly 32 hexadecimal bytes.
+        Some("u256") => typed_str(v, "u256")
+            .is_some_and(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())),
+        _ => false,
+    }
 }
 
 /// An `i128` / `u128` typed-JSON scalar (`{"type":"i128","value":"123"}`).
 /// A `u128` above `i128::MAX` cannot be stored and reads as `None`.
 fn scalar_i128(v: &Value) -> Option<i128> {
-    typed_str(v, "i128")
-        .or_else(|| typed_str(v, "u128"))?
-        .parse::<i128>()
-        .ok()
+    if let Some(s) = typed_str(v, "i128") {
+        return s.parse::<i128>().ok();
+    }
+    typed_str(v, "u128")?.parse::<u128>().ok()?.try_into().ok()
 }
 
 /// Addresses are the StrKeys the event carried; the persistence layer resolves

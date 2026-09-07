@@ -59,6 +59,74 @@ fn event(
 // ---- token_event_amount ------------------------------------------------
 
 #[test]
+fn sep50_unsigned_token_ids_are_not_amounts() {
+    use crate::scval::scval_to_typed_json;
+    use stellar_xdr::{ScVal, UInt128Parts, UInt256Parts};
+    for raw in [
+        ScVal::U32(123),
+        ScVal::U64(123),
+        ScVal::U128(UInt128Parts { hi: 0, lo: 123 }),
+        ScVal::U128(UInt128Parts {
+            hi: u64::MAX,
+            lo: u64::MAX,
+        }),
+        ScVal::U256(UInt256Parts {
+            hi_hi: u64::MAX,
+            hi_lo: 0,
+            lo_hi: 0,
+            lo_lo: 123,
+        }),
+    ] {
+        let data = scval_to_typed_json(&raw);
+        assert_eq!(
+            token_event_amount(&data),
+            TokenAmount::NonFungible,
+            "{data}"
+        );
+    }
+}
+
+#[test]
+fn contradictory_or_invalid_token_id_maps_are_rejected() {
+    for data in [
+        map(vec![
+            ("amount", i128v("1000000000")),
+            ("token_id", json!({"type":"u32","value":123})),
+        ]),
+        map(vec![("token_id", json!({"type":"void","value":null}))]),
+        map(vec![("amount", json!({"type":"u128","value":"-1"}))]),
+        map(vec![(
+            "amount",
+            json!({"type":"u128","value":u128::MAX.to_string()}),
+        )]),
+        json!({"type":"u32","value":4294967296u64}),
+        json!({"type":"u64","value":-1}),
+        json!({"type":"u128","value":"-1"}),
+    ] {
+        assert_eq!(token_event_amount(&data), TokenAmount::Unrecognised);
+    }
+}
+
+#[test]
+fn sep50_mint_cannot_credit_the_token_number_as_an_amount() {
+    let ev = event(
+        Some(OTHER_CONTRACT),
+        vec![sym("mint"), addr(G2)],
+        crate::scval::scval_to_typed_json(&stellar_xdr::ScVal::U128(stellar_xdr::UInt128Parts {
+            hi: 0,
+            lo: 1_000_000_000,
+        })),
+        EventSource::PerOp,
+        Some((0, 0)),
+    );
+    let out = extract_asset_transfers(&[ev], &net());
+    assert!(out.rejects.is_empty());
+    assert_eq!(out.transfers.len(), 1);
+    assert_eq!(out.transfers[0].to.as_deref(), Some(G2));
+    assert_eq!(out.transfers[0].amount, None);
+}
+
+#[test]
 fn scalar_i128_is_the_amount() {
     assert_eq!(
         token_event_amount(&i128v("5033540")),
@@ -66,7 +134,7 @@ fn scalar_i128_is_the_amount() {
     );
     assert_eq!(
         token_event_amount(&json!({ "type": "u128", "value": "7" })),
-        TokenAmount::Fungible(7)
+        TokenAmount::NonFungible
     );
 }
 
@@ -119,14 +187,14 @@ fn protocol_annotations_and_odd_scalars_are_unrecognised() {
     );
     assert_eq!(
         token_event_amount(&json!({ "type": "u64", "value": 5 })),
-        TokenAmount::Unrecognised
+        TokenAmount::NonFungible
     );
-    // A u128 the column cannot hold.
+    // Token IDs are not restricted by the signed amount column's range.
     assert_eq!(
         token_event_amount(
             &json!({ "type": "u128", "value": "340282366920938463463374607431768211455" })
         ),
-        TokenAmount::Unrecognised
+        TokenAmount::NonFungible
     );
 }
 
