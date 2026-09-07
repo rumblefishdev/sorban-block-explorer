@@ -6,7 +6,6 @@ members = [
     "crates/xdr-parser",
     "crates/domain",
     "crates/backfill-runner",
-    "crates/audit-harness",
     "crates/enrichment-shared",
     "crates/enrichment-worker",
     "crates/backfill-enrichment-runner",
@@ -35,7 +34,6 @@ utoipa-axum = "0.2"
 utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"] }
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "json", "chrono", "migrate"] }
 clickhouse = "=0.15.0"
 
 # Stellar XDR
@@ -63,7 +61,7 @@ aws-sdk-sqs = "1"
 # Error handling
 thiserror = "2"
 
-# HTTP client (used by audit-harness for Horizon API + api crate for SEP-1
+# HTTP client (api crate: SEP-1
 # stellar.toml fetches per task 0188). rustls-tls + json features only —
 # no native-tls so the build stays small and reproducible across Lambda /
 # CI / local without OpenSSL system deps.

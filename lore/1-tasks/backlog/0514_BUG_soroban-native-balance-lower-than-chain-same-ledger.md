@@ -60,6 +60,12 @@ decoding (task 0463 audit; method in that task's
 - **Live, not historical**: ledgers run to the checkpoint itself; the newest
   band (>= 64.0M, roughly a week) holds 107 rows spread over 96 distinct
   ledgers — a continuous process. Extrapolated rate ~1,900 rows/week.
+- **Second point measured 2026-09-02** (0521's dry-run, checkpoint
+  64,237,951): the bucket holds **18,363** — +565 over 131,456 ledgers
+  (~8.4 days), i.e. **~470 rows/week observed**. The ~1,900/week above was an
+  extrapolation from one week's band and overshot ~4x; the defect is
+  confirmed still accruing, just slower. Both directions unchecked in the new
+  run's dump — re-verify one-directionality when the fix lands, not before.
 - **Soroban-localised**: of the 107 recent (account, ledger) pairs, our
   `transactions` table shows a Soroban transaction from that account in that
   ledger for 106 — and zero classic-only pairs.

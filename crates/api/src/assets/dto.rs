@@ -125,9 +125,6 @@ pub struct AssetTransactionItem {
     pub has_soroban: bool,
     /// Distinct `op_type_name(...)` labels for every op in the tx, sorted asc.
     pub operation_types: Vec<String>,
-    /// Net-settled "value moved" per asset the transaction touched (task 0393);
-    /// see `TransactionValue`. Raw amounts + `decimals` — the frontend scales.
-    pub values: Vec<crate::transactions::dto::TransactionValue>,
 }
 /// Pagination payload for `GET /v1/assets`. The keyset walks the natural
 /// identity 4-tuple `(asset_type, asset_code, issuer_id, contract_id)` — the

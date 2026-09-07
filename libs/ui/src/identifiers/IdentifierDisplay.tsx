@@ -4,6 +4,7 @@ import Box from '@mui/material/Box';
 import type { SxProps, Theme } from '@mui/material/styles';
 
 import { formatInteger } from '../format/index.js';
+import { contentLinkSx } from '../theme/linkAffordance.js';
 import { monoFontFamily, secondaryFontFamily } from '../theme/typography.js';
 
 import { useLinkComponent } from './LinkComponentContext.js';
@@ -19,20 +20,28 @@ function makeIdentifierSx(
   mono: boolean
 ): SxProps<Theme> {
   const inheritColor = tone === 'inherit';
-  return {
+  return (theme: Theme) => ({
     fontFamily: mono ? monoFontFamily : secondaryFontFamily,
     fontSize,
     fontWeight: 500,
     lineHeight: 1.4,
-    color: inheritColor
-      ? 'inherit'
-      : (theme: Theme) => theme.palette.text.primary,
+    color: inheritColor ? 'inherit' : theme.palette.text.primary,
     '&:visited': {
-      color: inheritColor
-        ? 'inherit'
-        : (theme: Theme) => theme.palette.text.primary,
+      color: inheritColor ? 'inherit' : theme.palette.text.primary,
     },
+    // The underline that says "this is a link" comes from `contentLinkSx`, the
+    // one definition shared with every other in-content link (task 0535).
+    // Gated on `linked`, because that is exactly the distinction it has to
+    // carry: `linked={false}` renders next to linked identifiers on the same
+    // screen (`ContractSummary`), and before this they were identical.
+    //
+    // `tone: 'inherit'` sits on coloured surfaces where `text.primary` is the
+    // wrong reference, so it keeps the inherited `currentColor`.
     textDecoration: 'none',
+    ...(linked && {
+      ...contentLinkSx(theme),
+      ...(inheritColor && { textDecorationColor: 'currentColor' }),
+    }),
     display: 'inline-flex',
     alignItems: 'center',
     maxWidth: fullWidth ? '100%' : undefined,
@@ -41,18 +50,21 @@ function makeIdentifierSx(
     whiteSpace: 'nowrap',
     cursor: linked ? 'pointer' : 'inherit',
     '&:hover': linked
-      ? inheritColor
-        ? { textDecoration: 'underline' }
-        : { color: (theme: Theme) => theme.palette.surface.primaryMainAlt }
+      ? {
+          textDecorationColor: 'currentColor',
+          ...(inheritColor
+            ? {}
+            : { color: theme.palette.surface.primaryMainAlt }),
+        }
       : undefined,
     '&:focus-visible': {
       outline: inheritColor
         ? '2px solid currentColor'
-        : (theme: Theme) => `2px solid ${theme.palette.stroke.action}`,
+        : `2px solid ${theme.palette.stroke.action}`,
       outlineOffset: 2,
       borderRadius: 2,
     },
-  };
+  });
 }
 
 export interface IdentifierDisplayProps {

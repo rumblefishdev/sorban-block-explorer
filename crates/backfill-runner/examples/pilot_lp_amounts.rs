@@ -55,6 +55,7 @@ fn main() {
                 account_states: &parsed.account_states,
                 liquidity_pools: &parsed.liquidity_pools,
                 pool_snapshots: &parsed.pool_snapshots,
+                pool_family_writes: &parsed.pool_family_writes,
                 assets: &parsed.assets,
                 nfts: &parsed.nfts,
                 nft_events: &parsed.nft_events,
@@ -68,6 +69,7 @@ fn main() {
                 prior_wasm_verdicts: &HashMap::new(),
                 prior_contract_verdicts: &HashMap::new(),
                 prior_contract_rows: &HashMap::new(),
+                asset_transfers: &parsed.asset_transfers,
             })
             .expect("stage");
             ledgers += 1;

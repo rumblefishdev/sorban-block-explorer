@@ -226,7 +226,12 @@ duplicate `ledgers` rows for those sequences (see §5.3 note).
 1. download and decompress the XDR file from S3
 2. parse `LedgerCloseMeta` using the Rust `stellar-xdr` crate (ADR 0004) and
    extract the shared canonical data via `crates/xdr-parser` —
-   `parse_ledger()` is pure and shared with the backfill path
+   `parse_ledger()` is pure and shared with the backfill path. Since task
+   0540 it also decodes every token movement into edges
+   (`xdr_parser::extract_asset_transfers`, emitter-gated, payload-checked)
+   for `asset_transfers`; a token event the decoder rejects is logged as an
+   `error!` for the ledger (per-event detail on the
+   `xdr_parser::asset_transfers` target) and never becomes a row
 3. for each ledger in the batch: call
    `db_clickhouse::persist::persist_ledger_clickhouse(&client, &parsed.*)`
    — the same wrapper backfill's `Sink::persist_ledger` fallback drives.
@@ -270,6 +275,53 @@ duplicate `ledgers` rows for those sequences (see §5.3 note).
    `balance_aggregates_mv`, and the dead `assets.holder_count` /
    `assets.total_supply` columns were dropped in task 0310.
 
+**Soroban AMM pools** (ADR 0058, task 0374) ride the same pass with no extra
+step: `parse_ledger()`'s event sweep detects router `add_pool` registrations
+(`detect_pool_registrations`) and its ledger-entry-change walk extracts pool
+state (`extract_plane_pool_data` for fungible pools' plane `PoolData`,
+`extract_pool_instances` for pool instances — concentrated reserves +
+`TokenShare` / `Plane` / `Router`). Staging turns these into
+`liquidity_pools` rows (`pool_kind = 1`, whole-row registration — never
+partially updated on the RMT), `pool_state_changes` rows (one per
+`(pool, ledger)`) and `pool_instance_state` rows (side table, `asset_sac`
+pattern). An unparseable fee or reserve REFUSES the row with
+`tracing::error!` rather than writing a plausible default.
+
+Two staging rules are load-bearing here, both because a registration event
+names its pool in a payload the emitter chooses freely:
+
+- **A registration is corroborated before it becomes a row.** The named pool's
+  own instance storage — where the pool contract is the ledger-authenticated
+  owner — must declare that emitter as its `Router`. The instance is written
+  in the SAME transaction as `add_pool`, so the corroborating fact is always
+  in the same parse output. Without this, any contract could emit an
+  `add_pool` naming a REAL pool and replace its registry row wholesale, since
+  `liquidity_pools` is an RMT keyed on `pool_id` and versioned by ledger.
+  One documented exception: an instance with no `Router` key at all (five
+  older deployments, 23 pools) is accepted UNVERIFIED with a warn, and only
+  when the instance is CREATED in the registering ledger — every genuine
+  registration creates it there (497/497 measured), while a merely-touched
+  instance is the induced-forgery signature and is refused. A missing key is
+  an older contract version, not evidence of a forgery.
+  The Soroswap arm (task 0518) applies the same discipline with no
+  UNVERIFIED case at all: a `new_pair` stages only when the pair's own
+  instance names the emitting factory (DataKey 4) AND was created in the
+  registering ledger — validated on raw ledgers across three eras.
+  The config-factory arm (task 0518, third adapter) has no back-pointer to
+  check — the pool records no factory anywhere — so its corroboration is
+  the created gate plus the pool's own full `CONFIG` written in the
+  registering ledger (every registry fact comes from that CONFIG, none from
+  the event); validated on the family's entire registration population.
+  Its per-operation state rows are self-stamped like the pair family's, and
+  its `pool_instance_state` row stages ONLY when the transaction wrote
+  CONFIG: the table is RMT whole-row on `pool_id`, and a config-less
+  TotalShares write would clobber `share_token_id` to 0.
+- **Both reserve writers are folded together** before insert. The plane arm
+  and the concentrated-instance arm can each emit a row for the same
+  `(pool, ledger)`, and the parser-side folds cannot see each other; a
+  version-less RMT would then keep an arbitrary intra-ledger image. The fold
+  is the cross-writer twin of `dedup_final_pool_snapshots` (lore 0356).
+
 The historical 15-step PG flow (atomic per-ledger `BEGIN/COMMIT`) was removed with
 Postgres (task 0244); its ordering rationale is preserved in
 [ADR 0027](../../../lore/2-adrs/0027_post-surrogate-schema-and-endpoint-realizability.md).
@@ -302,31 +354,12 @@ registers their `from` / `to` as account participants plus — for SAC-wrapped
 classic/native assets — the moved asset (`"native"` → `NATIVE_ASSET_ID`).
 `transaction_participants` stays pure presence.
 
-`operation_asset_appearances` additionally carries `net_settled` per (tx, asset)
-— the tx-list "value moved" figure (task
-[0393](../../../lore/1-tasks/active/0393_FEATURE_transaction-value-amount-column/README.md)).
-At staging the value is reduced once per transaction and joined onto the
-presence rows: classic txs (`has_soroban = 0`) from ledger-entry balance deltas,
-Soroban txs from token-event amounts (see xdr-parsing overview §4.7). It is a
-non-key column on a version-less `ReplacingMergeTree`, so staging writes the
-**final** net (never an incremental fold). `net_settled` has a **single writer** —
-`persist::stage` — run by both live ingest and the full S3 re-ingest, so live and
-historical rows for a key are computed identically and the duplicate collapses
-cleanly; the read dedups with `max(net_settled)`.
-
-There is **no CH-local value backfill.** Classic value is reduced from
-`TransactionMeta` ledger changes, which are **not stored in ClickHouse**, and the
-Soroban value rides the same re-ingest rather than a separate script — so all
-historical `net_settled` (classic + Soroban) is `NULL` (hidden by the read's
-`HAVING net_settled IS NOT NULL`) until the **full S3 re-ingest** re-runs staging
-over every ledger. The 0383 token-flow backfill stays presence-only (writes
-`net_settled: NULL`) and must not run once the column is populated.
-
-The column is `Nullable`: `Some(0)` = genuinely nothing settled net; `NULL` = not
-computable (the reducer could not represent the result, or a recognised event's
-amount was unreadable). Keeping the two apart stops an uncomputable value from
-masquerading as a real zero; both are filtered at read (`max` ignores NULL, so a
-computed value wins over a not-computed one for the same key).
+`operation_asset_appearances` is pure presence. The `net_settled` value column
+(task 0393) was REMOVED on 2026-09-04 — the per-(tx, asset) aggregate carried no
+direction and no account. The reducer that produced it
+(`persist::stage::ledger_deltas_net_settled` over
+`xdr_parser::ledger_balance_deltas`) is KEPT: it reads the authoritative LEDGER
+balance changes, which is the input the lossless replacement needs.
 
 Per-ledger replay safety: every state table is `ReplacingMergeTree(version)`
 keyed on a column whose value monotonically reflects the latest observation

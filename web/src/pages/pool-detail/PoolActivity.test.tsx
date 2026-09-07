@@ -200,8 +200,8 @@ describe('PoolActivity table', () => {
       makeRow({ application_order: 2, pools_crossed: 1 }),
     ]);
     renderWithProviders(<PoolActivity poolId="LPOOL" pool={poolItem} />);
-    expect(screen.getByText('1 of 4 pools')).toBeInTheDocument();
-    expect(screen.queryByText('1 of 1 pools')).not.toBeInTheDocument();
+    expect(screen.getByText('via 4 pools')).toBeInTheDocument();
+    expect(screen.queryByText('via 1 pools')).not.toBeInTheDocument();
   });
 
   it('links a leg to its asset page from the amount cell', () => {

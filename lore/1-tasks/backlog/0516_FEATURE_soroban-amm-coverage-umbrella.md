@@ -48,11 +48,13 @@ every Stellar AMM, integrates exactly those three. Measured 2026-08-27:
 | **Phoenix**                              |                        **14** | **1 969 860** | **29 %** |
 | Soroswap                                 |      191 trading of 232 pairs |       578 921 |      8 % |
 
-**Phoenix is second, not third** — 3.4x Soroswap's flow across 14 contracts
-rather than 232. An earlier estimate put Soroswap second; it was measured only
-over contracts carrying Soroswap metadata and missed Phoenix entirely, because
-Phoenix's events decode to nothing (see 0517) and so were invisible to a
-signature-based count.
+**Correction 2026-09-02: the event counts above are RAW EVENTS and mislead on
+flow.** Phoenix publishes 6-8 events per swap (one per field), Soroswap one —
+so per TRUE swap Soroswap leads in both eras (48,334 vs 5,526 in a fresh
+1M-ledger window; details in the adapters section below). The original note
+("Phoenix is second") stood on this artefact; the Soroswap-was-invisible
+observation stays true (its events decoded to nothing before 0517), but the
+ranking it produced is reversed.
 
 **Read [0008](../archive/0008_RESEARCH_event-interpreter-patterns/README.md)
 before starting.** It already documents Soroswap's and Phoenix's event shapes
@@ -190,16 +192,69 @@ Copy into each adapter task:
 
 ## Adapters
 
-| Protocol               | Task                                                                         | State                                      |
-| ---------------------- | ---------------------------------------------------------------------------- | ------------------------------------------ |
-| Router-registry family | [0374](../active/0374_FEATURE_lp-native-leg-and-soroban-amm-completeness.md) | active, first adapter                      |
-| **Phoenix**            | —                                                                            | **next after 0374**; spawn when 0517 lands |
-| Soroswap               | [0518](./0518_FEATURE_soroswap-pool-adapter.md)                              | after Phoenix; blocked on 0517             |
+| Protocol               | Task                                                                         | State                                     |
+| ---------------------- | ---------------------------------------------------------------------------- | ----------------------------------------- |
+| Router-registry family | [0374](../active/0374_FEATURE_lp-native-leg-and-soroban-amm-completeness.md) | active, first adapter                     |
+| **Soroswap**           | [0518](./0518_FEATURE_soroswap-pool-adapter.md)                              | **next after 0374** (0517 fix in PR #443) |
+| Phoenix                | —                                                                            | after Soroswap; spawn then                |
 
-**Order reversed 2026-08-27 on measurement.** Phoenix carries 3.4x the swap
-flow of Soroswap across 14 contracts instead of 232 — more of the market for
-less of the work, and both are unblocked by the same fix (0517). Nothing about
-Soroswap changed; it simply is not second.
+**Order reversed 2026-08-27 on measurement — and REVERSED BACK 2026-09-02 on a
+better one (karolkow).** The 3.4x figure counted raw EVENTS, but Phoenix
+publishes 6-8 events per swap (one per field) while Soroswap publishes one —
+the ratio was an artefact of the publishing convention. Counted per TRUE swap
+(the one `sender` event per Phoenix swap vs Soroswap pair `swap` rows):
+Soroswap leads **48,334 vs 5,526 (8.7x)** in a fresh 1M-ledger window and
+45,135 vs 23,499 (1.9x) in a historical one — Soroswap ahead in both eras and
+the gap GROWING. It also wins on decode difficulty (one struct vs cross-event
+correlation), on discovery evidence in hand (factory + pair storage probed,
+see 0518), and it is what issue #405 asks for by name.
+
+## Sibling recon — stellar-prices-api (develop, read 2026-09-02)
+
+The prices project indexes the SAME three venues for OHLCV, events-only
+(no ledger state, `sync` skipped, no reserves). Their archive is a paid-for
+trap list for exactly our next steps; recorded here so no trap is walked
+twice. Their design also VALIDATES ours by contrast: multiple silent-zero
+incidents trace to events-as-the-only-source (their 0096: 536k Soroswap
+swaps → 0 candles, 0 alerts, because decoder AND guard keyed the same
+wrong topic) — our state-first-with-event-cross-checks stands.
+
+**Traps recorded there that hit OUR roadmap:**
+
+- **Phoenix grouping (their 0097/0099)**: group per-field events by
+  contiguity per (transaction, contract) and validate by PRESENCE of the
+  four required fields (sell_token, offer_amount, buy_token,
+  return_amount), capped at one swap's worth — NEVER by event count: a
+  `len >= 8` gate silently discarded 5,175 real 7-event swaps (~2.1%; the
+  `actual received amount` field is optional). Liquidity groups reject on
+  absent required fields.
+- **Phoenix has TWO XYK WASM hashes with identical interfaces** (their
+  0032/0034) — keying dispatch or discovery on wasm_hash silently drops a
+  pool family member. Phoenix stable pools: zero on mainnet, they keep a
+  periodic re-survey instead of dead code.
+- **Aquarius router `swap` SUMMARY events** (their 0087): recognizable by
+  an address-Vec at topic[1]; counting them alongside pool `trade` events
+  double-counts volume. Any event-side cross-check of ours must
+  discriminate the same way.
+- **Soroswap `/pools` API**: bearer-key auth, in ACTIVE use by that team —
+  the oracle-#1 key for 0518 exists in-house; ask them before asking the
+  vendor. Their registry-seed from it stayed a stopgap (current-set-only,
+  misses dead pools) — event discovery remained necessary.
+
+**Adopted into our method (0516-level):**
+
+1. An `unresolved_pools`-style GUARD TABLE: any pool-shaped activity from
+   a contract absent from the registry gets a row (contract, venue guess,
+   count, ledger range), with the invariant "empty after a clean forward
+   run". Generalises our per-vendor closure checks to every venue and
+   future factory. CRITICAL amendment from their 0096 post-mortem: the
+   guard's shape predicate must be derived INDEPENDENTLY of the decoder's
+   (theirs shared it, so one bug blinded both).
+2. Their live/backfill single-seam rule confirms ours (backfill-runner and
+   the indexer already share `parse_ledger` by construction) — keep it a
+   stated invariant.
+3. Real-sample fixtures for every extractor (their `dump-swap-events`
+   tool) — already our house practice; keep matching it per venue.
 
 ## Acceptance Criteria
 
@@ -207,3 +262,11 @@ Soroswap changed; it simply is not second.
 - [ ] four-oracle table filled in for every adapter task
 - [ ] protocol + deployment filter on the pool list
 - [ ] adding an adapter touches no shared table shape
+- [ ] account-page display decided (LAST, once positions are indexed): how a
+      holder's LP participation shows on the account page — concentrated
+      positions AND classic `lp_positions` (neither is visible there today;
+      fungible soroban share tokens already appear in the Assets card as
+      plain tokens). Direction recorded 2026-09-02: a separate "Liquidity
+      positions" section, never rows squeezed into the Assets card — a
+      position is not a token balance; no valuation until a portfolio-value
+      feature exists and the amount conversion passes an on-chain check.

@@ -42,7 +42,41 @@
 //! version carries changes (implement the arm) or not (extend the legacy arm) —
 //! never add a `_ =>` wildcard, never stub an empty return.
 
-use stellar_xdr::{LedgerEntryChange, LedgerEntryChanges, TransactionMeta};
+use stellar_xdr::{LedgerCloseMeta, LedgerEntryChange, LedgerEntryChanges, TransactionMeta};
+
+/// Visit every transaction's apply-time meta of one `LedgerCloseMeta`, in
+/// apply order, and return the ledger sequence. Same exhaustive-match
+/// philosophy as [`ledger_changes`]: a new close-meta version fails to
+/// compile HERE instead of being silently absorbed (review #447 — this
+/// V0/V1/V2 unroll was copy-pasted across the raw-ledger test harnesses).
+pub fn for_each_tx_meta(
+    lcm: &LedgerCloseMeta,
+    mut f: impl FnMut(u32, usize, &TransactionMeta),
+) -> u32 {
+    match lcm {
+        LedgerCloseMeta::V0(v0) => {
+            let seq = v0.ledger_header.header.ledger_seq;
+            for (i, tx) in v0.tx_processing.iter().enumerate() {
+                f(seq, i, &tx.tx_apply_processing);
+            }
+            seq
+        }
+        LedgerCloseMeta::V1(v1) => {
+            let seq = v1.ledger_header.header.ledger_seq;
+            for (i, tx) in v1.tx_processing.iter().enumerate() {
+                f(seq, i, &tx.tx_apply_processing);
+            }
+            seq
+        }
+        LedgerCloseMeta::V2(v2) => {
+            let seq = v2.ledger_header.header.ledger_seq;
+            for (i, tx) in v2.tx_processing.iter().enumerate() {
+                f(seq, i, &tx.tx_apply_processing);
+            }
+            seq
+        }
+    }
+}
 
 /// Every ledger entry change of a transaction, in canonical order:
 /// `tx_changes_before`, then each operation's changes in operation order, then
@@ -62,6 +96,32 @@ pub fn ledger_changes(meta: &TransactionMeta) -> Vec<&LedgerEntryChange> {
             v4.operations.iter().map(|o| &o.changes),
             &v4.tx_changes_after,
         ),
+        TransactionMeta::V0(_) | TransactionMeta::V1(_) | TransactionMeta::V2(_) => Vec::new(),
+    }
+}
+
+/// The changes the transaction's OPERATIONS made: `tx_changes_before` and each
+/// operation's changes, in order — without `tx_changes_after`.
+///
+/// `tx_changes_after` is where a Soroban transaction's unused-resource-fee
+/// REFUND lands before Protocol 23 (from 23 on it moves to
+/// `TransactionResultMetaV1.post_tx_apply_fee_processing`, outside
+/// `TransactionMeta` altogether). A refund is a fee, not a movement, so a
+/// reader of value moved by the operations wants this view (task 0540 T04 —
+/// the events-vs-ledger oracle found the refund as 277 native credits with no
+/// transfer to explain them).
+pub fn operation_changes(meta: &TransactionMeta) -> Vec<&LedgerEntryChange> {
+    match meta {
+        TransactionMeta::V3(v3) => v3
+            .tx_changes_before
+            .iter()
+            .chain(v3.operations.iter().flat_map(|o| o.changes.iter()))
+            .collect(),
+        TransactionMeta::V4(v4) => v4
+            .tx_changes_before
+            .iter()
+            .chain(v4.operations.iter().flat_map(|o| o.changes.iter()))
+            .collect(),
         TransactionMeta::V0(_) | TransactionMeta::V1(_) | TransactionMeta::V2(_) => Vec::new(),
     }
 }

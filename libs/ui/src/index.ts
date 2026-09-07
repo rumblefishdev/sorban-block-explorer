@@ -7,6 +7,7 @@ export {
   colorsLight,
   colorsDark,
   type ColorScheme,
+  contentLinkSx,
   grid,
   createPalette,
   radius,

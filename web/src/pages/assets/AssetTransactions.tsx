@@ -16,7 +16,7 @@ import type { ReactNode } from 'react';
 
 import { useAssetTransactions, usePagedRows } from '../../api/index.js';
 import { SectionCard } from '../detail/SectionCard.js';
-import { OperationCell, ValueCell } from '../transactions/cells.js';
+import { OperationCell } from '../transactions/cells.js';
 import { TransactionTime } from '../transactions/TransactionTime.js';
 
 const columns: ExplorerTableColumn<AssetTransactionItem>[] = [
@@ -56,14 +56,6 @@ const columns: ExplorerTableColumn<AssetTransactionItem>[] = [
     header: 'Status',
     width: 120,
     cell: (row) => <StatusChip successful={row.successful} />,
-  },
-  {
-    id: 'net_settled',
-    header: 'Net settled',
-    width: 170,
-    cell: (row) => (
-      <ValueCell values={row.values} ledgerSequence={row.ledger_sequence} />
-    ),
   },
   {
     id: 'time',

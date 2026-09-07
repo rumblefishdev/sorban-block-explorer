@@ -17,6 +17,11 @@ pub struct Classified {
     /// shape (full 56 chars or any prefix of `G…` / `C…`); drives the
     /// `account` and `contract` prefix CTEs.
     pub strkey_prefix: Option<String>,
+    /// `(asset_code, issuer G-StrKey)` when `q` is a fully-qualified asset —
+    /// `CODE:ISSUER` (the canonical SEP / SDK form) or `CODE-ISSUER` (the shape
+    /// our own `/assets/:id` routes emit, so users paste it back). Drives an
+    /// exact asset lookup instead of the code substring scan.
+    pub code_issuer: Option<(String, String)>,
 }
 
 /// Classify a trimmed, non-empty `q`.
@@ -48,6 +53,17 @@ pub fn classify(q: &str) -> Classified {
         return out;
     }
 
+    // Fully-qualified asset, `CODE:ISSUER` or `CODE-ISSUER`. This is the most
+    // precise thing a user can type and it used to classify as nothing at all:
+    // the asset arm then hunted a 60+ character needle through ≤12 character
+    // codes (provably empty) and the account arm never fired because the string
+    // does not start with `G`. The most specific query returned a blank page
+    // while the vaguest one returned impostors (task 0485).
+    if let Some(pair) = split_code_issuer(q) {
+        out.code_issuer = Some(pair);
+        return out;
+    }
+
     // StrKey shape (full or prefix of G… / C…). The DB index is
     // `text_pattern_ops` so prefix `LIKE 'PREFIX%'` is the served
     // branch — both the full StrKey and any non-empty prefix work
@@ -59,6 +75,26 @@ pub fn classify(q: &str) -> Classified {
     }
 
     out
+}
+
+/// Split a fully-qualified asset into `(code, issuer)`.
+///
+/// Splits on the LAST `:` or `-`, which is unambiguous: a Stellar asset code is
+/// `alphanum4` / `alphanum12`, so neither separator can occur inside one, and a
+/// G-StrKey is base32 (`A-Z`, `2-7`) so neither can occur in the issuer either.
+/// The issuer is validated in full — `from_string` checks the CRC — so a typo'd
+/// key falls through to the ordinary substring search rather than returning a
+/// confidently empty page.
+fn split_code_issuer(q: &str) -> Option<(String, String)> {
+    let (code, issuer) = q.rsplit_once([':', '-'])?;
+    if code.is_empty() || code.len() > 12 || !code.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return None;
+    }
+    // Codes are case-sensitive on-chain and matched case-insensitively here, so
+    // the original casing is kept; only the StrKey is normalised.
+    let issuer = issuer.to_ascii_uppercase();
+    stellar_strkey::ed25519::PublicKey::from_string(&issuer).ok()?;
+    Some((code.to_string(), issuer))
 }
 
 /// Returns true when `s` could be a prefix of a StrKey starting with
@@ -139,6 +175,76 @@ mod tests {
         let out = classify("LAB");
         assert!(out.hash_bytes.is_none());
         assert!(out.strkey_prefix.is_none());
+    }
+
+    /// A CRC-valid account StrKey. `FULL_G` above is shape-only — the prefix arm
+    /// never checks the checksum — but the `CODE:ISSUER` arm does, so it needs a
+    /// key the decoder actually accepts.
+    fn valid_g() -> String {
+        // `format!` (Display), not the inherent `to_string()` — that one returns
+        // a `heapless::String`, the same trap `common::strkey` documents.
+        format!("{}", stellar_strkey::ed25519::PublicKey([0u8; 32]))
+    }
+
+    #[test]
+    fn classifies_code_issuer_on_both_separators() {
+        // `:` is the canonical SEP / SDK form; `-` is what our own
+        // `/assets/:id` routes emit, so users paste it straight back.
+        let g = valid_g();
+        for q in [format!("USDC:{g}"), format!("USDC-{g}")] {
+            let out = classify(&q);
+            assert_eq!(
+                out.code_issuer,
+                Some(("USDC".to_string(), g.clone())),
+                "failed for {q:?}"
+            );
+            // Must not also fire the substring / prefix arms.
+            assert!(out.strkey_prefix.is_none());
+            assert!(out.hash_bytes.is_none());
+        }
+    }
+
+    #[test]
+    fn code_issuer_keeps_code_case_and_uppercases_the_strkey() {
+        let g = valid_g();
+        let out = classify(&format!("uSdC:{}", g.to_lowercase()));
+        assert_eq!(out.code_issuer, Some(("uSdC".to_string(), g)));
+    }
+
+    #[test]
+    fn code_issuer_rejects_a_bad_issuer_checksum() {
+        // Last character flipped — valid base32, wrong CRC. Falls through to the
+        // ordinary search rather than answering with a confident empty page.
+        let g = valid_g();
+        let flipped = if g.ends_with('A') { 'B' } else { 'A' };
+        let bad = format!("{}{flipped}", &g[..g.len() - 1]);
+        let out = classify(&format!("USDC:{bad}"));
+        assert!(out.code_issuer.is_none());
+        assert!(out.strkey_prefix.is_none());
+    }
+
+    #[test]
+    fn code_issuer_rejects_a_code_longer_than_alphanum12() {
+        let out = classify(&format!("THIRTEENCHARS:{}", valid_g()));
+        assert!(out.code_issuer.is_none());
+    }
+
+    #[test]
+    fn code_issuer_rejects_a_non_alphanumeric_code() {
+        // A hyphenated word ahead of the key is not an asset code; splitting on
+        // the LAST separator keeps this from being read as one.
+        let out = classify(&format!("not_a_code:{}", valid_g()));
+        assert!(out.code_issuer.is_none());
+    }
+
+    #[test]
+    fn a_bare_strkey_is_still_a_prefix_not_a_code_issuer() {
+        // Regression guard: no separator, so the new arm must not shadow the
+        // account/contract prefix classification.
+        let g = valid_g();
+        let out = classify(&g);
+        assert!(out.code_issuer.is_none());
+        assert_eq!(out.strkey_prefix.as_deref(), Some(g.as_str()));
     }
 
     #[test]

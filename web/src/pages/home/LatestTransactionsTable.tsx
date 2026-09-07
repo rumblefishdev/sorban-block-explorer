@@ -11,7 +11,6 @@ import {
   hashColumn,
   OperationCell,
   statusColumn,
-  ValueCell,
 } from '../transactions/cells.js';
 import { TransactionTime } from '../transactions/TransactionTime.js';
 
@@ -41,14 +40,6 @@ const columns: ExplorerTableColumn<TransactionListItem>[] = [
     cell: (row) => <OperationCell types={row.operation_types} />,
   },
   statusColumn<TransactionListItem>(),
-  {
-    id: 'net_settled',
-    header: 'Net settled',
-    width: 170,
-    cell: (row) => (
-      <ValueCell values={row.values} ledgerSequence={row.ledger_sequence} />
-    ),
-  },
   {
     id: 'time',
     header: 'Time',

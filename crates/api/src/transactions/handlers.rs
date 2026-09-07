@@ -167,7 +167,6 @@ pub async fn list_transactions(
             operation_count: row.operation_count,
             has_soroban: row.has_soroban,
             operation_types: row.operation_types,
-            values: row.values,
             created_at: row.created_at,
         })
         .collect();
@@ -345,6 +344,7 @@ pub async fn get_transaction(State(state): State<AppState>, Path(hash): Path<Str
         ledger_sequence: tx.ledger_sequence,
         application_order: tx.application_order,
         source_account: tx.source_account,
+        source_account_home_domain: tx.source_account_home_domain,
         fee_charged: tx.fee_charged,
         inner_tx_hash: tx.inner_tx_hash,
         successful: tx.successful,

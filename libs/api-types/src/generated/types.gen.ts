@@ -178,11 +178,6 @@ export type AccountTransactionItem = {
   operation_types: Array<string>;
   source_account: string;
   successful: boolean;
-  /**
-   * Net-settled "value moved" per asset the transaction touched (task 0393);
-   * see `TransactionValue`. Raw amounts + `decimals` — the frontend scales.
-   */
-  values: Array<TransactionValue>;
 };
 
 /**
@@ -390,11 +385,6 @@ export type AssetTransactionItem = {
   operation_types: Array<string>;
   source_account: string;
   successful: boolean;
-  /**
-   * Net-settled "value moved" per asset the transaction touched (task 0393);
-   * see `TransactionValue`. Raw amounts + `decimals` — the frontend scales.
-   */
-  values: Array<TransactionValue>;
 };
 
 /**
@@ -761,6 +751,12 @@ export type E3ResponseTransactionDetailLight = {
    * could not be decoded (lore-0209).
    */
   source_account?: string | null;
+  /**
+   * The source account's on-chain `home_domain` (SEP-1 anchor domain),
+   * `null` when it sets none. The frontend asks that domain for the SEP-2
+   * federated address it claims for this account (task 0443, issue #363).
+   */
+  source_account_home_domain?: string | null;
   successful: boolean;
 } & {
   heavy?: null | E3HeavyFields;
@@ -1279,11 +1275,6 @@ export type PaginatedAccountTransactionItem = {
     operation_types: Array<string>;
     source_account: string;
     successful: boolean;
-    /**
-     * Net-settled "value moved" per asset the transaction touched (task 0393);
-     * see `TransactionValue`. Raw amounts + `decimals` — the frontend scales.
-     */
-    values: Array<TransactionValue>;
   }>;
   page: PageInfo;
 };
@@ -1408,11 +1399,6 @@ export type PaginatedAssetTransactionItem = {
     operation_types: Array<string>;
     source_account: string;
     successful: boolean;
-    /**
-     * Net-settled "value moved" per asset the transaction touched (task 0393);
-     * see `TransactionValue`. Raw amounts + `decimals` — the frontend scales.
-     */
-    values: Array<TransactionValue>;
   }>;
   page: PageInfo;
 };
@@ -1827,15 +1813,6 @@ export type PaginatedTransactionListItem = {
      */
     source_account?: string | null;
     successful: boolean;
-    /**
-     * Net-settled "value moved" per asset the transaction touched (task 0393):
-     * `max(Σ+, Σ−)` per (transaction, asset). Raw values + `decimals` — the
-     * frontend scales. Ordered native-first (`asset_type`, then `asset_id`) so
-     * `values[0]` is XLM when the tx moved it; empty when nothing net-settled
-     * (a wash / pure cycle is zero by the flow decomposition theorem) or when
-     * history has not been backfilled yet.
-     */
-    values: Array<TransactionValue>;
   }>;
   page: PageInfo;
 };
@@ -2238,6 +2215,12 @@ export type TransactionDetailLight = {
    * could not be decoded (lore-0209).
    */
   source_account?: string | null;
+  /**
+   * The source account's on-chain `home_domain` (SEP-1 anchor domain),
+   * `null` when it sets none. The frontend asks that domain for the SEP-2
+   * federated address it claims for this account (task 0443, issue #363).
+   */
+  source_account_home_domain?: string | null;
   successful: boolean;
 };
 
@@ -2282,41 +2265,6 @@ export type TransactionListItem = {
    */
   source_account?: string | null;
   successful: boolean;
-  /**
-   * Net-settled "value moved" per asset the transaction touched (task 0393):
-   * `max(Σ+, Σ−)` per (transaction, asset). Raw values + `decimals` — the
-   * frontend scales. Ordered native-first (`asset_type`, then `asset_id`) so
-   * `values[0]` is XLM when the tx moved it; empty when nothing net-settled
-   * (a wash / pure cycle is zero by the flow decomposition theorem) or when
-   * history has not been backfilled yet.
-   */
-  values: Array<TransactionValue>;
-};
-
-/**
- * One asset's net-settled "value moved" in a transaction (task 0393).
- */
-export type TransactionValue = {
-  /**
-   * Asset identity for the asset detail link — `"native"`, `"CODE-ISSUER"`, or a
-   * contract `C…` StrKey for a bespoke type-3 Soroban token (all accepted by
-   * `GET /assets/{id}`).
-   */
-  asset: string;
-  /**
-   * Asset code for display (e.g. `"USDC"`) — the on-chain token symbol for a
-   * bespoke type-3 token; `null` for native XLM and for a bespoke token whose
-   * metadata symbol is unavailable.
-   */
-  asset_code?: string | null;
-  /**
-   * Display decimals (`7` for classic / SAC assets).
-   */
-  decimals: number;
-  /**
-   * Raw net-settled value as a stringified `Int128`; scale by `decimals`.
-   */
-  net_settled: string;
 };
 
 /**

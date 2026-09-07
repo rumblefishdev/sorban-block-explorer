@@ -97,6 +97,17 @@ pub fn contract_id(strkey: &str) -> i64 {
     hash64(strkey.as_bytes())
 }
 
+/// 32-byte payload of a C… contract StrKey, or `None` when it is not one.
+/// Feeds `FixedString(32)` pool ids for soroban rows (`liquidity_pools`,
+/// `pool_state_changes`, `pool_instance_state`) — a payload taken from
+/// anything other than a valid contract StrKey would fabricate a pool id.
+pub fn contract_payload(strkey: &str) -> Option<[u8; 32]> {
+    match stellar_strkey::Strkey::from_string(strkey) {
+        Ok(stellar_strkey::Strkey::Contract(c)) => Some(c.0),
+        _ => None,
+    }
+}
+
 /// `balances.holder_id` from ANY `ScAddress` StrKey — a G-account or a C-contract
 /// (a balance holder can be either; task 0331). Same `cityhash64` as
 /// `account_id`/`contract_id` (one shared surrogate space; resolve back to a StrKey

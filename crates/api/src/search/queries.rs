@@ -383,7 +383,6 @@ async fn search_pools_by_asset_code(
     let Some((clause, binds)) = asset_codes_predicate(&codes) else {
         return Ok(Vec::new());
     };
-
     let sql = format!(
         "SELECT pool_hex, {POOL_LABEL_SQL} \
          FROM ( \
@@ -709,9 +708,14 @@ struct IssuerRow {
 /// never be a substring of a ≤12-char asset code, so hash mode is provably
 /// empty). Step 1 pages matching assets — `asset_code` substring or the
 /// `native`/`xlm` special-case — joining the smaller `soroban_contracts` for the
-/// contract StrKey. Step 2 resolves the page's issuer surrogates → G-StrKey via
-/// a bloom-pruned `accounts WHERE id IN (...)` seek (NEVER a full-table
+/// contract StrKey, RANKED by match tier then holder count (task 0485; see the
+/// statement comment). Step 2 resolves the page's issuer surrogates → G-StrKey
+/// via a bloom-pruned `accounts WHERE id IN (...)` seek (NEVER a full-table
 /// `accounts` join — the Code 241 trap). `route_token` is then composed in Rust.
+/// The displayed code of an asset row — native's `XLM` standing in for its
+/// empty stored code. See the note in the function body before changing it.
+const SHOWN: &str = "lower(if(a.asset_type = 0, 'XLM', toString(a.asset_code)))";
+
 async fn search_assets(
     client: &clickhouse::Client,
     q: &str,
@@ -740,8 +744,46 @@ async fn search_assets(
     // (lore-0420): page-scoped CTE 1,896,766 rows / 37.8 MiB, this form
     // 1,118,154 rows / 28.5 MiB — cheaper even than the un-deduped original
     // (1,151,738 / 32.0 MiB).
-    let sql = format!(
-        "SELECT \
+    //
+    // A fully-qualified `CODE:ISSUER` (task 0534) takes a different arm: the pair
+    // names exactly one asset, so it is an equality lookup and needs no ranking —
+    // the most precise query is also the cheapest one. The issuer StrKey resolves
+    // through `accounts`, whose `ORDER BY account_id` primary key makes it a point
+    // seek rather than the ~23M-row hash join that OOMs (Code 241).
+    //
+    // The substring arm below is where relevance lives (task 0485). Before it,
+    // that arm ended in a bare `LIMIT` with NO `ORDER BY`, so it returned
+    // whichever rows the scan reached first — `q=USDC` answered with ten `IUSDC`
+    // rows and no USDC at all, and two identical calls could disagree.
+    //
+    // `SHOWN` is the code a row DISPLAYS as, and both the match and the tier
+    // compare it — never the stored value. Native XLM stores an EMPTY code and
+    // renders as `XLM`, so comparing what is stored returned thousands of
+    // impostor codes and missed the one asset everybody meant. That is also why
+    // there is no `native` arm: the alias IS the comparison.
+    //
+    // The same expression appears in `assets::queries` (the list) and in
+    // `common::pool_asset_codes` (the legs). It was briefly a shared builder;
+    // three literal copies read better than the indirection, so if you change
+    // the shape here, change it there — `native_is_matched_by_type_not_by_
+    // stored_code` in each module is the test that fails when you do not.
+    //
+    // Ranking is a tier (exact > prefix > substring anywhere) rather than a
+    // scoring formula: the order follows from what matched, not from a weighting
+    // we invented. Within a tier the tie-break is holder count — 441 assets carry
+    // the code `USDC` and the signal separates them cleanly (691,713 holders for
+    // Circle's, 3,093 for the runner-up). It lives in `balance_aggregates` (task
+    // 0331) — `assets` has no holder column any more (task 0310). Joined bare:
+    // the table is 1:1 on `asset_id`, so the usual `GROUP BY` collapse is pure
+    // cost (measured 93 ms -> 71 ms without it), and it cannot be page-scoped
+    // like the list's join because the ranking needs holders BEFORE the limit.
+    //
+    // The trailing PK columns make the order total: holder counts are NULL for
+    // most rows, and "same query, same answer" is half of what this fixes.
+    //
+    // The exact arm deliberately takes none of this: a qualified pair names one
+    // row, so there is nothing to rank and nothing to pay the join for.
+    const ASSET_HEAD: &str = "SELECT \
             a.asset_type AS asset_type, \
             nullIf(a.asset_code, '') AS asset_code, \
             nullIf(sc.contract_id, '') AS contract_strkey, \
@@ -750,19 +792,41 @@ async fn search_assets(
          LEFT JOIN ( \
              SELECT id, any(contract_id) AS contract_id \
              FROM soroban_contracts GROUP BY id \
-         ) sc ON sc.id = a.contract_id \
-         WHERE (length(a.asset_code) > 0 \
-                AND positionCaseInsensitive(toString(a.asset_code), ?) > 0) \
-            OR (a.asset_type = 0 AND (lower(?) = 'xlm' OR lower(?) = 'native')) \
-         LIMIT {per_group_limit}"
-    );
-    let rows = client
-        .query(&sql)
-        .bind(q)
-        .bind(q)
-        .bind(q)
-        .fetch_all::<AssetPhase1Row>()
-        .await?;
+         ) sc ON sc.id = a.contract_id ";
+    let rows = if let Some((code, issuer)) = classified.code_issuer.as_ref() {
+        let sql = format!(
+            "{ASSET_HEAD} \
+             WHERE lower(toString(a.asset_code)) = lower(?) \
+               AND a.issuer_id IN (SELECT id FROM accounts WHERE account_id = ?) \
+             LIMIT {per_group_limit}"
+        );
+        client
+            .query(&sql)
+            .bind(code)
+            .bind(issuer)
+            .fetch_all::<AssetPhase1Row>()
+            .await?
+    } else {
+        let sql = format!(
+            "{ASSET_HEAD} \
+             LEFT JOIN balance_aggregates bagg ON bagg.asset_id = a.id \
+             WHERE position({SHOWN}, lower(?)) > 0 \
+             ORDER BY multiIf({SHOWN} = lower(?), 0, \
+                              startsWith({SHOWN}, lower(?)), 1, \
+                              2) ASC, \
+                 bagg.holder_count DESC NULLS LAST, \
+                 a.asset_type ASC, a.asset_code ASC, a.issuer_id ASC \
+             LIMIT {per_group_limit}"
+        );
+        // One bind for the match, two for the tier — left to right, same needle.
+        client
+            .query(&sql)
+            .bind(q)
+            .bind(q)
+            .bind(q)
+            .fetch_all::<AssetPhase1Row>()
+            .await?
+    };
     if rows.is_empty() {
         return Ok(Vec::new());
     }
@@ -1046,6 +1110,46 @@ mod decode_smoke {
         .expect("transaction/pool bucket rows must decode");
     }
 
+    /// Task 0485. The tier ranking is only visible in the ORDER of the rows,
+    /// so the SQL-shape tests cannot see it — this runs the real read and
+    /// looks at the first asset hit. It also exercises the statement's 7
+    /// placeholders against the 7 `.bind(q)` calls; a mismatch is a runtime
+    /// failure no offline test reaches.
+    #[tokio::test]
+    async fn native_xlm_is_the_first_asset_hit_for_xlm() {
+        let Some(ch) = client() else {
+            eprintln!("CH_URL unset — skipping asset ranking smoke");
+            return;
+        };
+        let has_native: u64 = ch
+            .query("SELECT count() FROM assets WHERE asset_type = 0")
+            .fetch_one()
+            .await
+            .expect("native probe must run");
+        if has_native == 0 {
+            eprintln!("no native row in this CH — ranking smoke not exercised");
+            return;
+        }
+
+        let all = IncludeFlags::all();
+        let hits = fetch_search(&ch, "xlm", &classifier::classify("xlm"), &all, 20)
+            .await
+            .expect("ranked asset search decodes");
+
+        let first = hits
+            .iter()
+            .find(|(bucket, _)| bucket == "asset")
+            .map(|(_, hit)| hit)
+            .expect("a corpus with native XLM must yield an asset hit for `xlm`");
+        assert_eq!(
+            first.label, "native",
+            "`xlm` answered with {:?} first — before the ranking this bucket \
+             returned whichever look-alike codes the scan reached first and \
+             native XLM never made the page",
+            first.identifier
+        );
+    }
+
     /// A needle longer than a Stellar asset code cannot match a pool, so the
     /// scan must not run at all. Guards the gate that keeps every account- and
     /// contract-shaped search off the pools table (task 0470 review).
@@ -1118,6 +1222,113 @@ mod decode_smoke {
                     hit.identifier,
                 );
             }
+        }
+    }
+
+    /// Task 0485: the canonical `CODE:ISSUER` (and our own `CODE-ISSUER` route
+    /// token) used to classify as nothing, so the asset arm hunted a 60+
+    /// character needle through <=12 character codes — provably empty — and the
+    /// most precise query a user can type answered with a blank page.
+    ///
+    /// Only testable against a real corpus: what is asserted is which row
+    /// survives, which no fixture-free unit test can observe. The target is a
+    /// code carried by SEVERAL assets, addressed by the one the scan reaches
+    /// LAST, so a hit cannot come from the substring arm returning the first row
+    /// it happened to touch.
+    #[tokio::test]
+    async fn code_issuer_resolves_to_exactly_that_asset() {
+        let Some(ch) = client() else {
+            eprintln!("CH_URL unset — skipping CODE:ISSUER smoke");
+            return;
+        };
+
+        #[derive(Debug, Row, Deserialize)]
+        struct CodeRow {
+            asset_code: String,
+        }
+
+        let probe = ch
+            .query(
+                "SELECT toString(a.asset_code) AS asset_code \
+                 FROM assets a FINAL \
+                 WHERE length(a.asset_code) > 0 AND a.issuer_id != 0 \
+                 GROUP BY a.asset_code \
+                 HAVING count() > 1 \
+                 LIMIT 1",
+            )
+            .fetch_optional::<CodeRow>()
+            .await
+            .expect("corpus probe must run");
+        let Some(CodeRow { asset_code: code }) = probe else {
+            eprintln!("no asset code shared by two issuers — skipping");
+            return;
+        };
+
+        let same_code = ch
+            .query(
+                "SELECT a.asset_type AS asset_type, \
+                        nullIf(a.asset_code, '') AS asset_code, \
+                        nullIf(sc.contract_id, '') AS contract_strkey, \
+                        a.issuer_id AS issuer_id \
+                 FROM assets a FINAL \
+                 LEFT JOIN ( \
+                     SELECT id, any(contract_id) AS contract_id \
+                     FROM soroban_contracts GROUP BY id \
+                 ) sc ON sc.id = a.contract_id \
+                 WHERE lower(toString(a.asset_code)) = lower(?) \
+                 LIMIT 16",
+            )
+            .bind(&code)
+            .fetch_all::<AssetPhase1Row>()
+            .await
+            .expect("same-code query must run");
+        let target = same_code
+            .last()
+            .unwrap_or_else(|| panic!("no asset row for probed code {code:?}"));
+
+        let Some(issuer) = ch
+            .query(
+                "SELECT id AS id, account_id AS account_id \
+                 FROM accounts WHERE id = ? LIMIT 1 BY id",
+            )
+            .bind(target.issuer_id)
+            .fetch_optional::<IssuerRow>()
+            .await
+            .expect("issuer resolve must run")
+            .map(|r| r.account_id)
+        else {
+            eprintln!("probed asset has no resolvable issuer — skipping");
+            return;
+        };
+
+        let want = asset_route_token(
+            target.contract_strkey.as_deref(),
+            target.asset_code.as_deref(),
+            Some(issuer.as_str()),
+            target.asset_type,
+        );
+
+        // Both separators: `:` is the canonical SEP / SDK form, `-` is what our
+        // own `/assets/:id` routes emit and users paste back.
+        for q in [format!("{code}:{issuer}"), format!("{code}-{issuer}")] {
+            let hits = fetch_search(&ch, &q, &classifier::classify(&q), &IncludeFlags::all(), 10)
+                .await
+                .unwrap_or_else(|e| panic!("search failed for {q:?}: {e}"));
+            let assets: Vec<&SearchHit> = hits
+                .iter()
+                .filter(|(bucket, _)| bucket == "asset")
+                .map(|(_, hit)| hit)
+                .collect();
+
+            assert_eq!(
+                assets.len(),
+                1,
+                "{q:?} must resolve to exactly one asset, got {assets:?}"
+            );
+            assert_eq!(
+                assets[0].route_token, want,
+                "{q:?} resolved to the wrong asset",
+            );
         }
     }
 }

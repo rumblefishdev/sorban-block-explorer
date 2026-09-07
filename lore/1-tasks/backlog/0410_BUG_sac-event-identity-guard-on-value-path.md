@@ -36,6 +36,18 @@ history:
       to the presence path; same gate, different call site. Also adds a fix for a
       topic-index mismatch that would let a 5-topic event bypass the gate.
       Priority raised — this is exploitable today (not currently exploited).
+  - date: 2026-09-01
+    status: backlog
+    who: karolkow
+    note: >
+      RE-VERIFIED against develop, still open and still exploitable. Found
+      INDEPENDENTLY by the PR #438 (task 0374) blast-radius investigation,
+      which swept every entity producer for "identity taken from an
+      attacker-controlled payload instead of the authenticated
+      owner/emitter" — this is the ONLY pre-existing member of that class in
+      the codebase. Both defects this task names are unchanged in code; the
+      topic-index mismatch is confirmed still real. See "Re-verification"
+      below for the fresh evidence and the narrowed blast radius.
 ---
 
 # BUG: SAC event-identity guard on value path — verify emitter == asset SAC (full H2 fix)
@@ -67,6 +79,49 @@ history:
 > presence path**. Everything below about the guard still applies; ignore the
 > references to `token_events_net_settled` and `policy_null`, which were deleted
 > with the event-value path.
+
+## Re-verification 2026-09-01 — still open, independently rediscovered
+
+Re-checked against `develop` while auditing PR #438 (task 0374). That review
+ran a codebase-wide sweep for one bug class: **an entity's identity taken from
+a payload the emitting contract chooses freely, instead of from the
+authenticated owner/emitter, with no downstream check.** Three agents graded
+every entity producer in `xdr-parser` and `db-clickhouse/persist`.
+
+**Result worth knowing: this task is the ONLY pre-existing member of that
+class.** Every other producer anchors identity to an authenticated source — a
+ledger-entry owner, the event `contract_id`, the tx source, or a cryptographic
+derivation corroborated against the emitter (`nft.rs`'s
+`derived_sac == emitter` is the reference). So this is not one of many; it is
+the last one.
+
+Both defects named above are unchanged in today's code:
+
+1. **Presence path still unguarded.** `event_asset_surrogate`
+   (`stage.rs`) maps a `Credit` claim straight onto the real classic
+   surrogate — `EventAsset::Credit { code, issuer } => Some(ids::credit_asset_id(code, issuer))`
+   — with the emitter consulted only for `Bespoke`. `event_asset`
+   (`event_filters.rs`) receives the topic alone and never the emitter.
+
+2. **Topic-index mismatch still real** — and worth restating precisely,
+   because the decoder has changed shape since this task was written. It no
+   longer reads a hardcoded index: `parse_token_event` now picks a FIXED index
+   PER VERB (`transfer` → 3, `mint`/`burn`/`clawback` → 2). The gate
+   (`sac.rs`) still reads `topics.last()`. For the documented arities those
+   coincide; for a longer topic list they do not, so the gate would inspect a
+   different element than the one the decoder trusted. Aligning both on one
+   index (plus the over-long-topics test) stays a MUST-FIX alongside the
+   wiring.
+
+**Blast radius, measured rather than assumed** — the reason this stayed off
+the #438 critical path:
+
+- **Presence only.** The value path has read authenticated ledger deltas since
+  0393, so a forged event moves no amount, no balance, and no aggregate. What
+  a forged row buys is a line in a real asset's transaction list.
+- **Bespoke tokens fall out at read.** The reader INNER JOINs the `assets`
+  dimension, so a contract with no asset row contributes nothing.
+- Not introduced by #438, and not made worse by it.
 
 ## Summary
 

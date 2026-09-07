@@ -2220,7 +2220,6 @@
           "operation_count",
           "has_soroban",
           "operation_types",
-          "values",
           "created_at"
         ],
         "properties": {
@@ -2264,13 +2263,6 @@
           },
           "successful": {
             "type": "boolean"
-          },
-          "values": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TransactionValue"
-            },
-            "description": "Net-settled \"value moved\" per asset the transaction touched (task 0393);\nsee `TransactionValue`. Raw amounts + `decimals` — the frontend scales."
           }
         }
       },
@@ -2441,8 +2433,7 @@
           "created_at",
           "operation_count",
           "has_soroban",
-          "operation_types",
-          "values"
+          "operation_types"
         ],
         "properties": {
           "created_at": {
@@ -2480,13 +2471,6 @@
           },
           "successful": {
             "type": "boolean"
-          },
-          "values": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TransactionValue"
-            },
-            "description": "Net-settled \"value moved\" per asset the transaction touched (task 0393);\nsee `TransactionValue`. Raw amounts + `decimals` — the frontend scales."
           }
         }
       },
@@ -2975,6 +2959,10 @@
               "source_account": {
                 "type": ["string", "null"],
                 "description": "`null` for Variant A `parse_error` transactions whose envelope\ncould not be decoded (lore-0209)."
+              },
+              "source_account_home_domain": {
+                "type": ["string", "null"],
+                "description": "The source account's on-chain `home_domain` (SEP-1 anchor domain),\n`null` when it sets none. The frontend asks that domain for the SEP-2\nfederated address it claims for this account (task 0443, issue #363)."
               },
               "successful": {
                 "type": "boolean"
@@ -3618,7 +3606,6 @@
                 "operation_count",
                 "has_soroban",
                 "operation_types",
-                "values",
                 "created_at"
               ],
               "properties": {
@@ -3662,13 +3649,6 @@
                 },
                 "successful": {
                   "type": "boolean"
-                },
-                "values": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/TransactionValue"
-                  },
-                  "description": "Net-settled \"value moved\" per asset the transaction touched (task 0393);\nsee `TransactionValue`. Raw amounts + `decimals` — the frontend scales."
                 }
               }
             }
@@ -3777,8 +3757,7 @@
                 "created_at",
                 "operation_count",
                 "has_soroban",
-                "operation_types",
-                "values"
+                "operation_types"
               ],
               "properties": {
                 "created_at": {
@@ -3816,13 +3795,6 @@
                 },
                 "successful": {
                   "type": "boolean"
-                },
-                "values": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/TransactionValue"
-                  },
-                  "description": "Net-settled \"value moved\" per asset the transaction touched (task 0393);\nsee `TransactionValue`. Raw amounts + `decimals` — the frontend scales."
                 }
               }
             }
@@ -4372,7 +4344,6 @@
                 "operation_count",
                 "has_soroban",
                 "operation_types",
-                "values",
                 "created_at"
               ],
               "properties": {
@@ -4423,13 +4394,6 @@
                 },
                 "successful": {
                   "type": "boolean"
-                },
-                "values": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/TransactionValue"
-                  },
-                  "description": "Net-settled \"value moved\" per asset the transaction touched (task 0393):\n`max(Σ+, Σ−)` per (transaction, asset). Raw values + `decimals` — the\nfrontend scales. Ordered native-first (`asset_type`, then `asset_id`) so\n`values[0]` is XLM when the tx moved it; empty when nothing net-settled\n(a wash / pure cycle is zero by the flow decomposition theorem) or when\nhistory has not been backfilled yet."
                 }
               }
             }
@@ -4839,6 +4803,10 @@
             "type": ["string", "null"],
             "description": "`null` for Variant A `parse_error` transactions whose envelope\ncould not be decoded (lore-0209)."
           },
+          "source_account_home_domain": {
+            "type": ["string", "null"],
+            "description": "The source account's on-chain `home_domain` (SEP-1 anchor domain),\n`null` when it sets none. The frontend asks that domain for the SEP-2\nfederated address it claims for this account (task 0443, issue #363)."
+          },
           "successful": {
             "type": "boolean"
           }
@@ -4856,7 +4824,6 @@
           "operation_count",
           "has_soroban",
           "operation_types",
-          "values",
           "created_at"
         ],
         "properties": {
@@ -4907,38 +4874,6 @@
           },
           "successful": {
             "type": "boolean"
-          },
-          "values": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TransactionValue"
-            },
-            "description": "Net-settled \"value moved\" per asset the transaction touched (task 0393):\n`max(Σ+, Σ−)` per (transaction, asset). Raw values + `decimals` — the\nfrontend scales. Ordered native-first (`asset_type`, then `asset_id`) so\n`values[0]` is XLM when the tx moved it; empty when nothing net-settled\n(a wash / pure cycle is zero by the flow decomposition theorem) or when\nhistory has not been backfilled yet."
-          }
-        }
-      },
-      "TransactionValue": {
-        "type": "object",
-        "description": "One asset's net-settled \"value moved\" in a transaction (task 0393).",
-        "required": ["asset", "net_settled", "decimals"],
-        "properties": {
-          "asset": {
-            "type": "string",
-            "description": "Asset identity for the asset detail link — `\"native\"`, `\"CODE-ISSUER\"`, or a\ncontract `C…` StrKey for a bespoke type-3 Soroban token (all accepted by\n`GET /assets/{id}`)."
-          },
-          "asset_code": {
-            "type": ["string", "null"],
-            "description": "Asset code for display (e.g. `\"USDC\"`) — the on-chain token symbol for a\nbespoke type-3 token; `null` for native XLM and for a bespoke token whose\nmetadata symbol is unavailable."
-          },
-          "decimals": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Display decimals (`7` for classic / SAC assets).",
-            "minimum": 0
-          },
-          "net_settled": {
-            "type": "string",
-            "description": "Raw net-settled value as a stringified `Int128`; scale by `decimals`."
           }
         }
       },

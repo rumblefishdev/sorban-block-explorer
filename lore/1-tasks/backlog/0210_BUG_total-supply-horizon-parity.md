@@ -75,6 +75,18 @@ history:
       goal: supply is not validated by matching another indexer, it is
       validated by a reconciliation identity that must balance. See the
       2026-08-18 section in the body.
+  - date: '2026-09-03'
+    status: backlog
+    who: stkrolikiewicz
+    note: >
+      First per-asset measurement of the two remaining sources (USDT0), which
+      confirms they are the only two: LP reserves 24.5064194 + claimable
+      0.3070000 account for the entire gap, exactly. Four findings that change
+      the plan — the drift estimate is stale (0.001%, not 20-50%: 0331 ate it),
+      LP reserve data is already exact so that half is a query rather than an
+      ingestion path, the naive MV edit costs 3.7x per refresh, and the planned
+      synthetic-`balances` mechanism would corrupt `holder_count`. See the
+      2026-09-03 section in the body.
 ---
 
 # BUG: `assets.total_supply` Horizon parity — extend MVP sum to 4 sources
@@ -217,6 +229,115 @@ undetected, and would have moved this residual the day it appeared.
   gap from the other direction — five ledger entry types parsed and never
   stored. Whichever runs first should claim the ingestion path; the other
   consumes it.
+
+## 2026-09-03 (stkrolikiewicz) — the gap measured on a live asset
+
+First per-asset measurement since 0331. Target: `USDT0-GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q`
+(LayerZero OFT, listed 2026-07-21). Every figure below is from production.
+
+| bucket                             | amount                |
+| ---------------------------------- | --------------------- |
+| trustlines (8,253 authorized)      | 5,370.0258229         |
+| contracts (14)                     | 2,589,655.2118767     |
+| **our `total_supply`**             | **2,595,025.2376996** |
+| claimable balances (1) — source #2 | 0.3070000             |
+| native LP reserves (6 pools) — #3  | 24.5064194            |
+| **full supply**                    | **2,595,050.0511190** |
+
+The two missing sources account for the gap **exactly** — 24.8134194 USDT0,
+nothing unexplained. That is the useful part: sources #1 and #4 are not merely
+"done", they are provably exact, and #2 + #3 are provably the whole remainder.
+
+### 1. The drift estimate in this task is stale
+
+The "~20-50% on DeFi assets" figure is inherited from 0194, i.e. from **before**
+0331 closed sources #1 and #4. Measured now, the residual on a live,
+pool-listed, contract-heavy asset is **0.00096%**. 0331 ate essentially all of
+the drift this task was opened for.
+
+That does not close the task — a token whose float sits mostly in AMM will still
+show a fraction of the truth, and the field promises "total". But the urgency is
+different from what `priority-high` implies, and re-triage should be the first
+step, not the last.
+
+### 2. LP reserve data is already exact — that half is a query, not an ingestion path
+
+The body says reserves "are in `pool_snapshots`" without saying whether they can
+be trusted. They can. Reconstructed from `liquidity_pool_snapshots` +
+`liquidity_pools`, USDT0 shows **24.5064194 across 6 pools** — same value to the
+seventh decimal, same pool count, as the external cross-check.
+
+Source #3 therefore needs no new parsing and no new ledger-entry handling. Only
+source #2 (claimable balances) is a genuine ingestion path — no state table
+exists, and it needs the full create/claim/clawback lifecycle or balances hang
+in our DB forever after someone claims them. Overlaps 0504.
+
+### 3. Do not put the pool scan inside `balance_aggregates_mv`
+
+| table                       | rows     | on disk  |
+| --------------------------- | -------- | -------- |
+| `balances` (MV reads today) | 122.44 M | 1.52 GiB |
+| `liquidity_pool_snapshots`  | 324.97 M | 6.86 GiB |
+
+Current reserves require `argMax(reserve, ledger_sequence) GROUP BY pool_id` — a
+full scan of a time series, because snapshots are history, not state. The MV
+refreshes **every 2 minutes**, so folding this in raises the refresh from 122 M
+to 447 M rows, 30× an hour, on the box 0356 already identified as the
+bottleneck.
+
+Cheaper: an **incremental** MV (insert-triggered, not refreshable) into a
+current-state table, which `balance_aggregates_mv` then joins as something small.
+
+```sql
+CREATE TABLE pool_reserves_current (pool_id FixedString(32), reserve_a Decimal(38,7),
+       reserve_b Decimal(38,7), ledger_sequence Int64)
+ENGINE = ReplacingMergeTree(ledger_sequence) ORDER BY pool_id;
+
+CREATE MATERIALIZED VIEW pool_reserves_mv TO pool_reserves_current AS
+SELECT pool_id, reserve_a, reserve_b, ledger_sequence FROM liquidity_pool_snapshots;
+```
+
+52,733 rows out, no scan per refresh. One heavy pass over history is needed to
+seed it; that one is unavoidable.
+
+**Filter on `pool_kind = 0`** — and note that 52,733 is exactly the classic pool
+count, so the figure above already assumes it. Production carries 497 registered
+Soroban-AMM pools (`pool_kind = 1`, task 0374) and **zero** reserve snapshots for
+them today, so the MV as written is correct by accident. The moment 0374 starts
+persisting their reserves, an unfiltered version double-counts: a Soroban pool
+holds its reserves AS a contract, so ADR 0051 already sums them into `balances`.
+Source #3 is the NATIVE `LiquidityPoolEntry` and nothing else.
+
+### 4. The planned synthetic-`balances` rows would corrupt `holder_count`
+
+The 2026-07-02 plan writes synthetic `balances` rows (holder = pool id /
+claimable-balance id). Those rows flow through the **same** aggregate:
+
+```sql
+toInt32(countIf(amount > 0)) AS holder_count
+```
+
+A pool is not a holder, and neither is a claimable balance. `holder_count` is
+currently **correct** (91, matching the external funded-trustline count on the
+day of measurement) — this change would break a right field to fix a wrong one.
+Whatever synthetic holder-id space is chosen must be excluded from the count,
+which is an argument for a distinguishable id range rather than an opaque hash.
+
+### 5. Unit mismatch between the two sides
+
+`balances.amount` is raw `Int128` (scaled by the asset's `decimals` at read);
+`liquidity_pool_snapshots.reserve_{a,b}` is `Decimal(38,7)` — already scaled.
+A `reserve * 1e7` bridge is right for classic assets and **wrong for
+Soroban-AMM pools** carrying non-7-decimal assets (`pool_kind` ≠ 0, see 0374).
+Scale by the asset's own `decimals`, not by a constant.
+
+### Also worth fixing while here
+
+Two comments assert that `sum(balances)` equals real supply and list the known
+exceptions as "TTL-archived tail + true rebasing" — neither mentions LP reserves
+or claimable balances, which are the entire measured gap:
+`crates/db-clickhouse/schema/init.sql` (the `soroban_token_supply` tombstone) and
+`crates/api/src/assets/queries.rs` (the `total_supply` header comment).
 
 ## Context
 

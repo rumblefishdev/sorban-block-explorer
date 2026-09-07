@@ -8,7 +8,18 @@
 //! - `TrustLineEntry.balance` (classic issued assets),
 //! - `ContractData` `Balance(Address)` — a Soroban token balance held by an
 //!   account or contract: a SAC `BalanceValue` **struct** (a classic/native asset
-//!   held by a contract) or a **bare `i128`** (a bespoke token, which IS the asset).
+//!   held by a contract) or a **bare `i128`** (a bespoke token, which IS the asset),
+//! - `LiquidityPoolEntry` reserves — the pool (`L…`) as holder of its two
+//!   reserve assets (task 0540 / T03; before it, value routed *through* a classic
+//!   pool netted to zero for the only holder the reader saw — 7.6% of
+//!   value-moving transactions),
+//! - `ClaimableBalanceEntry.amount` — the balance (`B…`) as holder of its asset
+//!   between creation and claim.
+//!
+//! Pool-share trustlines stay unread on purpose: CAP-67 emits no token event for
+//! pool shares (measured: not one `mint`/`burn` labelled with a pool share on
+//! 60 000 ledgers — a deposit is two `transfer`s to the `L…` address), so a
+//! share balance has no event-side counterpart to reconcile against.
 //!
 //! **Every** value flow — payment, path payment, offer/DEX fill, LP deposit/
 //! withdraw, claimable-balance create/claim, clawback, and Soroban SAC/bespoke
@@ -19,9 +30,13 @@
 //! ## Fee
 //!
 //! The transaction fee is charged in the ledger's separate `feeProcessing`
-//! phase, **not** in `TransactionMeta` (the apply phase). So these deltas never
-//! include the fee — formula rule 3 ("fee events excluded") is satisfied by the
-//! source, with no subtraction. (A seq-number bump on the source appears in
+//! phase, **not** in `TransactionMeta` (the apply phase), so these deltas never
+//! include the charge. The Soroban unused-resource-fee REFUND is different:
+//! before Protocol 23 it lands in `tx_changes_after` (from 23 on it is outside
+//! `TransactionMeta`, in `post_tx_apply_fee_processing`). [`ledger_balance_deltas`]
+//! includes it; [`operation_balance_deltas`] does not — use the latter when the
+//! question is "what did the operations move". Found by the task 0540 oracle,
+//! not by reading the spec. (A seq-number bump on the source appears in
 //! `tx_changes_before`, but it does not move `balance`, so it nets to a 0 delta
 //! and is dropped.)
 //!
@@ -31,11 +46,11 @@
 use std::collections::BTreeMap;
 
 use stellar_xdr::{
-    ContractDataEntry, LedgerEntry, LedgerEntryChange, LedgerEntryData, LedgerKey, ScVal,
-    TransactionMeta, TrustLineAsset,
+    Asset, ContractDataEntry, LedgerEntry, LedgerEntryChange, LedgerEntryData, LedgerKey,
+    LiquidityPoolEntryBody, ScAddress, ScVal, TransactionMeta, TrustLineAsset,
 };
 
-use crate::meta::ledger_changes;
+use crate::meta::{ledger_changes, operation_changes};
 
 /// The asset a LEDGER balance change moved — the LEDGER domain's asset vocabulary
 /// (cf. `AssetRef` for op-declared assets, `EventAsset` for event-named; each domain
@@ -81,6 +96,20 @@ pub struct LedgerDelta {
 /// Per-(account, asset) net classic balance delta for a transaction. Only
 /// non-zero deltas are returned, ordered by (account, asset) for determinism.
 pub fn ledger_balance_deltas(meta: &TransactionMeta) -> Vec<LedgerDelta> {
+    balance_deltas_over(ledger_changes(meta))
+}
+
+/// Like [`ledger_balance_deltas`] but over the OPERATIONS' changes only —
+/// `tx_changes_after` excluded. That is where a Soroban transaction's fee
+/// refund lands before Protocol 23, and a refund is a fee, not a movement:
+/// the events-vs-ledger oracle (task 0540 T04) compares token movements, so it
+/// reads this view. From Protocol 23 the refund is outside `TransactionMeta`
+/// anyway, so the two functions agree there.
+pub fn operation_balance_deltas(meta: &TransactionMeta) -> Vec<LedgerDelta> {
+    balance_deltas_over(operation_changes(meta))
+}
+
+fn balance_deltas_over(changes: Vec<&LedgerEntryChange>) -> Vec<LedgerDelta> {
     // Runs for EVERY tx (classic AND Soroban): the ledger is the authoritative,
     // unspoofable source of value for native/classic/SAC, whether moved by a
     // classic op (Account/Trustline changes) or a Soroban invocation (which also
@@ -88,7 +117,7 @@ pub fn ledger_balance_deltas(meta: &TransactionMeta) -> Vec<LedgerDelta> {
     // tokens — with no ledger-readable balance — are valued from their events.
     // (account, asset) -> before/after balance, telescoped across the tx.
     let mut acc: BTreeMap<(String, LedgerAsset), Balances> = BTreeMap::new();
-    for change in ledger_changes(meta) {
+    for change in changes {
         match change {
             // `State` / `Restored` are before-images (Restored re-appears from
             // state archival, protocol 23 — the restore itself moves no value).
@@ -134,9 +163,19 @@ fn record(
     created: bool,
     is_update: bool,
 ) {
-    let Some((account, asset, balance)) = entry_balance(entry) else {
-        return;
-    };
+    for (account, asset, balance) in entry_balances(entry) {
+        record_one(acc, account, asset, balance, created, is_update);
+    }
+}
+
+fn record_one(
+    acc: &mut BTreeMap<(String, LedgerAsset), Balances>,
+    account: String,
+    asset: LedgerAsset,
+    balance: i128,
+    created: bool,
+    is_update: bool,
+) {
     let e = acc.entry((account, asset)).or_insert(Balances {
         initial: None,
         last: 0,
@@ -160,6 +199,36 @@ fn record(
 
 /// A removed entry drops to balance 0 (its initial came from a preceding State).
 fn record_removed(acc: &mut BTreeMap<(String, LedgerAsset), Balances>, key: &LedgerKey) {
+    // A pool or claimable-balance key names the holder but not its asset(s);
+    // those came from the preceding `State`, so every balance of that holder
+    // drops to 0. (Stellar removes a pool only when its reserves are already 0
+    // and a claimable balance only when claimed, so the drop IS the movement.)
+    let holder = match key {
+        LedgerKey::LiquidityPool(k) => {
+            Some(ScAddress::LiquidityPool(k.liquidity_pool_id.clone()).to_string())
+        }
+        LedgerKey::ClaimableBalance(k) => {
+            Some(ScAddress::ClaimableBalance(k.balance_id.clone()).to_string())
+        }
+        // Accounts and trustlines keep their own (asset, holder) key in the
+        // map and are zeroed by the caller; the rest hold no balance.
+        LedgerKey::Account(_)
+        | LedgerKey::Trustline(_)
+        | LedgerKey::Offer(_)
+        | LedgerKey::Data(_)
+        | LedgerKey::ContractData(_)
+        | LedgerKey::ContractCode(_)
+        | LedgerKey::ConfigSetting(_)
+        | LedgerKey::Ttl(_) => None,
+    };
+    if let Some(holder) = holder {
+        for ((account, _), b) in acc.iter_mut() {
+            if *account == holder {
+                b.last = 0;
+            }
+        }
+        return;
+    }
     let Some((account, asset)) = removed_balance_key(key) else {
         return;
     };
@@ -171,26 +240,74 @@ fn record_removed(acc: &mut BTreeMap<(String, LedgerAsset), Balances>, key: &Led
         .last = 0;
 }
 
-/// `(account, asset, balance)` for the balance-bearing entry types:
-/// `AccountEntry` (native), `TrustLineEntry` (classic credit), and a SAC
-/// contract-held balance (`ContractData` `Balance(Address)` with a SAC
-/// `BalanceValue` struct value). `None` for everything else (offers, LP,
-/// claimable balances, bespoke ContractData) — their effects either surface as
-/// account/trustline changes or belong to the bespoke event path.
-fn entry_balance(entry: &LedgerEntry) -> Option<(String, LedgerAsset, i128)> {
+/// Every `(holder, asset, balance)` an entry carries: one for `AccountEntry`
+/// (native), `TrustLineEntry` (classic credit), a `ContractData`
+/// `Balance(Address)` (SAC struct or bespoke i128) and `ClaimableBalanceEntry`
+/// (the `B…` balance as holder); **two** for a `LiquidityPoolEntry` (the `L…`
+/// pool as holder of each reserve). Empty for everything else (offers, data
+/// entries, pool-share trustlines, non-balance ContractData) — an offer's
+/// effect surfaces as the maker's trustline change when it is crossed.
+///
+/// Holder StrKeys use the same rendering as CAP-67 event topics
+/// (`ScAddress::{LiquidityPool, ClaimableBalance}` → `L…` / `B…`), so the
+/// events-vs-ledger oracle (task 0540 T04) compares like with like.
+fn entry_balances(entry: &LedgerEntry) -> Vec<(String, LedgerAsset, i128)> {
     match &entry.data {
-        LedgerEntryData::Account(a) => Some((
+        LedgerEntryData::Account(a) => vec![(
             a.account_id.to_string(),
             LedgerAsset::Native,
             i128::from(a.balance),
-        )),
-        LedgerEntryData::Trustline(t) => Some((
-            t.account_id.to_string(),
-            trustline_event_asset(&t.asset)?,
-            i128::from(t.balance),
-        )),
-        LedgerEntryData::ContractData(cd) => contract_data_balance(cd),
-        _ => None,
+        )],
+        LedgerEntryData::Trustline(t) => trustline_event_asset(&t.asset)
+            .map(|asset| (t.account_id.to_string(), asset, i128::from(t.balance)))
+            .into_iter()
+            .collect(),
+        LedgerEntryData::ContractData(cd) => contract_data_balance(cd).into_iter().collect(),
+        LedgerEntryData::LiquidityPool(lp) => {
+            let holder = ScAddress::LiquidityPool(lp.liquidity_pool_id.clone()).to_string();
+            let LiquidityPoolEntryBody::LiquidityPoolConstantProduct(cp) = &lp.body;
+            vec![
+                (
+                    holder.clone(),
+                    classic_asset(&cp.params.asset_a),
+                    i128::from(cp.reserve_a),
+                ),
+                (
+                    holder,
+                    classic_asset(&cp.params.asset_b),
+                    i128::from(cp.reserve_b),
+                ),
+            ]
+        }
+        LedgerEntryData::ClaimableBalance(cb) => vec![(
+            ScAddress::ClaimableBalance(cb.balance_id.clone()).to_string(),
+            classic_asset(&cb.asset),
+            i128::from(cb.amount),
+        )],
+        // No balance lives in these; an offer's value surfaces as the maker's
+        // trustline change when it is crossed. Exhaustive so that a new entry
+        // type is a compile error here, not a silent blind spot (the pool and
+        // claimable-balance blind spots cost 7.6% of transactions — 0412/0413).
+        LedgerEntryData::Offer(_)
+        | LedgerEntryData::Data(_)
+        | LedgerEntryData::ContractCode(_)
+        | LedgerEntryData::ConfigSetting(_)
+        | LedgerEntryData::Ttl(_) => Vec::new(),
+    }
+}
+
+/// The `LedgerAsset` of a classic `Asset` (pool reserves, claimable balances).
+fn classic_asset(asset: &Asset) -> LedgerAsset {
+    match asset {
+        Asset::Native => LedgerAsset::Native,
+        Asset::CreditAlphanum4(a) => LedgerAsset::Credit {
+            code: crate::asset_code::asset_code_str(a.asset_code.as_slice()),
+            issuer: a.issuer.to_string(),
+        },
+        Asset::CreditAlphanum12(a) => LedgerAsset::Credit {
+            code: crate::asset_code::asset_code_str(a.asset_code.as_slice()),
+            issuer: a.issuer.to_string(),
+        },
     }
 }
 
@@ -294,340 +411,5 @@ fn trustline_event_asset(asset: &TrustLineAsset) -> Option<LedgerAsset> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use stellar_xdr::{
-        AccountEntry, AccountEntryExt, AccountId, AlphaNum4, AssetCode4, ExtensionPoint, Hash,
-        LedgerEntryChanges, LedgerEntryExt, LedgerKeyTrustLine, OperationMeta, PoolId, PublicKey,
-        SequenceNumber, String32, Thresholds, TransactionMetaV3, TrustLineEntry, TrustLineEntryExt,
-        Uint256, VecM,
-    };
-
-    fn acct_id(b: u8) -> AccountId {
-        AccountId(PublicKey::PublicKeyTypeEd25519(Uint256([b; 32])))
-    }
-    fn strkey(b: u8) -> String {
-        acct_id(b).to_string()
-    }
-
-    fn account_entry(id: u8, balance: i64) -> LedgerEntry {
-        LedgerEntry {
-            last_modified_ledger_seq: 100,
-            data: LedgerEntryData::Account(AccountEntry {
-                account_id: acct_id(id),
-                balance,
-                seq_num: SequenceNumber(1),
-                num_sub_entries: 0,
-                inflation_dest: None,
-                flags: 0,
-                home_domain: String32::default(),
-                thresholds: Thresholds([1, 0, 0, 0]),
-                signers: VecM::default(),
-                ext: AccountEntryExt::V0,
-            }),
-            ext: LedgerEntryExt::V0,
-        }
-    }
-
-    fn usdc_asset(issuer: u8) -> TrustLineAsset {
-        TrustLineAsset::CreditAlphanum4(AlphaNum4 {
-            asset_code: AssetCode4(*b"USDC"),
-            issuer: acct_id(issuer),
-        })
-    }
-
-    fn trustline_entry(holder: u8, asset: TrustLineAsset, balance: i64) -> LedgerEntry {
-        LedgerEntry {
-            last_modified_ledger_seq: 100,
-            data: LedgerEntryData::Trustline(TrustLineEntry {
-                account_id: acct_id(holder),
-                asset,
-                balance,
-                limit: i64::MAX,
-                flags: 1,
-                ext: TrustLineEntryExt::V0,
-            }),
-            ext: LedgerEntryExt::V0,
-        }
-    }
-
-    /// Build a V3 meta whose single operation carries `changes`.
-    fn meta_with_op_changes(changes: Vec<LedgerEntryChange>) -> TransactionMeta {
-        TransactionMeta::V3(TransactionMetaV3 {
-            ext: ExtensionPoint::V0,
-            tx_changes_before: LedgerEntryChanges::default(),
-            operations: vec![OperationMeta {
-                changes: changes.try_into().unwrap(),
-            }]
-            .try_into()
-            .unwrap(),
-            tx_changes_after: LedgerEntryChanges::default(),
-            soroban_meta: None,
-        })
-    }
-
-    fn find<'a>(
-        d: &'a [LedgerDelta],
-        account: &str,
-        asset: &LedgerAsset,
-    ) -> Option<&'a LedgerDelta> {
-        d.iter().find(|x| x.account == account && &x.asset == asset)
-    }
-
-    fn usdc_credit() -> LedgerAsset {
-        LedgerAsset::Credit {
-            code: "USDC".to_string(),
-            issuer: strkey(0x11),
-        }
-    }
-
-    #[test]
-    fn native_payment_nets_source_and_destination() {
-        // source 1000 -> 900, dest 500 -> 600 (payment of 100 native).
-        let meta = meta_with_op_changes(vec![
-            LedgerEntryChange::State(account_entry(0xAA, 1000)),
-            LedgerEntryChange::Updated(account_entry(0xAA, 900)),
-            LedgerEntryChange::State(account_entry(0xBB, 500)),
-            LedgerEntryChange::Updated(account_entry(0xBB, 600)),
-        ]);
-        let d = ledger_balance_deltas(&meta);
-        assert_eq!(
-            find(&d, &strkey(0xAA), &LedgerAsset::Native).unwrap().delta,
-            -100
-        );
-        assert_eq!(
-            find(&d, &strkey(0xBB), &LedgerAsset::Native).unwrap().delta,
-            100
-        );
-    }
-
-    #[test]
-    fn created_account_funding_moves_native() {
-        // funder 1000 -> 700, new account created at 300.
-        let meta = meta_with_op_changes(vec![
-            LedgerEntryChange::State(account_entry(0xAA, 1000)),
-            LedgerEntryChange::Updated(account_entry(0xAA, 700)),
-            LedgerEntryChange::Created(account_entry(0xCC, 300)),
-        ]);
-        let d = ledger_balance_deltas(&meta);
-        assert_eq!(
-            find(&d, &strkey(0xAA), &LedgerAsset::Native).unwrap().delta,
-            -300
-        );
-        assert_eq!(
-            find(&d, &strkey(0xCC), &LedgerAsset::Native).unwrap().delta,
-            300
-        );
-    }
-
-    #[test]
-    fn credit_trustline_payment_uses_credit_asset() {
-        let meta = meta_with_op_changes(vec![
-            LedgerEntryChange::State(trustline_entry(0xAA, usdc_asset(0x11), 1000)),
-            LedgerEntryChange::Updated(trustline_entry(0xAA, usdc_asset(0x11), 850)),
-        ]);
-        let d = ledger_balance_deltas(&meta);
-        assert_eq!(find(&d, &strkey(0xAA), &usdc_credit()).unwrap().delta, -150);
-    }
-
-    #[test]
-    fn removed_trustline_zeroes_the_balance() {
-        // trustline 100 -> removed: delta -100.
-        let meta = meta_with_op_changes(vec![
-            LedgerEntryChange::State(trustline_entry(0xAA, usdc_asset(0x11), 100)),
-            LedgerEntryChange::Removed(LedgerKey::Trustline(LedgerKeyTrustLine {
-                account_id: acct_id(0xAA),
-                asset: usdc_asset(0x11),
-            })),
-        ]);
-        let d = ledger_balance_deltas(&meta);
-        assert_eq!(find(&d, &strkey(0xAA), &usdc_credit()).unwrap().delta, -100);
-    }
-
-    #[test]
-    fn balance_unchanged_update_is_dropped() {
-        // seq-number bump only: balance 1000 -> 1000, delta 0, no row.
-        let meta = meta_with_op_changes(vec![
-            LedgerEntryChange::State(account_entry(0xAA, 1000)),
-            LedgerEntryChange::Updated(account_entry(0xAA, 1000)),
-        ]);
-        assert!(ledger_balance_deltas(&meta).is_empty());
-    }
-
-    #[test]
-    fn only_the_first_image_sets_initial_across_repeated_changes() {
-        // Two ops touch the same account, each emitting its own State/Updated
-        // pair: 1000 -> 900, then 900 -> 850. Expected: ONE row, delta -150,
-        // measured first image to last.
-        //
-        // This pins the `if initial.is_none()` guard specifically. Drop it and
-        // the second State(900) overwrites initial, so the answer collapses to
-        // 850 - 850 = 0 and the whole transaction reads as moving nothing. (It
-        // does NOT distinguish telescoping from summing per-step deltas —
-        // (900-1000)+(850-900) is -150 either way; that is the telescoping
-        // identity, not a difference worth testing.)
-        let meta = meta_with_op_changes(vec![
-            LedgerEntryChange::State(account_entry(0xAA, 1000)),
-            LedgerEntryChange::Updated(account_entry(0xAA, 900)),
-            LedgerEntryChange::State(account_entry(0xAA, 900)),
-            LedgerEntryChange::Updated(account_entry(0xAA, 850)),
-        ]);
-        let d = ledger_balance_deltas(&meta);
-        assert_eq!(d.len(), 1, "one row per (account, asset), got {d:?}");
-        assert_eq!(
-            find(&d, &strkey(0xAA), &LedgerAsset::Native).unwrap().delta,
-            -150
-        );
-    }
-
-    #[test]
-    fn restored_is_a_before_image_not_a_value_move() {
-        // Protocol 23 state archival: the entry re-appears via Restored, which
-        // moves no value by itself — it is the "before" for what follows.
-        // Restored(1000) alone -> no row; Restored(1000) + Updated(900) -> -100.
-        let alone =
-            meta_with_op_changes(vec![LedgerEntryChange::Restored(account_entry(0xAA, 1000))]);
-        assert!(
-            ledger_balance_deltas(&alone).is_empty(),
-            "a bare restore moves nothing"
-        );
-
-        let then_spent = meta_with_op_changes(vec![
-            LedgerEntryChange::Restored(account_entry(0xAA, 1000)),
-            LedgerEntryChange::Updated(account_entry(0xAA, 900)),
-        ]);
-        let d = ledger_balance_deltas(&then_spent);
-        assert_eq!(
-            find(&d, &strkey(0xAA), &LedgerAsset::Native).unwrap().delta,
-            -100
-        );
-    }
-
-    #[test]
-    fn pool_share_trustline_is_not_a_single_asset_balance() {
-        // A pool-share trustline balance is LP shares, not an asset amount —
-        // counting it would invent value on every LP deposit/withdraw.
-        let pool_share = TrustLineAsset::PoolShare(PoolId(Hash([0x22; 32])));
-        let meta = meta_with_op_changes(vec![
-            LedgerEntryChange::State(trustline_entry(0xAA, pool_share.clone(), 100)),
-            LedgerEntryChange::Updated(trustline_entry(0xAA, pool_share, 250)),
-        ]);
-        assert!(ledger_balance_deltas(&meta).is_empty());
-    }
-
-    // ---- ContractData Soroban balances (task 0393 ledger redesign) --------
-    // Synthetic coverage of `contract_data_balance` / `sac_balance_struct_amount`
-    // / `balance_key_holder`. (A real-mainnet decode also lives in
-    // `tests/net_settled_ledger_contractdata.rs`, gated on a captured fixture.)
-
-    fn contract_addr(b: u8) -> stellar_xdr::ScAddress {
-        stellar_xdr::ScAddress::Contract(stellar_xdr::ContractId(Hash([b; 32])))
-    }
-
-    fn i128_scval(v: i128) -> ScVal {
-        ScVal::I128(stellar_xdr::Int128Parts {
-            hi: (v >> 64) as i64,
-            lo: v as u64,
-        })
-    }
-
-    /// A SAC `BalanceValue` struct value: `Map{ amount, authorized, clawback }`.
-    fn sac_balance_struct(amount: i128) -> ScVal {
-        use stellar_xdr::{ScMap, ScMapEntry, ScSymbol};
-        let entry = |k: &[u8], val: ScVal| ScMapEntry {
-            key: ScVal::Symbol(ScSymbol::try_from(k.to_vec()).unwrap()),
-            val,
-        };
-        ScVal::Map(Some(
-            ScMap::try_from(vec![
-                entry(b"amount", i128_scval(amount)),
-                entry(b"authorized", ScVal::Bool(true)),
-                entry(b"clawback", ScVal::Bool(false)),
-            ])
-            .unwrap(),
-        ))
-    }
-
-    /// A `ContractData` `Balance(Address)` entry for `holder` under token/SAC
-    /// contract `token`, carrying `val`.
-    fn contract_data_balance_entry(token: u8, holder: u8, val: ScVal) -> LedgerEntry {
-        use stellar_xdr::{ContractDataDurability, ContractDataEntry, ScSymbol, ScVec};
-        let key = ScVal::Vec(Some(
-            ScVec::try_from(vec![
-                ScVal::Symbol(ScSymbol::try_from(b"Balance".to_vec()).unwrap()),
-                ScVal::Address(contract_addr(holder)),
-            ])
-            .unwrap(),
-        ));
-        LedgerEntry {
-            last_modified_ledger_seq: 100,
-            data: LedgerEntryData::ContractData(ContractDataEntry {
-                ext: ExtensionPoint::V0,
-                contract: contract_addr(token),
-                key,
-                durability: ContractDataDurability::Persistent,
-                val,
-            }),
-            ext: LedgerEntryExt::V0,
-        }
-    }
-
-    #[test]
-    fn sac_contract_held_balance_telescopes_to_signed_delta() {
-        // A contract's SAC balance 1000 -> 250: it SENT 750 → SacWrapped delta -750.
-        let meta = meta_with_op_changes(vec![
-            LedgerEntryChange::State(contract_data_balance_entry(
-                0x0A,
-                0x0B,
-                sac_balance_struct(1000),
-            )),
-            LedgerEntryChange::Updated(contract_data_balance_entry(
-                0x0A,
-                0x0B,
-                sac_balance_struct(250),
-            )),
-        ]);
-        let d = ledger_balance_deltas(&meta);
-        let sac: Vec<_> = d
-            .iter()
-            .filter(|x| matches!(x.asset, LedgerAsset::SacWrapped(_)))
-            .collect();
-        assert_eq!(sac.len(), 1, "one SAC delta, got {d:?}");
-        assert_eq!(sac[0].delta, -750);
-    }
-
-    #[test]
-    fn bespoke_token_bare_i128_balance_telescopes_to_signed_delta() {
-        // A bespoke token balance 500 -> 800: it RECEIVED 300 → Bespoke delta +300.
-        let meta = meta_with_op_changes(vec![
-            LedgerEntryChange::State(contract_data_balance_entry(0x1A, 0x1B, i128_scval(500))),
-            LedgerEntryChange::Updated(contract_data_balance_entry(0x1A, 0x1B, i128_scval(800))),
-        ]);
-        let d = ledger_balance_deltas(&meta);
-        let tok: Vec<_> = d
-            .iter()
-            .filter(|x| matches!(x.asset, LedgerAsset::Bespoke(_)))
-            .collect();
-        assert_eq!(tok.len(), 1, "one bespoke delta, got {d:?}");
-        assert_eq!(tok[0].delta, 300);
-    }
-
-    #[test]
-    fn contract_data_non_balance_key_is_ignored() {
-        // A ContractData entry whose key is not `Balance(Address)` carries no balance.
-        use stellar_xdr::{ContractDataDurability, ContractDataEntry, ScSymbol};
-        let entry = LedgerEntry {
-            last_modified_ledger_seq: 100,
-            data: LedgerEntryData::ContractData(ContractDataEntry {
-                ext: ExtensionPoint::V0,
-                contract: contract_addr(0x2A),
-                key: ScVal::Symbol(ScSymbol::try_from(b"Admin".to_vec()).unwrap()),
-                durability: ContractDataDurability::Persistent,
-                val: i128_scval(999),
-            }),
-            ext: LedgerEntryExt::V0,
-        };
-        let meta = meta_with_op_changes(vec![LedgerEntryChange::State(entry)]);
-        assert!(ledger_balance_deltas(&meta).is_empty());
-    }
-}
+#[path = "ledger_value_tests.rs"]
+mod tests;

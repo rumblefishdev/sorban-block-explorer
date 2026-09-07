@@ -13,6 +13,17 @@
 //! worker observed, not the actual earliest observation across the
 //! union.
 //!
+//! **Not only under parallel backfill.** The same corruption happens on
+//! ordinary live ingest: the indexer sees only its current batch, so any
+//! later event for an entity carries no historic minimum and the RMT
+//! replace erases whatever was stored. Measured 2026-09-01 —
+//! `nfts.minted_at_ledger` was losing ~30 tokens/day, and 3.5% of a
+//! 400-row `accounts` sample carried a `first_seen_ledger` later than the
+//! true first appearance. So a clean run of this pass is point-in-time
+//! cleanup, never a guarantee. Task 0497 retires the compromise itself;
+//! task 0528 already moved `nfts.minted_at_ledger` off this pass by
+//! deriving it at read time.
+//!
 //! Twelve Tier-1 columns silently corrupt this way; this pass repairs
 //! the **6** that derive from on-chain facts (across **5** tables). The
 //! remaining 6 (NFT metadata: `collection_name`, `name`, `media_url` ×

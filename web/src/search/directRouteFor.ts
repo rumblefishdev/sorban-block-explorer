@@ -8,11 +8,11 @@ import { routes } from '../router/routes.js';
  * `/v1/search` has no ledger redirect branch (ledger is not a search
  * bucket entity), so the FE handles it before calling the API.
  *
- * Backend-served direct redirects (tx hash, full G/C/L strkey) flow
- * through `/v1/search` → `SearchResponse::Redirect` → `routeForHit`.
- * Adding more FE shortcuts here is rarely the right call — keep
- * classifier logic on the server unless the entity type has no
- * search bucket.
+ * `/v1/search` has had no redirect branch since task 0271 dropped the
+ * `SearchResponse::Redirect` wire variant: a tx hash or full G/C/L
+ * strkey is an exact-identity bucket lookup and lands on a one-row
+ * results page (deliberate since 0527 — a 64-hex query is ambiguous
+ * between tx hash and pool id, so it cannot be classified here).
  *
  * Returns the target route when the input matches a known
  * deterministic shape, or `null` to fall through to the results page.

@@ -510,7 +510,6 @@ pub async fn list_asset_transactions(
             operation_count: r.operation_count,
             has_soroban: r.has_soroban,
             operation_types: r.operation_types,
-            values: r.values,
         })
         .collect();
 

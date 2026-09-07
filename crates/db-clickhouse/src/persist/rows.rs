@@ -283,6 +283,85 @@ pub struct LiquidityPoolRow {
     pub asset_b_issuer_id: i64,
     pub fee_bps: i32,
     pub last_updated_ledger: i64,
+    /// 0 = classic (pool_id: CAP-38 hash), 1 = soroban contract (pool_id:
+    /// the 32-byte payload of the C… address). Registry columns below are
+    /// meaningful only for kind 1; classic writers set the defaults.
+    pub pool_kind: u8,
+    /// One surrogate per leg, in a PER-KIND id space (`pool_kind` says
+    /// which): kind 1 = token-CONTRACT surrogates (`ids::contract_id`) in
+    /// emission order, matching the pool's own `get_tokens()` so reserve
+    /// vectors align index-for-index; kind 0 = ASSET surrogates
+    /// (`ids::pool_leg_asset_id` — the `lp_operation_amounts` join key),
+    /// legs-migration step 2 towards retiring the pair columns.
+    ///
+    /// NOT `assets.id` in general (an earlier comment claimed that): the two
+    /// coincide only for bespoke type-3 tokens. 96% of legs are SACs, whose
+    /// classic asset has a DIFFERENT id — a leg resolves to its display
+    /// identity via `asset_sac` (`resolve_leg_assets`, task 0374 step 13).
+    pub legs: Vec<i64>,
+    /// Surrogate of the registering router contract. Venue labels resolve
+    /// from this id at read time — no label is stored on the pool.
+    pub deployment_id: i64,
+    /// Verbatim `pool_type` sym from `add_pool`; deliberately un-normalised.
+    pub pool_type_raw: String,
+}
+
+/// `pool_state_changes` — pool reserve state, ONE deterministic row per
+/// `(pool, plane, ledger)` (task 0374; grain aligned with the classic
+/// snapshots by decision karolkow 2026-08-30; the plane joined the key so a
+/// forged plane write cannot evict a genuine row — see the DDL comment).
+/// The collapse happens at parse time in ledger apply order
+/// (`fold_pool_state_changes`, the cross-writer twin of
+/// `dedup_final_pool_snapshots`), so no intra-ledger ordering column is
+/// needed and the 0356 LIMIT-1/no-FINAL invariant holds here too.
+/// Intra-ledger history stays reconstructible from `soroban_events`
+/// (`update_reserves` per action, permanent) — storing intermediates
+/// duplicated it; an earlier per-write design needed an `application_order`
+/// key component and was collapsed away before any production DDL existed.
+///
+/// Two on-chain layouts feed it: fungible pools' plane `PoolData` vector
+/// VERBATIM (possibly a per-tick tail — readers slice by the pool's leg
+/// count, never vector length) and concentrated pools' own-instance
+/// `Reserve0`/`Reserve1`.
+#[derive(Debug, Clone, Row, Serialize)]
+pub struct PoolStateChangeRow {
+    pub pool_id: [u8; 32],
+    pub ledger_sequence: i64,
+    pub reserves: Vec<i128>,
+    /// The plane contract that wrote these reserves — the provenance a read
+    /// checks against the pool's own declared plane (review #438). For the
+    /// concentrated arm the pool writes its own reserves, so this carries the
+    /// plane the instance declares.
+    pub plane_id: i64,
+}
+
+/// `pool_instance_state` — what a pool declares ABOUT ITSELF, read from its
+/// own instance storage (task 0374 step 15; extended by review #438).
+///
+/// The pool contract is the ledger-authenticated OWNER of that entry, so
+/// nothing here can be forged by a third party — which is what makes
+/// `plane_id` usable as the reserve-provenance authority.
+///
+/// A SIDE table, deliberately (the `asset_sac` pattern): a partial row in the
+/// RMT registry would clobber the full registration on merge, and these facts
+/// move on a different clock than the registration. Versioned by sighting
+/// ledger, so a share-token migration converges on the newest — exactly what
+/// `share_id()` returns on chain.
+#[derive(Debug, Clone, Row, Serialize)]
+pub struct PoolInstanceStateRow {
+    pub pool_id: [u8; 32],
+    /// The plane this pool reports its reserves to. Always populated: an
+    /// instance is only recognised as a pool when it carries `Plane`.
+    pub plane_id: i64,
+    /// `0` is STRUCTURAL for concentrated pools, which never mint a share
+    /// token (`share_id()` returns the pool itself).
+    pub share_token_id: i64,
+    /// Outstanding share supply, raw u128 from the instance's `TotalShares`
+    /// (same entry, same pass, same clock as the share token — the write half
+    /// of the soroban "Total shares" gap). `0` where the key is absent:
+    /// structural for concentrated pools and the elastic layout.
+    pub total_shares: i128,
+    pub derived_at_ledger: i64,
 }
 
 /// `lp_positions` — state, RMT(last_updated_ledger).
@@ -364,13 +443,6 @@ pub struct OperationAssetAppearanceRow {
     pub asset_id: i64,
     pub ledger_sequence: i64,
     pub transaction_id: i64,
-    /// Net-settled "value moved" for this (tx, asset), raw (scale by the asset's
-    /// `decimals` at read). Task 0393. `Some(0)` = genuinely nothing settled net
-    /// (e.g. a wash / pure cycle — zero by the flow decomposition theorem);
-    /// `None` = NOT COMPUTABLE (the reducer could not represent the result, or a
-    /// recognised event's amount was unreadable). The two must stay
-    /// distinguishable: the read drops both, but a `None` is not a real zero.
-    pub net_settled: Option<i128>,
 }
 
 /// `operation_pools` — fact, the per-(pool, transaction) presence index
@@ -406,6 +478,61 @@ pub struct LpOperationAmountRow {
     pub application_order: i16,
     pub asset_id: i64,
     pub amount: i64,
+}
+
+/// `asset_transfers` — fact, one row per token movement (task 0540). Keyed
+/// by Stellar's official event identity `(ledger, tx, op, event-in-op)`;
+/// `event_index` is our flat counter and only joins `soroban_events`.
+/// `amount` is `NULL` for exactly one reason: a non-fungible movement.
+/// `from_id`/`to_id` are `NULL` for mint / burn+clawback respectively, and
+/// always the surrogate of the underlying `G…` (an `M…` is split into
+/// `*_id` + `*_muxed_id`). Column order matches `init.sql` byte-for-byte.
+#[derive(Debug, Clone, PartialEq, Eq, Row, Serialize)]
+pub struct AssetTransferRow {
+    pub ledger_sequence: i64,
+    pub application_order: i16,
+    pub op_index: i16,
+    pub event_pos_in_op: i16,
+    pub event_index: i16,
+    pub asset_id: i64,
+    pub amount: Option<i128>,
+    pub from_id: Option<i64>,
+    pub from_kind: String,
+    pub from_muxed_id: Option<u64>,
+    pub to_id: Option<i64>,
+    pub to_kind: String,
+    pub to_muxed_id: Option<u64>,
+    pub verb: String,
+}
+
+/// `transaction_memos` — fact, one row per transaction that carries a memo
+/// (task 0540). A memo belongs to the envelope, not to a transfer, so it is
+/// stored once per transaction rather than on every edge row. `memo` is the
+/// text, the id as decimal, or the hash/return as hex — the same rendering
+/// `ExtractedTransaction.memo` already uses.
+#[derive(Debug, Clone, PartialEq, Eq, Row, Serialize)]
+pub struct TransactionMemoRow {
+    pub ledger_sequence: i64,
+    pub application_order: i16,
+    pub memo_type: String,
+    pub memo: String,
+}
+
+/// `soroban_event_ops` — narrow side table (task 0541): which operation
+/// emitted each event. Keyed by the transaction's **position in the ledger**
+/// (`application_order`), not its id: a `transaction_id` is a random hash and
+/// cost 4.66 of the row's 5.07 bytes (measured), while the position
+/// compresses to ~0 — 0.63 B/row for the same information. The join to
+/// `soroban_events` goes through `transactions`, as `asset_transfers` does.
+/// Only per-operation events have a row; tx-level and diagnostic events have
+/// no operation and are absent rather than null.
+#[derive(Debug, Clone, PartialEq, Eq, Row, Serialize)]
+pub struct SorobanEventOpRow {
+    pub ledger_sequence: i64,
+    pub application_order: i16,
+    pub event_index: i16,
+    pub op_index: i16,
+    pub event_pos_in_op: i16,
 }
 
 /// `soroban_events` — fact, full-content per-event row (ADR 0044
@@ -471,9 +598,6 @@ pub struct LiquidityPoolSnapshotRow {
     pub reserve_a: i128,
     pub reserve_b: i128,
     pub total_shares: i128,
-    pub tvl: Option<i128>,
-    pub volume: Option<i128>,
-    pub fee_revenue: Option<i128>,
     /// Gross trade volume in asset-A units per (pool, ledger), from
     /// path-payment/offer claim atoms. NULL until the 0266 backfill / 0247
     /// wiring writes it (live ingest leaves it NULL today). Task 0261/0268.

@@ -259,6 +259,11 @@ describe('AccountDetailPage', () => {
     ).not.toBeInTheDocument();
   });
 
+  // 45 rows through three pages of MUI reconciliation, with two userEvent
+  // clicks: genuinely more work than the 5s default allows when the suite runs
+  // lint, typecheck and tests in parallel. It timed out there while passing on
+  // its own, so the limit is raised for this case rather than the test being
+  // made to assert less.
   it('pages a long list and states the exact position, not "latest results"', async () => {
     // The whole set is on the page, so the caption can count — which is the
     // difference between paginating and silently capping.
@@ -291,7 +296,7 @@ describe('AccountDetailPage', () => {
     await user.click(assetsCard().getByRole('button', { name: 'Next' }));
     expect(screen.getByText('41–45 of 45')).toBeInTheDocument();
     expect(assetsCard().getByRole('button', { name: 'Next' })).toBeDisabled();
-  });
+  }, 15_000);
 
   it('opens on the page the URL names, so a position can be sent to someone', () => {
     // Every other paginated section here keeps its position in the URL. This

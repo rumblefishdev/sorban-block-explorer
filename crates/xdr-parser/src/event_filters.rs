@@ -50,57 +50,71 @@ pub struct TokenEvent {
     pub asset: EventAsset,
 }
 
+/// The verb in a token event's first topic, if it is one of the four SEP-41 /
+/// CAP-67 verbs — regardless of whether the remaining topics decode. Lets a
+/// caller tell "not a token event" from "a token verb in a shape we do not
+/// decode": the second is counted and raised, never dropped (task 0540).
+pub fn token_verb(topics: &Value) -> Option<TokenEventKind> {
+    let verb = topics.as_array()?.first()?;
+    if verb.get("type").and_then(Value::as_str)? != "sym" {
+        return None;
+    }
+    let sym = verb.get("value").and_then(Value::as_str)?;
+    if sym.eq_ignore_ascii_case("transfer") {
+        Some(TokenEventKind::Transfer)
+    } else if sym.eq_ignore_ascii_case("mint") {
+        Some(TokenEventKind::Mint)
+    } else if sym.eq_ignore_ascii_case("burn") {
+        Some(TokenEventKind::Burn)
+    } else if sym.eq_ignore_ascii_case("clawback") {
+        Some(TokenEventKind::Clawback)
+    } else {
+        None
+    }
+}
+
 /// Decode any SEP-41 / CAP-67 token event from its topics. Returns `None` when
 /// topics do not match a known token-event shape.
 ///
-/// Shapes (verified against prod, task 0383):
+/// Shapes — verified against prod (task 0383), extended in task 0540 when a
+/// review measured the admin shape on mainnet (3 169 `mint` events with an
+/// address as the last topic in ledgers 64 000 000–64 100 000, 54 emitters):
 /// - transfer `[sym, addr(from), addr(to), string(asset)?]`
-/// - mint     `[sym, addr(to), string(asset)?]`
+/// - mint     `[sym, addr(to), string(asset)?]`              — CAP-67 SAC
+/// - mint     `[sym, addr(admin), addr(to), string(asset)?]` — SEP-41 / pre-CAP-67 SAC
 /// - burn     `[sym, addr(from), string(asset)?]`
-/// - clawback `[sym, addr(from), string(asset)?]`
+/// - clawback `[sym, addr(from), string(asset)?]`            — CAP-67 SAC
+/// - clawback `[sym, addr(admin), addr(from), string(asset)?]` — SEP-41 / pre-CAP-67 SAC
+///
+/// In the admin shapes the party to the movement is the SECOND address; the
+/// admin authorised it and is not credited or debited. CAP-67 removed the
+/// admin topic from the SAC; SEP-41 tokens built on `soroban-token-sdk` still
+/// emit it. Decoded by shape (a second address topic selects the admin
+/// shape), never by fixed position.
 ///
 /// The trailing SEP-11 asset string is present on SAC events and absent on
 /// bespoke tokens (→ `EventAsset::Bespoke`).
 pub fn parse_token_event(topics: &Value) -> Option<TokenEvent> {
     let arr = topics.as_array()?;
-    let verb = arr.first()?;
-    if verb.get("type").and_then(Value::as_str)? != "sym" {
-        return None;
-    }
-    let sym = verb.get("value").and_then(Value::as_str)?;
+    let kind = token_verb(topics)?;
 
-    // (kind, from, to, asset_idx) — asset string, if any, sits after the
+    // (from, to, asset_idx) — the asset string, if any, sits right after the
     // address operand(s).
-    let (kind, from, to, asset_idx) = if sym.eq_ignore_ascii_case("transfer") {
-        (
-            TokenEventKind::Transfer,
+    let (from, to, asset_idx) = match kind {
+        TokenEventKind::Transfer => (
             Some(address_topic(arr.get(1)?)?),
             Some(address_topic(arr.get(2)?)?),
             3,
-        )
-    } else if sym.eq_ignore_ascii_case("mint") {
-        (
-            TokenEventKind::Mint,
-            None,
-            Some(address_topic(arr.get(1)?)?),
-            2,
-        )
-    } else if sym.eq_ignore_ascii_case("burn") {
-        (
-            TokenEventKind::Burn,
-            Some(address_topic(arr.get(1)?)?),
-            None,
-            2,
-        )
-    } else if sym.eq_ignore_ascii_case("clawback") {
-        (
-            TokenEventKind::Clawback,
-            Some(address_topic(arr.get(1)?)?),
-            None,
-            2,
-        )
-    } else {
-        return None;
+        ),
+        TokenEventKind::Mint => {
+            let (to, asset_idx) = operand_after_optional_admin(arr)?;
+            (None, Some(to), asset_idx)
+        }
+        TokenEventKind::Burn => (Some(address_topic(arr.get(1)?)?), None, 2),
+        TokenEventKind::Clawback => {
+            let (from, asset_idx) = operand_after_optional_admin(arr)?;
+            (Some(from), None, asset_idx)
+        }
     };
 
     Some(TokenEvent {
@@ -109,6 +123,19 @@ pub fn parse_token_event(topics: &Value) -> Option<TokenEvent> {
         to,
         asset: event_asset(arr.get(asset_idx)),
     })
+}
+
+/// The one address operand of `mint` / `clawback`, and the index the asset
+/// string (if any) follows it at. CAP-67 puts the operand first
+/// (`[verb, addr, asset?]`); SEP-41 and the pre-CAP-67 SAC put the admin
+/// first and the operand second (`[verb, admin, addr, asset?]`). A second
+/// address topic therefore selects the admin shape.
+fn operand_after_optional_admin(arr: &[Value]) -> Option<(String, usize)> {
+    let first = address_topic(arr.get(1)?)?;
+    match arr.get(2).and_then(address_topic) {
+        Some(operand) => Some((operand, 3)),
+        None => Some((first, 2)),
+    }
 }
 
 /// Resolve the asset from a trailing SEP-11 string topic. Absent, empty, or
@@ -130,25 +157,11 @@ fn event_asset(topic: Option<&Value>) -> EventAsset {
 }
 
 fn string_topic(topic: &Value) -> Option<String> {
-    if topic.get("type").and_then(Value::as_str)? != "string" {
-        return None;
-    }
-    topic
-        .get("value")
-        .and_then(Value::as_str)
-        .map(str::to_string)
+    crate::scval::typed_str(topic, "string").map(str::to_string)
 }
 
 fn address_topic(topic: &Value) -> Option<String> {
-    if topic.get("type").and_then(Value::as_str)? != "address" {
-        return None;
-    }
-    let s = topic.get("value").and_then(Value::as_str)?;
-    if s.is_empty() {
-        None
-    } else {
-        Some(s.to_string())
-    }
+    crate::scval::address(topic).map(str::to_string)
 }
 
 #[cfg(test)]
@@ -277,5 +290,68 @@ mod tests {
     #[test]
     fn token_event_rejects_mint_without_address() {
         assert!(parse_token_event(&json!([sym("mint"), sym("not_an_address")])).is_none());
+    }
+
+    // ---- SEP-41 admin shapes (0540 review, measured on mainnet) ----------
+
+    /// The `soroban-token-sdk` shape `("mint", admin, to)`: the emitter is
+    /// its own admin, the recipient is the SECOND address. Real instance:
+    /// tx 7850558829833248568, ledger 64 000 048, event 3.
+    #[test]
+    fn token_event_sep41_mint_credits_the_second_address_not_the_admin() {
+        let ev = parse_token_event(&json!([sym("mint"), addr("CADMIN"), addr("GBTO")])).unwrap();
+        assert_eq!(ev.kind, TokenEventKind::Mint);
+        assert_eq!(ev.from, None);
+        assert_eq!(ev.to.as_deref(), Some("GBTO"));
+        assert_eq!(ev.asset, EventAsset::Bespoke);
+    }
+
+    /// The pre-CAP-67 SAC shape kept the admin AND the asset string.
+    #[test]
+    fn token_event_pre_cap67_sac_mint_keeps_the_asset_after_the_admin() {
+        let ev = parse_token_event(&json!([
+            sym("mint"),
+            addr("GADMIN"),
+            addr("GBTO"),
+            string_topic(&format!("KALE:{ISSUER}"))
+        ]))
+        .unwrap();
+        assert_eq!(ev.to.as_deref(), Some("GBTO"));
+        assert_eq!(
+            ev.asset,
+            EventAsset::Credit {
+                code: "KALE".to_string(),
+                issuer: ISSUER.to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn token_event_sep41_clawback_debits_the_second_address_not_the_admin() {
+        let ev =
+            parse_token_event(&json!([sym("clawback"), addr("CADMIN"), addr("GBFROM")])).unwrap();
+        assert_eq!(ev.kind, TokenEventKind::Clawback);
+        assert_eq!(ev.from.as_deref(), Some("GBFROM"));
+        assert_eq!(ev.to, None);
+    }
+
+    /// `burn` has no admin shape in SEP-41; a second address is not decoded
+    /// as anything.
+    #[test]
+    fn token_event_burn_keeps_the_single_operand_shape() {
+        let ev = parse_token_event(&json!([sym("burn"), addr("GBFROM"), addr("GBX")])).unwrap();
+        assert_eq!(ev.from.as_deref(), Some("GBFROM"));
+        assert_eq!(ev.asset, EventAsset::Bespoke);
+    }
+
+    #[test]
+    fn token_verb_is_known_even_when_the_shape_is_not() {
+        // The 1-topic `mint` that concentrated-liquidity position contracts
+        // emit (measured: 123 in 100 000 ledgers): a verb, no decodable shape.
+        let topics = json!([sym("mint")]);
+        assert_eq!(token_verb(&topics), Some(TokenEventKind::Mint));
+        assert!(parse_token_event(&topics).is_none());
+        assert_eq!(token_verb(&json!([sym("swap"), addr("GBA")])), None);
+        assert_eq!(token_verb(&json!([addr("GBA")])), None);
     }
 }

@@ -455,7 +455,17 @@ ORDER BY (asset_id);
 -- no measurable gain: a mint always credits a holder balance (often a contract
 -- treasury, summed under Path A G+C holders), so `balance_aggregates.total_supply`
 -- (Σ amount, MV-refreshed) equals the real supply. ONE universal method; the
--- narrow residue (TTL-archived tail + true rebasing) is the accepted non-100% cost.
+-- narrow residue is the accepted non-100% cost.
+--
+-- What the residue actually is (measured on USDT0, 2026-09-03 — task 0210):
+-- everything the chain holds WITHOUT a holder, because this sum is keyed by
+-- holder. Native LP reserves (`LiquidityPoolEntry` — the depositor holds shares,
+-- not the asset) and claimable balances (`ClaimableBalanceEntry` — off the
+-- sender, not yet the receiver), plus the TTL-archived tail and true rebasing.
+-- On USDT0 the first two are the ENTIRE gap: 24.5064194 + 0.3070000 of
+-- 2,595,050.05, i.e. 0.001%. An AMM-heavy asset will show far worse. Soroban-DEX
+-- pool reserves are NOT in this list — a Soroban pool holds its reserves as a
+-- contract, so ADR 0051 already sums them.
 
 CREATE TABLE IF NOT EXISTS account_balances_current (
     account_id          Int64,
@@ -588,18 +598,122 @@ ORDER BY (contract_id, token_id);
 -- liquidity_pools (task 0208 Path 2 folded inline): RMT(last_updated_ledger),
 -- `created_at_ledger` dropped (derive read-time from
 -- `MIN(ledger_sequence) FROM liquidity_pool_snapshots GROUP BY pool_id`).
+-- One registry for EVERY pool (task 0374, decided 2026-08-27): classic rows
+-- keep pool_kind=0 and their soroban columns at defaults; Soroban AMM pools
+-- are rows with pool_kind=1. One user-facing concept, one table — the same
+-- reasoning ADR 0056 applies to positions. Engine stays RMT: whole-row
+-- replace is safe because each row has exactly ONE writer — the classic arm
+-- reads authenticated `LiquidityPoolEntry` ledger entries and never touches a
+-- contract pool_id, and the soroban arm accepts a registration only when the
+-- named pool's OWN instance storage names the emitter as its `Router`
+-- (`stage.rs`), so a third party cannot register — or overwrite — a pool it
+-- does not own, EXCEPT pools whose instance declares no router (older
+-- contract versions, 23 measured, all event-silent): those are accepted
+-- UNVERIFIED with a warn, and their registry row is forgeable — see the
+-- acceptance arm in `stage.rs` for the bounded residual.
+--
+-- Registration provenance (the router's subpool salt, raw init_args beyond
+-- the fee) is NOT materialised: the add_pool event itself sits complete and
+-- forever in soroban_events — extract on demand, never copy (depth-first,
+-- 2026-08-28).
+--
+-- The pair-shaped asset_a_*/asset_b_* columns are LEGACY once `legs` is
+-- backfilled for classic rows: 3- and 4-leg stable pools exist on mainnet and
+-- do not fit a pair. They stay until the ~612 pair-shaped call sites migrate
+-- to `legs` (tracked in 0374; do not add new readers).
 CREATE TABLE IF NOT EXISTS liquidity_pools (
-    pool_id              FixedString(32),
-    asset_a_type         Int16,
-    asset_a_code         LowCardinality(String),
-    asset_a_issuer_id    Int64,        -- 0 for native
-    asset_b_type         Int16,
-    asset_b_code         LowCardinality(String),
-    asset_b_issuer_id    Int64,
-    fee_bps              Int32,
-    last_updated_ledger  Int64
+    pool_id              FixedString(32),        -- classic: SHA-256 of the asset pair (CAP-38); soroban: 32-byte payload of the C... contract address. pool_kind says which — without it a contract id renders as a well-formed WRONG L... strkey
+    asset_a_type         Int16,                  -- LEGACY pair shape; XDR AssetType domain (NOT assets.asset_type's AssetFamily domain — task 0496)
+    asset_a_code         LowCardinality(String), -- LEGACY pair shape
+    asset_a_issuer_id    Int64,                  -- 0 for native; LEGACY pair shape
+    asset_b_type         Int16,                  -- LEGACY pair shape
+    asset_b_code         LowCardinality(String), -- LEGACY pair shape
+    asset_b_issuer_id    Int64,                  -- LEGACY pair shape
+    fee_bps              Int32,                  -- both worlds; soroban PER FAMILY: router = add_pool init_args[0] (u32, the one arg every measured shape shares); pair-factory = the vendor's compiled-in 30; config-factory = the pool's own CONFIG total_fee_bps (creation-time snapshot, mutable on chain)
+    last_updated_ledger  Int64,
+    pool_kind            UInt8                  DEFAULT 0,  -- 0=classic, 1=soroban contract
+    legs                 Array(Int64)           DEFAULT [], -- PER-KIND id space (pool_kind says which): kind 1 = token-contract surrogates in emission order (= get_tokens(); == assets.id only for bespoke type-3 — SAC legs resolve via asset_sac); kind 0 = ASSET surrogates (pool_leg_asset_id, the lp_operation_amounts join key) — legs-migration step 2. 3- and 4-leg pools exist, so never a pair
+    deployment_id        Int64                  DEFAULT 0,  -- soroban_contracts.id surrogate of the registering router; 0 = classic. Two live router deployments share Aquarius's code and only one is Aquarius (task 0374 T1) — labels resolve from this id at read time, so a new pool is labelled the moment it registers, with no editorial UPDATE to re-run
+    pool_type_raw        LowCardinality(String) DEFAULT ''  -- verbatim PER FAMILY, un-normalised on purpose (folding vocabularies is read-time interpretation): router = add_pool sym (constant|stable|concentrated|...); pair-factory = '' (the vendor emits no type); config-factory = the PairType u32 discriminant as text ("0" = XYK)
+    -- share_token_id was removed from the write path before any deploy: the relation lives ONLY in pool_instance_state (a registry column would clobber the full row on RMT merge, and a permanent 0 misleads). Prod (which received the column via the registry backfill ALTER) drops it with: ALTER TABLE liquidity_pools DROP COLUMN share_token_id
 )
 ENGINE = ReplacingMergeTree(last_updated_ledger)
+ORDER BY (pool_id);
+
+-- Pool reserve state (task 0374 step 7) — THE reserve source (T4: event
+-- arithmetic failed its oracle 6/49). ONE deterministic row per
+-- (pool, plane, ledger), collapsed at parse time in ledger apply order — the
+-- same grain and mechanism as the classic snapshots (decision 2026-08-30), so
+-- the 0356 LIMIT-1/no-FINAL invariant holds and the future unification is
+-- a plain union. Intra-ledger history lives in soroban_events forever.
+-- Two on-chain layouts feed it: fungible pools write plane PoolData
+-- (vector VERBATIM — per-tick tail possible; reads slice by leg count),
+-- concentrated pools write Reserve0/1 on their own instance. Named without
+-- a family prefix on purpose: classic history joins HERE if the snapshot
+-- models unify — never the reverse (ADR 0058).
+--
+-- `plane_id` is IN the sort key (three-lens review, 2026-09-01): a plane
+-- entry names its pool in an attacker-writable payload, so keying on
+-- (pool, ledger) alone would let a forged write EVICT the pool's genuine
+-- row on RMT merge — the read-side declared-plane filter would then hide
+-- the forgery but serve a stale ledger's reserves as current. With the
+-- plane in the key a forged row keeps its own key space, dies at the read
+-- filter (which joins `pool_instance_state`'s declared plane), and stays
+-- visible as evidence. Standing monitor for both forgery attempts and a
+-- plane migration (which would orphan pre-migration history — the
+-- share-token column of `pool_instance_state` measured 13 such
+-- re-pointings, so "planes never migrate" must fail loudly):
+--   SELECT pool_id, uniqExact(plane_id) AS planes
+--   FROM pool_state_changes GROUP BY pool_id HAVING planes > 1
+--
+-- Version-less RMT, exactly like its classic twin `liquidity_pool_snapshots`:
+-- the row is made a deterministic function of the ledger by folding at STAGE
+-- time (`fold_pool_state_changes`), not by a version column. Two writers feed
+-- this table — the plane arm and the concentrated-instance arm — and the fold
+-- collapses their collision; per backfills.md rule 4 a re-parse then wins on
+-- its own, because it lands last. A version column keyed on anything
+-- batch-local would BREAK that: a narrow re-parse could stamp a lower version
+-- than the original wide parse and lose to the stale row.
+CREATE TABLE IF NOT EXISTS pool_state_changes (
+    pool_id          FixedString(32),
+    ledger_sequence  Int64,
+    reserves         Array(Int128),
+    plane_id         Int64
+)
+ENGINE = ReplacingMergeTree
+PARTITION BY intDiv(ledger_sequence, 5000000)
+ORDER BY (pool_id, plane_id, ledger_sequence);
+
+-- What a pool declares ABOUT ITSELF, from its own instance storage — the
+-- pool contract is the ledger-authenticated owner of that entry, so these
+-- values cannot be forged by a third party. A SIDE table (the asset_sac
+-- pattern): a partial row in the RMT registry would clobber the full
+-- registration on merge, and these facts arrive on a DIFFERENT clock than
+-- the registration (instance rewrites, share-token migrations) which one
+-- RMT version column on `liquidity_pools` could not track. Versioned by
+-- sighting ledger so a migration (13 pools re-pointed their share token;
+-- measured) converges on the newest — matching share_id() on chain.
+--
+-- `plane_id` is the AUTHORITY for reserve provenance (review #438). Reserve
+-- rows in `pool_state_changes` carry the plane that wrote them, but a plane
+-- entry names its pool in an attacker-writable KEY payload — any contract
+-- can publish `[PoolData, Address(victim)]` under its own id. Reads must
+-- therefore keep only reserve rows whose `plane_id` matches the plane the
+-- POOL ITSELF declares here. `plane_id` is always populated — `Plane` is
+-- the shape key that recognises an instance as a pool at all. `Router` is
+-- OPTIONAL: five older deployments write none (23 pools), and their
+-- registrations are accepted UNVERIFIED with a warn, and only when the
+-- instance is CREATED in the registering ledger (see the acceptance arm
+-- in `stage.rs`). `share_token_id = 0` is structural for concentrated
+-- pools, which never mint one.
+CREATE TABLE IF NOT EXISTS pool_instance_state (
+    pool_id            FixedString(32),
+    plane_id           Int64,
+    share_token_id     Int64,
+    total_shares       Int128,  -- raw u128 from instance TotalShares; 0 = key absent (structural: concentrated + elastic) — AND structurally 0 forever for the config-factory family (rows stage only on CONFIG writes; its live supply is the share token's own tracked supply, never this column). Read half of the soroban "Total shares" gap
+    derived_at_ledger  Int64
+)
+ENGINE = ReplacingMergeTree(derived_at_ledger)
 ORDER BY (pool_id);
 
 -- `closed_at_ledger`: same lifecycle semantics as `balances` (ADR 0055) — a
@@ -736,50 +850,17 @@ ORDER BY (account_id, ledger_sequence, transaction_id);
 -- source != issuer, or a trustline predating the ingest window). Harmless -- the
 -- read path reaches a fact row only via an existing `assets` row, so such orphans
 -- are unreachable dead weight, never wrong output.
--- `net_settled` (task 0393): net-settled "value moved" per (transaction, asset)
--- for the tx-list "Net settled" column. RAW `Nullable(Int128)` (scale by the
--- asset's `decimals` at read, like balances/total_supply) — the figure
--- `max(Σ positive account deltas, Σ negative account deltas)` over the tx's
--- transfers, computed one-shot per (tx, asset) in Rust from the AUTHORITATIVE
--- LEDGER balance changes (`persist::stage::ledger_deltas_net_settled` +
--- `xdr_parser::ledger_balance_deltas` + `xdr_parser::net_settled`) — account,
--- trustline, and ContractData balances; NEVER from token events (logs). It is the
--- network-flow FLOW VALUE: by the flow decomposition theorem a flow splits into
--- source→sink paths plus cycles, and a cycle contributes exactly zero — so a
--- wash / round-trip nets to `0` BY DEFINITION, not by accident (that zero-balance
--- cycle is also how the wash-trading literature identifies a wash). Gross would be
--- `Σ path + Σ cycle`; if ever wanted, `cycle volume = gross − net`.
--- NULLABLE ON PURPOSE: `NULL` = not computable (the reducer could not represent
--- the result, or a recognised event's amount was unreadable), `0` = genuinely
--- nothing settled net. Without the distinction a value that could not be computed
--- would masquerade as a real zero. The read filters `IS NOT NULL AND != 0`.
--- NON-KEY data column, version-less RMT: `net_settled` has a SINGLE writer —
--- `stage.rs`, run by both live ingest and the full S3 re-ingest — so live and
--- historical rows for a key are computed identically and the duplicate collapses
--- cleanly. The read dedups with `max(net_settled)` (`max` ignores NULL, so a
--- computed value wins over a not-computed one for the same key). There is
--- deliberately no version column: a downward "correction" of a deterministic
--- figure only happens when OUR reducer changes, which is a deploy event handled
--- by re-running the re-ingest + `OPTIMIZE FINAL` over the range —
--- not a runtime concern worth a per-row version + a full-table engine rebuild.
--- The tx-list "+ N other assets" affordance is a read-time COUNT of asset rows
--- per tx, not a stored column.
--- tx-list "value" read note (task 0393): the PK is `asset_id`-leading (for the
--- per-asset activity page), so the tx-list read filtering
--- `(ledger_sequence, transaction_id) IN (page keys)` is NOT a prefix seek — it
--- SCANS the pruned partition. Measured ~26M rows/page against a full partition
--- vs ~16k for the seek-based op-types query beside it. This endpoint family is
--- polled and previously exhausted the read quota in exactly this shape (tasks
--- 0243/0386), so a `(ledger, tx)`-ordered companion (the `accounts_recent`
--- pattern: plain MergeTree + refreshable MV + atomic EXCHANGE — a projection is
--- refused on an RMT, CH Code 344) is REQUIRED before this ships at scale. Tracked
--- as the read-path work in task 0393's Operations / follow-up section; the head
--- partition being young hides the cost today.
+-- `net_settled` (task 0393) REMOVED 2026-09-04: the per-(tx, asset) aggregate
+-- was a lossy summary — it carried no direction and no account, so on an account
+-- page an inbound and an outbound transfer rendered identically. Replaced by a
+-- lossless per-transfer design (see the follow-up task); the reducer itself
+-- (`persist::stage::ledger_deltas_net_settled` + `xdr_parser::ledger_balance_deltas`
+-- + `xdr_parser::net_settled`) is KEPT — it reads the authoritative LEDGER balance
+-- changes and is the input the replacement needs.
 CREATE TABLE IF NOT EXISTS operation_asset_appearances (
     asset_id        Int64,
     ledger_sequence Int64,
-    transaction_id  Int64,
-    net_settled     Nullable(Int128)
+    transaction_id  Int64
     -- idx_oaa_transaction_id (bloom on transaction_id, planned for the 0393
     -- "Net settled" per-tx read) REMOVED 2026-08-06: that read was withdrawn
     -- from the API before it ever shipped (see common/ch.rs; [[0411]] owns
@@ -824,8 +905,8 @@ ORDER BY (pool_id, ledger_sequence, transaction_id);
 -- every such atom carries the IDENTICAL ORDER BY tuple, so the RMT would keep
 -- one and silently drop the rest of the fill. A per-op sum is deterministic on
 -- replay, so live ingest and the historical re-parse emit byte-identical rows
--- for a key and the duplicate collapses cleanly (the single-writer argument
--- of `operation_asset_appearances.net_settled`, same reducer both paths).
+-- for a key and the duplicate collapses cleanly (the single-writer argument:
+-- one reducer, identical on the live and the re-parse path).
 --
 -- `amount` is SIGNED FROM THE POOL'S PERSPECTIVE: positive = the asset entered
 -- the pool, negative = it left. The sign pattern therefore names the event
@@ -835,8 +916,8 @@ ORDER BY (pool_id, ledger_sequence, transaction_id);
 -- by definition, the XDR sources (`ClaimLiquidityAtom.amount_{sold,bought}`,
 -- trustline balance deltas) ARE `int64`, and a per-op sum is bounded by the
 -- pool's own `int64` reserve, so no overflow is reachable. Deliberately not
--- `Int128` (that width exists in `net_settled` for Soroban i128 token amounts,
--- which a classic pool cannot carry) and not `Decimal128(7)` (the read-model
+-- `Int128` (that width is for Soroban i128 token amounts, which a classic pool
+-- cannot carry) and not `Decimal128(7)` (the read-model
 -- choice in `liquidity_pool_snapshots` for the Lambda's USD math — fact tables
 -- store raw ints, and the cross-check below is one cast away).
 --
@@ -905,10 +986,26 @@ CREATE TABLE IF NOT EXISTS soroban_events (
     --    official key would change what counts as the same row.
     -- 2. The official key is NOT EXPRESSIBLE for much of this table. It needs
     --    an operation position, and `op_index` is absent for tx-level events
-    --    (fee charge and refund, always), for every diagnostic event, and for
-    --    EVERY pre-Protocol-23 event — the V3 meta carries no per-operation
-    --    attribution at all. Adopting it would trade a total key for one that
-    --    is null-bearing across years of history.
+    --    (fee charge and refund, always) and for every diagnostic event, both
+    --    of which this table stores. Adopting it would trade a total key for
+    --    one that is null-bearing.
+    --
+    --    CORRECTION (task 0540, 2026-09-04): this bullet also claimed the same
+    --    of "EVERY pre-Protocol-23 event", on the reasoning that V3 meta has no
+    --    per-operation container. True of the protocol, FALSE of our input —
+    --    the archive hands us `TransactionMeta::V4` across the whole ingested
+    --    range. Measured by decoding three archive ledgers end to end
+    --    (`xdr-parser/examples/event_op_index_audit.rs`): 1 265 of 1 265
+    --    transactions are V4, at protocols 20, 22 and 27, the first being the
+    --    ingest floor. So the operation position IS recoverable for all history
+    --    — from S3, never from this table, which does not store it.
+    --
+    --    The narrower claim still holds and is why OUR index stays: for
+    --    `soroban_events` as a whole the official key is null-bearing, because
+    --    fee and diagnostic events have no operation. For the subset that is
+    --    only token movements it is TOTAL (1 770 events audited, none at
+    --    transaction level) — which is why task 0540's edge table can consider
+    --    it and this table cannot.
     --
     -- So: ours is the better INTERNAL key, theirs is the better key for
     -- exchanging data with the outside world. Different jobs, not a defect.
@@ -930,6 +1027,126 @@ CREATE TABLE IF NOT EXISTS soroban_events (
 ENGINE = ReplacingMergeTree
 PARTITION BY intDiv(ledger_sequence, 500000)
 ORDER BY (contract_id, ledger_sequence, transaction_id, event_index);
+
+-- asset_transfers: one row per token movement (task 0540), the lossless
+-- replacement for the retired per-(tx, asset) `net_settled` aggregate.
+--
+-- Built from the CONSENSUS per-operation token events (transfer / mint /
+-- burn / clawback), classic and Soroban alike, by
+-- `xdr_parser::extract_asset_transfers` — the same decode for live ingest and
+-- the S3 backfill, so the two write byte-identical rows.
+--
+-- Identity. The sort key is Stellar's OFFICIAL event identity: the
+-- `getEvents` cursor is `(ledger, tx, op, event)` with `event` reset per
+-- operation (stellar-rpc `db/event.go`). It is defined by the XDR itself, so
+-- a re-parse can never renumber it; our flat `event_index` is carried only to
+-- join `soroban_events`. Identical transfers DO repeat inside one operation
+-- (ledger 64 249 110: a single path payment crossing two offers from one
+-- maker at one price) — `event_pos_in_op` is what keeps them two rows.
+--
+-- Asset. `asset_id` is the emitter's identity, never the topic string alone:
+-- a labelled event (`"USDC:G…"`) is stored only if its emitter IS that asset's
+-- Stellar Asset Contract (`emitter == derive_sac(asset)`); a bespoke token's
+-- id is its contract surrogate (`ids::asset_id` type 3). NOT NULL by
+-- construction.
+--
+-- Amount. `NULL` has exactly one meaning: a non-fungible movement
+-- (`{token_id}`), where no amount exists by nature. An unrecognised payload
+-- never becomes a row — it is rejected and raised as an ingest error.
+--
+-- Endpoints. `from_id` NULL for mint, `to_id` NULL for burn/clawback. The
+-- ids are surrogates of the underlying `G…` even when the envelope named an
+-- `M…`: the multiplexing id goes to `*_muxed_id` (from the envelope, matched
+-- through `op_index`), so the account page finds the row AND the sub-account
+-- survives. `*_kind` is the StrKey's first letter — G account, C contract,
+-- L classic pool, B claimable balance; measured 84% G, 11–16% L, up to
+-- 5.8% B, up to 1.2% C. G resolves through `accounts.id` and C through
+-- `soroban_contracts.id`; L and B have NO resolving table today (the id is
+-- `hash64(strkey)`, one-way; `liquidity_pools` is keyed by the raw 32-byte
+-- pool id, and claimable balances have no table), so for those the id is a
+-- comparison key only — a side table is a follow-up, buildable from
+-- `soroban_events` without another S3 pass.
+--
+-- Reads MUST be `FINAL` or `GROUP BY`: this table SUMS, and a version-less
+-- ReplacingMergeTree carries duplicate rows until merged — a duplicate here
+-- doubles a balance change on screen.
+--
+-- Storage, measured (README 0540): ZSTD(3) on every column (13.4 → 8.9 B/row
+-- against the default LZ4, which nobody chose); `index_granularity = 512` so
+-- the account-page read touches ~14 k rows instead of ~147 k (+2.3% size;
+-- outages 0243/0386 were this read shape). `LowCardinality` on the id
+-- columns measured −11.6% at 16.5 M rows and is deliberately NOT applied;
+-- it can be added per column later with `ALTER … MODIFY COLUMN`.
+--
+-- PROD: created by hand BEFORE the indexer that writes it deploys — the
+-- driver validates the row struct against `DESCRIBE`, and a missing table
+-- fails every insert client-side (task 0310).
+CREATE TABLE IF NOT EXISTS asset_transfers (
+    ledger_sequence    Int64                   CODEC(ZSTD(3)),
+    application_order  Int16                   CODEC(ZSTD(3)),
+    op_index           Int16                   CODEC(ZSTD(3)),
+    event_pos_in_op    Int16                   CODEC(ZSTD(3)),
+    event_index        Int16                   CODEC(ZSTD(3)),
+    asset_id           Int64                   CODEC(ZSTD(3)),
+    amount             Nullable(Int128)        CODEC(ZSTD(3)),
+    from_id            Nullable(Int64)         CODEC(ZSTD(3)),
+    from_kind          LowCardinality(String)  CODEC(ZSTD(3)),
+    from_muxed_id      Nullable(UInt64)        CODEC(ZSTD(3)),
+    to_id              Nullable(Int64)         CODEC(ZSTD(3)),
+    to_kind            LowCardinality(String)  CODEC(ZSTD(3)),
+    to_muxed_id        Nullable(UInt64)        CODEC(ZSTD(3)),
+    verb               LowCardinality(String)  CODEC(ZSTD(3))
+)
+ENGINE = ReplacingMergeTree
+PARTITION BY intDiv(ledger_sequence, 500000)
+ORDER BY (ledger_sequence, application_order, op_index, event_pos_in_op)
+SETTINGS index_granularity = 512;
+
+-- transaction_memos: one row per transaction that carries a memo (task 0540).
+-- A memo belongs to the envelope, not to a transfer — storing it here once
+-- instead of on every `asset_transfers` row is what keeps that table honest.
+-- Measured on 30 archive ledgers: 6.0% of transactions, 8.4 B average.
+-- `memo` is the text, the id as decimal, or the hash/return as hex (the
+-- rendering `xdr_parser::memo::extract_memo` already produces). A MEMO_TEXT
+-- that is not valid UTF-8 (28 arbitrary bytes by protocol) is stored as hex
+-- under `memo_type = 'text_hex'` — never a placeholder that a real memo
+-- could equal.
+CREATE TABLE IF NOT EXISTS transaction_memos (
+    ledger_sequence    Int64                   CODEC(ZSTD(3)),
+    application_order  Int16                   CODEC(ZSTD(3)),
+    memo_type          LowCardinality(String)  CODEC(ZSTD(3)),
+    memo               String                  CODEC(ZSTD(3))
+)
+ENGINE = ReplacingMergeTree
+PARTITION BY intDiv(ledger_sequence, 500000)
+ORDER BY (ledger_sequence, application_order);
+
+-- soroban_event_ops: which operation emitted each event (task 0541), as a
+-- narrow side table. The canonical home of these two numbers is a column on
+-- `soroban_events` (stellar-rpc returns the operation index as an attribute
+-- of the event); this table is the VEHICLE that the S3 pass can write
+-- additively today and the SOURCE of the later per-partition fold into
+-- `soroban_events` (`ALTER … ADD COLUMN` + `ALTER … UPDATE`, which rewrites
+-- only the two new columns — task 0541 "Target shape"). Keyed by the
+-- transaction's position in the ledger, NOT by `transaction_id`: the id is a
+-- random hash that cost 4.66 of a 5.07-byte row (measured 2026-09-07), the
+-- position compresses to ~0 — 0.63 B/row, ~3.6 GB on 5.7 bn rows instead of
+-- ~29 GB. The join to `soroban_events` goes through `transactions`
+-- (`ledger_sequence, application_order` → `id`), as `asset_transfers` does.
+-- Only per-operation events have a row — a tx-level (fee) or diagnostic
+-- event has no operation, and absence is the honest encoding of that.
+-- Retires the read-time XDR decode task 0453 pays on every transaction-detail
+-- render.
+CREATE TABLE IF NOT EXISTS soroban_event_ops (
+    ledger_sequence    Int64                   CODEC(ZSTD(3)),
+    application_order  Int16                   CODEC(ZSTD(3)),
+    event_index        Int16                   CODEC(ZSTD(3)),
+    op_index           Int16                   CODEC(ZSTD(3)),
+    event_pos_in_op    Int16                   CODEC(ZSTD(3))
+)
+ENGINE = ReplacingMergeTree
+PARTITION BY intDiv(ledger_sequence, 500000)
+ORDER BY (ledger_sequence, application_order, event_index);
 
 -- `amount` is a **fold count of invocation-tree nodes** aggregated into
 -- this (contract, transaction, ledger) trio (per ADR 0034 PG-side
@@ -985,13 +1202,18 @@ CREATE TABLE IF NOT EXISTS liquidity_pool_snapshots (
     reserve_a       Decimal128(7),
     reserve_b       Decimal128(7),
     total_shares    Decimal128(7),
-    tvl             Nullable(Decimal128(7)),
-    volume          Nullable(Decimal128(7)),
-    fee_revenue     Nullable(Decimal128(7)),
+    -- tvl/volume/fee_revenue columns were removed from the write path (0374
+    -- distillation): written as NULL since 0199 (USD is computed at read,
+    -- ADR 0053) and read by nothing. DEPLOY ORDER IS LOAD-BEARING: the
+    -- clickhouse-rs 0.15 client REFUSES an insert when the table still has a
+    -- no-DEFAULT column the struct dropped (proven in the 0374 local e2e;
+    -- the 0310 lesson), so prod must run
+    --   ALTER TABLE liquidity_pool_snapshots DROP COLUMN tvl, DROP COLUMN volume, DROP COLUMN fee_revenue
+    -- BEFORE the writer with this struct starts. (share_token_id had
+    -- DEFAULT 0, so its drop has no such ordering constraint.)
     -- Gross trade volume in asset-A units per (pool, ledger), computed from
     -- path-payment claim atoms (task 0261 extractor; written by the 0266
-    -- backfill / 0247 wiring). USD volume/fee stay NULL until the Prices
-    -- API lands (ADR 0053 read-time join).
+    -- backfill / 0247 wiring) — READ by the chart + 24h volume (kept).
     gross_volume_a  Nullable(Decimal128(7))
 )
 ENGINE = ReplacingMergeTree

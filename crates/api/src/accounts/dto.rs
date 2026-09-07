@@ -172,9 +172,6 @@ pub struct AccountTransactionItem {
     pub operation_count: i16,
     pub has_soroban: bool,
     pub operation_types: Vec<String>,
-    /// Net-settled "value moved" per asset the transaction touched (task 0393);
-    /// see `TransactionValue`. Raw amounts + `decimals` — the frontend scales.
-    pub values: Vec<crate::transactions::dto::TransactionValue>,
     pub created_at: DateTime<Utc>,
 }
 /// Keyset cursor for the accounts list — sorts on `last_seen_ledger` with the

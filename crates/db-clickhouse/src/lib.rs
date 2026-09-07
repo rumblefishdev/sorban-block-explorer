@@ -172,11 +172,20 @@ mod tests {
         // behind the pool page's "Amount" column (issue #371). 31 → 32.
         // task 0463: added `account_entry_state` — signers + thresholds side table
         // (issue #377); side table, not columns on `accounts`, because that
-        // table takes whole-row writes from more than one path. 32 → 33.
+        // table takes whole-row writes from more than one path. 33 → 34:
+        // pool_instance_state (task 0374 step 15, the asset_sac-pattern side
+        // table: what a pool declares about itself) and pool_state_changes
+        // (step 7, plane-state reserves).
+        // 34 → 35.
+        // task 0540 / 0541: added `asset_transfers` (one row per token
+        // movement, the lossless replacement for `net_settled`),
+        // `transaction_memos` (memo per transaction, from the envelope) and
+        // `soroban_event_ops` (operation attribution per event, the side table
+        // `soroban_events` cannot take). 35 → 38.
         assert_eq!(
             stmts.len(),
-            33,
-            "expected 30 tables + 2 materialized views + 1 dictionary, got {}",
+            38,
+            "expected 34 tables + 2 materialized views + 1 dictionary, got {}",
             stmts.len()
         );
     }

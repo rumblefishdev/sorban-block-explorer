@@ -50,6 +50,9 @@ pub struct ParseOutput {
     /// ledger entries, persisted into the unified `balances` table (task 0331; the
     /// field name is leftover Option-A naming — no `soroban_token_balances` table exists).
     pub soroban_token_balances: Vec<xdr_parser::ExtractedSorobanBalance>,
+    /// Every pool family's state writes behind one seam (task 0518,
+    /// decision 4a) — staging partitions by variant.
+    pub pool_family_writes: Vec<xdr_parser::pool_family::PoolFamilyWrite>,
     /// Per-transaction operation tree JSON, collected by `extract_invocations`.
     /// Neither write path reads it today (CH writer skips it, PG flow
     /// took it as `_operation_trees`). Kept on `ParseOutput` so the
@@ -70,6 +73,11 @@ pub struct ParseOutput {
     /// Task 0218 / 0220 — SAC overrides derived from the classic-asset
     /// slice (`assets`).
     pub sac_overrides: Vec<xdr_parser::SacOverride>,
+    /// Task 0540 — token movements for `asset_transfers`, decoded per
+    /// transaction from the per-op consensus events (emitter-gated,
+    /// payload-checked). Rejects are logged in `parse_ledger` as ingest
+    /// errors; they never become rows.
+    pub asset_transfers: Vec<xdr_parser::ExtractedAssetTransfer>,
 }
 
 /// Error returned by [`init_network_id`] when the
@@ -167,6 +175,8 @@ pub fn parse_ledger(meta: &LedgerCloseMeta) -> ParseOutput {
     let mut all_contract_interfaces = Vec::new();
     let mut all_ledger_entry_changes = Vec::new();
     let mut all_nft_events = Vec::new();
+    let mut all_asset_transfers = Vec::new();
+    let mut transfer_rejects = xdr_parser::RejectCounts::default();
     let mut tx_parse_errors = Vec::new();
 
     for (tx_index, ext_tx) in extracted_transactions.iter().enumerate() {
@@ -204,6 +214,9 @@ pub fn parse_ledger(meta: &LedgerCloseMeta) -> ParseOutput {
             let events = xdr_parser::extract_events(tm, &ext_tx.hash, ledger_sequence, closed_at);
             let nft_events = xdr_parser::detect_nft_events(&events, net_id);
             all_nft_events.extend(nft_events);
+            let edges = xdr_parser::extract_asset_transfers(&events, net_id);
+            transfer_rejects.absorb(edges.reject_counts());
+            all_asset_transfers.extend(edges.transfers);
             all_events.push((ext_tx.hash.clone(), events));
 
             if let Some(env) = envelope {
@@ -281,6 +294,7 @@ pub fn parse_ledger(meta: &LedgerCloseMeta) -> ParseOutput {
 
     let mut all_contract_metadata_writes: Vec<xdr_parser::ExtractedContractMetadata> = Vec::new();
     let mut all_soroban_token_balances: Vec<xdr_parser::ExtractedSorobanBalance> = Vec::new();
+    let mut all_pool_family_writes: Vec<xdr_parser::pool_family::PoolFamilyWrite> = Vec::new();
     for (_tx_hash, tx_source, changes) in &all_ledger_entry_changes {
         let deployments = xdr_parser::extract_contract_deployments(
             changes,
@@ -295,6 +309,7 @@ pub fn parse_ledger(meta: &LedgerCloseMeta) -> ParseOutput {
         // them.
         let assets = xdr_parser::detect_assets(&deployments, &all_contract_interfaces);
         all_assets.extend(assets);
+        all_pool_family_writes.extend(xdr_parser::pool_family::extract_pool_family_writes(changes));
         let classic_credits = xdr_parser::detect_classic_credit_assets(changes);
         all_assets.extend(classic_credits);
         all_contract_deployments.extend(deployments);
@@ -327,6 +342,27 @@ pub fn parse_ledger(meta: &LedgerCloseMeta) -> ParseOutput {
     // trustline — and trustline-only SACs keep their classic-credit asset row.
     let sac_overrides = xdr_parser::detect_undeployed_sac_overrides(&all_events, net_id);
 
+    // Task 0540: a token verb the decoder could not turn into a movement is a
+    // developer's problem, raised here where it can be fixed — never drawn in
+    // the UI. One line per ledger, broken down by cause; per-event detail is
+    // at `debug` on the `xdr_parser::asset_transfers` target (a systematic
+    // reject must not flood the log — task 0488). Baseline on production is
+    // not zero (~150 per 500 000 ledgers, mostly restated mints and
+    // concentrated-liquidity position events), so an alarm needs a threshold
+    // — a follow-up, not `> 0`.
+    if transfer_rejects.total() > 0 {
+        tracing::error!(
+            ledger_sequence,
+            rejected = transfer_rejects.total(),
+            emitter_not_sac = transfer_rejects.emitter_not_sac,
+            unrecognised_payload = transfer_rejects.unrecognised_payload,
+            unrecognised_topics = transfer_rejects.unrecognised_topics,
+            no_operation = transfer_rejects.no_operation,
+            no_emitter = transfer_rejects.no_emitter,
+            "token events rejected by the asset_transfers decoder"
+        );
+    }
+
     let parse_ms = parse_timer.elapsed().as_millis();
 
     let nft_events = xdr_parser::extract_nft_ownership_events(&all_nft_events);
@@ -353,10 +389,15 @@ pub fn parse_ledger(meta: &LedgerCloseMeta) -> ParseOutput {
         lp_positions: all_lp_positions,
         contract_metadata_writes: all_contract_metadata_writes,
         soroban_token_balances: all_soroban_token_balances,
+        // Plane writes and instance images pass through unfolded: staging
+        // owns the one fold per destination table
+        // (`fold_pool_state_changes` / `fold_pool_instance_state`).
+        pool_family_writes: all_pool_family_writes,
         operation_trees: all_operation_trees,
         parse_ms,
         tx_parse_errors,
         sac_overrides,
+        asset_transfers: all_asset_transfers,
     }
 }
 

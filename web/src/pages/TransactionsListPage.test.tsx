@@ -27,7 +27,6 @@ function makeTx(
     operation_count: 1,
     has_soroban: false,
     operation_types: ['PAYMENT'],
-    values: [],
     created_at: new Date(Date.now() - 60_000).toISOString(),
     source_account: 'GBQFOPGGSP4VCDFXJ4YEPCQNLN6EFRC4M7OOLQOEEY7H4VPF6N4WEE2N',
     inner_tx_hash: null,

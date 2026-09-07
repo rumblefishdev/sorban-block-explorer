@@ -57,6 +57,15 @@
   "targetDefaults": {
     "test": {
       "dependsOn": ["^build"]
+    },
+    "typecheck": {
+      "inputs": [
+        "default",
+        "^production",
+        {
+          "externalDependencies": ["typescript"]
+        }
+      ]
     }
   },
   "analytics": false

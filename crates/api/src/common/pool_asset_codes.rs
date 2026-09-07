@@ -30,21 +30,19 @@ pub fn normalize_asset_codes(raw: Option<String>) -> Vec<String> {
         .collect()
 }
 
-/// One leg's match test.
+/// One leg's displayed code — what the pool row RENDERS as, which for a
+/// native leg is `XLM` and not the empty string it stores.
 ///
-/// **Native XLM is stored with an EMPTY code**, so a bare
-/// `positionCaseInsensitive(asset_a_code, 'XLM')` matches thousands of
-/// impostor codes (`XLMFISH`, `yXLM`, …) and misses every real XLM pool. The
-/// `if(type = 0, 'XLM', code)` arm is what makes the native case work; do not
-/// simplify it away.
-///
-/// Both callers alias the pool row as `lp`, so the qualifier is fixed rather
-/// than threaded through as a parameter.
+/// The same expression the asset surfaces use on their own column names —
+/// `search::queries` and `assets::queries` each carry a `SHOWN` constant.
+/// Change one, change all three; the test below fails when this copy drifts.
+fn leg_shown(side: char, alias: &str) -> String {
+    format!("lower(if({alias}.asset_{side}_type = 0, 'XLM', toString({alias}.asset_{side}_code)))")
+}
+
+/// One leg's match test. One bind, the needle.
 fn leg(side: char) -> String {
-    format!(
-        "positionCaseInsensitive(if(lp.asset_{side}_type = 0, 'XLM', \
-         lp.asset_{side}_code), ?) > 0"
-    )
+    format!("position({}, lower(?)) > 0", leg_shown(side, "lp"))
 }
 
 /// Boolean expression matching pools against `codes`, plus its bind values in
@@ -137,8 +135,14 @@ mod tests {
     fn native_leg_is_matched_by_type_not_by_code() {
         // Load-bearing: without the `type = 0` arm, `XLM` matches impostor
         // codes and misses every real XLM pool (task 0440).
+        //
         let (sql, _) = asset_codes_predicate(&codes("xlm")).expect("clause");
-        assert!(sql.contains("if(lp.asset_a_type = 0, 'XLM', lp.asset_a_code)"));
-        assert!(sql.contains("if(lp.asset_b_type = 0, 'XLM', lp.asset_b_code)"));
+        for side in ['a', 'b'] {
+            let shown = leg_shown(side, "lp");
+            assert!(
+                sql.contains(&shown),
+                "leg {side} lost the native alias: {sql}"
+            );
+        }
     }
 }

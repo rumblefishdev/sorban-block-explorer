@@ -38,6 +38,7 @@ clickhouse = { workspace = true }
 # (ADR 0044 §Decision §4a). Domain enums supply the i16 discriminants used
 # in CH SMALLINT columns.
 xdr-parser = { path = "../xdr-parser" }
+stellar-strkey = "0.0.16"
 domain = { path = "../domain" }
 # Already pulled in transitively by `clickhouse` (lz4/zstd features).
 # Declared directly so `db_clickhouse::persist::ids` can derive

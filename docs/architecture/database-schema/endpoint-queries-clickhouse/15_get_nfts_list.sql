@@ -33,6 +33,43 @@
 --     regression as E08 (linear scan).
 --   • Metadata served by API layer via `runtime_enrichment::nft_token_uri`
 --     (ADR 0043 detail-only carve-out).
+--   • **`minted_at_ledger` is DERIVED, not read from `nfts` (task 0528).**
+--     `nfts` is Replacing(current_owner_ledger) with one row per token, so a
+--     transfer / burn arriving in a later ingest batch carries no mint ledger
+--     and replaces the WHOLE row, erasing it (621/13 915 tokens on prod when
+--     0528 was filed, growing ~30/day). The served value comes from the
+--     append-only `nft_ownership`:
+--         mint AS (SELECT contract_id, token_id,
+--                         min(ledger_sequence) AS minted_at_ledger
+--                    FROM nft_ownership WHERE event_type = 0
+--                   GROUP BY contract_id, token_id)
+--     LEFT JOIN'd on (contract_id, token_id). The `event_type = 0` filter is
+--     load-bearing — "earliest ownership row" would return a transfer ledger
+--     for a token whose transfer replayed ahead of its mint. The result is
+--     wrapped in `nullIf(_, 0)`: `min()` over a non-Nullable column yields a
+--     non-Nullable Int64 and, without `join_use_nulls = 1` (unavailable —
+--     `api_reader` is readonly), a JOIN miss fills DEFAULT 0 rather than NULL.
+--     The cursor, the keyset predicate and the ORDER BY all key on the DERIVED
+--     value, so the three agree. `nfts.minted_at_ledger` stays written and
+--     unread until task 0529 drops it.
+--
+-- ---------------------------------------------------------------------------
+-- DRIFT NOTICE — the statement below predates several shipped changes and is
+-- NOT the query the API runs today. It is retained as the endpoint's intent
+-- sketch; `crates/api/src/nfts/queries.rs::fetch_list` is authoritative.
+-- Known divergences beyond the `minted_at_ledger` derivation documented above:
+--   • `collection_name` / `name` / `media_url` are served from the
+--     `nft_enrichment` collapse (+ `soroban_contract_metadata` ledger-name
+--     precedence for the collection), NOT from the `nfts` columns shown here,
+--     which are vestigial.
+--   • The cursor is `(minted_at_ledger, contract_id, token_id)`, not
+--     `(contract_id, token_id)`.
+--   • Identity lookups use page-scoped `WHERE id IN` CTEs, not whole-dimension
+--     FINAL joins (task 0355).
+-- Reconciling this file in full is out of 0528's scope — 0528 changed only the
+-- mint-ledger source, and silently leaving the rest to read as current would
+-- be worse than naming it.
+-- ---------------------------------------------------------------------------
 
 SELECT
     n.contract_id                             AS contract_id_raw,
@@ -41,12 +78,18 @@ SELECT
     n.collection_name,
     n.name,
     n.media_url,
-    n.minted_at_ledger,
+    nullIf(mint.minted_at_ledger, 0)          AS minted_at_ledger,
     own.account_id                            AS current_owner,
     n.current_owner_ledger
 FROM nfts n FINAL
 JOIN      soroban_contracts sc  FINAL ON sc.id  = n.contract_id
 LEFT JOIN accounts          own FINAL ON own.id = n.current_owner_id AND n.current_owner_id IS NOT NULL
+LEFT JOIN (
+    SELECT contract_id, token_id, min(ledger_sequence) AS minted_at_ledger
+      FROM nft_ownership
+     WHERE event_type = 0
+     GROUP BY contract_id, token_id
+) mint ON mint.contract_id = n.contract_id AND mint.token_id = n.token_id
 WHERE
     ($2 IS NULL OR (n.contract_id, n.token_id) < ($2, $3))
     AND ($4 IS NULL OR n.collection_name = $4)

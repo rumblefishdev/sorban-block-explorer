@@ -43,10 +43,12 @@ use std::collections::{HashMap, HashSet};
 
 use domain::{AssetType, ContractEventType, ContractType, OperationType};
 use serde_json::Value;
+use xdr_parser::ExtractedAssetTransfer;
 use xdr_parser::ExtractedContractMetadata;
 use xdr_parser::ExtractedSorobanBalance;
 use xdr_parser::SacOverride;
 use xdr_parser::asset_appearances::AssetRef;
+use xdr_parser::scval;
 use xdr_parser::types::{
     EventSource, ExtractedAccountState, ExtractedAsset, ExtractedContractDeployment,
     ExtractedContractInterface, ExtractedEvent, ExtractedInvocation, ExtractedLedger,
@@ -57,6 +59,8 @@ use xdr_parser::{AccountDelta, LedgerDelta, NetSettled};
 use xdr_parser::{EventAsset, LedgerAsset};
 
 use xdr_parser::event::extract_executable_update_new_wasm_hash;
+use xdr_parser::pool_config_factory::PoolConfig;
+use xdr_parser::pool_family::PoolFamilyWrite;
 
 use super::ids;
 use super::rows::*;
@@ -223,6 +227,8 @@ pub struct StagedLedger {
     pub hash_index_rows: Vec<TransactionHashIndexRow>,
     pub participant_rows: Vec<TransactionParticipantRow>,
     pub pool_rows: Vec<LiquidityPoolRow>,
+    pub pool_instance_state_rows: Vec<PoolInstanceStateRow>,
+    pub pool_state_change_rows: Vec<PoolStateChangeRow>,
     pub snapshot_rows: Vec<LiquidityPoolSnapshotRow>,
     pub lp_position_rows: Vec<LpPositionRow>,
     pub op_rows: Vec<OperationAppearanceRow>,
@@ -258,6 +264,14 @@ pub struct StagedLedger {
     /// balances are appended straight from `account_states` (single-write — the
     /// legacy `account_balances_current` staging was removed).
     pub unified_balance_rows: Vec<BalanceRow>,
+    /// Task 0540 — one row per token movement → `asset_transfers`. Built in
+    /// [`prepare_with_sac_overrides`] by [`super::value_flow::build_value_flow_rows`]
+    /// from `StageInputs.asset_transfers` (the parser's decoded edges).
+    pub asset_transfer_rows: Vec<AssetTransferRow>,
+    /// Task 0540 — one row per transaction that carries a memo → `transaction_memos`.
+    pub transaction_memo_rows: Vec<TransactionMemoRow>,
+    /// Task 0541 — operation attribution per event → `soroban_event_ops`.
+    pub event_op_rows: Vec<SorobanEventOpRow>,
 }
 
 /// Named, borrowed inputs to [`prepare_with_sac_overrides`].
@@ -292,6 +306,15 @@ pub struct StageInputs<'a> {
     /// `unified_balance_rows` via [`build_balance_rows`]. Empty `&[]` for
     /// legacy callers.
     pub soroban_token_balances: &'a [ExtractedSorobanBalance],
+    /// Every family's pool state writes behind ONE seam (task 0518,
+    /// decision 4a): router-family plane `PoolData` (the fungible reserve
+    /// source, task 0374 step 7) and pool instances (the STATE source for
+    /// share tokens and planes; supersedes the deposit⇄mint detector as
+    /// primary — it stays a cross-check), and pair-factory instances (reserve
+    /// source AND declaration: leg tokens, deploying factory, LP supply).
+    /// Staging partitions by variant; adding a family adds a variant + an
+    /// arm, never a field.
+    pub pool_family_writes: &'a [xdr_parser::pool_family::PoolFamilyWrite],
     /// Task 0331 + ADR 0051 — SAC contract surrogate → wrapped classic/native
     /// `asset_id` (from `asset_sac`, via [`crate::persist::fetch_sac_classic_map`]).
     /// [`build_balance_rows`] keys a contract-held SAC balance onto the classic
@@ -313,6 +336,10 @@ pub struct StageInputs<'a> {
     /// so [`build_wasm_upgrade_rows`] can carry identity forward when it rewrites
     /// `wasm_hash`. Empty map for legacy callers (no upgrade rows emitted).
     pub prior_contract_rows: &'a HashMap<String, SorobanContractRow>,
+    /// Task 0540 — token movements decoded by
+    /// `xdr_parser::extract_asset_transfers` (per-op consensus events only,
+    /// emitter-gated, payload-checked). Empty for legacy callers.
+    pub asset_transfers: &'a [ExtractedAssetTransfer],
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -350,12 +377,14 @@ pub fn prepare(
         nft_events,
         lp_positions,
         contract_metadata_writes: &[],
+        pool_family_writes: &[],
         soroban_token_balances: &[],
         sac_classic: &HashMap::new(),
         sac_overrides: &[],
         prior_wasm_verdicts: &HashMap::new(),
         prior_contract_verdicts: &HashMap::new(),
         prior_contract_rows: &HashMap::new(),
+        asset_transfers: &[],
     })
 }
 
@@ -539,11 +568,13 @@ pub fn prepare_with_sac_overrides(input: &StageInputs<'_>) -> Result<StagedLedge
         lp_positions,
         contract_metadata_writes,
         soroban_token_balances,
+        pool_family_writes,
         sac_classic,
         sac_overrides,
         prior_wasm_verdicts,
         prior_contract_verdicts,
         prior_contract_rows,
+        asset_transfers,
     } = *input;
 
     let ledger_sequence_i64 = i64::from(ledger.sequence);
@@ -623,13 +654,6 @@ pub fn prepare_with_sac_overrides(input: &StageInputs<'_>) -> Result<StagedLedge
     } else {
         sac_classic
     };
-
-    let mut amount_by_tx_asset: HashMap<(String, i64), Option<i128>> = HashMap::new();
-    for tx in transactions {
-        for ns in ledger_deltas_net_settled(&tx.ledger_deltas, sac_map) {
-            amount_by_tx_asset.insert((tx.hash.clone(), ns.asset_id), ns.amount);
-        }
-    }
 
     // O(1) per-tx op count lookup. Built once over `operations` so the
     // transactions loop stays linear in `transactions.len()` rather than
@@ -934,6 +958,11 @@ pub fn prepare_with_sac_overrides(input: &StageInputs<'_>) -> Result<StagedLedge
     // from `contract_deployments` (site above).
 
     // ---- transactions + transaction_hash_index ----
+    // `(surrogate id, application_order)` per hash: the surrogate keys joins,
+    // the application order is the ledger's own temporal position — the ONLY
+    // valid intra-ledger ordering (a hash surrogate sorts randomly; the task
+    // 0374 e2e caught pool state picking an intermediate write as "last" on
+    // 127 of 1,410 real pairs when ordered by tx_id).
     let mut tx_id_by_hash: HashMap<String, i64> = HashMap::with_capacity(transactions.len());
     for (idx, tx) in transactions.iter().enumerate() {
         let hash = decode_hash(&tx.hash, "tx.hash")?;
@@ -1010,16 +1039,32 @@ pub fn prepare_with_sac_overrides(input: &StageInputs<'_>) -> Result<StagedLedge
             continue;
         };
         let last_updated_ledger = i64::from(pool.last_updated_ledger);
+        let asset_a_code = a_code.unwrap_or_default();
+        let asset_a_issuer_id = a_issuer.as_deref().map(ids::account_id).unwrap_or(0);
+        let asset_b_code = b_code.unwrap_or_default();
+        let asset_b_issuer_id = b_issuer.as_deref().map(ids::account_id).unwrap_or(0);
         let new_row = LiquidityPoolRow {
             pool_id,
+            // Legs migration step 2 (task 0374 committed follow-through):
+            // classic rows fill `legs` too, so the pair columns can retire.
+            // Classic legs are ASSET surrogates (`pool_leg_asset_id` — the
+            // same key `lp_operation_amounts` joins on), NOT contract
+            // surrogates like a soroban row's; `pool_kind` says which space.
+            legs: vec![
+                ids::pool_leg_asset_id(a_type as i16, &asset_a_code, asset_a_issuer_id),
+                ids::pool_leg_asset_id(b_type as i16, &asset_b_code, asset_b_issuer_id),
+            ],
             asset_a_type: a_type as i16,
-            asset_a_code: a_code.unwrap_or_default(),
-            asset_a_issuer_id: a_issuer.as_deref().map(ids::account_id).unwrap_or(0),
+            asset_a_code,
+            asset_a_issuer_id,
             asset_b_type: b_type as i16,
-            asset_b_code: b_code.unwrap_or_default(),
-            asset_b_issuer_id: b_issuer.as_deref().map(ids::account_id).unwrap_or(0),
+            asset_b_code,
+            asset_b_issuer_id,
             fee_bps: pool.fee_bps,
             last_updated_ledger,
+            pool_kind: 0,
+            deployment_id: 0,
+            pool_type_raw: String::new(),
         };
         match pool_indices.get(&pool_id).copied() {
             Some(idx) => {
@@ -1034,6 +1079,542 @@ pub fn prepare_with_sac_overrides(input: &StageInputs<'_>) -> Result<StagedLedge
             }
         }
     }
+
+    // One family seam (task 0518, decision 4a): partition the unified write
+    // collection back into per-family views for the arms below. The views are
+    // borrows — no clones, no reordering, the fold stays the single dedup
+    // home downstream.
+    let mut plane_pool_data: Vec<&xdr_parser::pool_state::ExtractedPlanePoolData> = Vec::new();
+    let mut pool_instances: Vec<&xdr_parser::pool_state::ExtractedPoolInstance> = Vec::new();
+    let mut factory_pairs: Vec<&xdr_parser::pool_pair_factory::ExtractedFactoryPair> = Vec::new();
+    let mut config_pools: Vec<&xdr_parser::pool_config_factory::ExtractedConfigPool> = Vec::new();
+    let mut address_lists: Vec<&xdr_parser::pool_config_factory::ExtractedAddressListWrite> =
+        Vec::new();
+    for write in pool_family_writes {
+        match write {
+            PoolFamilyWrite::RouterPlane(w) => plane_pool_data.push(w),
+            PoolFamilyWrite::RouterPool(w) => pool_instances.push(w),
+            PoolFamilyWrite::FactoryPair(w) => factory_pairs.push(w),
+            PoolFamilyWrite::ConfigPool(w) => config_pools.push(w),
+            PoolFamilyWrite::AddressList(w) => address_lists.push(w),
+        }
+    }
+
+    // Soroban pool registrations (task 0374): the semantic decode lives in
+    // `xdr_parser::pool_router` (same idiom as `detect_nft_events`); this
+    // section only maps registrations to registry rows. Idempotent under the
+    // RMT key (pool_id, version last_updated_ledger).
+    //
+    // A registration names its pool in the event DATA payload, which the
+    // emitter chooses freely — so the claim is CORROBORATED against the named
+    // pool's own instance storage before it becomes a row (review #438).
+    // The pool contract is the authenticated owner of that entry and records
+    // its `Router` there; the instance is written in the SAME transaction as
+    // `add_pool` (probed on raw meta), so the corroborating fact is always in
+    // this ledger's parse output. Without it, any contract could emit an
+    // `add_pool` naming a REAL pool and replace its registry row wholesale
+    // (RMT keyed on pool_id, versioned by ledger).
+    //
+    // An older contract version writes no `Router` key at all (read from chain
+    // 2026-09-01: five of the ten deployments, 23 pools). Those instances are
+    // real pools and cannot be authenticated — the chain simply never recorded
+    // who registered them — so they are ACCEPTED and counted, never refused: a
+    // missing key is an older contract, not a forgery, and dropping a real pool
+    // is the failure this module's reject taxonomy exists to prevent.
+    //
+    // The acceptance is gated on the instance being CREATED in this ledger
+    // (decision karolkow 2026-09-02): a genuine registration deploys and
+    // initialises the pool in one transaction (497/497 measured, dead
+    // deployments included), so its instance is always a creation. Without
+    // the gate the arm was inducibly forgeable — one transaction could touch
+    // an existing router-less pool (forcing an `updated` instance write) and
+    // emit a forged `add_pool` naming it. A router-less registration whose
+    // instance was merely touched is exactly that signature and is refused.
+    // The map ORs `created` across the ledger's writes, so a creation
+    // followed by a same-ledger update still qualifies.
+    let declared_router: HashMap<&str, (Option<&str>, bool)> = {
+        let mut m: HashMap<&str, (Option<&str>, bool)> = HashMap::new();
+        for i in &pool_instances {
+            let e = m.entry(i.state.pool.as_str()).or_insert((None, false));
+            e.0 = i.state.router.as_deref();
+            e.1 |= i.created;
+        }
+        m
+    };
+    for reg in xdr_parser::pool_router::detect_pool_registrations(events) {
+        match declared_router.get(reg.event.pool.as_str()) {
+            Some(&(Some(router), _)) if router == reg.router => {}
+            Some(&(None, true)) => tracing::warn!(
+                ledger_sequence = ledger.sequence,
+                pool = %reg.event.pool,
+                emitter = %reg.router,
+                "add_pool registration accepted UNVERIFIED — the named pool's \
+                 instance declares no router (older contract version) and was \
+                 created in this ledger"
+            ),
+            Some(&(None, false)) => {
+                tracing::warn!(
+                    ledger_sequence = ledger.sequence,
+                    pool = %reg.event.pool,
+                    emitter = %reg.router,
+                    "add_pool registration refused — router-less pool's \
+                     instance was only TOUCHED this ledger, not created: the \
+                     induced-forgery signature (no genuine registration ever \
+                     looks like this)"
+                );
+                continue;
+            }
+            found => {
+                tracing::warn!(
+                    ledger_sequence = ledger.sequence,
+                    pool = %reg.event.pool,
+                    emitter = %reg.router,
+                    declared_router = ?found.and_then(|f| f.0),
+                    "add_pool registration refused — the named pool does not declare \
+                     this emitter as its router"
+                );
+                continue;
+            }
+        }
+        match pool_registry_row(&reg.event, &reg.router, ledger_sequence_i64) {
+            Ok(row) => out.pool_rows.push(row),
+            Err(reason) => tracing::error!(
+                ledger_sequence = ledger.sequence,
+                pool = %reg.event.pool,
+                reason,
+                "add_pool registration refused — a pool is missing from the registry"
+            ),
+        }
+    }
+
+    // Soroswap-family registrations (task 0518): the factory's `new_pair`,
+    // corroborated by the PAIR's own instance — the pair records its
+    // deploying factory at DataKey 4 in storage IT owns, and the factory
+    // deploys + initialises the pair in the registering transaction, so a
+    // genuine registration always has a same-ledger CREATED instance
+    // pointing back at the emitter. Anything else — no instance, a foreign
+    // factory, or a merely TOUCHED instance (the induced-forgery signature,
+    // same class the router family's created gate closes) — is refused
+    // loudly. No UNVERIFIED arm exists here: the factory pointer is part of
+    // the recognition shape, so a pair without one is not a pair.
+    // The map also carries the instance's OWN leg tokens: the event's legs
+    // are a claim, the instance's are ledger-authenticated, and staging
+    // compares them (review #447) — the same both-or-refuse discipline as
+    // everywhere else, instead of trusting the claim because history showed
+    // them equal.
+    let declared_factory: HashMap<&str, (&str, bool, &str, &str)> = {
+        let mut m: HashMap<&str, (&str, bool, &str, &str)> = HashMap::new();
+        for sp in &factory_pairs {
+            let e = m.entry(sp.state.pair.as_str()).or_insert((
+                sp.state.factory.as_str(),
+                false,
+                sp.state.token_0.as_str(),
+                sp.state.token_1.as_str(),
+            ));
+            e.0 = sp.state.factory.as_str();
+            e.1 |= sp.created;
+            e.2 = sp.state.token_0.as_str();
+            e.3 = sp.state.token_1.as_str();
+        }
+        m
+    };
+    for reg in xdr_parser::pool_pair_factory::detect_pair_registrations(events) {
+        match declared_factory.get(reg.event.pair.as_str()) {
+            Some(&(factory, true, token_0, token_1))
+                if factory == reg.factory
+                    && token_0 == reg.event.token_0
+                    && token_1 == reg.event.token_1 => {}
+            found => {
+                tracing::warn!(
+                    ledger_sequence = ledger.sequence,
+                    pair = %reg.event.pair,
+                    emitter = %reg.factory,
+                    declared = ?found,
+                    "new_pair registration refused — the named pair's instance does \
+                     not declare this emitter as its factory at creation, or the \
+                     event's legs disagree with the instance's own"
+                );
+                continue;
+            }
+        }
+        match factory_pair_registry_row(&reg, ledger_sequence_i64) {
+            Ok(row) => out.pool_rows.push(row),
+            Err(reason) => tracing::error!(
+                ledger_sequence = ledger.sequence,
+                pair = %reg.event.pair,
+                reason,
+                "new_pair registration refused — a pair is missing from the registry"
+            ),
+        }
+    }
+
+    // Config-factory registrations (task 0518, third adapter): the factory's
+    // `create`/`liquidity_pool` event carries ONLY the pool address — legs,
+    // fee, share token all come from the pool's own `CONFIG`. The pool
+    // records NO factory back-pointer (read from chain 2026-09-03), so the
+    // corroboration is the created gate plus a decodable full CONFIG written
+    // by the pool itself in the registering LEDGER (a genuine registration
+    // constructs the pool — config, reserves, shares — in the deploy
+    // transaction; verified on the creation ledger raw meta; the maps here
+    // aggregate per ledger, the granularity the sibling gates use too).
+    //
+    // Three forgery shapes, three answers: an event naming an EXISTING pool
+    // fails the created gate; one naming a contract without the family
+    // shape has no CONFIG to decode; and a second emitter co-claiming a
+    // GENUINE pool inside its creation ledger — the one shape the pool-side
+    // checks cannot arbitrate, because this family has no back-pointer and
+    // both rows would carry the same RMT version — meets a TWO-STAGE gate
+    // (review #447):
+    //
+    // 1. Membership list, POINTWISE: the emitter must have written the
+    //    named pool into an address list in storage the EMITTER owns, this
+    //    ledger (the genuine factory appends each pool to its own pools
+    //    vector in the creation tx — read from raw meta). An event-only
+    //    forgery dies here and the genuine registration SURVIVES.
+    // 2. Conflict, BOTH refused: address-list content is still just data —
+    //    a determined attacker can copy the pool's address into his own
+    //    list — so if more than one emitter survives stage 1, every
+    //    registration for that pool refuses loudly. With 20 registrations
+    //    in all of history, a refused genuine one is loud and
+    //    backfillable, while a nondeterministic `deployment_id` would be
+    //    silent and permanent. (The cryptographic anchor — the pool
+    //    address's deployer preimage — is NOT in the ledger meta; probed
+    //    2026-09-05.)
+    let declared_config: HashMap<&str, (Option<&PoolConfig>, bool)> = {
+        let mut m: HashMap<&str, (Option<&PoolConfig>, bool)> = HashMap::new();
+        for cp in &config_pools {
+            let e = m.entry(cp.state.pool.as_str()).or_insert((None, false));
+            if let Some(config) = cp.state.config.as_ref() {
+                e.0 = Some(config);
+            }
+            e.1 |= cp.created;
+        }
+        m
+    };
+    // Stage-1 lookup: which pools did each emitter record in its OWN
+    // storage this ledger?
+    let listed_by_owner: HashMap<&str, HashSet<&str>> = {
+        let mut m: HashMap<&str, HashSet<&str>> = HashMap::new();
+        for al in &address_lists {
+            m.entry(al.owner.as_str())
+                .or_default()
+                .extend(al.members.iter().map(String::as_str));
+        }
+        m
+    };
+    let config_regs: Vec<_> =
+        xdr_parser::pool_config_factory::detect_config_pool_registrations(events)
+            .into_iter()
+            .filter(|reg| {
+                let listed = listed_by_owner
+                    .get(reg.factory.as_str())
+                    .is_some_and(|pools| pools.contains(reg.pool.as_str()));
+                if !listed {
+                    tracing::warn!(
+                        ledger_sequence = ledger.sequence,
+                        pool = %reg.pool,
+                        emitter = %reg.factory,
+                        "create/liquidity_pool registration refused — the emitter \
+                         did not record the named pool in its own storage this \
+                         ledger (an event-only claim)"
+                    );
+                }
+                listed
+            })
+            .collect();
+    let mut config_emitters: HashMap<&str, Vec<&str>> = HashMap::new();
+    for reg in &config_regs {
+        config_emitters
+            .entry(reg.pool.as_str())
+            .or_default()
+            .push(reg.factory.as_str());
+    }
+    let mut config_pools_staged: HashSet<&str> = HashSet::new();
+    for reg in &config_regs {
+        let emitters = &config_emitters[reg.pool.as_str()];
+        if emitters.iter().any(|e| *e != reg.factory) {
+            tracing::error!(
+                ledger_sequence = ledger.sequence,
+                pool = %reg.pool,
+                emitters = ?emitters,
+                "create/liquidity_pool registration refused for EVERY emitter — \
+                 conflicting emitters claim one pool in one ledger, and the RMT \
+                 version tie would pick the attribution nondeterministically; \
+                 a pool is missing from the registry and needs the runbook's \
+                 registration pass"
+            );
+            continue;
+        }
+        // Identical duplicates (one emitter announcing twice) collapse to
+        // one row — a second identical push would only feed the same RMT
+        // version tie with the same content.
+        if !config_pools_staged.insert(reg.pool.as_str()) {
+            continue;
+        }
+        match declared_config.get(reg.pool.as_str()) {
+            Some(&(Some(config), true)) => {
+                match config_pool_registry_row(reg, config, ledger_sequence_i64) {
+                    Ok(row) => out.pool_rows.push(row),
+                    Err(reason) => tracing::error!(
+                        ledger_sequence = ledger.sequence,
+                        pool = %reg.pool,
+                        reason,
+                        "create/liquidity_pool registration refused — a pool is \
+                         missing from the registry"
+                    ),
+                }
+            }
+            found => {
+                tracing::warn!(
+                    ledger_sequence = ledger.sequence,
+                    pool = %reg.pool,
+                    emitter = %reg.factory,
+                    declared = found.is_some(),
+                    "create/liquidity_pool registration refused — the named pool \
+                     did not write its own full CONFIG at creation in this ledger"
+                );
+                continue;
+            }
+        }
+    }
+
+    // Pool state from ledger entries (task 0374, step 7): plane writes are
+    // THE reserve source; instance writes are the STATE source for share
+    // tokens (the deposit⇄mint detector remains only as a cross-check, per
+    // the same reasoning that demoted update_reserves in T4). Unparseable
+    // coordinates are refused loudly — a silent skip is a pool going dark.
+    //
+    // Rows accumulate in locals and land in `out` FOLDED (one per key) — the
+    // single dedup home for both soroban state tables (decision karolkow
+    // 2026-09-01: fold in stage, symmetric for both, no parser-side pre-fold).
+    let mut pool_state_rows: Vec<PoolStateChangeRow> = Vec::new();
+    let mut instance_state_rows: Vec<PoolInstanceStateRow> = Vec::new();
+    for pw in plane_pool_data {
+        let Some(pool_id) = ids::contract_payload(&pw.data.pool) else {
+            tracing::error!(
+                ledger_sequence = pw.ledger_sequence,
+                pool = %pw.data.pool,
+                "plane write refused: pool address is not a valid C… strkey"
+            );
+            continue;
+        };
+        let Some(reserves) = parse_reserves(&pw.data.reserves) else {
+            tracing::error!(
+                ledger_sequence = pw.ledger_sequence,
+                pool = %pw.data.pool,
+                "plane write refused: non-numeric reserve — a snapshot is missing"
+            );
+            continue;
+        };
+        pool_state_rows.push(PoolStateChangeRow {
+            pool_id,
+            ledger_sequence: i64::from(pw.ledger_sequence),
+            reserves,
+            plane_id: ids::contract_id(&pw.data.plane),
+        });
+    }
+    for inst in pool_instances {
+        // A concentrated pool's per-operation reserves live in its INSTANCE
+        // (Reserve0/Reserve1) — the plane is not updated per op for them
+        // (measured; T4 refined). Fungible instances carry no `reserves`
+        // here by construction, so no double-write against the plane rows.
+        if !inst.state.reserves.is_empty() {
+            match (
+                ids::contract_payload(&inst.state.pool),
+                parse_reserves(&inst.state.reserves),
+                inst.state.plane.as_deref(),
+            ) {
+                (Some(pool_id), Some(reserves), Some(plane)) => {
+                    pool_state_rows.push(PoolStateChangeRow {
+                        pool_id,
+                        ledger_sequence: i64::from(inst.ledger_sequence),
+                        reserves,
+                        // Never a placeholder 0: the plane is half of the
+                        // provenance check AND part of the fold/sort key —
+                        // a plane-less row would neither match the declared
+                        // plane nor fold with rows that do. Refused below,
+                        // same as the instance-state arm.
+                        plane_id: ids::contract_id(plane),
+                    });
+                }
+                _ => tracing::error!(
+                    ledger_sequence = inst.ledger_sequence,
+                    pool = %inst.state.pool,
+                    "instance reserve write refused — bad pool address, \
+                     non-numeric reserve, or no declared plane; a \
+                     concentrated snapshot is missing"
+                ),
+            }
+        }
+        // What the pool declares about ITSELF. `plane_id` is written for
+        // EVERY instance — it is the provenance authority reads check reserve
+        // rows against (review #438) — while `share_token_id = 0` stays
+        // structural for concentrated pools, which never mint one.
+        match (
+            ids::contract_payload(&inst.state.pool),
+            inst.state.plane.as_deref(),
+        ) {
+            (Some(pool_id), Some(plane)) => {
+                // A PRESENT-but-unparseable TotalShares is refused loudly —
+                // writing 0 for it would be the misleading-fallback class
+                // (0 must mean "key absent", never "we failed to read it").
+                let total_shares = match inst.state.total_shares.as_deref() {
+                    None => 0,
+                    Some(raw) => match raw.parse::<i128>() {
+                        Ok(v) => v,
+                        Err(_) => {
+                            tracing::error!(
+                                ledger_sequence = inst.ledger_sequence,
+                                pool = %inst.state.pool,
+                                "instance write refused: non-numeric TotalShares"
+                            );
+                            continue;
+                        }
+                    },
+                };
+                instance_state_rows.push(PoolInstanceStateRow {
+                    pool_id,
+                    plane_id: ids::contract_id(plane),
+                    share_token_id: inst
+                        .state
+                        .token_share
+                        .as_deref()
+                        .map(ids::contract_id)
+                        .unwrap_or(0),
+                    total_shares,
+                    derived_at_ledger: i64::from(inst.ledger_sequence),
+                });
+            }
+            _ => tracing::error!(
+                ledger_sequence = inst.ledger_sequence,
+                pool = %inst.state.pool,
+                "instance write refused: pool address is not a valid C… strkey, \
+                 or the instance declares no plane"
+            ),
+        }
+    }
+    // Soroswap pairs (task 0518): the pair's OWN instance is both the
+    // reserve source and the declaration — owner, stamp and declaration
+    // COINCIDE, so `plane_id` is the pair's own id: the read-side provenance
+    // filter passes by construction, a forged foreign write still lands in
+    // its own key space, and `share_token_id` is the pair too (it IS its own
+    // SEP-41 LP token). `total_shares = 0` before the first mint is a TRUE
+    // zero (nothing outstanding), not a fallback; a present-but-unparseable
+    // value refuses the row loudly, same as every sibling arm.
+    for sp in factory_pairs {
+        let Some(pool_id) = ids::contract_payload(&sp.state.pair) else {
+            tracing::error!(
+                ledger_sequence = sp.ledger_sequence,
+                pair = %sp.state.pair,
+                "pair write refused: address is not a valid C… strkey"
+            );
+            continue;
+        };
+        let self_id = ids::contract_id(&sp.state.pair);
+        if let Some((r0, r1)) = &sp.state.reserves {
+            match parse_reserve_pair(r0, r1) {
+                Some(reserves) => pool_state_rows.push(PoolStateChangeRow {
+                    pool_id,
+                    ledger_sequence: i64::from(sp.ledger_sequence),
+                    reserves,
+                    plane_id: self_id,
+                }),
+                None => tracing::error!(
+                    ledger_sequence = sp.ledger_sequence,
+                    pair = %sp.state.pair,
+                    "pair reserve write refused: non-numeric reserve — a snapshot is missing"
+                ),
+            }
+        }
+        let Ok(total_shares) = parse_supply(sp.state.total_supply.as_deref()) else {
+            tracing::error!(
+                ledger_sequence = sp.ledger_sequence,
+                pair = %sp.state.pair,
+                "pair instance row refused: non-numeric TotalSupply (any reserve \
+                 row from this write is already staged)"
+            );
+            continue;
+        };
+        instance_state_rows.push(PoolInstanceStateRow {
+            pool_id,
+            plane_id: self_id,
+            share_token_id: self_id,
+            total_shares,
+            derived_at_ledger: i64::from(sp.ledger_sequence),
+        });
+    }
+    // Config-factory pools (task 0518): the pool's own keyed persistent
+    // entries are the reserve source — owner, stamp and declaration
+    // COINCIDE (the entries are ledger-authenticated to the pool), so
+    // `plane_id` is the pool's own id, same construction as the
+    // pair-factory arm.
+    //
+    // The INSTANCE row is emitted ONLY when the transaction wrote `CONFIG`
+    // (creation + admin config changes): `pool_instance_state` is RMT
+    // whole-row keyed on `pool_id` alone, and a per-operation TotalShares
+    // write arrives WITHOUT the config, so staging it would clobber
+    // `share_token_id` to 0 — the misleading-fallback class. Consequence:
+    // for THIS family the row's `total_shares` is STRUCTURALLY 0 forever
+    // (TotalShares never co-occurs with a post-creation CONFIG write) — it
+    // is not a snapshot of anything; the LIVE supply is the share token's
+    // own tracked supply — the share token is a separate SEP-41 contract
+    // whose mints/burns ride the generic token pipeline. The read half must
+    // branch on family (`share_token_id != pool_id` + deployment) and never
+    // render this 0 as a measured value.
+    for cp in config_pools {
+        let Some(pool_id) = ids::contract_payload(&cp.state.pool) else {
+            tracing::error!(
+                ledger_sequence = cp.ledger_sequence,
+                pool = %cp.state.pool,
+                "config-pool write refused: address is not a valid C… strkey"
+            );
+            continue;
+        };
+        let self_id = ids::contract_id(&cp.state.pool);
+        if let Some((ra, rb)) = &cp.state.reserves {
+            match parse_reserve_pair(ra, rb) {
+                Some(reserves) => pool_state_rows.push(PoolStateChangeRow {
+                    pool_id,
+                    ledger_sequence: i64::from(cp.ledger_sequence),
+                    reserves,
+                    plane_id: self_id,
+                }),
+                None => tracing::error!(
+                    ledger_sequence = cp.ledger_sequence,
+                    pool = %cp.state.pool,
+                    "config-pool reserve write refused: non-numeric reserve — a \
+                     snapshot is missing"
+                ),
+            }
+        }
+        if let Some(config) = &cp.state.config {
+            // A PRESENT-but-unparseable TotalShares refuses the row loudly,
+            // same as every sibling arm; absent means the config write did
+            // not touch it (0 stays the structural creation value).
+            let Ok(total_shares) = parse_supply(cp.state.total_shares.as_deref()) else {
+                tracing::error!(
+                    ledger_sequence = cp.ledger_sequence,
+                    pool = %cp.state.pool,
+                    "config-pool instance row refused: non-numeric TotalShares \
+                     (any reserve row from this write is already staged)"
+                );
+                continue;
+            };
+            instance_state_rows.push(PoolInstanceStateRow {
+                pool_id,
+                plane_id: self_id,
+                share_token_id: ids::contract_id(&config.share_token),
+                total_shares,
+                derived_at_ledger: i64::from(cp.ledger_sequence),
+            });
+        }
+    }
+
+    // ONE row per key for both state tables — the folds' doc comments carry
+    // the key rationale (plane in the state key; version ties within a
+    // ledger for the instance table).
+    out.pool_state_change_rows = fold_pool_state_changes(pool_state_rows);
+    out.pool_instance_state_rows = fold_pool_instance_state(instance_state_rows);
 
     // ---- liquidity_pool_snapshots ----
     // Per-(pool, ledger) asset-A trade volume from claim atoms (0261 extractor).
@@ -1060,24 +1641,12 @@ pub fn prepare_with_sac_overrides(input: &StageInputs<'_>) -> Result<StagedLedge
             reserve_a,
             reserve_b,
             total_shares: decimal7_string_to_i128(&snap.total_shares)?,
-            tvl: snap
-                .tvl
-                .as_deref()
-                .map(decimal7_string_to_i128)
-                .transpose()?,
-            volume: snap
-                .volume
-                .as_deref()
-                .map(decimal7_string_to_i128)
-                .transpose()?,
-            fee_revenue: snap
-                .fee_revenue
-                .as_deref()
-                .map(decimal7_string_to_i128)
-                .transpose()?,
-            // Asset-A-side trade volume for this (pool, ledger) from claim atoms
-            // (0261). `None` when the pool had no trade this ledger. USD volume/
-            // fee_revenue remain read-time (ADR 0053); those columns stay NULL.
+            // Asset-A-side trade volume for this (pool, ledger) from claim
+            // atoms (0261). `None` when the pool had no trade this ledger.
+            // USD tvl/volume/fee_revenue have NO columns here any more: they
+            // were written as NULL since 0199 (compute-at-read, ADR 0053) and
+            // read by nothing — dropped from the write path in 0374's
+            // distillation; prod drops them with ALTER … DROP COLUMN.
             gross_volume_a: gross_volume_by_pool.get(&pool_id).copied(),
         });
     }
@@ -1172,17 +1741,6 @@ pub fn prepare_with_sac_overrides(input: &StageInputs<'_>) -> Result<StagedLedge
                             ledger_sequence: ledger_sequence_i64,
                             transaction_id: tx_id,
                             // `Some(v)` = reduced; `None` (-> NULL) = touched but
-                            // not computable (i128-unrepresentable, or a
-                            // recognised token event whose amount we could not
-                            // read). The `Some(0)` fallback is for an asset an
-                            // OPERATION BODY declared that no movement reduced —
-                            // the reducer ran over this tx and found nothing
-                            // settling for it, so "computed, net zero" is the
-                            // honest answer, not an absence of information.
-                            net_settled: amount_by_tx_asset
-                                .get(&(tx_hash.clone(), asset_id))
-                                .copied()
-                                .unwrap_or(Some(0)),
                         });
                     }
                 }
@@ -1300,16 +1858,6 @@ pub fn prepare_with_sac_overrides(input: &StageInputs<'_>) -> Result<StagedLedge
                 asset_id,
                 ledger_sequence: ledger_sequence_i64,
                 transaction_id: tx_id,
-                // These asset ids come from token EVENTS, but value is reduced from
-                // the LEDGER (a different source), so an event-declared asset may
-                // have no ledger-reduced entry — e.g. a contract-held SAC whose
-                // registry lookup missed, or an asset the ledger did not actually
-                // move. A miss means "value not computed for this (tx, asset)" →
-                // `None` (NULL), NOT a fabricated `Some(0)`.
-                net_settled: amount_by_tx_asset
-                    .get(&(tx_hash.clone(), asset_id))
-                    .copied()
-                    .unwrap_or(None),
             });
         }
     }
@@ -2031,6 +2579,18 @@ pub fn prepare_with_sac_overrides(input: &StageInputs<'_>) -> Result<StagedLedge
         ledger_sequence_i64,
     ));
 
+    // ---- asset_transfers + transaction_memos + soroban_event_ops (0540/0541) --
+    let value_flow = super::value_flow::build_value_flow_rows(
+        ledger_sequence_i64,
+        transactions,
+        operations,
+        events,
+        asset_transfers,
+    )?;
+    out.asset_transfer_rows = value_flow.transfers;
+    out.transaction_memo_rows = value_flow.memos;
+    out.event_op_rows = value_flow.event_ops;
+
     Ok(out)
 }
 
@@ -2038,7 +2598,7 @@ pub fn prepare_with_sac_overrides(input: &StageInputs<'_>) -> Result<StagedLedge
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn decode_hash(hex_str: &str, field: &'static str) -> Result<[u8; 32], SchemaError> {
+pub(crate) fn decode_hash(hex_str: &str, field: &'static str) -> Result<[u8; 32], SchemaError> {
     let bytes = hex::decode(hex_str)
         .map_err(|e| staging_err(&format!("hex decode {field}: {e} (value={hex_str})")))?;
     <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| {
@@ -2135,16 +2695,241 @@ fn is_diagnostic(src: EventSource) -> bool {
     matches!(src, EventSource::Diagnostic)
 }
 
-fn extract_event_signature(topics: &Value) -> Option<String> {
-    let first = topics.as_array()?.first()?.as_object()?;
-    if first.get("type").and_then(Value::as_str)? != "sym" {
-        return None;
+/// Collapse `pool_state_changes` to ONE row per (pool, plane, ledger) — the
+/// cross-writer twin of `dedup_final_pool_snapshots` (lore-0356), via the
+/// shared `keep_last_by_key` fold. This is the ONLY fold on this vector: the
+/// plane arm and the concentrated-instance arm can collide on a pool's
+/// registration ledger, and emitting both would leave the surviving row to a
+/// version-less `ReplacingMergeTree` — the hazard backfills.md rule 4 names.
+///
+/// `plane_id` is IN the key (three-lens review, 2026-09-01): a forged plane
+/// entry naming a real pool would otherwise EVICT the pool's genuine row at
+/// this fold (and at the table's RMT key) — the read-side declared-plane
+/// filter would then hide the forgery but serve a stale ledger's reserves as
+/// current. With the plane in the key a forged row lands in its own key
+/// space, dies at the read filter, and stays visible to the divergence
+/// monitor (see the `pool_state_changes` DDL comment). Genuine collisions
+/// still fold: both arms stamp the pool's own declared plane.
+///
+/// Last-wins in staging order: the instance arm is the more specific source
+/// for a concentrated pool and runs second. Folding — not a version column —
+/// is what makes the stored row a deterministic function of the ledger, so a
+/// re-parse still wins simply by landing last (rule 4). The `ledger_sequence`
+/// component is belt-and-braces for a future batching caller
+/// (`xdr_parser::fold`).
+fn fold_pool_state_changes(rows: Vec<PoolStateChangeRow>) -> Vec<PoolStateChangeRow> {
+    xdr_parser::fold::keep_last_by_key(rows, |r| (r.pool_id, r.plane_id, r.ledger_sequence))
+}
+
+/// Collapse instance-state rows to ONE per (pool, ledger) — the last image
+/// in apply order. Load-bearing, not theoretical: 29 of 259 real
+/// (pool, ledger) keys in the raw corpus carry more than one instance image
+/// (up to 5 in one ledger — every pool action rewrites the instance), and
+/// the table's RMT version (`derived_at_ledger`) TIES within a ledger, so an
+/// unfolded insert would leave the surviving image to an arbitrary merge —
+/// the 0463 defect class. Every image carries the FULL instance storage, so
+/// keeping only the last loses nothing.
+fn fold_pool_instance_state(rows: Vec<PoolInstanceStateRow>) -> Vec<PoolInstanceStateRow> {
+    xdr_parser::fold::keep_last_by_key(rows, |r| (r.pool_id, r.derived_at_ledger))
+}
+
+/// Raw decimal reserve strings → `i128`, all-or-nothing: one unparseable
+/// element refuses the whole vector, because a partial reserve set is a
+/// snapshot lying about its own arity. Shared by the plane and the
+/// concentrated-instance arm.
+fn parse_reserves(raw: &[String]) -> Option<Vec<i128>> {
+    raw.iter().map(|r| r.parse::<i128>().ok()).collect()
+}
+
+/// The two-leg tuple flavour of [`parse_reserves`], shared by the
+/// pair-factory and config-factory arms — same all-or-nothing rule.
+fn parse_reserve_pair(a: &str, b: &str) -> Option<Vec<i128>> {
+    Some(vec![a.parse::<i128>().ok()?, b.parse::<i128>().ok()?])
+}
+
+/// Raw LP-supply string → `i128`. Absent means the write did not touch the
+/// key (a structural 0, never a fallback); PRESENT-but-unparseable is
+/// `Err` so the caller refuses the row loudly. Shared by the pair-factory
+/// (TotalSupply) and config-factory (TotalShares) arms.
+fn parse_supply(raw: Option<&str>) -> Result<i128, ()> {
+    match raw {
+        None => Ok(0),
+        Some(raw) => raw.parse::<i128>().map_err(|_| ()),
     }
-    first
-        .get("value")
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
+}
+
+/// Registry row for one corroborated `new_pair` registration (task 0518).
+///
+/// `pool_type_raw` stays EMPTY: the vendor emits no type — Soroswap is one
+/// fixed constant-product mode — and an invented label would be our
+/// interpretation, not a verbatim value (decision 64). The fee is the
+/// vendor's compiled-in constant: 3/1000 on every swap ("Constant product
+/// AMM with a .3% swap fee", `soroswap/core` pair source, fetched
+/// 2026-09-02) = 30 bps. Legs are the pair's leg TOKENS in vendor order
+/// (token_0, token_1); the share token is NOT a registry column — the pair
+/// is its own LP token and the relation lives in `pool_instance_state`.
+fn factory_pair_registry_row(
+    reg: &xdr_parser::pool_pair_factory::PairRegistration,
+    ledger_sequence: i64,
+) -> Result<LiquidityPoolRow, &'static str> {
+    let pool_id =
+        ids::contract_payload(&reg.event.pair).ok_or("pair address is not a valid C… strkey")?;
+    Ok(LiquidityPoolRow {
+        pool_id,
+        asset_a_type: 0,
+        asset_a_code: String::new(),
+        asset_a_issuer_id: 0,
+        asset_b_type: 0,
+        asset_b_code: String::new(),
+        asset_b_issuer_id: 0,
+        fee_bps: 30,
+        last_updated_ledger: ledger_sequence,
+        pool_kind: 1,
+        legs: vec![
+            ids::contract_id(&reg.event.token_0),
+            ids::contract_id(&reg.event.token_1),
+        ],
+        deployment_id: ids::contract_id(&reg.factory),
+        pool_type_raw: String::new(),
+    })
+}
+
+/// Registry row for one corroborated config-factory registration. The event
+/// names only the pool; every registry fact comes from the pool's own
+/// `CONFIG` (the same map that corroborated the registration). The share
+/// token is NOT a registry column — the relation lives in
+/// `pool_instance_state`, same as both sibling families.
+///
+/// `pool_type_raw` stores the vendor's `PairType` discriminant verbatim
+/// ("0" = XYK today; a stable pool would carry its own value) — the same
+/// un-normalised-on-purpose rule as the router family's sym.
+fn config_pool_registry_row(
+    reg: &xdr_parser::pool_config_factory::ConfigPoolRegistration,
+    config: &xdr_parser::pool_config_factory::PoolConfig,
+    ledger_sequence: i64,
+) -> Result<LiquidityPoolRow, &'static str> {
+    let pool_id =
+        ids::contract_payload(&reg.pool).ok_or("pool address is not a valid C… strkey")?;
+    // The chain carries the fee as i64; an out-of-i32-range value is a new
+    // vocabulary nobody has seen — refuse it loudly rather than record a
+    // plausible truncation.
+    let fee_bps =
+        i32::try_from(config.total_fee_bps).map_err(|_| "total_fee_bps out of i32 range")?;
+    Ok(LiquidityPoolRow {
+        pool_id,
+        asset_a_type: 0,
+        asset_a_code: String::new(),
+        asset_a_issuer_id: 0,
+        asset_b_type: 0,
+        asset_b_code: String::new(),
+        asset_b_issuer_id: 0,
+        fee_bps,
+        last_updated_ledger: ledger_sequence,
+        pool_kind: 1,
+        legs: vec![
+            ids::contract_id(&config.token_a),
+            ids::contract_id(&config.token_b),
+        ],
+        deployment_id: ids::contract_id(&reg.factory),
+        pool_type_raw: config.pool_type.to_string(),
+    })
+}
+
+/// Registry row for one decoded `add_pool` registration.
+///
+/// `Err` names what was wrong. A bad pool address must never fabricate a
+/// 32-byte `pool_id`, and an unparseable fee must never become a plausible
+/// zero (Karol, 2026-08-28: error, not warn-and-default) — either way the
+/// registration is refused loudly and lands in the missing-pool alarm.
+///
+/// The share-token relation lives ONLY in `pool_instance_state` (side table;
+/// a registry column for it was dead-on-arrival and removed). No venue label
+/// is stored anywhere: labels resolve from `deployment_id` at read time. The salt and raw
+/// init_args are NOT materialised — the add_pool event itself sits complete
+/// in soroban_events; extract on demand, never copy.
+fn pool_registry_row(
+    reg: &xdr_parser::pool_router::AddPoolEvent,
+    router_strkey: &str,
+    ledger_sequence: i64,
+) -> Result<LiquidityPoolRow, &'static str> {
+    let pool_id =
+        ids::contract_payload(&reg.pool).ok_or("pool address is not a valid C… strkey")?;
+    // Position 0 is a u32 fee in EVERY shape measured on mainnet (497/497,
+    // pinned by the corpus test). A shape where it is missing or unparseable
+    // is a new vocabulary nobody has seen — refuse it loudly rather than
+    // record a plausible fee of 0.
+    let fee_bps = reg
+        .init_args
+        .first()
+        .and_then(|v| v.parse::<i32>().ok())
+        .ok_or("init_args[0] is not a parseable fee")?;
+    Ok(LiquidityPoolRow {
+        pool_id,
+        asset_a_type: 0,
+        asset_a_code: String::new(),
+        asset_a_issuer_id: 0,
+        asset_b_type: 0,
+        asset_b_code: String::new(),
+        asset_b_issuer_id: 0,
+        fee_bps,
+        last_updated_ledger: ledger_sequence,
+        pool_kind: 1,
+        legs: reg.tokens.iter().map(|t| ids::contract_id(t)).collect(),
+        deployment_id: ids::contract_id(router_strkey),
+        pool_type_raw: reg.pool_type.clone(),
+    })
+}
+
+/// Event NAME, lifted from the topics into the `signature` column (the cheap
+/// `WHERE signature = 'transfer'` filter).
+///
+/// Three publishing conventions exist on mainnet (task 0517; measured
+/// 2026-09-02 on two 1M-ledger windows of the then-NULL population, shapes
+/// identical in both):
+///
+/// 1. `[Symbol(name), …]` — the dominant convention (SEP-41, the router
+///    family, …). Unchanged.
+/// 2. `[String(label), Symbol(name), …]` — a protocol label first, the name
+///    second (SoroswapPair/Router/Aggregator, DeFindexVault, BlendStrategy).
+///    The label is NOT copied anywhere: it sits verbatim in `topics_xdr`
+///    forever — extract on demand, never copy.
+/// 3. `[String(name), …]` where `topics[1]` is NOT a Symbol — the
+///    Phoenix-family plain-&str convention (`("swap","sender")` publishes
+///    two Strings): the FIRST topic is the name, the second discriminates
+///    the field and stays in the topics for the protocol's decoder.
+///
+/// Known compromise in arm 3: a future protocol publishing
+/// `[String(label), String(name)]` would get its label lifted as the name —
+/// wrong but visible and verifiable per protocol, unlike the silent NULL it
+/// replaces.
+///
+/// Anything else with a non-empty topic vector resolves nowhere: it keeps
+/// NULL **and warns**, so the next convention surfaces as a count, never as
+/// absence (the 0517 monitor; 100% of the measured NULL population had a
+/// String first topic, so this arm is quiet today). An EMPTY topic vector
+/// stays a silent NULL — there is no name to resolve.
+fn extract_event_signature(topics: &Value) -> Option<String> {
+    let arr = topics.as_array()?;
+    let first = arr.first()?;
+    let nonempty = |s: &str| (!s.is_empty()).then(|| s.to_string());
+    if let Some(name) = scval::typed_str(first, "sym").and_then(nonempty) {
+        return Some(name);
+    }
+    if let Some(label_or_name) = scval::typed_str(first, "string").and_then(nonempty) {
+        if let Some(name) = arr
+            .get(1)
+            .and_then(|t| scval::typed_str(t, "sym"))
+            .and_then(nonempty)
+        {
+            return Some(name);
+        }
+        return Some(label_or_name);
+    }
+    tracing::warn!(
+        topics = %topics,
+        "event name unresolved — unknown topic convention (task 0517 monitor)"
+    );
+    None
 }
 
 fn tx_has_soroban_map(operations: &[(String, Vec<ExtractedOperation>)]) -> HashMap<String, bool> {
@@ -2466,7 +3251,10 @@ pub struct DerivedTokenEvent {
 /// value. (Before task 0393 this returned `None` for bespoke, since arm B —
 /// `soroban_invocations_appearances` — already covered their asset page; 0393
 /// needs the amount, which arm B has no concept of, so bespoke now writes arm A.)
-fn event_asset_surrogate(asset: &EventAsset, emitting_contract_id: Option<i64>) -> Option<i64> {
+pub(crate) fn event_asset_surrogate(
+    asset: &EventAsset,
+    emitting_contract_id: Option<i64>,
+) -> Option<i64> {
     match asset {
         EventAsset::Native => Some(ids::NATIVE_ASSET_ID),
         EventAsset::Credit { code, issuer } => Some(ids::credit_asset_id(code, issuer)),
@@ -2909,5 +3697,72 @@ mod balance_tests {
             ids::contract_id("CTOKEN3"),
             "type-3 unchanged"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // extract_event_signature — the three mainnet topic conventions plus
+    // the monitored fourth arm (task 0517). Shapes are verbatim from the
+    // production measurement of 2026-09-02.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn signature_from_a_symbol_first_topic() {
+        let topics = serde_json::json!([
+            {"type": "sym", "value": "transfer"},
+            {"type": "address", "value": "GAAAA"}
+        ]);
+        assert_eq!(
+            extract_event_signature(&topics).as_deref(),
+            Some("transfer")
+        );
+    }
+
+    #[test]
+    fn signature_from_the_label_convention() {
+        // SoroswapPair / DeFindexVault / BlendStrategy: a String protocol
+        // label first, the Symbol name second. The label is NOT lifted.
+        let topics = serde_json::json!([
+            {"type": "string", "value": "SoroswapPair"},
+            {"type": "sym", "value": "sync"}
+        ]);
+        assert_eq!(extract_event_signature(&topics).as_deref(), Some("sync"));
+    }
+
+    #[test]
+    fn signature_from_the_phoenix_plain_str_convention() {
+        // Phoenix publishes ("swap", "sender") as two Strings — the FIRST
+        // is the name, the second discriminates the field.
+        let topics = serde_json::json!([
+            {"type": "string", "value": "swap"},
+            {"type": "string", "value": "sender"}
+        ]);
+        assert_eq!(extract_event_signature(&topics).as_deref(), Some("swap"));
+        // Single-String and String+bytes variants of the same family.
+        let single = serde_json::json!([{"type": "string", "value": "Message"}]);
+        assert_eq!(extract_event_signature(&single).as_deref(), Some("Message"));
+        let with_bytes = serde_json::json!([
+            {"type": "string", "value": "OrderCreated"},
+            {"type": "bytes", "value": "AAAA"}
+        ]);
+        assert_eq!(
+            extract_event_signature(&with_bytes).as_deref(),
+            Some("OrderCreated")
+        );
+    }
+
+    #[test]
+    fn an_unknown_convention_keeps_null_and_an_empty_vector_stays_silent() {
+        // A hypothetical fourth convention (non-sym, non-string first
+        // topic) resolves nowhere — NULL plus the monitor warn.
+        let unknown = serde_json::json!([
+            {"type": "u64", "value": "7"},
+            {"type": "sym", "value": "name_here_is_not_taken"}
+        ]);
+        assert_eq!(extract_event_signature(&unknown), None);
+        // No topics — nothing to resolve, silently.
+        assert_eq!(extract_event_signature(&serde_json::json!([])), None);
+        // Empty strings never become names.
+        let empty = serde_json::json!([{"type": "string", "value": ""}]);
+        assert_eq!(extract_event_signature(&empty), None);
     }
 }

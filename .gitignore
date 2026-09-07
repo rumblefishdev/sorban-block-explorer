@@ -94,3 +94,8 @@ docker-compose.override.yaml
 # Playwright browser regression output (web/e2e)
 web/test-results/
 web/playwright-report/
+
+# Wayfinder triage map — deliberately never committed. It tracks review
+# findings across sessions, and at least one of them concerns data that
+# must not be described in a public repo. Local-only by design.
+.wayfinder/

@@ -27,7 +27,31 @@
 --     the tuple. Migration paths: (a) PG-backed id→tuple lookup; (b)
 --     frontend uses synthetic cityHash64 surrogate from E15 as routing
 --     key and the API decomposes.
---   • Burned NFT: `current_owner_id IS NULL` → LEFT JOIN yields NULL.
+--   • Burned NFT: `current_owner_id IS NULL` → LEFT JOIN yields NULL. Note
+--     the burn ALSO erases `nfts.minted_at_ledger` — see the next bullet.
+--   • **`minted_at_ledger` is DERIVED from `nft_ownership`, not read from the
+--     `nfts` column (task 0528).** `nfts` is Replacing(current_owner_ledger)
+--     with one row per token, so the burn above — or any later transfer —
+--     replaces the WHOLE row with one carrying no mint ledger. Detail scopes
+--     the derivation to the resolved contract:
+--         LEFT JOIN (SELECT contract_id, token_id,
+--                           min(ledger_sequence) AS minted_at_ledger
+--                      FROM nft_ownership
+--                     WHERE contract_id IN (SELECT id FROM cid)
+--                       AND event_type = 0
+--                     GROUP BY contract_id, token_id) mi
+--     `event_type = 0` and the `nullIf(_, 0)` wrapper are both load-bearing —
+--     see `15_get_nfts_list.sql` for the full reasoning. `nfts.minted_at_ledger`
+--     stays written and unread until task 0529 drops it.
+--
+-- ---------------------------------------------------------------------------
+-- DRIFT NOTICE — as with E15, the statement below is an intent sketch, not the
+-- query the API runs. `crates/api/src/nfts/queries.rs::fetch_by_composite` is
+-- authoritative: it serves collection / name / media from the `nft_enrichment`
+-- collapse (+ `soroban_contract_metadata` ledger-name precedence), resolves the
+-- owner StrKey in Rust via a `WHERE id IN` seek instead of an `accounts` FINAL
+-- join, and echoes the contract StrKey from the request input (task 0355).
+-- ---------------------------------------------------------------------------
 
 SELECT
     n.contract_id                             AS contract_id_raw,
@@ -36,11 +60,17 @@ SELECT
     n.collection_name,
     n.name,
     n.media_url,
-    n.minted_at_ledger,
+    nullIf(mi.minted_at_ledger, 0)            AS minted_at_ledger,
     own.account_id                            AS current_owner,
     n.current_owner_ledger
 FROM nfts n FINAL
 JOIN      soroban_contracts sc  FINAL ON sc.id  = n.contract_id
 LEFT JOIN accounts          own FINAL ON own.id = n.current_owner_id AND n.current_owner_id IS NOT NULL
+LEFT JOIN (
+    SELECT contract_id, token_id, min(ledger_sequence) AS minted_at_ledger
+      FROM nft_ownership
+     WHERE event_type = 0
+     GROUP BY contract_id, token_id
+) mi ON mi.contract_id = n.contract_id AND mi.token_id = n.token_id
 WHERE n.contract_id = (SELECT id FROM soroban_contracts FINAL WHERE contract_id = $1 LIMIT 1)
   AND n.token_id    = $2;

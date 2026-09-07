@@ -13,11 +13,12 @@ import {
 } from '@rumblefish/soroban-block-explorer-ui';
 
 import { searchPolicy } from '../api/polling.js';
+import { federatedDomain } from './federation.js';
 
 // `/v1/search` returns a flat `SearchResults` payload — task 0271
-// dropped the previous `SearchResponse::Redirect` wire variant. The
-// FE inspects `totalCount` for the singleton-direct-navigation
-// behaviour (see SearchResultsPage useEffect).
+// dropped the previous `SearchResponse::Redirect` wire variant. Task
+// 0527 removed the singleton auto-navigation that used to read
+// `totalCount`; the count is still what the tab badges render.
 
 export const TAB_ORDER: ReadonlyArray<EntityType> = [
   'transaction',
@@ -72,7 +73,13 @@ export function useSearchResults({
 }: UseSearchResultsParams): SearchResultsState {
   const debouncedRaw = useDebounced(q, DEFAULT_DEBOUNCE_MS);
   const effectiveQuery = debouncedRaw.trim();
-  const enabled = effectiveQuery.length > 0;
+  // `/v1/search` knows nothing about SEP-2, so for a federated address it can
+  // only answer zero hits, which renders as "No results for karol*lobstr.co" —
+  // a claim that the address does not exist. Suppressed here, on the hook that
+  // issues the request, so the gate and the request cannot disagree about what
+  // the query is.
+  const enabled =
+    effectiveQuery.length > 0 && federatedDomain(effectiveQuery) == null;
 
   const query = useQuery({
     // Sent explicitly rather than relying on the server default, so the cap

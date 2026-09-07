@@ -12,6 +12,7 @@ pub mod contract;
 pub mod error;
 pub mod event;
 pub mod event_filters;
+pub mod fold;
 pub mod invocation;
 pub mod ledger;
 pub mod ledger_entry_changes;
@@ -23,6 +24,11 @@ pub mod nft;
 pub mod op_participants;
 pub mod op_source;
 pub mod operation;
+pub mod pool_config_factory;
+pub mod pool_family;
+pub mod pool_pair_factory;
+pub mod pool_router;
+pub mod pool_state;
 pub mod sac;
 pub mod scval;
 pub mod state;
@@ -30,19 +36,24 @@ pub mod token_metadata;
 pub mod transaction;
 pub mod types;
 
+pub mod asset_transfers;
 pub mod envelope;
 mod xdr_limits;
 
+pub use asset_transfers::{
+    AssetTransferExtraction, ExtractedAssetTransfer, RejectCounts, RejectKind, TokenAmount,
+    TransferReject, extract_asset_transfers, token_event_amount,
+};
 pub use classification::{ContractClassification, classify_contract_from_wasm_spec};
 pub use contract::extract_contract_interfaces;
 pub use envelope::InnerTxRef;
 pub use error::{ParseError, ParseErrorKind};
 pub use event::extract_events;
-pub use event_filters::{EventAsset, TokenEvent, TokenEventKind, parse_token_event};
+pub use event_filters::{EventAsset, TokenEvent, TokenEventKind, parse_token_event, token_verb};
 pub use invocation::{InvocationResult, extract_invocations, extract_invocations_from_diagnostics};
 pub use ledger::extract_ledger;
 pub use ledger_entry_changes::extract_ledger_entry_changes;
-pub use ledger_value::{LedgerAsset, LedgerDelta, ledger_balance_deltas};
+pub use ledger_value::{LedgerAsset, LedgerDelta, ledger_balance_deltas, operation_balance_deltas};
 pub use net_settled::{AccountDelta, NetSettled, net_settled};
 pub use nft::{detect_nft_events, detect_undeployed_sac_overrides};
 pub use op_source::extract_op_source_per_contract;

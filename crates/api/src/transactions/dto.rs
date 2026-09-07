@@ -74,42 +74,7 @@ pub struct TransactionListItem {
     /// All distinct operation type names in the transaction
     /// (e.g. `["INVOKE_HOST_FUNCTION", "PAYMENT"]`).
     pub operation_types: Vec<String>,
-    /// Net-settled "value moved" per asset the transaction touched (task 0393):
-    /// `max(Σ+, Σ−)` per (transaction, asset). Raw values + `decimals` — the
-    /// frontend scales. Ordered native-first (`asset_type`, then `asset_id`) so
-    /// `values[0]` is XLM when the tx moved it; empty when nothing net-settled
-    /// (a wash / pure cycle is zero by the flow decomposition theorem) or when
-    /// history has not been backfilled yet.
-    pub values: Vec<TransactionValue>,
     pub created_at: DateTime<Utc>,
-}
-
-/// One asset's net-settled "value moved" in a transaction (task 0393).
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct TransactionValue {
-    /// Asset identity for the asset detail link — `"native"`, `"CODE-ISSUER"`, or a
-    /// contract `C…` StrKey for a bespoke type-3 Soroban token (all accepted by
-    /// `GET /assets/{id}`).
-    pub asset: String,
-    /// Asset code for display (e.g. `"USDC"`) — the on-chain token symbol for a
-    /// bespoke type-3 token; `null` for native XLM and for a bespoke token whose
-    /// metadata symbol is unavailable.
-    pub asset_code: Option<String>,
-    /// Raw net-settled value as a stringified `Int128`; scale by `decimals`.
-    pub net_settled: String,
-    /// Display decimals (`7` for classic / SAC assets).
-    pub decimals: u32,
-}
-
-impl From<crate::common::ch::TxValueMoved> for TransactionValue {
-    fn from(v: crate::common::ch::TxValueMoved) -> Self {
-        Self {
-            asset: v.asset,
-            asset_code: v.asset_code,
-            net_settled: v.net_settled.to_string(),
-            decimals: v.decimals,
-        }
-    }
 }
 
 // `memo_type` / `memo` are NOT exposed on the list item by design — list
@@ -135,6 +100,10 @@ pub struct TransactionDetailLight {
     /// `null` for Variant A `parse_error` transactions whose envelope
     /// could not be decoded (lore-0209).
     pub source_account: Option<String>,
+    /// The source account's on-chain `home_domain` (SEP-1 anchor domain),
+    /// `null` when it sets none. The frontend asks that domain for the SEP-2
+    /// federated address it claims for this account (task 0443, issue #363).
+    pub source_account_home_domain: Option<String>,
     /// Fee charged, in raw stroops. Native (XLM) is always 7 decimals, so
     /// there is no `decimals` field — the frontend scales by 1e7.
     pub fee_charged: i64,

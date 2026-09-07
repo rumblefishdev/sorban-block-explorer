@@ -377,9 +377,14 @@ step 14, called out here so the parser/indexer boundary stays explicit):
   task 0195 §2d). Parser only writes the (`contract_id`, `token_id`,
   `current_owner_id`) tuple — see §5.1 NFT pattern.
 
-### 4.7 Transaction Value — "net settled" (task 0393)
+### 4.7 Ledger balance deltas — the value reader
 
-The tx-list "Net settled" column needs a single figure per (transaction, asset).
+> The tx-list "Net settled" COLUMN was removed on 2026-09-04 (no storage column,
+> no API field, no UI). The reader and reducer described here are KEPT: the
+> authoritative per-(account, asset) LEDGER deltas are the input the lossless
+> per-transfer replacement needs.
+
+The reducer needs a single figure per (transaction, asset).
 The protocol has no per-transaction amount — value lives on operations and Soroban
 token events — so the parser derives the **net-settled value**:
 `max(Σ positive account deltas, Σ negative account deltas)` per (tx, asset),
@@ -417,9 +422,22 @@ A single **ledger** reader feeds it, for EVERY tx (classic and Soroban):
 
 Surrogate resolution and the net reduction run at ingest
 (`db_clickhouse::persist::stage`), which writes the result to
-`operation_asset_appearances.net_settled` (`Nullable(Int128)`; §4.3 / schema
-doc). Values are stored RAW; the read scales by the asset's decimals (classic /
-SAC = 7).
+memory only — since 2026-09-04 there is no storage column for it.
+
+Task 0540 (T03) extended the reader to two more holders: a `LiquidityPoolEntry`
+yields the pool (`L…`) as holder of each of its two reserves, and a
+`ClaimableBalanceEntry` yields the balance (`B…`) as holder of its asset;
+removing either zeroes every balance of that holder. Pool-share trustlines stay
+unread on purpose — CAP-67 emits no token event for pool shares (measured), so
+there is nothing on the event side to reconcile a share balance against.
+
+Two functions now: `ledger_balance_deltas` reads the whole meta;
+`operation_balance_deltas` reads `tx_changes_before` + the operations' changes
+only. The difference is the Soroban unused-resource-fee **refund**, which sits
+in `tx_changes_after` before Protocol 23 and outside `TransactionMeta` from 23
+on — found by the events-vs-ledger oracle (`tests/value_flow_oracle.rs`), which
+reconciles the edge decode of §5.8 against the operations-only reader bit-exact
+per (holder, asset): 0 contradictions on 33 archive ledgers.
 
 ## 5. Soroban-Specific Handling
 
@@ -634,6 +652,129 @@ was closed, leaving live ingest as the only caller. NFT-shaped events (no SEP-11
 register their account operands as participants but are excluded from the fungible
 asset index — that identity is ambiguous and tracked separately by the NFT path
 above.
+
+### 5.7 AMM Pool Registrations and State (`pool_router` / `pool_state`)
+
+Router-family AMM pools (Aquarius's shape; ADR 0058, lore task 0374) are
+decoded by two sibling modules:
+
+- **`pool_router.rs`** — `parse_add_pool` decodes a registration event
+  (pool, verbatim `pool_type` sym, 2–4 token legs, `subpool_salt`, raw
+  `init_args` — three arg vocabularies exist and are stored verbatim);
+  `detect_pool_registrations` sweeps a ledger's events SHAPE-first, from any
+  deployment (an address list loses ~6% of live pools, measured), skipping the
+  diagnostic container — which carries copies of events from FAILED
+  transactions, and would otherwise register pools whose registration never
+  applied. Shape alone does not make a registration trustworthy: the pool
+  named in the payload is corroborated against its own instance state at
+  staging (see the indexing-pipeline overview). The deposit⇄mint share-token
+  rule is NOT part of this module — it is a demoted cross-check living with
+  its corpus oracle in `tests/`, because instance state is the primary source.
+  Verified against the full mainnet population: 497/497 registrations decode,
+  0 false positives on a 307-event all-signatures negative corpus.
+- **`pool_state.rs`** — reserves from ledger-entry changes, two layouts:
+  `parse_plane_pool_data` reads the deployment's shared plane contract's
+  `PoolData[pool]` entries (fungible pools; reserves vector VERBATIM);
+  `parse_pool_instance` reads a pool instance's `TokenShare` / `Plane` /
+  `Router` keys plus `Reserve0`/`Reserve1` — `Plane` is the key that makes it a
+  pool, while `Router` is absent on an older contract version (five of the ten
+  live deployments, measured on chain) and is therefore optional (concentrated pools keep reserves
+  on their own instance — the plane holds their `PoolData` only at
+  registration). Extraction mirrors the token-balance extractors: state
+  images from created/updated/restored changes only. Verified by a
+  bidirectional anti-test against the routers' own `update_reserves` events
+  (0 missing, 0 foreign captures, last-write-per-ledger values 17/17).
+
+Note the asymmetry between the two, which the storage contract depends on:
+`parse_pool_instance` keys on the entry's OWNER (the pool contract itself), so
+a pool can only ever describe itself, while `parse_plane_pool_data` takes the
+pool identity from the entry's KEY PAYLOAD and uses the owner only as the
+`plane` attribution. That is why the plane's claim is authoritative for
+reserves only once a read pairs it with the plane the pool itself declares.
+
+Both feed `persist::stage`, which writes the `liquidity_pools` registry rows
+(`pool_kind = 1`), `pool_state_changes` and `pool_instance_state` (see the
+database-schema overview and ADR 0058).
+
+**`pool_pair_factory.rs` (task 0518)** is the second adapter, proving the ADR's
+adapter-not-redesign consequence: same three tables, no shared shape change.
+Differences worth knowing: discovery is the factory's `new_pair` event
+(String label + Symbol name — the 0517 label convention; the vendor's
+`new_pairs_length` counter is gapless per factory and doubles as the
+backfill closure check); the pair's instance keys are BARE u32 enum
+DISCRIMINANTS (0/1 = leg tokens, 2/3 = reserves, 4 = the deploying factory
+— the corroboration authority), deliberately a separate reader from the
+symbol-keyed Aquarius one, with the composite shape's false-positive rate
+measured at zero over the raw corpus; and the SEP-41 half MIXES key
+spellings in one instance (`METADATA` bare sym, `TotalSupply` VEC-WRAPPED —
+the token-SDK enum encoding; a CLI dump flattens the wrap, which is exactly
+how a wrong fixture passed unit tests and was caught by the local e2e).
+The pair is its own LP token, so owner, stamp and declaration coincide —
+`plane_id = share_token_id =` the pair itself.
+
+**`pool_config_factory.rs` (task 0518)** is the third adapter (the
+Phoenix-family shape) and the first whose state is NOT one atomic entry:
+the pool keeps per-key PERSISTENT entries — a `CONFIG` symbol-keyed map
+(legs, separate share token, per-pool `total_fee_bps`, `pool_type`
+discriminant) written at creation/config-change only, plus bare-u32
+`DataKey` discriminants (0 = TotalShares, 1/2 = the reserves) rewritten per
+operation; the contract instance itself is storage-less. Discovery is the
+factory's `("create", "liquidity_pool")` event carrying ONLY the pool
+address, and the pool records no factory back-pointer — corroboration is
+therefore the created gate + the pool's own full CONFIG in the registering
+ledger (validated on the entire 14-registration population). Per-operation
+recognition rests on the RESERVE PAIR co-occurring in one transaction
+(measured across three eras; both-or-neither, half a pair refuses loudly).
+All three adapters feed the same `PoolFamilyWrite` seam (`pool_family.rs`,
+decision 4a): one enum from extraction to staging, a new family being a
+variant + an arm rather than a field through every pipeline struct.
+
+### 5.8 Token Movements — the `asset_transfers` decode (task 0540)
+
+`xdr_parser::extract_asset_transfers` (`crates/xdr-parser/src/asset_transfers.rs`)
+turns one transaction's events into **edges**: one `ExtractedAssetTransfer` per
+token movement, built on `parse_token_event` (§5.6) and shared by the live
+indexer and the S3 backfill so both write byte-identical rows. Three rules,
+each measured before it was written:
+
+1. **Only the per-operation container.** Diagnostic events are byte-identical
+   copies or the trace of a rolled-back call (measured: 6 twin-less diagnostic
+   token events in 30 ledgers — 2 in a failed transaction, 4 pre-Protocol-23 SAC
+   mints whose consensus copy is already in the CAP-67 shape without the
+   `admin` topic). A token verb at transaction level has never been observed
+   (0 of 12 237) and is a **reject**, not a row with a null operation.
+2. **The asset is the emitter.** A labelled event (`"CODE:ISSUER"` or
+   `"native"` last topic) is accepted only if `emitter == derive_sac(asset)`
+   (`sac_override_from_event_topics`); otherwise it is rejected as
+   `EmitterNotSac` — the spoofing shape, measured absent on 60 000 ledgers
+   (25 912 of 25 912 pairs pass). A bespoke token (no asset topic) IS its
+   emitter.
+3. **The amount is a scalar `i128`/`u128`, or the `amount` key of a map;
+   `token_id` means non-fungible** (`token_event_amount`). The map is read by
+   key, never positionally — `{amount, to_muxed_id}` is 30–47% of transfers,
+   and `{amount, amount0, amount1, …}` is a position mint whose `amount0/1` are
+   components, not movements. Anything else (`{mint_amount, mint_tokens}`, a
+   protocol restating its own mint) is `UnrecognisedPayload`: rejected AND
+   counted, so a new shape shows up as a number, never as a silent zero.
+
+Rejects go back to the caller (`ParseOutput` → an `error!` per ledger in
+`parse_ledger`, per-event detail on the `xdr_parser::asset_transfers` target).
+They are a developer's problem, never drawn in the UI.
+
+Two identity fields were added for this table:
+
+- `ExtractedEvent.event_pos_in_op` — the event's position inside its
+  operation's own event list. With `op_index` this is Stellar's official event
+  identity (the `getEvents` cursor `(ledger, tx, op, event)`, `event` reset per
+  operation), and it keys `asset_transfers`. `None` outside the per-op container.
+- `ExtractedTransaction.source_muxed_id`, `ExtractedOperation.source_muxed_id`
+  / `destination_muxed_id` — the 64-bit id of an `M…` address (`envelope::muxed_id`).
+  ADR 0026 reduces every `M…` to its `G…` at the parser boundary; these fields
+  keep the id that reduction dropped, so the persistence layer can store an
+  exchange sub-account losslessly (`*_muxed_id` columns) while the surrogate
+  stays the `G…`'s. CAP-67 puts the id in the event **merged with the memo**
+  (`to_muxed_id` is 98.5% memo text on mainnet), which is why it is taken from
+  the envelope instead.
 
 ## 6. Storage Contract
 

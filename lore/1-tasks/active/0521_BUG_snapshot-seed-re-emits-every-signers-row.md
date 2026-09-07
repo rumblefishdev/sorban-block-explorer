@@ -138,18 +138,19 @@ ours-equal skips, ours-ahead skips, ours-absent emits.
 
 ## Acceptance Criteria
 
-- [ ] Pass 4 emits only accounts whose snapshot ledger is above what we hold
-- [ ] `summary.txt` reports written and skipped-as-unchanged, summing to the
+- [x] Pass 4 emits only accounts whose snapshot ledger is above what we hold
+- [x] `summary.txt` reports written and skipped-as-unchanged, summing to the
       live-account count
-- [ ] A dry-run against production reports **~0 written** and ~10.9M unchanged —
-      the prediction that makes this falsifiable, and the number that turns into
-      a signal if a live-writer regression ever stops stamping
-- [ ] The version read is sliced and its missing floor is explained in place
-- [ ] Regression test for the four gate cases
-- [ ] **Docs updated** — `docs/backfills.md` describes the seed pass; the
+- [x] A dry-run against production reports **~0 written** and ~10.9M unchanged —
+      hit exactly (2026-09-02, checkpoint 64,237,951): **0 written,
+      10,909,433 unchanged**, and the sum equals the snapshot's live-account
+      count to the row
+- [x] The version read is sliced and its missing floor is explained in place
+- [x] Regression test for the four gate cases
+- [x] **Docs updated** — `docs/backfills.md` describes the seed pass; the
       `account_entry_state` line in its summary walkthrough changes shape.
       `docs/architecture/**` — N/A, no schema or contract change.
-- [ ] **API types regenerated** — N/A, nothing under `crates/api/**`.
+- [x] **API types regenerated** — N/A, nothing under `crates/api/**`.
 
 ## Notes
 
@@ -158,3 +159,36 @@ S1 idempotency run, which was itself filed because "a future run writes nothing"
 had been argued from the verdict table and never observed. The measurement
 confirmed six of seven predictions and falsified the seventh — this one. Worth
 recording as the return on running a check whose result you believe you know.
+
+## Measured 2026-09-02 — the gate's first production dry-run
+
+Checkpoint 64,237,951, read-only (`dev_read`), 375.5 s. The falsifiable
+prediction hit exactly:
+
+| line                          | value          |
+| ----------------------------- | -------------- |
+| `account_entry_state` written | **0**          |
+| unchanged                     | **10,909,433** |
+| snapshot live accounts        | 10,909,433     |
+
+The version read returned 10,936,067 accounts we hold — 26,634 more than the
+snapshot's live set, which is the merged/deleted accounts whose entry-state
+rows have no lifecycle column to retire them. Expected shape, not a defect.
+
+The same run doubles as the week's reconciliation, and the newly-informative
+lines carried real signal:
+
+- **`divergent SAME ledger` (native) = 18,363** — the 0514 counter, up from
+  17,739 / 17,798 / 17,838 / 17,840 across the four pre-seed dry-runs
+  (64,106,239 → 64,115,135). Still accruing, as 0514 predicts until its writer
+  fix lands.
+- **20 new ghosts** (19 classic + 1 native, 5.4205503 XLM) — holdings we show
+  open that the network no longer has, all post-seed, i.e. removals the live
+  writer missed in the last week. Small, but the class belongs to 0503's
+  audit; noted there rather than chased here.
+- Everything else at zero or churn: 0 missing (both populations), 0 closures,
+  0 stubs, 32,483,409 classic `agree`.
+
+Numbering note: filed as 0519, renumbered to 0521 by a concurrent session
+sweeping an id collision (0519 = the api-spa task). The branch is
+`fix/0521_snapshot-seed-signers-version-gate`.

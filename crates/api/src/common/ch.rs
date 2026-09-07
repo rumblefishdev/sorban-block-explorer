@@ -62,26 +62,6 @@ use serde::Deserialize;
 pub struct TxListAggregates {
     /// Distinct operation type labels (e.g. `["INVOKE_HOST_FUNCTION", "PAYMENT"]`).
     pub operation_types: Vec<String>,
-    /// Net-settled "value moved" per asset the transaction touched (task 0393),
-    /// ordered native-first (`asset_type`, then `asset_id`) so `values[0]` is XLM
-    /// when the tx moved it. Raw amounts + `decimals` — the client scales
-    /// (classic/SAC = 7).
-    pub values: Vec<TxValueMoved>,
-}
-
-/// One (asset, net-settled value) the transaction moved.
-#[derive(Debug, Clone)]
-pub struct TxValueMoved {
-    /// Asset identity accepted by the asset detail endpoint's `parse_asset_id` —
-    /// `"native"` or `"CODE-ISSUER"` (G-StrKey issuer). The frontend links to it.
-    pub asset: String,
-    /// Asset code for display (`"USDC"`); `None` for native (render as XLM).
-    pub asset_code: Option<String>,
-    /// Raw net-settled value (`max(Σ+, Σ−)` — the network-flow flow value);
-    /// scale by `decimals`. Never NULL/0 here: the query drops both.
-    pub net_settled: i128,
-    /// Display decimals — `7` for classic/SAC (all assets stored in this table).
-    pub decimals: u32,
 }
 
 #[derive(Debug, Row, Deserialize)]
@@ -90,33 +70,12 @@ struct OpTypeCodesRow {
     codes: Vec<i16>,
 }
 
-#[derive(Debug, Row, Deserialize)]
-struct TxValueChRow {
-    transaction_id: i64,
-    /// `toString`-encoded to avoid Int128 wire decode (matches `total_supply`).
-    /// Non-nullable: `assumeNotNull` + the `IS NOT NULL` HAVING guarantee it.
-    net_settled: String,
-    asset_type: i16,
-    asset_code: Option<String>,
-    issuer_id: i64,
-    /// Emitting contract C-StrKey — the identity of a bespoke Soroban token
-    /// (`asset_type = 3`); `None` for classic/native.
-    contract_strkey: Option<String>,
-    /// Bespoke token symbol (on-chain metadata); `None` for classic/native.
-    symbol: Option<String>,
-    decimals: u32,
-}
-
-/// Aggregate `operation_types` and the net-settled `values` for a bounded
-/// page of `(ledger_sequence, transaction_id)` keys.
+/// Aggregate `operation_types` for a bounded page of
+/// `(ledger_sequence, transaction_id)` keys.
 ///
 /// Returns a map keyed by `transaction_id`. A transaction with no operations
 /// is simply absent (the caller treats a missing entry as the empty vec).
 /// Empty `keys` short-circuits to an empty map with no query.
-///
-/// Every tx-list table renders the "Net settled" column, so the value
-/// aggregate always runs — no per-caller gating (the `wants_values` flag was
-/// 0393 review finding F; it died with the column's 2026-09 reinstatement).
 ///
 /// Non-correlated by construction (see module docs) — CH-26-safe.
 pub async fn fetch_tx_list_aggregates(
@@ -163,105 +122,12 @@ pub async fn fetch_tx_list_aggregates(
          GROUP BY oa.transaction_id"
     );
 
-    // Second aggregate: net-settled "value moved" per (tx, asset) (task 0393).
-    // `max(net_settled)` is the read-side dedup over the version-less RMT: the
-    // live indexer and the 0383 backfill reduce the SAME value from the SAME
-    // events, so duplicate rows agree, and `max` ignores NULL — so a computed
-    // value wins over a "not computed" row for the same key. (There is no
-    // engine version: a downward correction only follows a change to our own
-    // reducer, handled by a re-backfill + OPTIMIZE, not per-row versioning.)
-    //
-    // `net_settled` is `Nullable(Int128)`: NULL = not computable, 0 = genuinely
-    // nothing settled. HAVING drops both — uninteresting to show — but they stay
-    // distinguishable at rest, the point of the nullable column. `assumeNotNull`
-    // is safe only because HAVING has already excluded NULL; without it the
-    // aggregate over a Nullable column decodes as Nullable(String) into a
-    // non-nullable field and 500s (the trap that took account-detail down, 0324).
-    //
-    // NOTE (0393 read-path, deferred to the task's Operations section): the table
-    // is `asset_id`-leading, so this `(ledger, tx)` filter SCANS the pruned
-    // partition (~26M rows/page measured, vs ~16k for the op-types seek beside
-    // it), and the three dimension joins below are un-pruned (`assets.id` is not
-    // in its ORDER BY). A `(ledger, tx)` companion (accounts_recent pattern) is
-    // required before this ships at scale. `decimals` = 7 for classic/SAC; the
-    // metadata coalesce keeps bespoke type-3 correct. Ordered `asset_type` first
-    // so native (type 0 = XLM) sorts ahead of credit — the frontend takes the
-    // first row as the primary asset (0393 decision: native-first, not hash order).
-    let value_sql = format!(
-        "SELECT oaa.transaction_id             AS transaction_id, \
-                toString(assumeNotNull(max(oaa.net_settled))) AS net_settled, \
-                any(a.asset_type)              AS asset_type, \
-                any(nullIf(a.asset_code, ''))  AS asset_code, \
-                any(a.issuer_id)               AS issuer_id, \
-                any(nullIf(sc.contract_id, '')) AS contract_strkey, \
-                any(nullIf(m.symbol, ''))      AS symbol, \
-                any(coalesce(m.decimals, 7))   AS decimals \
-         FROM operation_asset_appearances oaa \
-         INNER JOIN assets a FINAL ON a.id = oaa.asset_id \
-         LEFT JOIN soroban_contracts sc ON sc.id = a.contract_id \
-         LEFT JOIN ( \
-             SELECT contract_id, symbol, decimals FROM soroban_contract_metadata FINAL \
-         ) m ON m.contract_id = sc.contract_id \
-         WHERE (oaa.ledger_sequence, oaa.transaction_id) IN ({in_tuples}) \
-           AND intDiv(oaa.ledger_sequence, 500000) IN ({partitions}) \
-         GROUP BY oaa.transaction_id, oaa.asset_id \
-         HAVING max(oaa.net_settled) IS NOT NULL \
-            AND max(oaa.net_settled) != 0 \
-         ORDER BY oaa.transaction_id, asset_type, oaa.asset_id"
-    );
-    // Both aggregates are independent non-correlated queries over the same page
-    // keys — run them concurrently to overlap the round-trips. `resolve_accounts`
-    // below depends on `value_rows`, so it stays sequential after.
-    let (op_rows, value_rows) = tokio::try_join!(
-        client.query(&op_sql).fetch_all::<OpTypeCodesRow>(),
-        client.query(&value_sql).fetch_all::<TxValueChRow>(),
-    )?;
+    let op_rows = client.query(&op_sql).fetch_all::<OpTypeCodesRow>().await?;
 
     let mut map: HashMap<i64, TxListAggregates> = HashMap::with_capacity(keys.len());
     for row in op_rows {
         map.entry(row.transaction_id).or_default().operation_types =
             sorted_unique_labels(row.codes);
-    }
-    // Resolve issuer surrogates -> G-StrKeys (bloom-pruned key seek) so a credit
-    // asset's `parse_asset_id` link identity `CODE-ISSUER` can be built.
-    let issuer_ids: Vec<i64> = value_rows
-        .iter()
-        .filter(|r| r.asset_type != 0 && r.issuer_id != 0)
-        .map(|r| r.issuer_id)
-        .collect();
-    let issuers = resolve_accounts(client, issuer_ids).await?;
-    for row in value_rows {
-        let Ok(net_settled) = row.net_settled.parse::<i128>() else {
-            continue;
-        };
-        // Asset identity for the `parse_asset_id` link + display code, per
-        // `TokenAssetType`: 0 native, 1 classic credit, 3 bespoke Soroban.
-        let (asset, asset_code) = match row.asset_type {
-            0 => ("native".to_string(), None),
-            3 => {
-                // Bespoke Soroban token: identity is its contract C-StrKey
-                // (`parse_asset_id` accepts a `C…`); display code is its symbol.
-                (
-                    row.contract_strkey.clone().unwrap_or_default(),
-                    row.symbol.clone(),
-                )
-            }
-            _ => {
-                // Classic credit — `CODE-ISSUER` (G-StrKey issuer).
-                let code = row.asset_code.clone().unwrap_or_default();
-                let issuer = issuers.get(&row.issuer_id).cloned().unwrap_or_default();
-                (format!("{code}-{issuer}"), row.asset_code)
-            }
-        };
-        map.entry(row.transaction_id)
-            .or_default()
-            .values
-            .push(TxValueMoved {
-                asset,
-                asset_code,
-                net_settled,
-                decimals: row.decimals,
-            });
     }
     Ok(map)
 }

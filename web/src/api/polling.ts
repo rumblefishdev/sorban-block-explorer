@@ -93,3 +93,27 @@ export const searchPolicy = {
   staleTime: 0,
   gcTime: 0,
 } as const;
+
+/**
+ * Policy for the two SEP-2 federation lookups (task 0443). They differ from
+ * every other query here: the host is a third party the account or the user
+ * named, not our API.
+ *
+ * - `retry: false` — a federation server that says "not found" means it, and
+ *   a hostile or dead one must not be dialled twice.
+ * - `refetchOnWindowFocus: false` — the global default is `true`, which would
+ *   re-run both hops against someone else's server every time the tab regains
+ *   focus, for a value that changes on a human timescale.
+ * - No caching at all, matching `searchPolicy`. SEP-2 is explicit: "Federation
+ *   responses should not be cached. Some organizations may generate random IDs
+ *   to protect their users' privacy. Those IDs may change over time." A cached
+ *   forward answer could send someone to an account the anchor has since
+ *   rotated away from, which is the one failure worth paying an extra request
+ *   to avoid.
+ */
+export const federationPolicy = {
+  staleTime: 0,
+  gcTime: 0,
+  retry: false,
+  refetchOnWindowFocus: false,
+} as const;

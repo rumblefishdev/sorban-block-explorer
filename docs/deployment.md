@@ -240,6 +240,44 @@ Frontend **content** is separate: `deploy-production-web`
 
 ### Gotchas — read before you deploy
 
+- **Soroban-AMM (task 0374): DDL BEFORE the indexer, or ingest stops.** The
+  clickhouse-rs 0.15 client refuses an insert when the target table still has
+  a no-DEFAULT column the row struct dropped, or is missing entirely — a
+  `SchemaError` aborts the whole partition (the 0310 outage class). The 0374
+  indexer's soroban arm runs unconditionally, so deploying it against an
+  un-migrated schema is an outage, not a degradation. Order:
+
+  0. **Pause the indexer first** (`indexerLambdaConcurrency = 0`): the
+     RUNNING (pre-0374) writer still names `tvl`/`volume`/`fee_revenue` in
+     its snapshot inserts (verified on `origin/master`
+     `LiquidityPoolSnapshotRow`), so dropping them under a live writer
+     fails every snapshot insert — doorbell retries drain toward the DLQ
+     until the new code deploys. Doorbells accumulate durably while paused
+     (see §3.1); the reconcile catches up after unpause. `CREATE TABLE` x2
+     and the `share_token_id` drop need no pause (nothing running writes or
+     reads them — verified against master's structs and SQL), but batch
+     everything inside the one pause window anyway.
+  1. **DDL next** (prod is mid-migration: the `liquidity_pools` soroban
+     columns are already ALTERed in — verified live 2026-09-02, five
+     columns present with correct defaults; the rest is not):
+     ```sql
+     -- new tables: run the definitions VERBATIM from
+     -- crates/db-clickhouse/schema/init.sql (the source of truth — do not
+     -- retype them). Extract with:
+     --   awk '/CREATE TABLE IF NOT EXISTS pool_state_changes/,/^ORDER BY/; /CREATE TABLE IF NOT EXISTS pool_instance_state/,/^ORDER BY/' \
+     --     crates/db-clickhouse/schema/init.sql
+     CREATE TABLE IF NOT EXISTS pool_state_changes (...);   -- from init.sql
+     CREATE TABLE IF NOT EXISTS pool_instance_state (...);  -- from init.sql
+     -- load-bearing drops (no-DEFAULT columns the new structs dropped)
+     ALTER TABLE liquidity_pool_snapshots
+       DROP COLUMN tvl, DROP COLUMN volume, DROP COLUMN fee_revenue;
+     -- DEFAULT 0, no hard ordering constraint — batch it here anyway
+     ALTER TABLE liquidity_pools DROP COLUMN share_token_id;
+     ```
+  2. **Then the indexer** (Galexie recipe below).
+  3. **Then the catch-up backfills and the window-closure check** — see
+     "Soroban-AMM pool passes" in [backfills.md](./backfills.md).
+
 - **A SPA build without the Turnstile site key takes production down for
   users.** With `enableAuthLayer: true` the API rejects unauthenticated
   requests; a bundle built without `VITE_TURNSTILE_SITE_KEY` ships an

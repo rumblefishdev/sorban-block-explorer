@@ -21,12 +21,14 @@ use stellar_xdr::LedgerCloseMeta;
 use tracing::{info, warn};
 
 use crate::error::BackfillError;
+use db_clickhouse::persist::TargetedTables;
 
 /// ClickHouse write-path handle wired up at startup. Exactly one `Sink`
 /// exists per process; the runner passes `&Sink` down — no clones needed.
 pub struct Sink {
     client: ClickhouseClient,
-    lp_amounts_only: bool,
+    /// Task 0279 / 0540 targeted write — see [`Sink::with_only`].
+    only: Option<TargetedTables>,
 }
 
 /// Row shape for the resume / status query against ClickHouse. Private
@@ -39,10 +41,7 @@ struct LedgerSeqRow {
 impl Sink {
     /// Wrap a ClickHouse client as the write-path sink.
     pub fn new(client: ClickhouseClient) -> Self {
-        Self {
-            client,
-            lp_amounts_only: false,
-        }
+        Self { client, only: None }
     }
 
     /// Switch the whole process to the **targeted write** of task 0279: parse
@@ -56,15 +55,15 @@ impl Sink {
     ///
     /// Consequence to plan for: no `ledgers` commit marker is written, so
     /// resume cannot read progress from the DB — see
-    /// [`db_clickhouse::persist::PartitionWriter::write_lp_amounts_only`].
-    pub fn with_lp_amounts_only(mut self, on: bool) -> Self {
-        self.lp_amounts_only = on;
+    /// [`db_clickhouse::persist::PartitionWriter::write_only`].
+    pub fn with_only(mut self, only: Option<TargetedTables>) -> Self {
+        self.only = only;
         self
     }
 
-    /// Is this process running the 0279 targeted write?
-    pub fn lp_amounts_only(&self) -> bool {
-        self.lp_amounts_only
+    /// Is this process running a targeted write (`--only`)?
+    pub fn targeted(&self) -> bool {
+        self.only.is_some()
     }
 
     /// Borrow the underlying ClickHouse client (backfill passes read it
@@ -135,7 +134,7 @@ impl Sink {
     pub fn open_partition(&self) -> PartitionWriterHandle {
         PartitionWriterHandle {
             writer: db_clickhouse::persist::PartitionWriter::open(self.client.clone()),
-            lp_amounts_only: self.lp_amounts_only,
+            only: self.only.clone(),
         }
     }
 
@@ -164,13 +163,13 @@ impl Sink {
 /// lifecycle described in `db-clickhouse/src/persist/writer.rs`.
 pub struct PartitionWriterHandle {
     writer: db_clickhouse::persist::PartitionWriter,
-    /// Task 0279 targeted write — see [`Sink::with_lp_amounts_only`].
-    lp_amounts_only: bool,
+    /// Targeted write — see [`Sink::with_only`].
+    only: Option<TargetedTables>,
 }
 
 impl PartitionWriterHandle {
     pub async fn write_ledger(&mut self, meta: &LedgerCloseMeta) -> Result<(), BackfillError> {
-        let lp_amounts_only = self.lp_amounts_only;
+        let targeted = self.only.is_some();
         let pw = &mut self.writer;
         {
             let parsed = indexer::handler::process::parse_ledger(meta);
@@ -182,11 +181,16 @@ impl PartitionWriterHandle {
             // `Run` path is the rarely-used heavy fallback, so no cross-ledger
             // cache. Add one if a full reprocess ever makes this hot.
             //
-            // Skipped entirely under the 0279 targeted write: the map only
-            // re-keys BALANCE rows, which that mode does not persist, so the
-            // query would be a per-ledger round-trip bought for nothing —
-            // 13.16M of them across the run.
-            let sac_classic = if lp_amounts_only {
+            // Skipped entirely under the targeted write (`--only`): the map's
+            // ONLY consumer is `build_balance_rows` (the `balances` table),
+            // which is not targetable — `TargetedTables::TARGETABLE` is a
+            // closed list and none of its four tables reads `sac_classic`
+            // (`asset_transfers` resolves a SAC through
+            // `event_asset_surrogate`, not this map). So the query would be a
+            // per-ledger round-trip bought for nothing — 13.16M of them
+            // across the run. If a future targetable table needs the map,
+            // this branch must key on the table list, not on `targeted`.
+            let sac_classic = if targeted {
                 std::collections::HashMap::new()
             } else {
                 db_clickhouse::persist::fetch_sac_classic_map(
@@ -227,6 +231,11 @@ impl PartitionWriterHandle {
                     // entries never re-emitted in-window stay absent — the
                     // open caveat.)
                     soroban_token_balances: &parsed.soroban_token_balances,
+                    // Task 0374 step 7 — pool state rides the shared
+                    // `process.rs` extraction exactly like token balances
+                    // above, so the historical re-parse emits
+                    // `pool_state_changes` / `pool_instance_state` for free.
+                    pool_family_writes: &parsed.pool_family_writes,
                     sac_classic: &sac_classic,
                     sac_overrides: &parsed.sac_overrides,
                     // Task 0283 live G1/G9 are for the live indexer path only.
@@ -240,10 +249,11 @@ impl PartitionWriterHandle {
                     // the backfill recovers stale hashes via the dedicated
                     // `wasm-upgrade-backfill` pass, so pass an empty map here.
                     prior_contract_rows: &std::collections::HashMap::new(),
+                    asset_transfers: &parsed.asset_transfers,
                 },
             )?;
-            if lp_amounts_only {
-                pw.write_lp_amounts_only(&staged).await?;
+            if let Some(only) = &self.only {
+                pw.write_only(&staged, only).await?;
             } else {
                 pw.write_ledger(staged).await?;
             }

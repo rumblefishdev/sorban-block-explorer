@@ -80,6 +80,24 @@ accounts**.
 → **Budget a `repair-tier1` pass after every parallel or `--reindex` backfill.**
 `repair-tier1` itself requires the indexer stopped (see the table below).
 
+> **This is NOT only a backfill trap — it also happens on ordinary live
+> ingest** (task 0531, measured 2026-09-01). The indexer sees only its current
+> batch, so any later event for an entity carries no historic minimum and the
+> RMT replace erases whatever was stored. No parallel run is required.
+>
+> - `nfts.minted_at_ledger` — 643 of 13 932 tokens were wrong, growing **~30 per
+>   day**. Served correctly since task 0528, which reads the value from the
+>   append-only `nft_ownership` instead of the stored column.
+> - `accounts.first_seen_ledger` — **14 of 400 sampled rows diverge (3.5%)**, all
+>   of them later than the true first appearance. Still wrong today, and it is
+>   rendered on the account page and the account list.
+> - `soroban_contracts.deployed_at_ledger` — **1 597 of 146 397 diverge (1.1%)**.
+>
+> So a clean `repair-tier1` after a backfill does **not** mean the Tier-1 columns
+> stay correct: they start drifting again immediately. Treat the pass as
+> point-in-time cleanup, not as a guarantee. Task 0531 replaces it with storage
+> that carries MIN semantics natively, and retires this rule.
+
 **Unless the run writes one table that has no such column.** A re-parse whose
 only purpose is to populate a NEW derived table does not need to re-emit the
 other twenty-odd — and if it does, it re-arms this trap for nothing. Task 0266
@@ -87,16 +105,23 @@ did this with a bespoke harness ("targeted write only — do NOT run the full
 persist pipeline"); task 0279 turned it into a flag:
 
 ```bash
-backfill-runner run --start <A> --end <B> --lp-amounts-only
+backfill-runner run --start <A> --end <B> --only lp_operation_amounts
 ```
 
-It parses exactly as a normal run does and persists only
-`lp_operation_amounts`, so **no Tier-1 column is touched and no `repair-tier1`
+Task 0540 generalised the flag to a list — `--only asset_transfers,transaction_memos,soroban_event_ops`
+writes its three tables in one pass; only tables that are additive (deterministic
+from the XDR, no Tier-1 column, `DROP TABLE` rollback) are accepted, and the
+list is closed in code (`TargetedTables::TARGETABLE`).
+
+It parses exactly as a normal run does and persists only the named tables,
+so **no Tier-1 column is touched and no `repair-tier1`
 is owed**. The trade is that it writes no `ledgers` commit marker (the marker
 means "fully ingested", which a targeted pass has not done), so resume cannot
 read progress from the DB: on a crash, restart with a narrowed `--start`.
-Re-running a range is harmless — the rows are deterministic and the RMT
-collapses the duplicates.
+Re-running a range is harmless **with the same decoder** — the rows are
+deterministic and the RMT collapses the duplicates. After a decoder change the
+old and new rows share a key and differ in content, and nothing in the row says
+which is which: run the 0503 tie query (below) before trusting a re-run.
 
 Adding a second such mode is a one-line branch beside it in
 `sink.rs::write_ledger`; the pattern generalises to any future
@@ -319,14 +344,14 @@ new binary.
 
 **Flags — with the traps:**
 
-| Flag                | Reality                                                                                                                                                                                                  |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--start` / `--end` | u32, inclusive. This is also how you parallelise (disjoint ranges).                                                                                                                                      |
-| `--reindex`         | Bypasses the resume-skip so an already-ingested range is re-parsed. Without it, re-parsing history is a silent **0-row no-op** — `run` skips whatever is already in `ledgers`.                           |
-| `--lp-amounts-only` | Persists **only** `lp_operation_amounts` (task 0279). Implies `--reindex`. Writes no `ledgers` marker, so resume is manual — narrow `--start`; re-running a range is a no-op. See the rule-3 note below. |
-| `--keep-partitions` | **Debug only.** "Do not pass this for a real backfill — disk grows linearly."                                                                                                                            |
-| `--target`          | **Does not exist.** Survives only in stale doc comments; PG was retired (0244), CH is the sole target.                                                                                                   |
-| `--workers`         | **Does not exist.** Run K processes instead.                                                                                                                                                             |
+| Flag                | Reality                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--start` / `--end` | u32, inclusive. This is also how you parallelise (disjoint ranges).                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `--reindex`         | Bypasses the resume-skip so an already-ingested range is re-parsed. Without it, re-parsing history is a silent **0-row no-op** — `run` skips whatever is already in `ledgers`.                                                                                                                                                                                                                                                                                                                                                              |
+| `--only <t,…>`      | Persists **only** the named additive tables — `lp_operation_amounts` (task 0279, formerly `--lp-amounts-only`), `asset_transfers`, `transaction_memos`, `soroban_event_ops` (task 0540/0541); anything else is refused at parse time. Implies `--reindex`. Writes no `ledgers` marker, so resume is manual — narrow `--start`; re-running a range is a no-op **for one decoder version only** (after a decoder change the old and new rows share a key — run the 0503 tie query below before trusting a re-run). See the rule-3 note below. |
+| `--keep-partitions` | **Debug only.** "Do not pass this for a real backfill — disk grows linearly."                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `--target`          | **Does not exist.** Survives only in stale doc comments; PG was retired (0244), CH is the sole target.                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `--workers`         | **Does not exist.** Run K processes instead.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 **Config** (flag-or-env): `CLICKHOUSE_URL`, `CLICKHOUSE_USER`,
 `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DATABASE`; `CLICKHOUSE_CERT` / `_KEY` / `_CA`
@@ -603,6 +628,275 @@ detectable tie. The arbiter is the network:
 
 This is the same tooling as the one-off 0463 seed; the seed is one-off, the
 reconciliation is not.
+
+## Soroban-AMM pool passes (task 0374)
+
+Run only AFTER the 0374 DDL + indexer deploy (see the deploy-order gotcha in
+[deployment.md](./deployment.md) — reversing the order is the 0310 outage
+class). Three catch-ups, then one closure check:
+
+1. **Pool registry** — one-off generator, deliberately not in the tree
+   (a one-off is not a maintained surface). Full workflow — restore, harvest,
+   generate, insert:
+
+   ```bash
+   # restore the generator source verbatim
+   git show 082ee364:crates/db-clickhouse/src/bin/gen_pool_registry_backfill.rs \
+     > crates/db-clickhouse/src/bin/gen_pool_registry_backfill.rs
+   # harvest the corpus AFTER the live writer is deployed (step-4 ordering
+   # rule: the corpus must cover everything up to the writer's start)
+   chq "SELECT ledger_sequence, event_index, topics_xdr, data_xdr
+        FROM soroban_events WHERE signature='add_pool'
+        ORDER BY ledger_sequence, event_index
+        FORMAT JSONEachRow" > /tmp/add_pool_corpus.jsonl
+   # generate the INSERT, then run it via chq / clickhouse-client
+   cargo run -p db-clickhouse --bin gen_pool_registry_backfill \
+     /tmp/add_pool_corpus.jsonl > /tmp/pool_registry_backfill.sql
+   ```
+
+   Two adjustments the resurrected source needs before running (it predates
+   later schema decisions):
+
+   - drop `share_token_id` from its INSERT column list — the column is
+     removed from `liquidity_pools` by the 0374 DDL;
+   - make it REFUSE duplicate registrations (one GROUP BY on the pool
+     address): the generator cannot perform the live writer's router
+     corroboration (instance storage is not in `soroban_events`), so a
+     forged duplicate `add_pool` naming an already-registered pool would
+     beat the genuine row on RMT merge. Zero duplicates measured
+     2026-09-01; this guards the window between that measurement and the
+     writer's start.
+
+   Emits `liquidity_pools` rows (pool_kind=1); idempotent, safe to re-run.
+
+2. **Reserve history + instance state** — historical re-parse of the soroban
+   window with the new indexer (`backfill-runner run` over the range),
+   filling `pool_state_changes` + `pool_instance_state` from ledger state.
+   `pool_instance_state.plane_id` is load-bearing: reserve reads keep only
+   rows whose plane matches what the pool itself declares, so a pool with no
+   instance row shows no reserves until this pass covers it.
+3. **Classic `legs` backfill** — one-shot pass reading the legacy pair
+   columns and emitting rows with `legs` filled, versioned on each row's own
+   `last_updated_ledger` (task 0374 legs-migration step 2).
+
+**Window-closure check (mandatory)** — proves no registration slipped between
+the backfill's snapshot and the live writer's start. A cardinality diff is
+blind to substitution (one missing + one extra = 0), so the check reconciles
+the canonical pool-id SETS in both directions — a pool's registry `pool_id`
+is the 32-byte payload of its `C...` address, which ClickHouse can derive
+(`base32Decode`, strkey layout: 1 version byte + 32 payload + 2 checksum):
+
+```sql
+-- registered on chain but missing from the registry — MUST return 0 rows
+SELECT DISTINCT JSONExtractString(data_xdr,'value',1,'value') AS missing_pool
+FROM soroban_events WHERE signature = 'add_pool'
+  AND toFixedString(substring(base32Decode(
+        JSONExtractString(data_xdr,'value',1,'value')), 2, 32), 32)
+      NOT IN (SELECT pool_id FROM liquidity_pools WHERE pool_kind = 1);
+
+-- in the registry but never registered on chain — MUST return 0 rows
+SELECT hex(pool_id) AS extra_pool
+FROM liquidity_pools WHERE pool_kind = 1
+  AND pool_id NOT IN (
+    SELECT toFixedString(substring(base32Decode(
+             JSONExtractString(data_xdr,'value',1,'value')), 2, 32), 32)
+    FROM soroban_events WHERE signature = 'add_pool');
+```
+
+Any `missing_pool` → re-run the generator (idempotent) and re-check. Any
+`extra_pool` → investigate before proceeding (a row nothing on chain
+registered should not exist).
+
+## Soroswap pool passes (task 0518)
+
+Run only AFTER the 0518 indexer deploy (writer-first, same reasoning as the
+0374 passes). Everything is derivable in-DB — no S3 re-parse — but BOTH
+passes are small one-off Rust generators, not pure SQL: the surrogate ids
+are `cityhash_102_128` (NOT ClickHouse's `cityHash64`), so SQL cannot
+compute `pool_id`/`plane_id`/leg surrogates.
+
+1. **Pair registry** — harvest the `new_pair` corpus (the exact chq command
+   sits in `crates/xdr-parser/tests/pair_factory_real_corpus.rs` module docs),
+   run it through a one-off generator built on `parse_new_pair` +
+   `factory_pair_registry_row` (mirror `gen_pool_registry_backfill`, task
+   0374). 235 pairs measured 2026-09-02; idempotent.
+   **MANDATORY corroboration leg (review #447):** this pass is events-only
+   — instance storage is not in `soroban_events` — so without it the
+   backfill accepts exactly what the live writer's gate exists to refuse
+   (a forged `new_pair` emitted after the 2026-09-02 measurement would
+   land permanently, and its own gapless 1..k counter passes the closure
+   check). The generator must therefore RPC-read every pair's instance
+   (`getLedgerEntries`, ~235 reads): DataKey 4 must equal the corpus
+   emitter and the instance must exist — the same cross-check the stage
+   e2e performs offline. A pair failing it is refused loudly, never
+   written.
+   **Closure check, three layers:** per factory the vendor's own monotone
+   counter — `max(new_pairs_length) == count()`; the base32Decode set
+   reconciliation from the 0374 section (`pool_kind = 1` both times); and
+   one EXTERNAL anchor (the first two compare us with ourselves and are
+   blind to tail truncation — max and count shrink together): RPC each
+   LIVING factory's own `all_pairs_length` and require our per-factory max
+   to equal it. A fourth layer is free while both projects share one
+   ClickHouse: set-compare against the sibling registry
+   (`SELECT contract_id FROM prices.pool_registry WHERE venue='soroswap'`)
+   — an INDEPENDENTLY-SOURCED set (vendor API seed); expect theirs ⊆ ours
+   and INVESTIGATE any only-theirs address (this exact check caught the
+   config family's dead early factories on 2026-09-05). Their seed is a
+   snapshot, so only-ours entries are normal (stale seed). Guard every chq harvest with a `DB::Exception` grep on the
+   output — chq exits 0 even on a server error, so a truncated corpus
+   otherwise self-certifies.
+2. **Reserve history** — `sync` events carry ABSOLUTE reserves and the
+   local e2e proved them value-identical to instance state on every one of
+   1,563 (pair, ledger) keys, both directions — so history comes from
+   `sync` and the live writer's state rows continue seamlessly (task 0518
+   decision 63). One-off Rust pass over the harvested sync corpus
+   (per-partition chq slices, same quota rule as the 0517 backfill),
+   emitting `pool_state_changes` rows with `plane_id = the pair's own
+surrogate`. Idempotent under the RMT key.
+   **Check:** re-run the bidirectional sync↔rows comparison per partition —
+   compared == equal, both remainders zero.
+3. **Declarations (`pool_instance_state`) — pass 1 emits them too**
+   (review #447 amendment; the previous "no history pass needed" wording
+   contradicted the ADR 0058 read rule quoted in the 0374 section: reserve
+   reads keep only rows whose plane matches the pool's own declaration, so
+   a DORMANT pair with no declaration row — 21 pairs of the three dead
+   factories alone never trade again — would have its ENTIRE sync-derived
+   reserve history invisible forever). The rows are free from the same
+   corpus: `plane_id = share_token_id =` the pair's own surrogate,
+   `derived_at_ledger =` the registration ledger. The live writer then
+   refreshes active pairs on their next activity. The one remaining gap:
+   `total_shares` of dormant pairs stays 0 until touched — the pass-1 RPC
+   leg already reads each instance, so record the live `TotalSupply` from
+   the same response instead of leaving the false zero.
+
+## Config-factory (Phoenix-family) pool passes (task 0518, third adapter)
+
+Run only AFTER the adapter deploy (writer-first, as above). This family is
+the one whose history CANNOT come from events alone: its events carry
+per-field amounts, never absolute reserves (no `sync` analogue), and the
+registration event is a bare pool address — legs/fee/share token live only
+in the pool's own `CONFIG` ledger entry. Both passes therefore read RAW
+LEDGERS — but only a targeted, harvested list, fetched over public HTTPS
+(the `aws-public-blockchain` bucket, unsigned; recipe in
+`crates/db-clickhouse/tests/pair_factory_stage_real_e2e.rs` docs), never a
+full re-parse.
+
+1. **Pool registry + declarations** — exactly the **14 registration
+   ledgers** (the full population, listed in
+   `crates/db-clickhouse/tests/config_pool_stage_real_e2e.rs`; harvest
+   query in `crates/xdr-parser/tests/config_pool_real_corpus.rs`). One-off
+   generator driving `extract_pool_family_writes` + the STAGING gate
+   (never the row builder directly — the two-stage registration gate,
+   membership list + conflict, must hold for the backfill exactly as it
+   does live): registry rows AND the `pool_instance_state` declarations
+   (share token) come from the same 14 files.
+   **Closure check:** live `query_pools()` on the factory must be a
+   **SUBSET of ours — never set-equality**: the factory's vector is
+   mutable, and one real pool (`CAZ6W4WH…`, 25,873 events traded to
+   63.77M) is already delisted from it while its history stands. A
+   registry seeded from `query_pools()` alone silently loses that pool.
+   The ⊆ check alone is tail-blind (a pool both delisted AND missing from
+   a truncated harvest is invisible to it), so pin the expected count too:
+   **20 registrations across 6 factory deployments as of 2026-09-05** —
+   the harvest must reproduce at least that many, and any new ones must be
+   newer than ledger 64,030,567. (The count was 14 for one day: the first
+   harvest was scoped to the documented factory; the cross-check against
+   the sibling project's independently-seeded `prices.pool_registry`
+   surfaced the five dead early deployments' 6 pools — proof the external
+   anchor earns its place. The full-history shape-wide sweep also hit the
+   hourly read quota mid-run and truncated SILENTLY, which is exactly why
+   every closure layer here demands the `DB::Exception` grep AND an
+   external anchor.) Guard the chq harvest with a `DB::Exception` grep
+   (chq exits 0 on server errors).
+2. **Reserve history** — one-off Rust pass over the **harvested activity
+   ledgers**: `SELECT DISTINCT ledger_sequence FROM soroban_events WHERE
+contract_id IN (the 14 pool surrogates)` — 195,637 ledgers / 2.04M
+   events measured 2026-09-03 (≈40 GB of per-ledger `.xdr.zst` over
+   HTTPS). Fetch each, run `extract_config_pools`, emit
+   `pool_state_changes` rows (`plane_id` = the pool's own surrogate).
+   Idempotent under the RMT key. Reserve co-occurrence (both keys per tx)
+   is measured, era-proof — a half-pair in the output is a bug, not data.
+   **Check:** per-pool spot comparison against raw creation values plus
+   the live writer's overlap window — same rule as the pair family's
+   sync↔state anti-test, with raw ledgers as the second source.
+3. **`total_shares` caveat (family-specific, recorded in the task):** the
+   declaration row's value is STRUCTURALLY 0 for this family (the supply
+   key never co-occurs with a post-creation CONFIG write) — the live
+   supply is the share token's own tracked supply (separate SEP-41
+   contract on the generic token pipeline). Do not "fix" it with a
+   per-op writer: `pool_instance_state` is RMT whole-row on `pool_id`, and
+   a config-less row would clobber `share_token_id` to 0.
+4. **Standing live cross-check (review #447):** this is the ONE family
+   with no event oracle (the pair family has `sync`, the router family the
+   deposit⇄mint detector), so a pool-WASM upgrade re-purposing the u32
+   keys would corrupt reserves silently. Two cheap defenses, per release
+   or on a cadence: (a) RPC-read every pool `query_pools()` still lists
+   (13 today) and compare reserves against our latest `pool_state_changes`
+   row; (b) watch `executable_update` events (already ingested, task 0320)
+   on the registered pools — an upgrade of a registered pool warrants
+   re-running (a) immediately.
+
+## Event-name backfill (task 0517) — in-DB, per partition
+
+Fills `soroban_events.signature` for the ~3.8M historical rows whose name
+lives under a non-Symbol first topic (the Soroswap/DeFindex/Blend label
+convention and the Phoenix plain-&str convention). Pure `INSERT … SELECT`
+over `topics_xdr` — flavour A, no re-parse, no S3. The SQL mirrors
+`extract_event_signature` (stage.rs) exactly; version-less RMT keeps the
+last insert per key (rule 4), so re-running a slice is harmless.
+
+**Run it per partition** — a bare `WHERE signature IS NULL` scans all 10G+
+rows in one query, which blows the hourly read quota; the partition key is
+`intDiv(ledger_sequence, 500000)` and each partition is ~300-420M rows, so
+one partition per query prunes cleanly (~4-5/hour under quota, or loop them
+all as the box operator where no quota applies). Partition ids:
+`SELECT DISTINCT partition FROM system.parts WHERE table='soroban_events' AND active`.
+
+```sql
+-- one slice; substitute {P} with a partition id and iterate
+INSERT INTO soroban_events
+SELECT
+    contract_id, transaction_id, ledger_sequence, event_index, event_type,
+    multiIf(
+        JSONExtractString(topics_xdr,1,'type') = 'string'
+          AND JSONExtractString(topics_xdr,2,'type') = 'sym'
+          AND JSONExtractString(topics_xdr,2,'value') != '',
+            JSONExtractString(topics_xdr,2,'value'),
+        JSONExtractString(topics_xdr,1,'type') = 'string'
+          AND JSONExtractString(topics_xdr,1,'value') != '',
+            JSONExtractString(topics_xdr,1,'value'),
+        CAST(NULL, 'Nullable(String)')
+    ) AS signature,
+    topics_xdr, data_xdr
+FROM soroban_events
+WHERE signature IS NULL
+  AND intDiv(ledger_sequence, 500000) = {P}
+  AND multiIf(
+        JSONExtractString(topics_xdr,1,'type') = 'string'
+          AND JSONExtractString(topics_xdr,2,'type') = 'sym'
+          AND JSONExtractString(topics_xdr,2,'value') != '',
+            JSONExtractString(topics_xdr,2,'value'),
+        JSONExtractString(topics_xdr,1,'type') = 'string'
+          AND JSONExtractString(topics_xdr,1,'value') != '',
+            JSONExtractString(topics_xdr,1,'value'),
+        CAST(NULL, 'Nullable(String)')
+    ) IS NOT NULL
+```
+
+The trailing filter keeps still-unresolvable rows OUT of the insert — their
+NULL row already exists, and re-inserting an identical NULL row would only
+churn the merge. **Verification** (after all partitions):
+
+```sql
+-- the resolvable NULL population MUST be zero
+SELECT count() FROM soroban_events
+WHERE signature IS NULL
+  AND JSONExtractString(topics_xdr,1,'type') = 'string'
+  AND JSONExtractString(topics_xdr,1,'value') != ''
+```
+
+Verification criteria for the deployed result live in task 0374's
+final-phase notes.
 
 ## Superseded — do not follow
 

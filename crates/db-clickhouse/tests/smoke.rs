@@ -349,8 +349,8 @@ async fn smoke_inserts_and_reads_each_table() {
     // ----- liquidity_pool_snapshots (append-only fact) — no surrogate `id` -----
     client
         .query(
-            "INSERT INTO liquidity_pool_snapshots (pool_id, ledger_sequence, reserve_a, reserve_b, total_shares, tvl, volume, fee_revenue) \
-             VALUES (unhex('00000000000000000000000000000000000000000000000000000000000000bb'), ?, toDecimal128('100.0', 7), toDecimal128('200.0', 7), toDecimal128('150.0', 7), NULL, NULL, NULL)",
+            "INSERT INTO liquidity_pool_snapshots (pool_id, ledger_sequence, reserve_a, reserve_b, total_shares) \
+             VALUES (unhex('00000000000000000000000000000000000000000000000000000000000000bb'), ?, toDecimal128('100.0', 7), toDecimal128('200.0', 7), toDecimal128('150.0', 7))",
         )
         .bind(SMOKE_LEDGER)
         .execute()

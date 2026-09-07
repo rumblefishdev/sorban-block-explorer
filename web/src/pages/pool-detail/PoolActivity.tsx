@@ -281,11 +281,7 @@ function activityColumns(
                   </Typography>
                 )}
                 {crossed > 1 && (
-                  <Chip
-                    size="sm"
-                    color="blue"
-                    label={`1 of ${crossed} pools`}
-                  />
+                  <Chip size="sm" color="blue" label={`via ${crossed} pools`} />
                 )}
               </Stack>
             )}

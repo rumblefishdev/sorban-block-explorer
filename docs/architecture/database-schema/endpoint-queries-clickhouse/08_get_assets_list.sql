@@ -33,9 +33,9 @@
 --                 a GROUP BY sub-select (no FINAL).
 --               asset_aggregates — MergeTree batch table (no FINAL).
 -- CH Pattern:   FINAL on `assets` + the metadata sub-select only. Keyset cursor
---               on the 4-tuple natural key (DESC) for stable pagination.
---               asset_code substring via positionCaseInsensitiveUTF8 (no
---               pg_trgm in CH; linear scan acceptable on small `assets`).
+--               on the 4-tuple natural key, ASC (task 0485).
+--               asset_code substring against the DISPLAYED code (no pg_trgm in
+--               CH; linear scan acceptable on small `assets`).
 -- ADR 0044 §:   §4.5 (Replacing state). **PR #175 amendment:** `assets`
 --               dropped surrogate `id Int32`; natural composite key now.
 --               `issuer_id` / `contract_id` are `Int64` (NOT Nullable);
@@ -90,8 +90,34 @@ LEFT JOIN (
 ) ae ON ae.asset_type = a.asset_type AND ae.asset_code = a.asset_code
     AND ae.issuer_id = a.issuer_id   AND ae.contract_id = a.contract_id
 WHERE
-    ($2 IS NULL OR (a.asset_type, a.asset_code, a.issuer_id, a.contract_id) < ($2, $3, $4, $5))
-    AND ($6 IS NULL OR a.asset_type = $6)
-    AND ($7 IS NULL OR positionCaseInsensitiveUTF8(a.asset_code, $7) > 0)
-ORDER BY a.asset_type DESC, a.asset_code DESC, a.issuer_id DESC, a.contract_id DESC
+    ($6 IS NULL OR a.asset_type = $6)
+    -- Matched against the DISPLAYED code: native XLM stores an EMPTY code and
+    -- renders as `XLM`, so comparing the stored value returned thousands of
+    -- impostor codes and missed the one asset everybody meant. The same
+    -- expression appears in 22_get_search.sql and in the pools predicate.
+    AND ($7 IS NULL OR position(lower(if(a.asset_type = 0, 'XLM', toString(a.asset_code))),
+                                lower($7)) > 0
+                    OR positionCaseInsensitive(coalesce(m.name, ''), $7) > 0
+                    OR positionCaseInsensitive(coalesce(m.symbol, ''), $7) > 0)
+    AND ($2 IS NULL OR (asset_type, asset_code, issuer_id, contract_id)
+                     > ($2, $3, $4, $5))
+-- ASC, filtered or not, because native XLM is the MINIMUM of that 4-tuple:
+-- under DESC it sorted onto the LAST page, so `filter[code]=xlm` answered with
+-- `zXLMr, zXLM, …` and the unfiltered list opened the asset list of a Stellar
+-- explorer on codeless Soroban contracts without ever showing XLM.
+ORDER BY asset_type ASC, asset_code ASC, issuer_id ASC, contract_id ASC
 LIMIT $1;
+
+-- NO relevance ranking on this surface, by decision (task 0485). A tier order
+-- would have to be carried in the cursor — a keyset must resume in the order it
+-- walked — which means a rank column, a second copy of the tier rule in Rust to
+-- mint that cursor, and a page-walk test to catch the two drifting. That was
+-- built, measured and taken back out: this is a browse list with a filter, and
+-- the walk direction alone answers "native first". Relevance lives in
+-- 22_get_search.sql, which has no pagination and so pays none of it.
+
+-- STALE ABOVE (not touched by task 0485): the projection still shows the
+-- single-statement shape with `asset_aggregates`. The read has been a two-phase
+-- keys-then-hydrate seek since task 0364, and holder counts come from
+-- `balance_aggregates` since task 0331. Only the predicate, keyset and ORDER BY
+-- below were brought up to date here.

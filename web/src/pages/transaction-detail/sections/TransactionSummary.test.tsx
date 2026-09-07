@@ -2,9 +2,10 @@ import type {
   E3ResponseTransactionDetailLight,
   XdrOperationDto,
 } from '@rumblefish/api-types';
-import { render, screen } from '@testing-library/react';
-import { ExplorerThemeProvider } from '@rumblefish/soroban-block-explorer-ui';
+import { screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
+
+import { renderWithProviders } from '../../../test-utils.js';
 
 import { opFailReason, TransactionSummary } from './TransactionSummary.js';
 
@@ -65,10 +66,10 @@ describe('opFailReason', () => {
 
 describe('TransactionSummary failed strip', () => {
   it('shows the per-op reason on the strip', () => {
-    render(
-      <ExplorerThemeProvider>
+    renderWithProviders(
+      <>
         <TransactionSummary tx={tx([op('create_account', 1, 'LowReserve')])} />
-      </ExplorerThemeProvider>
+      </>
     );
     expect(screen.getByText(/Create Account #1 — LOW_RESERVE/)).toBeTruthy();
   });
@@ -90,10 +91,10 @@ describe('TransactionSummary with no archive data', () => {
   }
 
   it('marks the memo unavailable instead of dashing it', () => {
-    render(
-      <ExplorerThemeProvider>
+    renderWithProviders(
+      <>
         <TransactionSummary tx={heavyless(true)} />
-      </ExplorerThemeProvider>
+      </>
     );
 
     // Two cells resolve to the marker: memo and, via inner_tx_hash, fee source.
@@ -103,20 +104,20 @@ describe('TransactionSummary with no archive data', () => {
   });
 
   it('says the fail reason is unavailable rather than implying a validation failure', () => {
-    render(
-      <ExplorerThemeProvider>
+    renderWithProviders(
+      <>
         <TransactionSummary tx={heavyless(false)} />
-      </ExplorerThemeProvider>
+      </>
     );
 
     expect(screen.getByText(/reason unavailable/)).toBeTruthy();
   });
 
   it('keeps a real memo-less transaction on the plain dash', () => {
-    render(
-      <ExplorerThemeProvider>
+    renderWithProviders(
+      <>
         <TransactionSummary tx={tx([], true)} />
-      </ExplorerThemeProvider>
+      </>
     );
 
     expect(screen.queryByText('Not available')).toBeNull();

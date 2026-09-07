@@ -334,7 +334,6 @@ pub async fn list_account_transactions(
             operation_count: r.operation_count,
             has_soroban: r.has_soroban,
             operation_types: r.operation_types,
-            values: r.values,
             created_at: r.created_at,
         })
         .collect();

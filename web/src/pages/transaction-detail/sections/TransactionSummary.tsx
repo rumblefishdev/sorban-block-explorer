@@ -209,6 +209,15 @@ export function TransactionSummary({ tx }: TransactionSummaryProps) {
             label: 'Source account',
             value:
               tx.source_account != null ? (
+                // Deliberately no SEP-2 name here. A transaction page carries
+                // several accounts — source, operation destinations, signers
+                // — and naming exactly one of them reads as "we know who the
+                // sender is and not the recipient", which is false: we simply
+                // did not ask. Naming all of them means a pair of
+                // cross-origin requests per account, per page view, to hosts
+                // those accounts named. The name lives one click away, on the
+                // account's own page, which is the page whose subject the
+                // account actually is (task 0443).
                 <IdentifierWithCopy
                   value={tx.source_account}
                   type="account"

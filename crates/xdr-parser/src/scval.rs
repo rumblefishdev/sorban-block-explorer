@@ -81,7 +81,24 @@ pub fn scval_to_typed_json(v: &ScVal) -> Value {
                     json!({ "type": "stellar_asset" })
                 }
             };
-            ("contract_instance", json!({ "executable": executable }))
+            // `storage` used to be DROPPED here, which made every fact a
+            // contract keeps about itself (share tokens, planes, the METADATA
+            // struct) invisible downstream — task 0374 step 7 needs it, and
+            // the on-ledger token-metadata gap traced to the same omission.
+            let storage = inst.storage.as_ref().map(|m| {
+                m.iter()
+                    .map(|e| {
+                        json!({
+                            "key": scval_to_typed_json(&e.key),
+                            "value": scval_to_typed_json(&e.val),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            });
+            (
+                "contract_instance",
+                json!({ "executable": executable, "storage": storage }),
+            )
         }
         ScVal::LedgerKeyContractInstance => ("ledger_key_contract_instance", json!(null)),
         ScVal::LedgerKeyNonce(k) => ("ledger_key_nonce", json!(k.nonce)),
@@ -98,6 +115,49 @@ pub fn scval_to_typed_json(v: &ScVal) -> Value {
 // leave them compiling and wrong. (`nft.rs` and `event_filters.rs` each grew
 // their own `map_get` before this; task 0393.)
 // ---------------------------------------------------------------------------
+
+/// `value` of a typed node, iff its `type` tag matches. The one reader for the
+/// dialect this module encodes.
+///
+/// Kept as a tag check that RETURNS the payload rather than a bool, because
+/// `value` is a string for scalars and an array for `vec`/`map` — a caller
+/// that checks the tag and then reaches for the wrong shape is the mistake
+/// this signature removes.
+pub fn typed<'a>(v: &'a Value, tag: &str) -> Option<&'a Value> {
+    (v.get("type")?.as_str()? == tag).then(|| v.get("value"))?
+}
+
+/// A scalar's `value` as text, iff its `type` tag matches.
+pub fn typed_str<'a>(v: &'a Value, tag: &str) -> Option<&'a str> {
+    typed(v, tag)?.as_str()
+}
+
+/// Elements of a `vec`-typed payload.
+pub fn vec_elements(v: &Value) -> Option<&[Value]> {
+    typed(v, "vec")?.as_array().map(Vec::as_slice)
+}
+
+/// A non-empty `address`. Empty is rejected rather than passed on: an address
+/// is an identity, and an empty one names nothing.
+pub fn address(v: &Value) -> Option<&str> {
+    typed_str(v, "address").filter(|s| !s.is_empty())
+}
+
+/// A non-empty `sym`.
+pub fn symbol(v: &Value) -> Option<&str> {
+    typed_str(v, "sym").filter(|s| !s.is_empty())
+}
+
+/// Any scalar's value as text. Numeric ScVal JSON carries wide types as
+/// strings and narrow ones as JSON numbers; both render the same way here, and
+/// anything unexpected renders as its JSON rather than vanishing.
+pub fn raw_scalar(v: &Value) -> String {
+    match v.get("value") {
+        Some(Value::String(s)) => s.clone(),
+        Some(other) => other.to_string(),
+        None => String::new(),
+    }
+}
 
 /// Look up `key` in a `map`-typed payload, returning the entry value iff the
 /// entry key is a Symbol equal to `key`. `None` when `data` is not a map or the

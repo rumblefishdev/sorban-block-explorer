@@ -328,23 +328,14 @@ Expanded behavior:
 Paginated, filterable table of all indexed transactions. Default sort: most recent first.
 
 - Transaction table - hash, ledger sequence, source account, operation type, status badge
-  (success/failed), fee, **value moved**, timestamp
+  (success/failed), fee, timestamp
 - Filters - source account, contract ID, operation type
 - Cursor-based pagination controls
 
-**Net settled** (task 0393, UI column "Net settled"): each row carries `values` —
-the net-settled value per asset the transaction moved (`TransactionValue[]` =
-`{ asset, asset_code, net_settled, decimals }`). `net_settled` is a raw
-stringified `Int128`; the client scales by `decimals` (classic / SAC = 7). The
-API omits an asset entirely when its value is not computed yet (history pending
-backfill) or is genuinely zero (a wash / pure cycle nets to zero by the flow
-decomposition theorem), so `values` can be empty — the cell then renders a dash. `asset` is the `parse_asset_id` identity
-(`"native"` or `"CODE-ISSUER"`) for linking to the asset detail page; `asset_code`
-is `null` for native (render as XLM). A transaction can move several assets, so
-the cell shows the primary asset and collapses the rest ("+ N others" — the exact
-collapse/primary-selection UX is a display decision, not a data one; the API
-returns the full list). Same field on the global and per-account transaction
-lists (it is a transaction-level intrinsic).
+**Net settled — REMOVED (2026-09-04).** The list rows no longer carry a `values`
+field. The per-(transaction, asset) aggregate had no direction and no account, so
+on an account page an inbound and an outbound transfer rendered identically; it is
+replaced by a lossless per-transfer design.
 
 Expanded behavior:
 
