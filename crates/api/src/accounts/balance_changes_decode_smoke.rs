@@ -19,9 +19,8 @@
 //! Read-only: every statement is a SELECT, and the ones that hit real tables
 //! are written so an EMPTY table still exercises the decode.
 
-use super::{
-    AssetIdentityChRow, DeltaChRow, TxKey, fetch_balance_changes, resolve_asset_identities,
-};
+use super::{DeltaChRow, TxKey, fetch_balance_changes};
+use crate::common::asset_identity::{AssetIdentityChRow, resolve_asset_identities};
 use std::collections::BTreeSet;
 
 fn client() -> Option<clickhouse::Client> {

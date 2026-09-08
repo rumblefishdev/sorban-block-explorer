@@ -53,6 +53,8 @@ use std::collections::{BTreeSet, HashMap};
 use clickhouse::Row;
 use serde::Deserialize;
 
+use crate::common::asset_identity::{ResolvedAsset, resolve_asset_identities};
+
 /// First ledger `asset_transfers` covers — the ledger the live indexer started
 /// writing it (deploy `production-2026.09.07-1`). Below it the table is empty
 /// because nothing has been written yet, NOT because nothing moved, so the API
@@ -128,23 +130,6 @@ struct DeltaChRow {
     nft_owner: Option<i64>,
 }
 
-#[derive(Debug, Row, Deserialize)]
-struct AssetIdentityChRow {
-    id: i64,
-    /// `false` = no `assets` row. NOT an error: the three busiest NFT
-    /// collections on production have zero rows there, so an `INNER JOIN`
-    /// would silently drop every one of their transfers. The contract
-    /// surrogate IS the `asset_id` in that case, which is what the fallback
-    /// leg below resolves.
-    known: bool,
-    asset_type: i16,
-    asset_code: Option<String>,
-    issuer_id: i64,
-    contract_strkey: Option<String>,
-    symbol: Option<String>,
-    decimals: u32,
-}
-
 /// Net per-asset balance change for the account in context, for a bounded page
 /// of `(ledger_sequence, application_order)` keys, each transaction's assets in
 /// the order their movements occurred.
@@ -186,7 +171,11 @@ pub async fn fetch_balance_changes(
     }
 
     let asset_ids: BTreeSet<i64> = delta_rows.iter().map(|r| r.asset_id).collect();
-    let identities = resolve_asset_identities(client, &asset_ids).await?;
+    let identities: HashMap<i64, AssetIdentity> = resolve_asset_identities(client, &asset_ids)
+        .await?
+        .into_iter()
+        .map(|(id, r)| (id, balance_change_identity(&r)))
+        .collect();
 
     // Which PIECE moved. Only asked when the page actually carries a
     // non-fungible entry — one row in 2 256 264 on production today — so this
@@ -349,120 +338,35 @@ async fn resolve_moved_pieces(
         .collect())
 }
 
-/// Resolve a bounded set of `asset_transfers.asset_id` surrogates to a link
-/// identity + display code + decimals.
-///
-/// The `assets` join is a **LEFT** join on purpose. `asset_id` is the emitting
-/// contract's surrogate for a bespoke token, and a token nobody registered has
-/// no `assets` row at all — measured on production, the three busiest NFT
-/// collections (17 816 / 1 541 / 900 ownership rows) have none, so an inner
-/// join would drop every transfer they ever made without a trace.
-///
-/// **The contract leg needs no `assets` row either**, which is what keeps this
-/// to one scan: a Soroban asset's surrogate IS its contract's
-/// (`assets.id = assets.contract_id` for 4 422 of 4 422 type-3 rows on
-/// production; types 0 and 1 have no contract at all), so `soroban_contracts`
-/// is seeked on the same id list whether or not `assets` knew the asset. An
-/// earlier shape joined it through `assets.contract_id`, which forced the
-/// scan-only `assets` leg to run TWICE — measured 209 ms / 2.5M rows against
-/// 44 ms / 268k for this one, per page view.
-///
-/// `assets.id` carries no skip index (`id` is not in its `ORDER BY`), so its
-/// leg is a scan; `soroban_contracts.id` and `accounts.id` are bloom-indexed
-/// granule seeks, and `soroban_contract_metadata` is 3 927 rows.
-/// `FINAL` is replaced by `LIMIT 1 BY id` / `argMax(…, version)` throughout —
-/// exact here for the same reason as task 0344, and `FINAL` on these
-/// dimensions measured 4.7x the rows read.
-///
-/// `toBool(...)` on `known`, not the bare comparison: `a.id != 0` is `UInt8`
-/// on the wire and the driver decodes a Rust `bool` from CH `Bool`. The same
-/// class of mismatch (a `Nullable` aggregate into a non-nullable field) took
-/// account-detail down in task 0324.
-///
-/// **`CAST(… AS Array(Int64))` around the id list, not a bare literal array.**
-/// ClickHouse infers an array literal's element type from its VALUES, so a page
-/// whose asset ids all happen to be positive yields `Array(UInt64)` and the
-/// `id` column decodes as `UInt64` into `i64` — a 500 on that account's page
-/// and on no other. Caught on production
-/// (`GBO56XB4…`, whose only asset is `XTAR` at id 8106068169672383637); every
-/// earlier test happened to include native, whose surrogate is negative.
-async fn resolve_asset_identities(
-    client: &clickhouse::Client,
-    ids: &BTreeSet<i64>,
-) -> Result<HashMap<i64, AssetIdentity>, clickhouse::error::Error> {
-    let in_list = ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
-    let sql = format!(
-        "SELECT ids.id                        AS id, \
-                toBool(a.id != 0)             AS known, \
-                a.asset_type                  AS asset_type, \
-                nullIf(a.asset_code, '')      AS asset_code, \
-                a.issuer_id                   AS issuer_id, \
-                nullIf(sc.contract_id, '')    AS contract_strkey, \
-                nullIf(m.symbol, '')          AS symbol, \
-                coalesce(m.decimals, 7)       AS decimals \
-         FROM (SELECT arrayJoin(CAST([{in_list}] AS Array(Int64))) AS id) ids \
-         LEFT JOIN (SELECT id, asset_type, asset_code, issuer_id FROM assets \
-                    WHERE id IN ({in_list}) LIMIT 1 BY id) a ON a.id = ids.id \
-         LEFT JOIN (SELECT id, contract_id FROM soroban_contracts \
-                    WHERE id IN ({in_list}) LIMIT 1 BY id) sc ON sc.id = ids.id \
-         LEFT JOIN (SELECT contract_id, \
-                           argMax(symbol, version)   AS symbol, \
-                           argMax(decimals, version) AS decimals \
-                    FROM soroban_contract_metadata GROUP BY contract_id) m \
-                ON m.contract_id = sc.contract_id"
-    );
-
-    let rows = client.query(&sql).fetch_all::<AssetIdentityChRow>().await?;
-
-    // A classic asset's link identity is `CODE-ISSUER`, and the issuer is a
-    // surrogate here — resolved by the shared bloom seek rather than by an
-    // `accounts` join, which would have to be bounded through `assets` and so
-    // would cost the scan above a second time.
-    let issuers = crate::common::ch::resolve_accounts(
-        client,
-        rows.iter()
-            .filter(|r| r.known && r.asset_type == 1 && r.issuer_id != 0)
-            .map(|r| r.issuer_id)
-            .collect(),
-    )
-    .await?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| {
-            // `parse_asset_id`'s three accepted forms, by `TokenAssetType`:
-            // 0 native, 1 classic credit, 3 bespoke Soroban. An asset with no
-            // `assets` row is a bespoke token by construction, so it takes the
-            // same branch as type 3.
-            let (asset, asset_code) = match (r.known, r.asset_type) {
-                (true, 0) => ("native".to_string(), None),
-                (true, 1) => (
-                    match (
-                        r.asset_code.as_deref(),
-                        issuers.get(&r.issuer_id).filter(|s| !s.is_empty()),
-                    ) {
-                        (Some(code), Some(issuer)) => format!("{code}-{issuer}"),
-                        // No issuer StrKey means no link identity exists; the
-                        // code still names the asset in the cell.
-                        _ => String::new(),
-                    },
-                    r.asset_code.clone(),
-                ),
-                _ => (
-                    r.contract_strkey.clone().unwrap_or_default(),
-                    r.symbol.clone().or_else(|| r.asset_code.clone()),
-                ),
-            };
-            (
-                r.id,
-                AssetIdentity {
-                    asset,
-                    asset_code,
-                    decimals: r.decimals,
-                },
-            )
-        })
-        .collect())
+/// Project a resolved asset onto what a balance-change cell renders: the link
+/// identity `parse_asset_id` accepts, the code shown in the cell, and the scale
+/// the amount is divided by.
+fn balance_change_identity(r: &ResolvedAsset) -> AssetIdentity {
+    // `parse_asset_id`'s three accepted forms, by `TokenAssetType`:
+    // 0 native, 1 classic credit, 3 bespoke Soroban. An asset with no
+    // `assets` row is a bespoke token by construction, so it takes the
+    // same branch as type 3.
+    let (asset, asset_code) = match (r.known, r.asset_type) {
+        (true, 0) => ("native".to_string(), None),
+        (true, 1) => (
+            match (r.asset_code.as_deref(), r.issuer.as_deref()) {
+                (Some(code), Some(issuer)) => format!("{code}-{issuer}"),
+                // No issuer StrKey means no link identity exists; the
+                // code still names the asset in the cell.
+                _ => String::new(),
+            },
+            r.asset_code.clone(),
+        ),
+        _ => (
+            r.contract_strkey.clone().unwrap_or_default(),
+            r.symbol.clone().or_else(|| r.asset_code.clone()),
+        ),
+    };
+    AssetIdentity {
+        asset,
+        asset_code,
+        decimals: r.decimals,
+    }
 }
 
 /// The per-transaction, per-asset signed sum for one account.
