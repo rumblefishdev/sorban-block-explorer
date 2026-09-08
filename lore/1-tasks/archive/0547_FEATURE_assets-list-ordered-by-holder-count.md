@@ -2,7 +2,7 @@
 id: '0547'
 title: 'FEATURE: order the assets list by holder count, not by the storage key'
 type: FEATURE
-status: active
+status: completed
 related_adr: []
 related_tasks: ['0364', '0450', '0331']
 tags: [frontend, api, assets, clickhouse, priority-medium, effort-small]
@@ -16,6 +16,16 @@ history:
       each type and reads as noise. Not a regression — it has been the storage
       key since 0364 made the read two-phase; nobody chose it as a browse
       order, it fell out of choosing a cheap keyset.
+  - date: '2026-09-08'
+    status: completed
+    who: karolkow
+    note: >
+      Deployed and verified on the live list. Five code lines changed in one
+      driver query plus the cursor it implies; 281 API tests pass, 3 rewritten
+      where they asserted the old order. All 7 acceptance criteria met.
+      Cost measured on production before shipping (61 ms / 1.02 M rows per
+      page) and the mutable-key property of the new cursor measured, decided
+      and recorded rather than left implicit.
 ---
 
 # FEATURE: order the assets list by holder count
@@ -162,6 +172,19 @@ count refreshed every two minutes. The property is not new to the system.
 
 **What would reopen it:** a report of rows going missing while paging, not the
 theory. The answer then is C.
+
+## Deployed and verified on production (2026-09-08)
+
+Read off the live list, 20 rows, strictly descending, native once:
+
+```
+XLM 9 950 045 · TXT 804 336 · USDC 684 236 · AQUA 129 397 · DRA 107 800 …
+```
+
+The deploy also produced the decision record's own evidence, unplanned. Against
+the measurement taken an hour earlier: XLM +69, USDC +51, SHX +7, **DOGET −1**
+— five counters moved, one downward, and **the order did not change**. Exactly
+the property the "accept" decision rests on, observed rather than argued.
 
 ## Acceptance criteria
 
