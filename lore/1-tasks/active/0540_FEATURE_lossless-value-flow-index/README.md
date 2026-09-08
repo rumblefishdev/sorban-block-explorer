@@ -889,7 +889,13 @@ event_pos_in_op)`, all NOT NULL; `event_index` is an ordinary column
       `asset_transfers` rows minus XLM fees equals their current per-asset
       balance read as raw XDR via RPC `getLedgerEntries` — bit-exact, every
       asset type. Runnable from `tests/`; accounts and ledger recorded here
-- [ ] Direction visible on the account page in production
+- [x] Direction visible on the account page in production — deployed
+      2026-09-08 and read off the live page, not off a row count. Account
+      `GCKBNEKI…` shows all three states at once: `+1 NFT #44 XLEND` (ledger
+      64 320 740, the same transaction whose other leg is −4 681 USDC), a
+      MEASURED `0` on a Manage Sell Offer, and signed amounts with US
+      grouping. A `Clawback` renders as an outflow (`−1 436.3560918 ICE`) —
+      the one verb never exercised on live data before the deploy
 - [ ] **Docs updated** — `docs/architecture/database-schema/**`,
       `indexing-pipeline/**`, `xdr-parsing/**`, `frontend/**` per ADR 0032.
       Read half (2026-09-07): `database-schema/database-schema-overview.md`
