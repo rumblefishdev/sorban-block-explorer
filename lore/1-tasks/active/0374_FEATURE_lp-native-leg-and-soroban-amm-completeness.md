@@ -1642,3 +1642,124 @@ position id; `position_update` is the indexing source. The phrase entered on
 2026-08-29 as an unsourced aside in the read-path commit (a Uniswap-v3
 pattern carried over) and was copied into the ADR the same day. ADR fixed;
 the branch comment corrected in place. Indexing stays deferred to 0516.
+
+## CONFIRMED DEFECT (2026-09-08) — soroban pool legs key on the SAC surrogate, and orphan
+
+Found while designing the read half's `legs` migration, by tracing the
+producer after the owner refused a measurement that "smelled wrong" — the
+first reading blamed two disjoint id spaces, which the code refutes.
+
+**There is ONE id space.** `ids::asset_id` returns `contract_id` for a
+soroban token, so a token contract's surrogate _is_ its asset id. The classic
+arm goes through `pool_leg_asset_id`, which branches on the XDR asset type
+and yields the canonical id. The three soroban registry-row builders
+(`pool_registry_row`, `factory_pair_registry_row`, `config_pool_registry_row`)
+instead call `ids::contract_id(token)` **directly — no branch, no lookup**.
+
+That is correct for a genuine soroban token and WRONG for a SAC. ADR 0051
+retired `asset_type = 2`: a SAC is not a distinct asset and has no `assets`
+row of its own, so anything keyed on its surrogate orphans. The balance path
+already re-keys through `fetch_sac_classic_map`; `stage.rs` even carries the
+comment naming the failure ("must key by the classic/native asset it wraps
+**or it would orphan**"). The pool leg writer skips that step.
+
+### Measured on production, 2026-09-08
+
+| pool kind | leg occurrences | native id | classic credit id | soroban token id | **orphan** |
+| --------- | --------------- | --------- | ----------------- | ---------------- | ---------- |
+| classic   | 38,932          | 4,222     | 34,642            | 0                | **0**      |
+| soroban   | 1,175           | 0         | 0                 | 91               | **1,084**  |
+
+The split is clean — zero ambiguous cases: 1,059 of 1,151 leg occurrences
+(measured a few minutes earlier in the same session) carry `is_sac = true`
+AND appear in `asset_sac`; 92 carry neither. All 1,059 resolve to an
+`assets.id` by **pure lookup** — no hashing, so the repair needs no
+re-implementation of `hash64` in SQL (which would be impossible: our
+surrogate is not ClickHouse's `cityHash64`). Both join directions are
+unambiguous (313,037 SAC surrogates → 0 with more than one asset).
+
+Worked example — 211 soroban pools hold a native XLM leg, and not one carries
+XLM's id `-6959166271784855184`. They all carry `-6164601581949826601`, the
+surrogate of XLM's SAC `CAS3J7GY…` (confirmed in `asset_sac` as asset_type 0,
+issuer 0). To the database that is not XLM; it is nothing.
+
+Raw sample, one row per variant (`legs` today → after the fix):
+
+| variant                 | pool           | legs today             | resolves to | legs after             | resolves to |
+| ----------------------- | -------------- | ---------------------- | ----------- | ---------------------- | ----------- |
+| classic / native        | `0E544374BBD5` | `-6959166271784855184` | type 0      | unchanged              | XLM         |
+| classic / credit        | `544317D9B5E7` | `4519192638202107447`  | type 1 USDZ | unchanged              | USDZ        |
+| soroban / SAC of native | `0A0D06326A1B` | `-6164601581949826601` | **ORPHAN**  | `-6959166271784855184` | XLM         |
+| soroban / SAC of credit | `E55B1F69F0B8` | `5690321183329937413`  | **ORPHAN**  | `1076006802138508448`  | EURC        |
+| soroban / real token    | `FDD21419D7EC` | `6077758128363813942`  | type 3      | unchanged              | unchanged   |
+
+Classic rows and genuine-soroban-token rows do not move. Only the SAC legs do.
+
+### Consequences for the read half
+
+- `asset → pools` breaks across kinds: the same asset carries two different
+  ids depending on which kind of pool references it, so "pools holding USDC"
+  cannot be one query.
+- Naming: measured over the BROKEN state, 216 of 1,151 leg occurrences (18.8%)
+  had no name anywhere. Over the FIXED state that collapses to **5** — 1,059
+  become classic assets with real codes, and 87 of the 92 genuine soroban
+  tokens carry an on-chain SEP-41 symbol.
+- The `pool_kind = 0` guard the #438 review added to `asset_codes_predicate`
+  is NOT the fix for this and must not be re-created (task 0530 deletes it).
+
+### Decision (karolkow, 2026-09-08) — repair at the source, option A
+
+Rejected: a read-time bridge through `asset_sac` (rebuilds machinery the write
+side already owns, and becomes permanent). Rejected: promoting a SAC to a
+first-class asset with its own `assets` row (reverses ADR 0051 and fragments
+every balance — the same disease at larger scale).
+
+Deployment order, and the reason for it: **every writer producing old-rule rows
+must finish before the repair script runs**, or it re-introduces wrong rows.
+The registry backfill is such a writer and is running for BOTH pool kinds.
+
+1. Backfill finishes.
+2. Deploy the corrected writer — everything new is right from that moment.
+3. Repair script over `pool_kind = 1` rows only.
+4. Invariant checks below.
+
+Step 3 needs **no indexer pause**: after step 2 the live writer is already
+correct, and a ClickHouse mutation only rewrites parts existing at its start.
+Standing hazard to record: running a backfill with an OLD binary after step 3
+re-breaks the column — step 2 must precede every later run.
+
+### The invariant — two parts, deliberately not one
+
+A single "every leg resolves in `assets`" check cannot pass and would have to
+be weakened into uselessness. Split it:
+
+**Hard, must be zero forever** — catches exactly this defect:
+
+```sql
+-- soroban legs whose value is a known SAC surrogate
+WITH p AS (SELECT pool_id, argMax(pool_kind, last_updated_ledger) k,
+                  argMax(legs, last_updated_ledger) legs
+           FROM liquidity_pools GROUP BY pool_id)
+SELECT count() AS mis_keyed
+FROM (SELECT arrayJoin(legs) AS leg FROM p WHERE k = 1)
+WHERE leg IN (SELECT sac_contract_id FROM asset_sac WHERE sac_contract_id != 0)
+```
+
+Before: **1,084**. After the repair: **0**, unconditionally.
+
+**Soft, counted and alarmed — never silently allowed**: legs with no `assets`
+row that are not a known SAC. Before: 1. After: 1. Growth means a token family
+we do not know about, and we want to hear about it rather than discover it as
+a blank cell.
+
+That one is understood, not a mystery: pool
+`8FE06922A146D7BEBAB9CDD93D0E34224AFE09CFB42465378423F26DA8DE3370`, registered
+at ledger 50,875,676 by deployment `CARVO4GF…` — one of the five dead early
+config-factory deployments that predate the documented factory. Its
+registration event is the family's `["create", "liquidity_pool"]` shape, so the
+legs came from the pool's own CONFIG. The pool holds exactly one
+`pool_state_changes` row (its creation reserves) and emitted 2 events ever; the
+leg's token contract has emitted **zero** events in our entire window. It is
+not below the ingest floor (floor 50,457,424 < 50,875,676) — the token is
+simply inert, so no `soroban_contracts` row was ever created for it. An
+unnamed leg here is an honest statement, not a lost identity.
