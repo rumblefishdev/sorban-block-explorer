@@ -1763,3 +1763,38 @@ leg's token contract has emitted **zero** events in our entire window. It is
 not below the ingest floor (floor 50,457,424 < 50,875,676) — the token is
 simply inert, so no `soroban_contracts` row was ever created for it. An
 unnamed leg here is an honest statement, not a lost identity.
+
+## Asset-identity resolution consolidated (2026-09-08) — and what it costs
+
+The pool read path needs a leg's display identity from an `assets.id`
+surrogate. Before designing one, a check of what already exists found it: task
+0540 wrote `resolve_asset_identities` for the account value-flow read, with a
+statement whose every shape is a paid-for lesson (LEFT join or NFT transfers
+vanish; the contract leg on the same id list or the `assets` scan runs twice —
+209 ms / 2.5M rows against 44 ms / 268k; `toBool` for the driver's `Bool`;
+`CAST(… AS Array(Int64))` or an all-positive page 500s; `LIMIT 1 BY id` over
+`FINAL`, 4.7x fewer rows). Copying that into the pools module was the wrong
+answer, so the domain map's consolidation trigger — "a third consumer needing
+richer fields" — fires here.
+
+Moved to `crates/api/src/common/asset_identity.rs` with the SQL **byte-identical**
+(verified programmatically, 1,137 characters). The split point moved by one
+step, deliberately: the shared function now returns the RAW identity
+(`ResolvedAsset`), and the account read keeps its own projection onto the three
+fields a balance-change cell renders. Sharing the resolution while copying the
+projection is what makes it reusable — the pool leg's projection is an avatar,
+not a `CODE-ISSUER` link.
+
+**Re-measured on production after the move** (9 mixed asset ids, one page's
+worth): **605,688 rows / 6.83 MiB / 47 ms**. Against 0540's documented 44 ms /
+268k the time is unchanged and the rows are 2.26x — all of it dimension growth,
+accounted for exactly: `assets` 569,042 (a full scan, because `id` is not in
+its `ORDER BY` and it carries no skip index) + `soroban_contract_metadata`
+3,930 + 32,716 granules from the bloom seek on `soroban_contracts`.
+
+**Worth watching, not fixing yet:** the `assets` scan is now 94% of that read
+and grows with the table, and the pools path is about to become its second
+caller. The fix, if it ever earns its keep, is a bloom index on `assets.id` —
+the same `idx_acc_id` treatment `accounts` got at ~23M rows — which is a
+production DDL and therefore an operator action. Not justified at 569k and
+47 ms.
