@@ -183,9 +183,20 @@ path (`stage.rs:1930`) already keeps `C`, which shows the omission is an acciden
 
 ### Measured, 2026-09-08 (production)
 
+> **Correction, same day.** An earlier version of this table read
+> `contract_type = 1` as `Fungible`. The enum is `Token = 0, Other = 1,
+Nft = 2, Fungible = 3` (`domain/src/enums/contract_type.rs:23`), so `1` is
+> **`Other`** — "the classifier recognised nothing", not "the classifier
+> disagreed". The corrected reading is weaker as a contradiction and stronger
+> as evidence for [[0512]]: the two sides do not contradict each other, one of
+> them simply never had an opinion. Re-measured with the right values:
+> non-fungible movements split **410 in 12 collections the classifier calls
+> `Nft`** (agreement) against **136 in 3 it calls `Other`**, and asset-row
+> coverage for contracts it calls `Fungible` is **4 423 of 4 423 — complete**.
+
 | #   | Contradiction                                                                           | Exposure                                                                                                                                                          |
 | --- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | decoder says non-fungible, classifier says Fungible                                     | **136 movements, 3 collections**                                                                                                                                  |
+| 1   | decoder says non-fungible, classifier says `Other` — it recognised nothing              | **136 movements, 3 collections**                                                                                                                                  |
 | 2   | `nft.rs` credits the ADMIN, `asset_transfers` credits the recipient                     | witness above; 26 movements collapse in the read                                                                                                                  |
 | 3   | NFT owner is a CONTRACT and the API resolves owners only via `accounts`                 | **339 of 1 089 owners (31%)** — all 339 resolve in `soroban_contracts`, so it is a read-side omission, not missing data (belongs to [[0376]], measured there too) |
 | 4   | a `C` transfer endpoint with no `soroban_contracts` row                                 | 4 of 2 371                                                                                                                                                        |
@@ -199,11 +210,28 @@ edges), `nfts.current_owner_id` vs its own ownership history (0 of 13 955),
 native's surrogate (one convention, 0 empty-string rows), `canonical_id` vs
 `asset_route_token`, and the three `decimals` paths.
 
-Fixed outside this task, in 0540, because it was already on a live surface: an
-asset was linked to `/assets/{id}` whenever `soroban_contracts` knew the
-contract, which is a different question from whether `assets` has a row —
-4 of 51 421 fungible assets in a historical partition would have produced a
-404 link.
+Mitigated outside this task, in 0540, because it was already on a live
+surface — but the mitigation is a PLASTER and is named as one here so it gets
+removed rather than inherited. The cell stopped linking an asset whose
+`assets` row is missing (4 of 51 421 fungible assets in a historical
+partition). It did not ask WHY the row is missing.
+
+**Why it is missing, traced 2026-09-08.** An `assets` row for a bespoke token
+is created by `stage.rs:2119-2146` for contracts whose verdict is `Fungible`,
+and that rule is complete: 4 423 of 4 423. The four dead links are contracts
+the classifier calls **`Other`** — yet each one emits `{amount}` transfers, so
+the chain has already demonstrated they are fungible tokens. The registry keys
+on a **guess at the WASM's function names**; the evidence of what the contract
+actually did is never consulted.
+
+**The fundamental fix**, and it belongs to this task's "one definition":
+register an asset from the EVIDENCE — a contract that moved a fungible amount
+is a fungible asset — not from a name match. That rule is self-healing for
+history, because `asset_transfers` carries the evidence for the whole range
+once the backfill lands, and it removes 0540's plaster along with the
+`resolves_on_asset_page` flag that exists only to route around the gap.
+Sequenced after [[0512]], which is the same question asked of the classifier
+itself.
 
 ### What this task now owns
 
