@@ -2063,6 +2063,40 @@
           }
         }
       },
+      "AccountBalanceChange": {
+        "type": "object",
+        "description": "One asset's net balance change for the account whose page this is\n(task 0540). Relative to that account by construction: the same\ntransaction seen from another account carries different numbers.",
+        "required": ["asset", "decimals", "nft_delta"],
+        "properties": {
+          "amount": {
+            "type": ["string", "null"],
+            "description": "SIGNED raw amount as an `Int128` string: positive received, negative\nspent. Scale by `decimals`.\n\n**`null` is not zero.** It means a NON-FUNGIBLE movement, where no\namount exists by nature — the event carries a token id, not a value.\nThe piece changed hands; rendering `0` would say it did not. See\n`nft_delta`, and `nfts` / `nft_ownership` for which piece it was (this\nfield's source does not carry the token id)."
+          },
+          "asset": {
+            "type": "string",
+            "description": "Asset identity accepted by the asset detail endpoint — `\"native\"`,\n`\"CODE-ISSUER\"`, or a bespoke Soroban token's `C…` contract StrKey.\nEmpty when the asset resolves to nothing at all (an unregistered\ncontract): render the code without a link rather than a dead one."
+          },
+          "asset_code": {
+            "type": ["string", "null"],
+            "description": "Display code (`\"USDC\"`, or a bespoke token's on-chain symbol).\n`null` for native — render as XLM — and for a token with no symbol."
+          },
+          "decimals": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Display decimals — 7 for native/classic/SAC, on-chain `METADATA` for a\nbespoke Soroban token.",
+            "minimum": 0
+          },
+          "nft_delta": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Signed count of non-fungible pieces moved (`+1` received, `−1` sent);\n`0` for an ordinary fungible asset. Non-zero exactly when `amount` is\n`null`."
+          },
+          "token_id": {
+            "type": ["string", "null"],
+            "description": "WHICH piece moved — the contract-defined token id (`\"44\"`), so the\nclient can link to that NFT rather than to its whole collection.\n\nA transaction that moved SEVERAL pieces yields several entries, one per\npiece, each with its own id — so each NFT is listed and linked\nseparately rather than lumped into a count.\n\n`null` whenever naming the pieces would be a guess: a fungible asset, a\ncollection whose ownership rows are not indexed, or a set whose size\ndoes not match the number of pieces this account moved (somebody else\nmoved pieces to the same owner in the same transaction). Link to the\ncollection in that case; do not invent an id."
+          }
+        }
+      },
       "AccountDetailResponse": {
         "type": "object",
         "required": [
@@ -2227,6 +2261,13 @@
             "type": "integer",
             "format": "int32",
             "description": "1-based position in ledger."
+          },
+          "balance_changes": {
+            "type": ["array", "null"],
+            "items": {
+              "$ref": "#/components/schemas/AccountBalanceChange"
+            },
+            "description": "What this transaction did to THIS account's balances, in the order the\nmovements happened on the chain. Account-relative, which is why no other\nlist endpoint carries it.\n\nThe order is NOT a ranking. Assets have different decimals and different\nprices, and no price exists anywhere in this system, so sorting by\namount would compare quantities that are not comparable. Chain order is\na fact; render it as given.\n\n**`null` means NOT INDEXED, never \"nothing moved\".** The per-transfer\nindex starts at ledger 64 317 019 (it drops to the ingest floor once the\nhistorical backfill lands); below that there is no data, and a client\nthat draws `null` as `0` is showing a value nobody measured. An empty\nARRAY is the real \"nothing changed\" — the transaction is indexed and\nthis account's balances came out unchanged (a round-trip arbitrage, an\noffer placed, a failed transaction, a payment to self).\n\nAssets whose net change is exactly zero are omitted: under this name an\nasset that did not change is not a balance change. The gross movement\nbehind a net figure is not carried here."
           },
           "created_at": {
             "type": "string",
@@ -3613,6 +3654,13 @@
                   "type": "integer",
                   "format": "int32",
                   "description": "1-based position in ledger."
+                },
+                "balance_changes": {
+                  "type": ["array", "null"],
+                  "items": {
+                    "$ref": "#/components/schemas/AccountBalanceChange"
+                  },
+                  "description": "What this transaction did to THIS account's balances, in the order the\nmovements happened on the chain. Account-relative, which is why no other\nlist endpoint carries it.\n\nThe order is NOT a ranking. Assets have different decimals and different\nprices, and no price exists anywhere in this system, so sorting by\namount would compare quantities that are not comparable. Chain order is\na fact; render it as given.\n\n**`null` means NOT INDEXED, never \"nothing moved\".** The per-transfer\nindex starts at ledger 64 317 019 (it drops to the ingest floor once the\nhistorical backfill lands); below that there is no data, and a client\nthat draws `null` as `0` is showing a value nobody measured. An empty\nARRAY is the real \"nothing changed\" — the transaction is indexed and\nthis account's balances came out unchanged (a round-trip arbitrage, an\noffer placed, a failed transaction, a payment to self).\n\nAssets whose net change is exactly zero are omitted: under this name an\nasset that did not change is not a balance change. The gross movement\nbehind a net figure is not carried here."
                 },
                 "created_at": {
                   "type": "string",

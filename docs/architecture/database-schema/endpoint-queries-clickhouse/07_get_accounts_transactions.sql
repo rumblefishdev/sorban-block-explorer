@@ -26,6 +26,22 @@
 --          the api_reader read_rows quota in the global list — CH Code: 201).
 --       3. operation_types via the shared two-step aggregate; re-order rows in
 --          Rust by the driver keyset order.
+--       4. `balance_changes` (task 0540) — this account's signed per-asset
+--          movement per transaction, from `asset_transfers`, keyed on
+--          `(ledger_sequence, application_order)` which step 2 already has and
+--          which is that table's sort-key PREFIX, so it is a seek. Two
+--          statements: the signed sum, then the asset identity for the ids it
+--          returned. Measured on production, 25-transaction page: 20 ms /
+--          13 824 rows and 44 ms / 268 k rows. Rules that are NOT optional —
+--          the inner GROUP BY over the FULL sort key (version-less RMT with
+--          permanent duplicates), the `intDiv(ledger_sequence, 500000)`
+--          partition prune, `to - from` per row so a self-transfer cancels,
+--          and `CAST(… AS Array(Int64))` on any inlined id list (ClickHouse
+--          types an array literal from its values, so an all-positive list
+--          becomes `Array(UInt64)` and fails to decode). Transactions BELOW
+--          the index floor get `null`, never an empty list: the table has no
+--          rows there and an absent measurement must not render as a zero.
+--          See `crates/api/src/accounts/balance_changes.rs`.
 --     Cursor keys on `(ledger_sequence, transaction_id)` on CH (PG keeps
 --     `(created_at, transaction_id)`); see `transactions::dto::TxListCursor`.
 -- ============================================================================

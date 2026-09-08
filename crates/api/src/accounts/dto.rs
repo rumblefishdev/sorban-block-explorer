@@ -156,6 +156,50 @@ pub struct AccountSigning {
     pub last_updated_ledger: i64,
 }
 
+/// One asset's net balance change for the account whose page this is
+/// (task 0540). Relative to that account by construction: the same
+/// transaction seen from another account carries different numbers.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct AccountBalanceChange {
+    /// Asset identity accepted by the asset detail endpoint — `"native"`,
+    /// `"CODE-ISSUER"`, or a bespoke Soroban token's `C…` contract StrKey.
+    /// Empty when the asset resolves to nothing at all (an unregistered
+    /// contract): render the code without a link rather than a dead one.
+    pub asset: String,
+    /// Display code (`"USDC"`, or a bespoke token's on-chain symbol).
+    /// `null` for native — render as XLM — and for a token with no symbol.
+    pub asset_code: Option<String>,
+    /// Display decimals — 7 for native/classic/SAC, on-chain `METADATA` for a
+    /// bespoke Soroban token.
+    pub decimals: u32,
+    /// SIGNED raw amount as an `Int128` string: positive received, negative
+    /// spent. Scale by `decimals`.
+    ///
+    /// **`null` is not zero.** It means a NON-FUNGIBLE movement, where no
+    /// amount exists by nature — the event carries a token id, not a value.
+    /// The piece changed hands; rendering `0` would say it did not. See
+    /// `nft_delta`, and `nfts` / `nft_ownership` for which piece it was (this
+    /// field's source does not carry the token id).
+    pub amount: Option<String>,
+    /// Signed count of non-fungible pieces moved (`+1` received, `−1` sent);
+    /// `0` for an ordinary fungible asset. Non-zero exactly when `amount` is
+    /// `null`.
+    pub nft_delta: i64,
+    /// WHICH piece moved — the contract-defined token id (`"44"`), so the
+    /// client can link to that NFT rather than to its whole collection.
+    ///
+    /// A transaction that moved SEVERAL pieces yields several entries, one per
+    /// piece, each with its own id — so each NFT is listed and linked
+    /// separately rather than lumped into a count.
+    ///
+    /// `null` whenever naming the pieces would be a guess: a fungible asset, a
+    /// collection whose ownership rows are not indexed, or a set whose size
+    /// does not match the number of pieces this account moved (somebody else
+    /// moved pieces to the same owner in the same transaction). Link to the
+    /// collection in that case; do not invent an id.
+    pub token_id: Option<String>,
+}
+
 /// Slim — `inner_tx_hash` lives on `/v1/transactions` only.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AccountTransactionItem {
@@ -173,6 +217,27 @@ pub struct AccountTransactionItem {
     pub has_soroban: bool,
     pub operation_types: Vec<String>,
     pub created_at: DateTime<Utc>,
+    /// What this transaction did to THIS account's balances, in the order the
+    /// movements happened on the chain. Account-relative, which is why no other
+    /// list endpoint carries it.
+    ///
+    /// The order is NOT a ranking. Assets have different decimals and different
+    /// prices, and no price exists anywhere in this system, so sorting by
+    /// amount would compare quantities that are not comparable. Chain order is
+    /// a fact; render it as given.
+    ///
+    /// **`null` means NOT INDEXED, never "nothing moved".** The per-transfer
+    /// index starts at ledger 64 317 019 (it drops to the ingest floor once the
+    /// historical backfill lands); below that there is no data, and a client
+    /// that draws `null` as `0` is showing a value nobody measured. An empty
+    /// ARRAY is the real "nothing changed" — the transaction is indexed and
+    /// this account's balances came out unchanged (a round-trip arbitrage, an
+    /// offer placed, a failed transaction, a payment to self).
+    ///
+    /// Assets whose net change is exactly zero are omitted: under this name an
+    /// asset that did not change is not a balance change. The gross movement
+    /// behind a net figure is not carried here.
+    pub balance_changes: Option<Vec<AccountBalanceChange>>,
 }
 /// Keyset cursor for the accounts list — sorts on `last_seen_ledger` with the
 /// surrogate `id` as the unique tiebreak. Serialized (base64/JSON) into the

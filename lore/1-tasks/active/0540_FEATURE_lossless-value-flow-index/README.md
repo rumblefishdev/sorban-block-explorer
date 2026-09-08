@@ -577,6 +577,214 @@ reached the release PR without ever having been through CI. It was run locally
 first (420 parser tests, 135 persistence tests, clippy clean) and the release
 PR was its first full CI pass.
 
+### Rollout steps 8–10 — the read half, built 2026-09-07
+
+The `Balance change` column, end to end, against the live tail of the table
+(L₀ onward; the historical backfill has not run, and the column is honest about
+that rather than waiting for it).
+
+**API.** `crates/api/src/accounts/balance_changes.rs`, hung off step 2 of the
+existing account-transactions read: that step already holds
+`(ledger_sequence, application_order)` for the page, which is the
+`asset_transfers` sort-key prefix, so the transfer read is a seek and needs no
+second driver. Two statements — the signed per-asset sum, then the asset
+identity — and the second one only because the first cannot know its asset ids
+in advance. The `resolve_accounts` hop for source accounts and the transfer read
+now run concurrently (`tokio::try_join!`).
+
+**The wire contract carries three states, and the cell keeps them apart:**
+
+| `balance_changes` | Means                              | Cell           |
+| ----------------- | ---------------------------------- | -------------- |
+| `null`            | below the floor — **not measured** | `Not indexed`  |
+| `[]`              | measured; balances held            | `0`            |
+| non-empty         | measured; these assets moved       | signed amounts |
+
+`VALUE_FLOW_FLOOR_LEDGER = 64_317_019`, a `const` rather than config: env vars
+come from the CDK compute stack, so changing it needs a deploy either way and an
+env read would buy nothing. It drops to the ingest floor once the backfill
+passes its gate.
+
+**Measured on production** (25-transaction page, busiest `G…` account, one
+partition — the live window is ~3 300 ledgers, so the multi-partition worst case
+is not reproducible until the backfill lands):
+
+| Statement                   | Time   | Rows read | Bytes   |
+| --------------------------- | ------ | --------- | ------- |
+| signed per-asset sum        | 20 ms  | 13 824    | 288 KiB |
+| asset identity              | 44 ms  | 268 k     | 6.7 MiB |
+| asset identity, first shape | 209 ms | 2.5 M     | 78 MiB  |
+
+The first shape joined `soroban_contracts` through `assets.contract_id`, which
+made the CTE holding the scan-only `assets` leg run twice. It does not need to:
+**a Soroban asset's surrogate IS its contract's** — 4 422 of 4 422 type-3 rows
+on production have `id = contract_id`, and types 0/1 have no contract at all —
+so the contract leg seeks the same id list whether or not `assets` knows the
+asset, and the scan happens once. `FINAL` on these dimensions is replaced by
+`LIMIT 1 BY id` / `argMax(…, version)`; it measured 4.7× the rows read for a
+collapse that is exact without it (0344's argument). `assets.id` carries no skip
+index, so its leg is a scan either way; `soroban_contracts.id` and `accounts.id`
+are bloom seeks.
+
+**Decisions taken here, beyond what T07 settled:**
+
+1. **An asset whose net change is zero is dropped server-side.** Under a heading
+   that says `Balance change`, an asset that did not change is not one. It is
+   also what makes the adversarial row readable: the six-hop arbitrage nets to
+   exactly zero in eight assets and profits in one, and `+8` for the eight would
+   bury the only content the row has. Measured on production — a real
+   arbitrage page row carries nine assets of which eight net to zero.
+2. **`to − from` per row, never a first-match branch.** With
+   `from_id = to_id = account` a `multiIf` testing `to_id` first returns
+   `+amount`, and the page shows an account paying itself. Pinned by a test
+   against the SQL.
+3. **A non-fungible movement renders as pieces (`+1 NFT`), not as a blank or a
+   zero.** `amount` `NULL` has one cause and the count carries the direction, so
+   the cell can say what happened without inventing an amount. The piece's own
+   identity is NOT in this table — `nfts` / `nft_ownership` own that, and the
+   cell does not claim otherwise. Zero such rows exist in the live window
+   (0 of 1 771 703), so this is correctness for after the backfill, not for now.
+4. **Assets are returned in CHAIN ORDER, not ranked** (task owner, 2026-09-07).
+   The first implementation ordered by amount scaled by each asset's own
+   `decimals`. The owner rejected it on the grounds that settle it: different
+   assets have different decimals AND different prices, and this system holds no
+   price for any of them, so the comparison is between quantities that are not
+   comparable — a ranking presented as one would be a claim we cannot support.
+   The statement now orders on `min((op_index, event_pos_in_op))`, the position
+   of an asset's first edge in the transaction, and nothing re-sorts it
+   afterwards. It is the only ordering available that is a fact rather than an
+   interpretation.
+5. **Fungible and non-fungible movements of one asset are SEPARATE entries**
+   (review finding, 2026-09-07). `asset_id` is the emitting contract's
+   surrogate, so a contract emitting both an `{amount}` and a `{token_id}`
+   transfer shares an id between them — and `sum()` skips NULLs, so one row
+   would carry a real `delta` AND a non-zero `nft_delta`, contradicting the
+   DTO's own invariant. The cell branches on "is there an amount", so the piece
+   movement would have vanished; and where the fungible legs netted out the row
+   would still pass `HAVING` and print `0` for a transaction that changed an
+   owner — the exact thing this column exists to stop. `is_non_fungible` is now
+   part of the grouping key, which makes the invariant true by construction
+   rather than by assertion. Exposure today is nil (1 non-fungible asset id in
+   2.26 M rows, and it emits nothing else), which is why it survived every test.
+6. **Review fixes carried in the same change** (two-axis review, 2026-09-07).
+   `decode_smoke` and the `accounts/queries.rs` tests both moved to sibling
+   files — the second because this change pushed that file from 798 to 831
+   lines, and extracting its tests returns it to 785. The `assets.id` bloom
+   index was REVERTED out of `init.sql`: it is a real optimisation but it
+   creates a production migration that no rollout step owns, and the read is
+   correct without it, so it belongs to its own task. A non-fungible entry now
+   links to its NFT collection (`/nfts?contract=…`) instead of `/assets/…`,
+   which 404s for precisely the collections this column names — they have no
+   `assets` row, which is why the read joins that table `LEFT`. And
+   `scaleByDecimals` now refuses a `decimals` above 39: it arrives from on-chain
+   metadata as a `u32`, and `10n ** BigInt(4_000_000_000)` freezes the tab.
+7. **The cell links to the PIECE, not to a filtered list** (task owner,
+   2026-09-07). The first fix sent a non-fungible movement to the collection
+   view, and the owner rejected the result on sight: it renders as a list with a
+   56-character contract id typed into a search box, which is not where someone
+   clicking an NFT wants to land. The token id is genuinely absent from
+   `asset_transfers` — it belongs to the piece, not to the movement — but
+   `nft_ownership` has it, keyed `(contract_id, token_id, ledger_sequence,
+event_order)`, so a `contract_id`-leading seek on the page's transaction ids
+   answers it: measured 18 ms / 1 509 rows, and the statement only runs when a
+   page actually carries a non-fungible entry (1 row in 2 256 264 today). The id
+   is used ONLY when the pieces can be proven; otherwise the entry falls back
+   to the collection view rather than name a piece we would be guessing at.
+   Verified end to end on production: the XLEND row reads `+1 NFT #44` and
+   lands on Token 44, whose artwork states the same `$4.68K` supply as the
+   `−4 681.51 USDC` beside it.
+
+   **Every piece of a bulk move is listed and linked separately** (task owner,
+   2026-09-08). Collapsing several pieces into `+3 NFT` was the first shape and
+   was rejected. Two measurements shaped the fix:
+
+   - **Pairing one edge with one piece is impossible from the data.**
+     `nft_ownership.event_order` is `0` on every row of a ten-piece transfer
+     (measured), so nothing there says which event moved which token. An
+     earlier claim in this task — that outgoing pieces would need an
+     ownership-history window — was also wrong: the table records the NEW
+     owner, and the edge already carries `to_id`, which IS that owner, so one
+     join names pieces in both directions.
+   - **1 659 transactions on production already move more than one piece of a
+     collection**, so this is a historical majority case, not a hypothetical;
+     it is simply absent from the live window since L₀.
+
+   So the read groups non-fungible movements by `(collection, transaction, new
+   owner)` and expands a group into one entry per piece — but ONLY when the set
+   size equals the number of pieces this account moved. That count is the proof:
+   the join is on the owner, so a transaction where a third party also moved
+   pieces to that same owner hands back more ids than we moved, and the entry
+   then stays collapsed with no id. Verified on a real ClickHouse in all three
+   shapes: a 3-piece mint → three `+1 NFT #101/#102/#103` entries; a 2-piece
+   send → two `−1` entries naming the pieces via the recipient; and the same
+   send with a third party's piece added to the set → collapses to `−2 NFT`
+   with no id.
+
+8. **The dedup stays `GROUP BY`.** The step-8 choice against `FINAL` was left
+   open on the grounds that one local part flatters `FINAL`; production parts
+   did not change the answer, and `GROUP BY` over the full sort key is the shape
+   that cannot silently stop deduplicating if a version column is ever added.
+
+**Frontend.** `web/src/pages/accounts/BalanceChangeCell.tsx` + the column on
+`AccountTransactions`. Account page only. `scaleByDecimals` rejects negative raw
+amounts by its own contract, so the sign is split off in the cell and
+re-attached rather than widening a formatter every other caller depends on.
+7 component tests cover the three states, the sign, US grouping, the NFT count
+and the unregistered-token label.
+
+**Verified end to end against a real ClickHouse** (the repo's docker instance,
+seeded to cover every branch; no production cert needed, which was the cheaper
+route the task owner pointed at). The seed was a one-off: the `decode_smoke`
+tests that stayed behind need no fixtures, and the branch coverage below was
+re-confirmed against production rows, so nothing depends on reproducing it):
+
+| Case                                              | Expected                           | Got                                  |
+| ------------------------------------------------- | ---------------------------------- | ------------------------------------ |
+| unmerged RMT duplicate of one transfer            | counted once                       | `+60 970 653 780` USDC, not doubled  |
+| classic asset                                     | `CODE-ISSUER` link identity        | `USDC-GA5ZSEJY…`                     |
+| registered type-3 token                           | on-chain symbol + decimals         | `DEMO`, `decimals 4`                 |
+| **unregistered** NFT collection (no `assets` row) | resolved via `soroban_contracts`   | `C…`, symbol `TALKMP25`              |
+| non-fungible movement                             | `amount` NULL, signed piece count  | `None`, `nft_delta −1`               |
+| transfer to self                                  | cancels, dropped                   | absent                               |
+| round trip netting to zero                        | dropped                            | transaction absent → `[]` → cell `0` |
+| ordering                                          | chain order — first movement first | USDC before native; token before NFT |
+
+Two `decode_smoke` tests pin the wire contract against a real server — the
+`Nullable` sum into `Option<String>` and `toBool` into `bool`. Neither is
+checkable in pure Rust and both are the 0324 outage class.
+
+**A 500 that only fired on some accounts, found by browsing the running
+page.** `arrayJoin([…])` types an array literal from its VALUES, so a page whose
+asset ids all happen to be positive yields `Array(UInt64)` and the `id` column
+decodes as `UInt64` into `i64` — `schema mismatch`, a 500 on that account and on
+no other. Every test before it happened to include native, whose surrogate is
+negative, so all of them passed. Fixed with `CAST([…] AS Array(Int64))` and
+pinned by a `decode_smoke` case with an all-positive list — asserted through the
+REAL builder, not a copy of its SQL, and confirmed by removing the `CAST` and
+watching only that test go red while its all-negative twin stayed green. Found on
+`GBO56XB4…`, whose only asset is `XTAR` (id 8 106 068 169 672 383 637) — which
+is the argument for standing the thing up against production rows rather than
+trusting a green suite.
+
+**Read cost, and a schema line that removes the rest of it.** `assets.id` is
+not in that table's `ORDER BY` and carried no skip index, so the identity read
+scans. `init.sql` now declares `INDEX idx_assets_id` — the same bloom
+`accounts` and `soroban_contracts` already have. Production needs
+`ALTER TABLE assets ADD INDEX idx_assets_id id TYPE bloom_filter(0.001)
+GRANULARITY 1` + `MATERIALIZE INDEX` for it to take effect (task owner's).
+Not load-bearing: the read is correct either way, and it also cheapens the
+`balances` join on the same page.
+
+**Fees are NOT in this column, and cannot be yet.** Confirmed on production:
+`asset_transfers` carries token movements only — a 1 XLM payment stores exactly
+10 000 000 stroops beside a `fee_charged` of 100. Folding the fee in would need
+to know WHO paid it, and **40.2% of transactions in the live window are
+fee-bumps** (574 554 of 1 430 830), where the payer is the envelope's
+`fee_source`, not `transactions.source_id` — deliberately so, since bug 0168.
+No column stores `fee_source` anywhere. Attributing the fee to the inner source
+would be wrong on two rows in five, so the column stays transfers-only and the
+`Fee` column beside it carries the rest.
+
 ### Design decisions
 
 #### From plan
@@ -655,9 +863,12 @@ event_pos_in_op)`, all NOT NULL; `event_index` is an ordinary column
       live indexer; the column
       ships only after the three-layer completion gate passes on the full range
       (per-partition count vs `soroban_events`, archive re-decode diff, T11)
-- [ ] Read path benchmarked on the account endpoint before exposure
-      (0243/0386 were both read-shape outages)
-- [ ] Column `Balance change` on the **account page only** — not the global
+- [x] Read path benchmarked on the account endpoint before exposure
+      (0243/0386 were both read-shape outages) — 20 ms / 13 824 rows for the
+      transfer read and 44 ms / 268 k for the asset identity beside it, measured
+      on production 2026-09-07; the first shape of the second statement was
+      209 ms / 2.5 M and was fixed before it shipped (see rollout steps 8–10)
+- [x] Column `Balance change` on the **account page only** — not the global
       transaction list, the ledger page or the asset page. A balance change means
       nothing without an account in context, and the global list is where the
       removed column misled most
@@ -680,4 +891,12 @@ event_pos_in_op)`, all NOT NULL; `event_index` is an ordinary column
       asset type. Runnable from `tests/`; accounts and ledger recorded here
 - [ ] Direction visible on the account page in production
 - [ ] **Docs updated** — `docs/architecture/database-schema/**`,
-      `indexing-pipeline/**`, `xdr-parsing/**`, `frontend/**` per ADR 0032
+      `indexing-pipeline/**`, `xdr-parsing/**`, `frontend/**` per ADR 0032.
+      Read half (2026-09-07): `database-schema/database-schema-overview.md`
+      UPDATED (the read path and its measured cost);
+      `database-schema/endpoint-queries-clickhouse/07_get_accounts_transactions.sql`
+      UPDATED (step 4 of the read shape); `frontend/frontend-overview.md`
+      UPDATED (§6.7 the column, §6.3 why it is not on the global list);
+      `indexing-pipeline/**` **N/A — the read half writes nothing**;
+      `xdr-parsing/**` **N/A — no parser change; the decode shipped with the
+      write half**. Write half's own entries stay open until the backfill

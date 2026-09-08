@@ -32,6 +32,7 @@ export {
 } from './sdk.gen.js';
 export type {
   AccountBalance,
+  AccountBalanceChange,
   AccountDetailResponse,
   AccountListItem,
   AccountSigner,
