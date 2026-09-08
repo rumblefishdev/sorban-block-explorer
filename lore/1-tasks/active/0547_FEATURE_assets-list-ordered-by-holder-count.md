@@ -112,6 +112,57 @@ rows / 21 MiB.** Ordering on a joined column reads all of `assets`; against the
 that ever binds, is a driver over `balance_aggregates` itself (11 ms) — not a
 return to the alphabet.
 
+## The cursor now walks a MUTABLE key — known, measured, accepted
+
+Raised by the task owner on review, and it is a real property the old order did
+not have: the identity 4-tuple is immutable, so a keyset over it could only be
+disturbed by inserts and deletes. `holder_count` changes on its own.
+
+`balance_aggregates` is a refreshable MV on `REFRESH EVERY 2 MINUTE`, full
+recompute + atomic `EXCHANGE`. So a single query always sees one consistent
+snapshot; two pages fetched more than two minutes apart may straddle two.
+
+Across a boundary, a count that moves past the cursor's value means the row
+moves with it: upward → onto a page already shown, so it is **missed**;
+downward → below the cursor, so it is **seen twice**. Bounded to rows whose
+count crossed that exact value, never a whole page.
+
+**Measured on production, 2026-09-08** — the top 60 rows (three pages), sampled
+twice ~6 minutes apart:
+
+|                                   |             |
+| --------------------------------- | ----------- |
+| assets whose holder count changed | **5 of 60** |
+| positions that reordered          | **0**       |
+
+Counts move constantly; the ORDER barely does, because near the top the gaps
+are enormous (XLM 9 949 976, TXT 804 336, USDC 684 185 — a ±10 drift reorders
+nothing) and only one asset sits within ±15 of the page-1 boundary.
+
+The tail is the opposite shape and is where the effect is real: **335 735 of
+452 599 assets hold 1–3 holders**, so there a ±1 change jumps a row past
+thousands of ties. Nobody paginates to page 16 000, and the `id` tiebreak keeps
+equal counts stably ordered, so the exposure is theoretical rather than
+observed.
+
+**This list is not the first.** `/accounts` already walks
+`ORDER BY last_seen_ledger, id` with the same shape of cursor — and that key
+moves on every transaction an account makes, far more volatile than a holder
+count refreshed every two minutes. The property is not new to the system.
+
+**Decision (task owner, 2026-09-08): accept.** The options weighed:
+
+|     | Option                                       | Verdict                                                                                                                                                                   |
+| --- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A   | accept                                       | **taken** — measured zero reorderings where readers look                                                                                                                  |
+| B   | bucket the key (`intDiv(holder_count, 100)`) | rejected — kills churn nobody sees by making the order inside a bucket arbitrary, which readers do see                                                                    |
+| C   | pin an aggregate version in the cursor       | the only strictly correct fix, and the expensive one: the MV keeps no old versions, so it means retaining, expiring and evicting snapshots — server state on a public API |
+| D   | slow the refresh to ~15 min                  | rejected — buys list stability with staleness on the asset detail page, where the count is the content                                                                    |
+| E   | `OFFSET`                                     | strictly worse: same defect, slower with depth, against ADR 0008                                                                                                          |
+
+**What would reopen it:** a report of rows going missing while paging, not the
+theory. The answer then is C.
+
 ## Acceptance criteria
 
 - [x] Default order is holder count, highest first; verified against the live
