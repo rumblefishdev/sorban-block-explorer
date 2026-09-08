@@ -217,7 +217,26 @@ pub async fn fetch_balance_changes(
             // cannot happen through the query above (every id yields a row),
             // and is here so a future caller cannot silently get a wrong scale.
             || (String::new(), None, 7),
-            |i| (i.asset.clone(), i.asset_code.clone(), i.decimals),
+            |i| {
+                // A NON-FUNGIBLE entry keeps its contract StrKey whatever
+                // `assets` knows: the cell sends it to the NFT pages, which are
+                // keyed on the contract and answer for collections `assets` has
+                // never heard of — that is the whole reason this read joins
+                // `assets` LEFT. A FUNGIBLE entry goes to `/assets/{id}`, so it
+                // is linked only when that page can answer; otherwise the
+                // identity is emitted EMPTY and the cell prints the code as
+                // plain text. Measured on production: 4 such assets in one
+                // historical partition, 0 in the live one — small, but a dead
+                // link is exactly the plausible-looking wrongness this column
+                // exists to avoid.
+                let linkable = row.nft_delta != 0 || i.resolves_on_asset_page;
+                let asset = if linkable {
+                    i.asset.clone()
+                } else {
+                    String::new()
+                };
+                (asset, i.asset_code.clone(), i.decimals)
+            },
         );
         // A non-fungible group is EXPANDED into one entry per piece when the
         // pieces can be named — that is what makes each NFT in a bulk move its
@@ -279,6 +298,15 @@ struct AssetIdentity {
     asset: String,
     asset_code: Option<String>,
     decimals: u32,
+    /// Whether `/assets/{asset}` can actually answer for this identity.
+    ///
+    /// A bespoke token's link is its contract StrKey, and `soroban_contracts`
+    /// has a row for EVERY deployed contract — but the asset endpoint hydrates
+    /// the key `(3, '', 0, surrogate)` out of `assets`, so a token nobody
+    /// registered there answers 404. The two conditions are not the same
+    /// question, and reading the StrKey's presence as if it were the second one
+    /// is what produced a live-looking link to a page that does not exist.
+    resolves_on_asset_page: bool,
 }
 
 #[derive(Debug, Row, Deserialize)]
@@ -459,6 +487,7 @@ async fn resolve_asset_identities(
                     asset,
                     asset_code,
                     decimals: r.decimals,
+                    resolves_on_asset_page: r.known,
                 },
             )
         })

@@ -720,7 +720,22 @@ event_order)`, so a `contract_id`-leading seek on the page's transaction ids
    send with a third party's piece added to the set → collapses to `−2 NFT`
    with no id.
 
-8. **The dedup stays `GROUP BY`.** The step-8 choice against `FINAL` was left
+8. **An asset is linked only where a page can answer** (2026-09-08, found by a
+   contradiction sweep after the deploy). `BalanceChange.asset` took a bespoke
+   token's contract StrKey from `soroban_contracts`, which has a row for EVERY
+   deployed contract — but `/assets/{id}` hydrates `(3, '', 0, surrogate)` out
+   of `assets`, so a token nobody registered there answers 404. Two different
+   questions read as one, and the cell drew a live-looking link to a page that
+   does not exist. The identity is now emitted EMPTY for a FUNGIBLE movement
+   whose asset has no `assets` row, and the cell prints the code as plain text;
+   a NON-FUNGIBLE entry keeps its StrKey because its destination is the NFT
+   pages, which are keyed on the contract and answer for collections `assets`
+   has never heard of. Measured on production: 4 of 51 421 fungible assets in a
+   historical partition, 0 of 8 643 in the live one — so nothing on screen today,
+   and it would have surfaced as the backfill lowers the floor. Verified against
+   production rows: the two sampled unregistered contracts report
+   `resolves_on_asset_page = false`, USDC reports `true`.
+9. **The dedup stays `GROUP BY`.** The step-8 choice against `FINAL` was left
    open on the grounds that one local part flatters `FINAL`; production parts
    did not change the answer, and `GROUP BY` over the full sort key is the shape
    that cannot silently stop deduplicating if a version column is ever added.

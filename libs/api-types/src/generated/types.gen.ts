@@ -88,10 +88,18 @@ export type AccountBalanceChange = {
    */
   amount?: string | null;
   /**
-   * Asset identity accepted by the asset detail endpoint — `"native"`,
-   * `"CODE-ISSUER"`, or a bespoke Soroban token's `C…` contract StrKey.
-   * Empty when the asset resolves to nothing at all (an unregistered
-   * contract): render the code without a link rather than a dead one.
+   * Asset identity the client can link to — `"native"`, `"CODE-ISSUER"`, or
+   * a bespoke Soroban token's `C…` contract StrKey.
+   *
+   * **Empty means there is no page for this asset**: render the code as
+   * plain text, never as a link. That happens when a token has no `assets`
+   * row, which is a different question from whether its contract exists —
+   * every deployed contract has a StrKey, but `/assets/{id}` answers only
+   * for registered assets.
+   *
+   * A NON-FUNGIBLE entry always carries its contract StrKey even when
+   * `/assets` would 404, because its destination is the NFT pages, which
+   * are keyed on the contract.
    */
   asset: string;
   /**
