@@ -1176,7 +1176,7 @@ pub fn prepare_with_sac_overrides(input: &StageInputs<'_>) -> Result<StagedLedge
                 continue;
             }
         }
-        match pool_registry_row(&reg.event, &reg.router, ledger_sequence_i64) {
+        match pool_registry_row(&reg.event, &reg.router, ledger_sequence_i64, sac_map) {
             Ok(row) => out.pool_rows.push(row),
             Err(reason) => tracing::error!(
                 ledger_sequence = ledger.sequence,
@@ -1237,7 +1237,7 @@ pub fn prepare_with_sac_overrides(input: &StageInputs<'_>) -> Result<StagedLedge
                 continue;
             }
         }
-        match factory_pair_registry_row(&reg, ledger_sequence_i64) {
+        match factory_pair_registry_row(&reg, ledger_sequence_i64, sac_map) {
             Ok(row) => out.pool_rows.push(row),
             Err(reason) => tracing::error!(
                 ledger_sequence = ledger.sequence,
@@ -1353,7 +1353,7 @@ pub fn prepare_with_sac_overrides(input: &StageInputs<'_>) -> Result<StagedLedge
         }
         match declared_config.get(reg.pool.as_str()) {
             Some(&(Some(config), true)) => {
-                match config_pool_registry_row(reg, config, ledger_sequence_i64) {
+                match config_pool_registry_row(reg, config, ledger_sequence_i64, sac_map) {
                     Ok(row) => out.pool_rows.push(row),
                     Err(reason) => tracing::error!(
                         ledger_sequence = ledger.sequence,
@@ -2768,9 +2768,37 @@ fn parse_supply(raw: Option<&str>) -> Result<i128, ()> {
 /// 2026-09-02) = 30 bps. Legs are the pair's leg TOKENS in vendor order
 /// (token_0, token_1); the share token is NOT a registry column — the pair
 /// is its own LP token and the relation lives in `pool_instance_state`.
+/// The `assets.id` surrogate for ONE soroban pool leg token.
+///
+/// A leg token is one of two things, and only one of them may keep its own
+/// contract surrogate. A genuine Soroban token IS its contract as far as asset
+/// identity goes (`ids::asset_id`'s type-3 arm returns `contract_id`). A SAC is
+/// NOT: ADR 0051 retired `asset_type = 2`, so a SAC has no `assets` row of its
+/// own and a leg keyed on its surrogate points at nothing — the same orphaning
+/// `build_balance_rows` exists to prevent for contract-held balances, and the
+/// reason 1,084 of 1,175 soroban legs resolved to no asset at all (task 0374,
+/// measured on production 2026-09-08).
+///
+/// `sac_classic` is the SAME map the balance path uses (seeded with this
+/// ledger's own SAC carriers before either caller runs), so both paths key the
+/// same asset identically. A token ABSENT from the map is a Soroban-native
+/// token, and it goes through `ids::asset_id` rather than returning the
+/// contract surrogate directly — the two are equal only because that is what
+/// the type-3 arm does, and spelling it as an ASSET id is what the defect
+/// below was missing. Mirrors `build_balance_rows` line for line.
+#[inline]
+fn pool_leg_token_id(token: &str, sac_classic: &HashMap<i64, i64>) -> i64 {
+    let contract = ids::contract_id(token);
+    sac_classic
+        .get(&contract)
+        .copied()
+        .unwrap_or_else(|| ids::asset_id(domain::AssetFamily::Soroban as i16, "", 0, contract))
+}
+
 fn factory_pair_registry_row(
     reg: &xdr_parser::pool_pair_factory::PairRegistration,
     ledger_sequence: i64,
+    sac_classic: &HashMap<i64, i64>,
 ) -> Result<LiquidityPoolRow, &'static str> {
     let pool_id =
         ids::contract_payload(&reg.event.pair).ok_or("pair address is not a valid C… strkey")?;
@@ -2786,8 +2814,8 @@ fn factory_pair_registry_row(
         last_updated_ledger: ledger_sequence,
         pool_kind: 1,
         legs: vec![
-            ids::contract_id(&reg.event.token_0),
-            ids::contract_id(&reg.event.token_1),
+            pool_leg_token_id(&reg.event.token_0, sac_classic),
+            pool_leg_token_id(&reg.event.token_1, sac_classic),
         ],
         deployment_id: ids::contract_id(&reg.factory),
         pool_type_raw: String::new(),
@@ -2807,6 +2835,7 @@ fn config_pool_registry_row(
     reg: &xdr_parser::pool_config_factory::ConfigPoolRegistration,
     config: &xdr_parser::pool_config_factory::PoolConfig,
     ledger_sequence: i64,
+    sac_classic: &HashMap<i64, i64>,
 ) -> Result<LiquidityPoolRow, &'static str> {
     let pool_id =
         ids::contract_payload(&reg.pool).ok_or("pool address is not a valid C… strkey")?;
@@ -2827,8 +2856,8 @@ fn config_pool_registry_row(
         last_updated_ledger: ledger_sequence,
         pool_kind: 1,
         legs: vec![
-            ids::contract_id(&config.token_a),
-            ids::contract_id(&config.token_b),
+            pool_leg_token_id(&config.token_a, sac_classic),
+            pool_leg_token_id(&config.token_b, sac_classic),
         ],
         deployment_id: ids::contract_id(&reg.factory),
         pool_type_raw: config.pool_type.to_string(),
@@ -2851,6 +2880,7 @@ fn pool_registry_row(
     reg: &xdr_parser::pool_router::AddPoolEvent,
     router_strkey: &str,
     ledger_sequence: i64,
+    sac_classic: &HashMap<i64, i64>,
 ) -> Result<LiquidityPoolRow, &'static str> {
     let pool_id =
         ids::contract_payload(&reg.pool).ok_or("pool address is not a valid C… strkey")?;
@@ -2874,7 +2904,11 @@ fn pool_registry_row(
         fee_bps,
         last_updated_ledger: ledger_sequence,
         pool_kind: 1,
-        legs: reg.tokens.iter().map(|t| ids::contract_id(t)).collect(),
+        legs: reg
+            .tokens
+            .iter()
+            .map(|t| pool_leg_token_id(t, sac_classic))
+            .collect(),
         deployment_id: ids::contract_id(router_strkey),
         pool_type_raw: reg.pool_type.clone(),
     })
@@ -3333,6 +3367,10 @@ pub fn ledger_deltas_net_settled(
         .collect();
     xdr_parser::net_settled(&resolved)
 }
+
+#[cfg(test)]
+#[path = "stage_tests.rs"]
+mod stage_tests;
 
 #[cfg(test)]
 mod pool_fill_amount_tests {
