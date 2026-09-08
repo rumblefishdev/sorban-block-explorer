@@ -223,6 +223,18 @@ FROM accounts FINAL;
 -- are byte-identical) — not redundancy. Renaming was costed and deferred to
 -- task 0418: the ALTER is metadata-only, but the call sites are 85 in
 -- `stage.rs` + 21 in `crates/api`.
+-- READ TRAP (measured 2026-09-08) — `LIMIT 1 BY id` is the cheap dedup this
+-- schema recommends for the surrogate-to-StrKey lookup, and it is exact for
+-- `contract_id`, which every version of a row carries identically (task 0344).
+-- It is NOT safe for any other column. The stub rows above are real rows with
+-- `contract_type`/`wasm_hash`/`deployer_id` all NULL, so "pick any one version"
+-- can pick a stub: the largest NFT collection on production holds three rows —
+-- one complete (`contract_type = 2`) and two stubs — where `FINAL` answers `2`
+-- and `LIMIT 1 BY id` answers NULL. Read anything but `contract_id` with
+-- `FINAL` (the engine versions on `wasm_uploaded_at_ledger`, so the complete
+-- row wins over a stub's `0`), or with `argMax(col, wasm_uploaded_at_ledger)`.
+-- No current reader is wrong — `contracts/queries.rs` uses `FINAL` — this is
+-- here so the next one is not.
 CREATE TABLE IF NOT EXISTS soroban_contracts (
     id                       Int64,
     contract_id              String,
