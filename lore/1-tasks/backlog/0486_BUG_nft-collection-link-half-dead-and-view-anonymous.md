@@ -4,7 +4,7 @@ title: 'BUG: the NFT collection link is half-dead and its destination never name
 type: BUG
 status: backlog
 related_adr: []
-related_tasks: ['0472', '0483', '0392', '0309']
+related_tasks: ['0472', '0483', '0392', '0309', '0540']
 tags: [frontend, nfts, contracts, priority-medium, effort-small]
 links:
   - 'https://github.com/rumblefishdev/soroban-block-explorer/issues/368'
@@ -18,6 +18,20 @@ history:
       pre-existing pipeline gaps at once, and the destination view — newly
       addressable, but built as a filtered list — never says what collection
       it is showing.
+  - date: '2026-09-08'
+    status: backlog
+    who: karolkow
+    note: >
+      Second entry point found, from the other side: task 0540's `Balance
+      change` column links a non-fungible movement, and landing on this view
+      was rejected on sight — a list with a 56-character contract id typed
+      into its search box is not where someone clicking an NFT expects to be.
+      0540 now resolves the token id and links to the PIECE where it can, so
+      the column reaches this view only in the cases it cannot (several pieces
+      in one transaction, or a collection whose ownership rows are still
+      quarantined). That narrows the exposure; it does not fix the view, and
+      the reaction is evidence the anonymity is a real defect and not a
+      reviewer's nitpick.
 ---
 
 # BUG: a link that fails half the time, to a page that does not say what it is
@@ -48,6 +62,20 @@ name, and the Contract ID column repeats the same value 20 times. The only
 "Clear filters" affordance appears in the empty state and silently drops the
 scope. A link labelled "View this collection" lands on a page that never says
 which collection, or that it is a collection view at all.
+
+## Who reaches this view (2026-09-08)
+
+Two links now, and both hit the same anonymous page:
+
+| From                                            | When                                                                                                                                           |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| the contract-header chip (0472)                 | always, for a contract classified NFT                                                                                                          |
+| the account page's `Balance change` cell (0540) | a non-fungible movement whose piece cannot be named — several pieces in one transaction, or a collection with no promoted `nft_ownership` rows |
+
+The second one is bounded by the same two pipeline gaps this task's first half
+is about: a collection stuck in `nft_ownership_pending` has no token id to link
+to, so it falls through to here. Closing 0392 / the 0309 classifier gap shrinks
+that path as well as the "No NFTs match your filters" one.
 
 ## Scope
 
