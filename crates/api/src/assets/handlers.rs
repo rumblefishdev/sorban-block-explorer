@@ -200,10 +200,11 @@ pub async fn list_assets(
         |dir, r| {
             cursor::encode(
                 &AssetKeyCursor {
-                    asset_type: r.asset_type,
-                    asset_code: r.asset_code.clone().unwrap_or_default(),
-                    issuer_id: r.issuer_id,
-                    contract_id: r.contract_surrogate_id,
+                    // The same fold the SQL applies, and it has to stay the
+                    // same: a missing aggregate row is `-1`, below a measured
+                    // zero.
+                    holder_rank: r.holder_count.unwrap_or(-1),
+                    id: r.id,
                 },
                 dir,
             )
@@ -547,7 +548,6 @@ mod tests {
             icon_url: None,
             deployed_at_ledger: None,
             issuer_home_domain: None,
-            issuer_id: 0,
             contract_surrogate_id: 0,
             sac_contract_surrogate: 0,
             sac_deployed: false,

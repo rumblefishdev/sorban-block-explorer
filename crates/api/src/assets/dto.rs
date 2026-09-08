@@ -126,14 +126,18 @@ pub struct AssetTransactionItem {
     /// Distinct `op_type_name(...)` labels for every op in the tx, sorted asc.
     pub operation_types: Vec<String>,
 }
-/// Pagination payload for `GET /v1/assets`. The keyset walks the natural
-/// identity 4-tuple `(asset_type, asset_code, issuer_id, contract_id)` — the
-/// exact `ORDER BY` of the CH `assets` table. Serialized into the opaque wire
-/// cursor (ADR 0008), so it lives on the DTO boundary.
+/// Pagination payload for `GET /v1/assets`: the keyset the list walks
+/// (task 0547), serialized into the opaque wire cursor (ADR 0008).
+///
+/// A keyset cursor has to carry the SORT key, so this changed with the order.
+/// A cursor minted under the old identity-4-tuple order does not deserialize
+/// into this shape and is rejected `invalid_cursor` — the fail-clean ADR 0008
+/// asks for, rather than comparing numbers that meant something else.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetKeyCursor {
-    pub asset_type: i16,
-    pub asset_code: String,
-    pub issuer_id: i64,
-    pub contract_id: i64,
+    /// Active holders, `-1` when the asset has no aggregate row. Mirrors the
+    /// SQL's `coalesce(ba.holder_count, -1)`.
+    pub holder_rank: i32,
+    /// `assets.id` — the tiebreak within one holder count.
+    pub id: i64,
 }

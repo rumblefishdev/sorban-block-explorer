@@ -608,6 +608,13 @@ List of all known assets (native XLM, classic credit assets, SACs, and Soroban-n
 
 - Asset table - asset code, issuer / contract ID, type badge (+ a separate "SAC"
   tag when the asset carries a deployed SAC), total supply, holder count
+- **Ordered by holder count, highest first** (task 0547). No column here is
+  sortable, so this is the only order a reader ever sees — which is why it is
+  the most-held assets rather than the storage key. The list used to walk the
+  `assets` primary key, making it alphabetical inside each type: never a
+  decision, just what fell out of picking a cheap keyset when the read went
+  two-phase (task 0364). An asset we hold no aggregate for sorts last, below a
+  measured zero, because "no data" and "no holders" are different statements.
 - **What names an asset** (`assetDisplayCode`, task 0472). Only classic credit
   assets carry an `asset_code`; native XLM and Soroban tokens return `null` and
   need the rest of the row to name them. One shared rule serves the list cell,

@@ -93,11 +93,12 @@ pub struct AssetRow {
     /// native, no-issuer, and issuer accounts that did not set
     /// `home_domain` on-chain.
     pub issuer_home_domain: Option<String>,
-    /// Surrogate key columns — cursor keyset only, never on the wire. These
-    /// are the 4-tuple CH orders `assets` by `(asset_type, asset_code,
-    /// issuer_id, contract_id)`; `0` / `''` stand in for "absent" (native has
-    /// no issuer_id, classic-credit has no contract_id), matching CH defaults.
-    pub issuer_id: i64,
+    /// Surrogate key column, never on the wire. `0` stands in for "absent"
+    /// (classic-credit has no contract), matching the CH default.
+    ///
+    /// Its sibling `issuer_id` went with the old cursor: the keyset walked the
+    /// identity 4-tuple until task 0547 moved it to `(holder_rank, id)`, and
+    /// nothing else read the field.
     pub contract_surrogate_id: i64,
     /// SAC facet (ADR 0051): the surrogate of the wrapping SAC's `C…` StrKey,
     /// or `0` when the asset has no observed SAC. Never on the wire — the
@@ -277,7 +278,6 @@ fn list_row_to_asset_row(r: AssetListChRow, iss: Option<(String, Option<String>)
         icon_url: r.icon_url,
         deployed_at_ledger: r.deployed_at_ledger,
         issuer_home_domain,
-        issuer_id: r.issuer_id_key,
         contract_surrogate_id: r.contract_id_key,
         sac_contract_surrogate: r.sac_contract_surrogate,
         sac_deployed: r.sac_deployed,
@@ -672,23 +672,17 @@ const SEEK_OVERFETCH: i64 = 8;
 const SHOWN: &str = "lower(if(a.asset_type = 0, 'XLM', toString(a.asset_code)))";
 
 fn build_list_seek_sql(params: &ResolvedListParams, direction: Direction) -> String {
-    // ASC, both paths (task 0485). Native XLM is `asset_type = 0` with an EMPTY
-    // code — the MINIMUM of the identity 4-tuple this keyset walks — so under
-    // DESC it sorts onto the LAST page: `filter[code]=xlm` answered with
-    // `zXLMr, zXLM, …`, and the unfiltered list opened on six codeless Soroban
-    // contracts instead of XLM.
-    //
-    // The old DESC was not a decision. It came from `keyset_sql_desc`, whose
-    // own doc calls it the helper for endpoints with a single NEWEST-FIRST
-    // order — but this key holds no time. It read "newest first" and delivered
-    // reverse-alphabetical. Nothing pinned it: no `?order=` param, no sort
-    // control in the frontend, no claim in `docs/architecture/**`.
-    //
-    // Same cost either way — the order is still the `assets` primary key, so
-    // the unfiltered page stays a PK-prefix walk. `op` comes from the same
-    // call as `order`, so the cursor comparator always points into the walk;
-    // that pairing is what a keyset needs and why they are never chosen apart.
-    let (op, order) = keyset_sql(SortOrder::Asc, direction);
+    // Ordered by holders, not by the identity 4-tuple (task 0547). The old key
+    // was the `assets` primary key, so the page was a prefix walk — but as a
+    // BROWSE order it was alphabetical inside each type, and no column here is
+    // sortable, so it was the only order anyone saw. Ordering on a joined
+    // column costs a full `assets` read: measured 61 ms / 1.02 M rows per page.
+    // `LEFT` join and the `-1` fold keep assets with no aggregate row in the
+    // list (4 222 of them) and below a measured zero.
+    // DESC on the holder count — most-held first. See the ORDER BY below for
+    // why the key changed at all; `op` comes from the same call as `order`, so
+    // the cursor comparator always points into the walk.
+    let (op, order) = keyset_sql(SortOrder::Desc, direction);
     let lim_over = params.limit * SEEK_OVERFETCH;
 
     let type_clause = params
@@ -762,7 +756,7 @@ fn build_list_seek_sql(params: &ResolvedListParams, direction: Direction) -> Str
     // direction already gives on its own. Relevance lives in `/v1/search`,
     // which has no pagination and therefore pays none of it.
     let cursor_clause = if params.cursor.is_some() {
-        format!(" AND (a.asset_type, a.asset_code, a.issuer_id, a.contract_id) {op} (?, ?, ?, ?)")
+        format!(" AND (coalesce(ba.holder_count, -1), a.id) {op} (?, ?)")
     } else {
         String::new()
     };
@@ -771,9 +765,9 @@ fn build_list_seek_sql(params: &ResolvedListParams, direction: Direction) -> Str
         "SELECT a.asset_type AS asset_type, a.asset_code AS asset_code, \
                 a.issuer_id AS issuer_id, a.contract_id AS contract_id, a.id AS id \
          FROM assets a{search_join} \
+         LEFT JOIN balance_aggregates ba ON ba.asset_id = a.id \
          WHERE 1{type_clause}{sac_clause}{code_clause}{cursor_clause} \
-         ORDER BY a.asset_type {order}, a.asset_code {order}, \
-                  a.issuer_id {order}, a.contract_id {order} \
+         ORDER BY coalesce(ba.holder_count, -1) {order}, a.id {order} \
          LIMIT {lim_over}"
     )
 }
@@ -796,11 +790,7 @@ pub async fn fetch_list(
         query = query.bind(code).bind(code).bind(code);
     }
     if let Some(c) = &params.cursor {
-        query = query
-            .bind(c.asset_type)
-            .bind(&c.asset_code)
-            .bind(c.issuer_id)
-            .bind(c.contract_id);
+        query = query.bind(c.holder_rank).bind(c.id);
     }
     let raw = query.fetch_all::<AssetKeyChRow>().await?;
     let raw_len = raw.len();
@@ -1234,6 +1224,9 @@ mod tests {
 
     #[test]
     fn dedup_consecutive_keeps_first_version_per_key_and_truncates() {
+        // Both physical versions of an asset share one aggregate row, so they
+        // stay adjacent under the holder walk as they were under the old one —
+        // which is what lets a CONSECUTIVE dedup collapse them.
         let key = |code: &str, id: i64| AssetKeyChRow {
             asset_type: 1,
             asset_code: code.to_string(),
@@ -1317,19 +1310,16 @@ mod tests {
     }
 
     #[test]
-    fn the_walk_is_ascending_so_native_opens_the_list() {
-        // Task 0485. Native XLM is `asset_type = 0` with an empty code — the
-        // MINIMUM of the identity 4-tuple this keyset walks — so the old DESC
-        // order buried it on the LAST page (measured on production: page 1 of
-        // `filter[code]=xlm` was `zXLMr, zXLMr, zXLM, zXLM, zXLM`, and the
-        // unfiltered list opened on codeless Soroban contracts).
+    fn the_walk_is_by_holders_so_the_list_opens_on_what_people_hold() {
+        // Task 0485 needed native XLM to OPEN the list and got it from the
+        // alphabet (empty code = the minimum of the old key). It still opens
+        // the list, now because it has the most holders — so the outcome no
+        // longer rests on a property of the storage key.
         let mut params = ResolvedListParams {
             limit: 10,
             cursor: Some(AssetKeyCursor {
-                asset_type: 1,
-                asset_code: "XLM".to_string(),
-                issuer_id: 1,
-                contract_id: 0,
+                holder_rank: 684_170,
+                id: 7,
             }),
             asset_type: None,
             asset_code: Some("xlm".to_string()),
@@ -1339,14 +1329,31 @@ mod tests {
             params.asset_code = None;
             build_list_seek_sql(&params, Direction::Next)
         }] {
-            assert!(sql.contains("ORDER BY a.asset_type ASC"), "{sql}");
+            assert!(
+                sql.contains("ORDER BY coalesce(ba.holder_count, -1) DESC, a.id DESC"),
+                "{sql}"
+            );
+            // LEFT: an asset with no aggregate row still appears, ordered
+            // last. An inner join would delete it from the list.
+            assert!(
+                sql.contains("LEFT JOIN balance_aggregates ba ON ba.asset_id = a.id"),
+                "{sql}"
+            );
+            // The fold has to be identical in the ORDER BY, the projection and
+            // the cursor comparator, or a page boundary skips or repeats rows.
+            // Twice: the projection and the cursor comparator. The ORDER BY
+            // reuses the `holder_rank` alias rather than a third copy.
+            assert_eq!(
+                sql.matches("coalesce(ba.holder_count, -1)").count(),
+                2,
+                "{sql}"
+            );
             // The comparator must point INTO the walk, or the cursor pages
             // backwards on every "next".
-            assert!(sql.contains(") > (?, ?, ?, ?)"), "{sql}");
-            // No relevance machinery on this surface, by decision: ranking it
-            // means carrying the rank in the cursor.
+            assert!(sql.contains(") < (?, ?)"), "{sql}");
+            // No relevance machinery on this surface, by decision (0485):
+            // ranking it means carrying the rank in the cursor.
             assert!(!sql.contains("rank_tier"), "{sql}");
-            assert!(!sql.contains("balance_aggregates"), "{sql}");
         }
     }
 
@@ -1361,9 +1368,13 @@ mod tests {
         };
         let sql = build_list_seek_sql(&params, Direction::Next);
         assert!(!sql.contains("positionCaseInsensitive"));
-        // No filter → pure `assets` PK walk: no side-table joins, no placeholders
-        // (the LIMIT is inlined).
-        assert!(!sql.contains("JOIN"));
+        // Neither SEARCH join is paid for. The aggregate join is always
+        // present (it carries the browse order), hence asserting the two by
+        // name rather than that "JOIN" is absent.
+        assert!(!sql.contains("soroban_contracts sc"), "{sql}");
+        assert!(!sql.contains("soroban_contract_metadata"), "{sql}");
+        assert!(sql.contains("LEFT JOIN balance_aggregates"), "{sql}");
+        // No cursor and no needle → nothing to bind (the LIMIT is inlined).
         assert_eq!(sql.matches('?').count(), 0);
     }
 }
