@@ -1,10 +1,23 @@
 ---
 id: '0542'
-title: 'FEATURE: token-event decoder — one shape inventory, one trust policy, re-runnable'
+title: 'FEATURE: one definition of a token movement — shared by every decoder and reader'
 type: FEATURE
 status: backlog
 related_adr: []
-related_tasks: ['0540', '0541', '0383', '0323', '0453', '0503']
+related_tasks:
+  [
+    '0540',
+    '0541',
+    '0383',
+    '0323',
+    '0453',
+    '0503',
+    '0409',
+    '0424',
+    '0376',
+    '0392',
+    '0512',
+  ]
 tags:
   [
     'xdr-parsing',
@@ -79,6 +92,137 @@ value-flow tables on 0540's branch. The same class remains elsewhere:
 Consequence of 0540's fix living in the shared parser: from that deploy on,
 the recipient of an admin-shape mint is also a `transaction_participants`
 row; history stays as it was until a re-parse.
+
+## Measured on production, 2026-09-08 — the `nft.rs` defect, with a witness
+
+The row above was carried from 0540's review as a code reading. It now has a
+concrete case, found because 0540's read path refused to trust it.
+
+**Transaction `6338289864338569526`, ledger 56 162 678, operation position 196,
+collection `CC23DRQPZAUP5MRMPDFGU5R4ISZRSCWCP4TIED2ZTVJLQCPCNDLSALAD`.** Two
+pieces minted. The chain event (`soroban_events`, indices 6 and 7) reads:
+
+```
+[sym "mint", address GDJWENY5…ALAD, address CD4FTCAP…N3TX]
+             ^ admin                ^ recipient (a CONTRACT)
+```
+
+| Table                            | Recipient recorded            | Correct? |
+| -------------------------------- | ----------------------------- | -------- |
+| `asset_transfers` (0540 decoder) | `CD4FTCAP…` (`to_kind = 'C'`) | yes      |
+| `nft_ownership` (`nft.rs`)       | `GDJWENY5…` — the ADMIN       | **no**   |
+
+The mechanism is one comparison. `try_parse_mint` calls
+`extract_args(topics, data, n_addrs = 1)`, whose shape-A arm tests
+`remaining_topics.len() >= n_addrs` and then takes `remaining_topics[..1]`. For
+`[mint, to]` that is the recipient; for `[mint, admin, to]` the length test still
+passes and the FIRST address wins, so the admin is stored as the owner. `>=`
+where the shape needs `==` plus an address-count branch — the same rule 0540
+put into `asset_transfers.rs`.
+
+**Age:** `nft.rs` was written on 2026-04-01 (task 0026) against
+`SEP-0050 pattern: topics = [Symbol("mint"), Address(to)]`, which its own doc
+comment still states. Every admin-shape mint since has been attributed to the
+admin — five months of `nfts.current_owner_id` and `nft_ownership.owner_id`.
+
+**Not a rogue contract.** `[mint, admin, to]` is the `soroban-token-sdk` /
+SEP-41 shape. Both shapes are standard; the decoder knew one of them.
+
+**How it surfaced.** 0540's cell names a moved piece only when the count of ids
+`nft_ownership` returns for `(collection, transaction, new owner)` equals the
+number of pieces the account moved. Here `asset_transfers` says two pieces to
+`CD4FTCAP…` and `nft_ownership` has none for that owner (its two rows sit under
+the admin), so the counts disagree and the cell collapses to `+2 NFT` with no
+ids rather than linking to pieces attributed to the wrong owner. Three
+transactions on production behave this way today; the four larger multi-piece
+mints (10, 8, 5, 5 pieces) agree and are named. So the read path is already a
+live detector for this defect — worth keeping in mind when step 2 lands, since
+those cells start naming pieces the moment `nft.rs` agrees.
+
+## Re-scoped 2026-09-08 — one definition, not an inventory of shapes
+
+The task began as "inventory the shapes the decoder meets and decide a trust
+policy". A systematic sweep for CONTRADICTIONS — places where two parts of the
+system answer the same question differently on real data — showed the shapes
+are the symptom. The disease is that **nothing owns the answer**: the same
+question is decided independently in four to five places, with different rules,
+written months apart.
+
+### "Is this non-fungible?" — four rules
+
+| Where                      | Rule                                                                | Written    |
+| -------------------------- | ------------------------------------------------------------------- | ---------- |
+| `classification.rs:102`    | WASM exposes one of 5 function names                                | 2026-04-21 |
+| `nft.rs:321`               | payload type is not `void`/`map`/`vec`/`error` — **accepts `i128`** | 2026-04-01 |
+| `asset_transfers.rs:90`    | payload is an UNSIGNED scalar — **rejects `i128`**                  | 2026-09-07 |
+| `balance_changes.rs` (API) | `amount IS NULL`                                                    | 2026-09-08 |
+
+Rows two and three return OPPOSITE verdicts on the same event. Measured
+exposure today: **0** movements carrying an amount from an NFT-classified
+contract, across the live and one historical partition — so the contradiction
+is latent, and step 6 below is where it gets settled.
+
+`nft.rs` does not merely disagree; it has its own topic and payload parser
+(`extract_args`, `topic_address_value`) and shares nothing with
+`event_filters::parse_token_event`, which `asset_transfers` and the presence
+tables both use.
+
+### "Which address kind counts?" — four more
+
+| Where                   | Rule                                                    |
+| ----------------------- | ------------------------------------------------------- |
+| `stage.rs:2690`         | `len <= 56 && starts_with('G')` (private helper)        |
+| `stage.rs:819`          | the same rule **re-spelled inline**, next door          |
+| `value_flow.rs:200`     | first character of the StrKey — **every kind accepted** |
+| `api/common/path.rs:79` | exactly 56 chars + base32; `M` rejected                 |
+
+So `asset_transfers` records `L`, `B` and `C` endpoints that the presence
+tables discard — the schema documents 16–22% of endpoints as non-`G`. That is a
+recorded decision, not a bug, but nobody owns it in one place, and the invocation
+path (`stage.rs:1930`) already keeps `C`, which shows the omission is an accident.
+
+### Measured, 2026-09-08 (production)
+
+| #   | Contradiction                                                                           | Exposure                                                                                                                                                          |
+| --- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | decoder says non-fungible, classifier says Fungible                                     | **136 movements, 3 collections**                                                                                                                                  |
+| 2   | `nft.rs` credits the ADMIN, `asset_transfers` credits the recipient                     | witness above; 26 movements collapse in the read                                                                                                                  |
+| 3   | NFT owner is a CONTRACT and the API resolves owners only via `accounts`                 | **339 of 1 089 owners (31%)** — all 339 resolve in `soroban_contracts`, so it is a read-side omission, not missing data (belongs to [[0376]], measured there too) |
+| 4   | a `C` transfer endpoint with no `soroban_contracts` row                                 | 4 of 2 371                                                                                                                                                        |
+| 5   | a token with >1 ownership event in one ledger — order undecidable                       | **88** ([[0424]])                                                                                                                                                 |
+| 6   | `i128` — token id or amount                                                             | 0 today, latent                                                                                                                                                   |
+| 7   | `M…` inside an event TOPIC is split by `value_flow` and dropped by `derive_token_event` | 0 today (no `M…` has ever appeared in a topic); the 56 muxed ids in a live partition all come from the envelope, which is the designed path                       |
+
+Checked and found CONSISTENT, so nobody re-derives them: transfer recipients vs
+`transaction_participants` (0 missing over 294 264 live and 232 523 historical
+edges), `nfts.current_owner_id` vs its own ownership history (0 of 13 955),
+native's surrogate (one convention, 0 empty-string rows), `canonical_id` vs
+`asset_route_token`, and the three `decimals` paths.
+
+Fixed outside this task, in 0540, because it was already on a live surface: an
+asset was linked to `/assets/{id}` whenever `soroban_contracts` knew the
+contract, which is a different question from whether `assets` has a row —
+4 of 51 421 fungible assets in a historical partition would have produced a
+404 link.
+
+### What this task now owns
+
+1. **One definition of a token movement**, in `domain`, used by `nft.rs`,
+   `asset_transfers.rs` and `derive_token_event`. `nft.rs` stops having its own
+   parser. This subsumes step 2 below rather than sitting beside it.
+2. **One rule for which address kinds count**, in one place, with the current
+   per-table policy expressed against it rather than re-spelled four times.
+3. **The `nft.rs` admin-shape fix** (task owner, 2026-09-08: it belongs here,
+   not as a separate change) — including the re-derivation of the historical
+   `nfts` / `nft_ownership` rows it has been mis-attributing since 2026-04-01.
+4. **[[0409]] is absorbed**: "arm-A NFT pollution" is this same disease in
+   another table — a token event written with an NFT's id parsed as an amount,
+   because the writer did not consult the same definition.
+
+Related, NOT absorbed: [[0512]] (the classifier itself), [[0392]] (the
+completeness umbrella above it), [[0424]] (ownership order), [[0376]] (contract
+owners), [[0486]] (the collection view). Each keeps its own outcome; this task
+supplies the shared vocabulary they all read.
 
 ## Implementation Plan
 

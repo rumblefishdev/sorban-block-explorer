@@ -23,6 +23,18 @@ contract-held NFTs show a NULL owner (22% of NFTs / 51% of transfer rows),
 pending NFTs are invisible (71K), and collection activity is not unioned on the
 contract page.
 
+## Re-measured 2026-09-08 (production)
+
+The contract-owner gap, counted from the current tables rather than the 0359
+sample: **339 of 1 089 distinct NFT owners (31%) cannot be resolved through
+`accounts`, and all 339 resolve in `soroban_contracts`.** So the owner is known
+for every one of them — `nfts/queries.rs` simply resolves owners against
+`accounts` alone, and a contract owner therefore renders as null. A read-side
+omission, not missing data.
+
+Found while sweeping for contradictions during task 0540; the shared-vocabulary
+side of it is [[0542]].
+
 ## Context
 
 Spawned from 0359. The NFT owner is a single-slot current value; contract owners
