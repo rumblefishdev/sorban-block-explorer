@@ -323,3 +323,45 @@ permanence flag, with fail-closed reads. Its deterministic/non-deterministic
 split explains 0392's F1 exactly — the quarantine holds _deterministic_ failures
 being handled by a _non-deterministic_ wait-and-retry, which is why a reconcile
 moves zero rows.
+
+## Same residual, measured from the VALUE-FLOW side (2026-09-08, from 0374)
+
+The entry-state numbers above were measured from the quarantine queue. This is
+the same residual seen from the other end — `asset_transfers`, the 0540 value
+index — and it is worth recording because it says how much the residual
+actually MOVES, which the queue cannot.
+
+Full-table, no sampling: **1,352,496,561 rows, 143,782 distinct `asset_id`**.
+Of those distinct ids, **28 have no `assets` row at all**, together accounting
+for **563 rows** — 0.019% of the assets and 0.00004% of the traffic.
+
+`assets` only gets a row for a contract classified `Fungible`, so an orphan
+here is exactly a contract this task's discriminator has not reached. The
+split:
+
+| the 28 orphans                        | count | rows | reading                           |
+| ------------------------------------- | ----- | ---- | --------------------------------- |
+| classified `Nft`, in the NFT registry | ~13   | ~394 | correct by design, nothing to fix |
+| classified `Other`                    | ~15   | ~162 | this task's residual              |
+| unknown to `soroban_contracts` too    | **0** | 0    | every one resolves to an address  |
+
+By movement shape rather than by verdict: **15 emit ONLY non-fungible
+movements, 13 emit ONLY movements carrying an amount, 0 are mixed.** Two of
+those numbers are the interesting ones:
+
+- **3 contracts emit non-fungible movements and are NOT in the NFT registry.**
+  They behave like NFTs and were classified `Other` — the launchpad-template
+  class this task exists to catch, seen from the traffic side. The two busiest
+  carry 88 and 44 transfer rows.
+- **13 contracts emit movements WITH an amount and have no `assets` row.** They
+  behave like fungible tokens and were also classified `Other`.
+
+Nothing here is invisible: all 28 resolve to a `C…` address through
+`soroban_contracts`, and the value read LEFT-joins `assets` on purpose, so
+their movements render with an address instead of a code rather than
+disappearing. The cost of the residual is a missing name, not a missing row.
+
+**No task filed for this** — it is this task's subject measured from a second
+angle, not a new defect. Recorded here so the discriminator's acceptance can be
+checked against traffic (does the orphan count fall?) and not only against the
+queue depth.
