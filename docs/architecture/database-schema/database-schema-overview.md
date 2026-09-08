@@ -185,7 +185,11 @@ Derived explorer entities:
   time-series snapshots + per-account share positions
 - `liquidity_pools` is also the dimension for **Soroban AMM pools** (ADR 0058,
   task 0374): `pool_kind = 1` rows discovered from router `add_pool` events,
-  carrying `legs Array(Int64)` (token-contract surrogates, 2–4 legs),
+  carrying `legs Array(Int64)` (ASSET surrogates, 2–4 legs — one id space with
+  the classic rows: a Soroban-native token's contract surrogate IS its
+  `assets.id`, while a SAC leg keys onto the classic/native asset it wraps,
+  because ADR 0051 retired `asset_type = 2` and a SAC has no `assets` row of
+  its own),
   `deployment_id` (registering router), `pool_type_raw` and `fee_bps`.
   Registration provenance (the subpool salt, raw `init_args` beyond the fee)
   is deliberately NOT materialised — the `add_pool` event sits complete in
