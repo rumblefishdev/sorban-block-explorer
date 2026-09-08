@@ -300,6 +300,15 @@ struct AssetIdentity {
     decimals: u32,
     /// Whether `/assets/{asset}` can actually answer for this identity.
     ///
+    /// **This flag is a WORKAROUND and is meant to be deleted** (task 0542).
+    /// It routes around a gap it does not fix: an `assets` row is created from
+    /// the classifier's `Fungible` verdict, which is a guess at the WASM's
+    /// function names — so a contract that demonstrably moves fungible amounts
+    /// but whose code is named unusually is filed as `Other` and never gets a
+    /// row, hence never a page. Registering an asset from the EVIDENCE (it
+    /// moved an amount) instead of from the name retires both the gap and this
+    /// flag. Until then, refusing the link is the honest half-measure.
+    ///
     /// A bespoke token's link is its contract StrKey, and `soroban_contracts`
     /// has a row for EVERY deployed contract — but the asset endpoint hydrates
     /// the key `(3, '', 0, surrogate)` out of `assets`, so a token nobody
