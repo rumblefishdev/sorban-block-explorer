@@ -258,6 +258,63 @@ rule. The two defects must be fixed in this order: resolving the `i128` ids
 first stops step 6's collections from ever reaching the registry as fungible
 candidates.
 
+### Measured from the historical pass, 2026-09-09 — a shape no decoder can complete
+
+The 0540 backfill is the first sweep over history with the counting decoder, so
+it is also the first reject measurement taken over **~2.08 M ledgers of
+history** rather than a live window (from the ingest floor 50 457 424 onward,
+three workers). A mid-run snapshot, so the counts grow with the run; the shape
+of the answer does not.
+
+| Cause                  | Count     |
+| ---------------------- | --------- |
+| `unrecognised_topics`  | **1 108** |
+| `emitter_not_sac`      | 0         |
+| `unrecognised_payload` | 0         |
+| `no_operation`         | 0         |
+| `no_emitter`           | 0         |
+
+532 per million ledgers against the ~300 per million the review measured on a
+recent window — the same order, and the gap is era, not regression. Three
+results matter more than the rate.
+
+**Every reject is one cause and one contract family.** 21 emitters, the largest
+801 of the 1 108. Their event is `topics ["transfer", u32 <token id>]` with
+`data address <recipient>`: the token id in the topic, the recipient in the
+data, **and no sender at all**.
+
+**The sender is not missing from the decode — it is missing from the event.**
+The contract's own interface declares `transfer(from, to, token_id: u32)`
+(read from `wasm_interface_metadata`), so the ledger carries the sender in the
+invocation's arguments while the event omits it. No topic-shape rule can
+complete this edge from the event alone: the `from` would have to come from the
+invocation, a different source than every other row in `asset_transfers`. That
+makes it a question for "one definition of a token movement" — is a movement
+defined by what an event says, or by what the ledger shows the call did? — and
+not a missing row in a shape table.
+
+**Why the classifier answers `Other` here, precisely.** These contracts expose
+none of the five discriminator FUNCTION names. Four of the five nonetheless
+contain the string `token_uri` — as the name of a `mint` **parameter**, not a
+function — so a substring test over the interface reports a false NFT verdict
+where the classifier correctly reports none. The interface is otherwise
+unmistakably non-fungible: `transfer(from, to, token_id)`,
+`mint(owner, token_id, token_uri)`,
+`bulk_mint(owner, vec<tuple<u32, string>>)`, `burn(owner, token_id)`. Same
+disease as the missing-assets-row gap above, in the other direction: the
+registry keys on a guess at function names while the chain has already
+demonstrated what the contract does.
+
+**They are all but absent from the NFT tables.** Zero rows in `nfts` for all
+five sampled; `nfts_pending` holds 4 rows, all from one of them. The
+collections exist on chain and trade, and are invisible in every table that
+would render them.
+
+**`emitter_not_sac = 0` across 2.08 M ledgers of history.** First historical
+evidence for the gate 0540 added: no contract has ever labelled an event with
+an asset whose SAC it is not. The attack the gate exists to stop has not been
+attempted anywhere in the indexed range.
+
 ### What this task now owns
 
 1. **One definition of a token movement**, in `domain`, used by `nft.rs`,
