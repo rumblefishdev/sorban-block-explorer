@@ -286,6 +286,18 @@ Note the `i128` nuance that reverted "Patch C" historically: the SEP-39 contract
 top-level tag is `vec`, not `i128`. The old counter-example does not contradict
 tier 4.
 
+**Scope limit found 2026-09-09 ([[0542]]): tier 4's sample is `transfer` only,
+and the overlap lives on `mint`.** Two `Nft`-verdict collections emit a bare
+`i128` — `[mint, to]` topics, `data = i128`, 27 events, the only signature
+either contract ever emits. Not inside a `vec`, so the historical
+counter-example above does not cover it either. `nft.rs` reads that scalar as a
+token id and `asset_transfers` reads it as a quantity, and joined on
+`(contract, ledger)` all 27 pairs carry the same number under two meanings — so
+this is a live disagreement, not a hypothetical. Tier 4 stays sound as stated,
+but its evidence must be re-measured **per verb** before the cascade rests on
+it; `mint` is where a bare `i128` is ambiguous, because SEP-50 specifies no
+`mint` at all.
+
 ### Classification
 
 Structural conformance to SEP-50's 11 mandatory functions, computed from the

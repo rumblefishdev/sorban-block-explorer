@@ -314,6 +314,42 @@ would render them.
 evidence for the gate 0540 added: no contract has ever labelled an event with
 an asset whose SAC it is not. The attack the gate exists to stop has not been
 attempted anywhere in the indexed range.
+**The witness this task was named for, found 2026-09-09.** The 27 movements are
+not a decoder failing in isolation — they are two decoders reading the SAME
+BYTES and disagreeing. The event, out of `soroban_events`, decoded:
+
+```
+topics: [{"type":"sym","value":"mint"},{"type":"address","value":"GD75WZVG…"}]
+data:   {"type":"i128","value":"20"}
+```
+
+A CAP-67-shaped `[mint, to]` with a bare `i128` payload. `nft.rs` read that
+`i128` as a token id and wrote `nft_ownership.token_id`; `asset_transfers` read
+the same scalar as a quantity. Joined on `(contract, ledger)`, every pair agrees
+on the number and disagrees on what it means:
+
+| ledger               | `nft_ownership.token_id` | `asset_transfers.amount` |
+| -------------------- | ------------------------ | ------------------------ |
+| 51 827 994           | 1                        | 1                        |
+| 51 827 996           | 2                        | 2                        |
+| 51 859 831           | 4                        | 4                        |
+| … 27 rows, all equal |                          |                          |
+
+One definition would have made this unrepresentable. Two definitions made it
+invisible: each table is internally consistent, and only the join exposes it.
+
+**It also puts a scope limit on [[0512]]'s tier-4 discriminator.** That tier
+rests on "no overlap on the scalar types", measured as `Nft`-verdict `transfer`
+emitting `u32` 8 487 / `map` 71 / `vec` 3 against `Fungible`'s `i128` 797 376.
+These 27 events are **`mint`, not `transfer`** — the only signature these two
+collections ever emit — so they sit outside what that measurement covered, and
+they are `Nft`-verdict carrying a bare `i128`. The overlap the tier rules out
+does exist; it lives on the verb the sample did not include. Re-measure per
+verb before the cascade relies on it.
+
+Bounded, checked the same day: **0 of 136 `Nft`-verdict contracts have an
+`assets` row**, so the anti-join above already sees every collection in this
+state — there is no larger hidden population.
 
 ### What this task now owns
 
