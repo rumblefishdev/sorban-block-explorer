@@ -417,6 +417,21 @@ two 500 k-ledger windows and is bounded to the collection's own `asset_id`;
 it does not gate the backfill (policy and decision in
 `notes/T-nft-interpretation-policy.md`; implementation is 0542 step 6).
 
+**Correction, 2026-09-09 — the exposure is not zero.** The "zero" above was
+measured on two 500 k-ledger windows; the backfilled range disagrees. Counted
+across every partition `asset_transfers` holds today: **27 movements in 2
+collections** are an `i128` token id stored as an `amount`. Both collections
+are in `nft_ownership` (23 and 4 pieces, ids 1..9 and 1..4) and the amounts
+recorded against them are 1..19 and 1..4 — sequential piece numbers, not
+quantities. Neither collection has a single `amount IS NULL` row, so every
+movement they have is the misread one. Consequence on the account page: the
+column would print `+19` as a quantity for what is one piece changing hands.
+It is masked today only because these collections have no `assets` row either,
+so decision 8's flag refuses the link and the cell prints plain text — the
+right answer for the wrong reason. Still bounded to the collection's own
+`asset_id`, still does not gate the backfill; but 0542 step 6 now has a
+measured witness instead of a hypothetical.
+
 ### Storage knobs re-challenged by the task owner (2026-09-07)
 
 Three settings looked like overkill from the outside — "if they were that
