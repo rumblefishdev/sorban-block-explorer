@@ -233,6 +233,31 @@ once the backfill lands, and it removes 0540's plaster along with the
 Sequenced after [[0512]], which is the same question asked of the classifier
 itself.
 
+**Re-measured across the whole backfilled range, 2026-09-09 — and the "four"
+were two different defects wearing one symptom.** Every partition
+`asset_transfers` holds was counted, not one: **8 contracts, 45 movements, 45
+transactions**, against ~1.5 bn fungible movements — 0.0000030%, one in ~33
+million. The figure is a moving target, not a constant: it read 36 an hour
+earlier, because three more partitions landed while the measurement ran. Per
+partition the worst is **6 of 53 668 distinct fungible assets (0.011%)**; the
+live window since L₀ is **0 of 8 671**, so nothing is on screen today.
+
+The 45 split by cause, and only one of them is this section's:
+
+| Cause                                                                       | Movements | Contracts | Classifier said | In `nft_ownership`    |
+| --------------------------------------------------------------------------- | --------- | --------- | --------------- | --------------------- |
+| `i128` token id stored as an `amount` — [[0540]]'s correction, step 6 below | 27        | 2         | `Nft`           | yes (23 and 4 pieces) |
+| Fungible token never registered — the registry-by-name gap above            | 18        | 6         | `Other`         | no                    |
+
+So the "four `Other` contracts" was an undercount AND a conflation. Of the six
+`Other` ones, two are unarguably fungible (single amounts of 10 000 000 000 000
+and a 1.3–3.8 bn spread); the remaining four emit only the values `0` and `1`,
+two movements each, which the evidence rule cannot classify on its own — they
+are the case that needs step 6's event-spec evidence, not just a registry
+rule. The two defects must be fixed in this order: resolving the `i128` ids
+first stops step 6's collections from ever reaching the registry as fungible
+candidates.
+
 ### What this task now owns
 
 1. **One definition of a token movement**, in `domain`, used by `nft.rs`,
