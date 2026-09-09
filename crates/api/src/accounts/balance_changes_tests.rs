@@ -75,9 +75,10 @@ fn assets_come_back_in_the_order_they_moved() {
 }
 
 #[test]
-fn the_floor_is_the_ledger_the_indexer_started_writing() {
+fn the_floor_is_a_ledger_the_backfill_has_covered() {
     // Below it the table is EMPTY, which is indistinguishable from "nothing
     // moved" — the API must report absence, never a zero. Pinned so the value
-    // moves only deliberately, with the backfill that earns it.
-    assert_eq!(VALUE_FLOW_FLOOR_LEDGER, 64_317_019);
+    // moves only deliberately, with the backfill that earns it: it may drop
+    // only to a range already written, never ahead of one.
+    assert_eq!(VALUE_FLOW_FLOOR_LEDGER, 64_128_000);
 }

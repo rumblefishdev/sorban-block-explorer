@@ -829,8 +829,20 @@ any ledger the backfill has provably covered, and finally to the ingest floor
 50 457 424 once the whole range is in and gate 7a passes on it. Below the
 ingest floor it stays forever — there is no data to have.
 
-Each drop touches three places in lockstep: the constant, the test that pins
-it, and the frontend gate that decides whether to draw the column at all.
+Each drop touches **two** places, not three: the constant and the test that
+pins it. The frontend holds no threshold of its own — the cell renders
+"not indexed" purely on a `null` from the API, so the API is the single owner
+of where the floor sits. (An earlier version of this note said three; the
+frontend gate does not exist.)
+
+**Dropped once already, 2026-09-09: 64 317 019 → 64 128 000.** A fourth
+backfill worker took `64 128 000 .. 64 317 019` out of order — the archive
+partition boundary below the fourteen-day mark, so the alignment the loop does
+anyway buys four extra hours of history for nothing. Verified before the drop
+that the upper edge leaves no hole: `ledgers` is continuous above the deploy
+ledger (28 161 rows, zero missing) and no ledger above it carries a token event
+without its edges, so the worker's range meets the live block at exactly one
+overlapping ledger.
 
 An intermediate drop is worth taking before the full range lands. The
 backfill's three workers advance from the bottom of their own ranges, so the

@@ -53,10 +53,21 @@ use std::collections::{BTreeSet, HashMap};
 use clickhouse::Row;
 use serde::Deserialize;
 
-/// First ledger `asset_transfers` covers — the ledger the live indexer started
-/// writing it (deploy `production-2026.09.07-1`). Below it the table is empty
-/// because nothing has been written yet, NOT because nothing moved, so the API
-/// reports "not indexed" rather than a balance change of zero.
+/// First ledger `asset_transfers` covers. Below it the table is empty because
+/// nothing has been written yet, NOT because nothing moved, so the API reports
+/// "not indexed" rather than a balance change of zero.
+///
+/// It started at the deploy ledger 64 317 019 (`production-2026.09.07-1`),
+/// where the live indexer began writing. It now sits at the start of the
+/// archive partition covering the last two weeks before that deploy: a
+/// dedicated backfill worker filled `64 128 000 .. 64 317 019` out of order,
+/// ahead of the three workers walking up from the ingest floor, because the
+/// newest ledgers are the ones an account page is most often asked about and
+/// they would otherwise have arrived last.
+///
+/// **The value may only move to a range the backfill has provably covered.**
+/// Lowering it ahead of the data turns "not indexed" into a measured zero,
+/// which is the one failure this constant exists to prevent.
 ///
 /// It drops to the ingest floor (50 457 424) once the historical backfill of
 /// `50 457 424 .. 64 317 019` passes its coverage gate, and stays there for
@@ -66,7 +77,7 @@ use serde::Deserialize;
 /// ponytail: a `const`, not config — the only way to change it is a deploy
 /// either way (env vars come from the CDK compute stack), so an env read would
 /// buy nothing. Promote it if it ever has to move without one.
-pub const VALUE_FLOW_FLOOR_LEDGER: i64 = 64_317_019;
+pub const VALUE_FLOW_FLOOR_LEDGER: i64 = 64_128_000;
 
 /// One asset's net movement for the account in context, on one transaction.
 /// Position in the vector is the order the movement happened on the chain —
