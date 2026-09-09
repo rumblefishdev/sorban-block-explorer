@@ -2074,7 +2074,7 @@
           },
           "asset": {
             "type": "string",
-            "description": "Asset identity accepted by the asset detail endpoint — `\"native\"`,\n`\"CODE-ISSUER\"`, or a bespoke Soroban token's `C…` contract StrKey.\nEmpty when the asset resolves to nothing at all (an unregistered\ncontract): render the code without a link rather than a dead one."
+            "description": "Asset identity the client can link to — `\"native\"`, `\"CODE-ISSUER\"`, or\na bespoke Soroban token's `C…` contract StrKey.\n\n**Empty means there is no page for this asset**: render the code as\nplain text, never as a link. That happens when a token has no `assets`\nrow, which is a different question from whether its contract exists —\nevery deployed contract has a StrKey, but `/assets/{id}` answers only\nfor registered assets.\n\nA NON-FUNGIBLE entry always carries its contract StrKey even when\n`/assets` would 404, because its destination is the NFT pages, which\nare keyed on the contract."
           },
           "asset_code": {
             "type": ["string", "null"],

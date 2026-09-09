@@ -417,6 +417,21 @@ two 500 k-ledger windows and is bounded to the collection's own `asset_id`;
 it does not gate the backfill (policy and decision in
 `notes/T-nft-interpretation-policy.md`; implementation is 0542 step 6).
 
+**Correction, 2026-09-09 — the exposure is not zero.** The "zero" above was
+measured on two 500 k-ledger windows; the backfilled range disagrees. Counted
+across every partition `asset_transfers` holds today: **27 movements in 2
+collections** are an `i128` token id stored as an `amount`. Both collections
+are in `nft_ownership` (23 and 4 pieces, ids 1..9 and 1..4) and the amounts
+recorded against them are 1..19 and 1..4 — sequential piece numbers, not
+quantities. Neither collection has a single `amount IS NULL` row, so every
+movement they have is the misread one. Consequence on the account page: the
+column would print `+19` as a quantity for what is one piece changing hands.
+It is masked today only because these collections have no `assets` row either,
+so decision 8's flag refuses the link and the cell prints plain text — the
+right answer for the wrong reason. Still bounded to the collection's own
+`asset_id`, still does not gate the backfill; but 0542 step 6 now has a
+measured witness instead of a hypothetical.
+
 ### Storage knobs re-challenged by the task owner (2026-09-07)
 
 Three settings looked like overkill from the outside — "if they were that
@@ -720,7 +735,22 @@ event_order)`, so a `contract_id`-leading seek on the page's transaction ids
    send with a third party's piece added to the set → collapses to `−2 NFT`
    with no id.
 
-8. **The dedup stays `GROUP BY`.** The step-8 choice against `FINAL` was left
+8. **An asset is linked only where a page can answer** (2026-09-08, found by a
+   contradiction sweep after the deploy). `BalanceChange.asset` took a bespoke
+   token's contract StrKey from `soroban_contracts`, which has a row for EVERY
+   deployed contract — but `/assets/{id}` hydrates `(3, '', 0, surrogate)` out
+   of `assets`, so a token nobody registered there answers 404. Two different
+   questions read as one, and the cell drew a live-looking link to a page that
+   does not exist. The identity is now emitted EMPTY for a FUNGIBLE movement
+   whose asset has no `assets` row, and the cell prints the code as plain text;
+   a NON-FUNGIBLE entry keeps its StrKey because its destination is the NFT
+   pages, which are keyed on the contract and answer for collections `assets`
+   has never heard of. Measured on production: 4 of 51 421 fungible assets in a
+   historical partition, 0 of 8 643 in the live one — so nothing on screen today,
+   and it would have surfaced as the backfill lowers the floor. Verified against
+   production rows: the two sampled unregistered contracts report
+   `resolves_on_asset_page = false`, USDC reports `true`.
+9. **The dedup stays `GROUP BY`.** The step-8 choice against `FINAL` was left
    open on the grounds that one local part flatters `FINAL`; production parts
    did not change the answer, and `GROUP BY` over the full sort key is the shape
    that cannot silently stop deduplicating if a version column is ever added.
@@ -784,6 +814,44 @@ fee-bumps** (574 554 of 1 430 830), where the payer is the envelope's
 No column stores `fee_source` anywhere. Attributing the fee to the inner source
 would be wrong on two rows in five, so the column stays transfers-only and the
 `Fee` column beside it carries the rest.
+
+### The read floor, and what removing it is gated on (2026-09-09)
+
+The account page ships with a hard floor: `VALUE_FLOW_FLOOR_LEDGER` in
+`crates/api/src/accounts/balance_changes.rs`, currently the deploy ledger
+64 317 019, pinned by a test and honoured twice in `accounts/queries.rs`.
+Below it the column renders "not indexed" rather than an empty cell, because
+`asset_transfers` holds no rows there and an empty cell reads as "nothing
+moved".
+
+**Lowering it is a rollout step, not a code change.** The floor may drop to
+any ledger the backfill has provably covered, and finally to the ingest floor
+50 457 424 once the whole range is in and gate 7a passes on it. Below the
+ingest floor it stays forever — there is no data to have.
+
+Each drop touches **two** places, not three: the constant and the test that
+pins it. The frontend holds no threshold of its own — the cell renders
+"not indexed" purely on a `null` from the API, so the API is the single owner
+of where the floor sits. (An earlier version of this note said three; the
+frontend gate does not exist.)
+
+**Dropped once already, 2026-09-09: 64 317 019 → 64 128 000.** A fourth
+backfill worker took `64 128 000 .. 64 317 019` out of order — the archive
+partition boundary below the fourteen-day mark, so the alignment the loop does
+anyway buys four extra hours of history for nothing. Verified before the drop
+that the upper edge leaves no hole: `ledgers` is continuous above the deploy
+ledger (28 161 rows, zero missing) and no ledger above it carries a token event
+without its edges, so the worker's range meets the live block at exactly one
+overlapping ledger.
+
+An intermediate drop is worth taking before the full range lands. The
+backfill's three workers advance from the bottom of their own ranges, so the
+newest ledgers — the ones an account page is most likely to be asked about —
+are the last to arrive. A separate worker over the most recent window fills
+that slice out of order in hours rather than days, and the floor can move to
+the start of that window as soon as it does. The overlap this creates with the
+worker that will later cover the same ledgers costs nothing: the write is
+idempotent under the row key, proven on a deliberate re-run.
 
 ### Design decisions
 
@@ -889,7 +957,13 @@ event_pos_in_op)`, all NOT NULL; `event_index` is an ordinary column
       `asset_transfers` rows minus XLM fees equals their current per-asset
       balance read as raw XDR via RPC `getLedgerEntries` — bit-exact, every
       asset type. Runnable from `tests/`; accounts and ledger recorded here
-- [ ] Direction visible on the account page in production
+- [x] Direction visible on the account page in production — deployed
+      2026-09-08 and read off the live page, not off a row count. Account
+      `GCKBNEKI…` shows all three states at once: `+1 NFT #44 XLEND` (ledger
+      64 320 740, the same transaction whose other leg is −4 681 USDC), a
+      MEASURED `0` on a Manage Sell Offer, and signed amounts with US
+      grouping. A `Clawback` renders as an outflow (`−1 436.3560918 ICE`) —
+      the one verb never exercised on live data before the deploy
 - [ ] **Docs updated** — `docs/architecture/database-schema/**`,
       `indexing-pipeline/**`, `xdr-parsing/**`, `frontend/**` per ADR 0032.
       Read half (2026-09-07): `database-schema/database-schema-overview.md`

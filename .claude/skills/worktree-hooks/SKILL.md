@@ -40,26 +40,58 @@ Skipping these = prettier drift, type errors, and clippy warnings on `develop`.
 
 ## Fix: provision node_modules in the worktree
 
-### 1. Symlink the primary worktree's node_modules (fast, default)
-
-The main checkout already has `node_modules` (~1 GB). Symlink it — no reinstall,
-no copy. This repo uses **npm** (`package-lock.json`), whose `node_modules` is
-self-contained with relative links, so it is safe to share across worktrees on
-the same lockfile.
+### One command
 
 ```bash
-MAIN=$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')
-[ -d "$MAIN/node_modules" ] && ln -s "$MAIN/node_modules" node_modules
-npx nx --version   # resolves → good
+sh tools/scripts/worktree-node-modules.sh
 ```
 
-### 2. Fallback: install (if no primary node_modules, or the lockfile differs)
+Clones the main checkout's `node_modules` — ~20 s, ~30 MB of disk, and it
+verifies the result before returning. Idempotent, and it repairs a worktree
+that already carries the broken symlink shape below. Falls back to `npm ci`
+when the lockfile differs from main's.
+
+### Never symlink node_modules — this is the bug that keeps coming back
+
+`ln -s "$MAIN/node_modules" node_modules` looks like the cheap answer and was
+this skill's own advice until it was traced. It is wrong, and it fails in a way
+that points at innocent files.
+
+npm workspaces (`workspaces: ["libs/*", "infra", "web"]`) materialise each
+workspace package as a symlink inside `node_modules/@rumblefish/`, **relative to
+node_modules' own location**:
+
+```
+node_modules/@rumblefish/soroban-block-explorer-ui -> ../../libs/ui
+```
+
+Resolve that through a symlinked `node_modules` and `../../` lands in the MAIN
+checkout. So the worktree's `web` compiles against **main's** `libs/ui` and
+`libs/api-types` — whatever branch main happens to be parked on. The symptom is
+~25 TypeScript errors in files your branch never touched, blocking every commit
+including lore-only ones, with nothing wrong in your diff. The repo has no
+`paths` mapping in `tsconfig.base.json`, so `node_modules` is the only
+resolution route and there is no second opinion to catch it.
+
+A real directory fixes it because the same relative symlink then resolves inside
+the worktree. On APFS `cp -c` is a copy-on-write clone, so a real directory
+costs neither the 1 GB nor the minutes an install would:
+
+| Shape           | Disk   | Time    | Workspace packages resolve to  |
+| --------------- | ------ | ------- | ------------------------------ |
+| `ln -s` to main | 0      | instant | **MAIN's libs — wrong branch** |
+| `npm ci`        | 1 GB   | minutes | worktree's libs                |
+| `cp -Rpc` clone | ~30 MB | ~20 s   | worktree's libs                |
+
+Check any worktree by hand:
 
 ```bash
-npm ci             # respects package-lock.json; use when symlink is unsuitable
+cd node_modules/@rumblefish/soroban-block-explorer-ui && pwd -P
 ```
 
-Use `npm ci` (not `npm install`) so the lockfile is honoured and not rewritten.
+The path must start with the worktree's own root. If it starts with the main
+checkout, the layout is the broken one and every typecheck in that worktree is
+lying to you.
 
 ### 3. Commit / push normally — hooks now run
 

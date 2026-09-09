@@ -55,10 +55,21 @@ use serde::Deserialize;
 
 use crate::common::asset_identity::{ResolvedAsset, resolve_asset_identities};
 
-/// First ledger `asset_transfers` covers — the ledger the live indexer started
-/// writing it (deploy `production-2026.09.07-1`). Below it the table is empty
-/// because nothing has been written yet, NOT because nothing moved, so the API
-/// reports "not indexed" rather than a balance change of zero.
+/// First ledger `asset_transfers` covers. Below it the table is empty because
+/// nothing has been written yet, NOT because nothing moved, so the API reports
+/// "not indexed" rather than a balance change of zero.
+///
+/// It started at the deploy ledger 64 317 019 (`production-2026.09.07-1`),
+/// where the live indexer began writing. It now sits at the start of the
+/// archive partition covering the last two weeks before that deploy: a
+/// dedicated backfill worker filled `64 128 000 .. 64 317 019` out of order,
+/// ahead of the three workers walking up from the ingest floor, because the
+/// newest ledgers are the ones an account page is most often asked about and
+/// they would otherwise have arrived last.
+///
+/// **The value may only move to a range the backfill has provably covered.**
+/// Lowering it ahead of the data turns "not indexed" into a measured zero,
+/// which is the one failure this constant exists to prevent.
 ///
 /// It drops to the ingest floor (50 457 424) once the historical backfill of
 /// `50 457 424 .. 64 317 019` passes its coverage gate, and stays there for
@@ -68,7 +79,7 @@ use crate::common::asset_identity::{ResolvedAsset, resolve_asset_identities};
 /// ponytail: a `const`, not config — the only way to change it is a deploy
 /// either way (env vars come from the CDK compute stack), so an env read would
 /// buy nothing. Promote it if it ever has to move without one.
-pub const VALUE_FLOW_FLOOR_LEDGER: i64 = 64_317_019;
+pub const VALUE_FLOW_FLOOR_LEDGER: i64 = 64_128_000;
 
 /// One asset's net movement for the account in context, on one transaction.
 /// Position in the vector is the order the movement happened on the chain —
@@ -206,7 +217,26 @@ pub async fn fetch_balance_changes(
             // cannot happen through the query above (every id yields a row),
             // and is here so a future caller cannot silently get a wrong scale.
             || (String::new(), None, 7),
-            |i| (i.asset.clone(), i.asset_code.clone(), i.decimals),
+            |i| {
+                // A NON-FUNGIBLE entry keeps its contract StrKey whatever
+                // `assets` knows: the cell sends it to the NFT pages, which are
+                // keyed on the contract and answer for collections `assets` has
+                // never heard of — that is the whole reason this read joins
+                // `assets` LEFT. A FUNGIBLE entry goes to `/assets/{id}`, so it
+                // is linked only when that page can answer; otherwise the
+                // identity is emitted EMPTY and the cell prints the code as
+                // plain text. Measured on production: 4 such assets in one
+                // historical partition, 0 in the live one — small, but a dead
+                // link is exactly the plausible-looking wrongness this column
+                // exists to avoid.
+                let linkable = row.nft_delta != 0 || i.resolves_on_asset_page;
+                let asset = if linkable {
+                    i.asset.clone()
+                } else {
+                    String::new()
+                };
+                (asset, i.asset_code.clone(), i.decimals)
+            },
         );
         // A non-fungible group is EXPANDED into one entry per piece when the
         // pieces can be named — that is what makes each NFT in a bulk move its
@@ -268,6 +298,24 @@ struct AssetIdentity {
     asset: String,
     asset_code: Option<String>,
     decimals: u32,
+    /// Whether `/assets/{asset}` can actually answer for this identity.
+    ///
+    /// **This flag is a WORKAROUND and is meant to be deleted** (task 0542).
+    /// It routes around a gap it does not fix: an `assets` row is created from
+    /// the classifier's `Fungible` verdict, which is a guess at the WASM's
+    /// function names — so a contract that demonstrably moves fungible amounts
+    /// but whose code is named unusually is filed as `Other` and never gets a
+    /// row, hence never a page. Registering an asset from the EVIDENCE (it
+    /// moved an amount) instead of from the name retires both the gap and this
+    /// flag. Until then, refusing the link is the honest half-measure.
+    ///
+    /// A bespoke token's link is its contract StrKey, and `soroban_contracts`
+    /// has a row for EVERY deployed contract — but the asset endpoint hydrates
+    /// the key `(3, '', 0, surrogate)` out of `assets`, so a token nobody
+    /// registered there answers 404. The two conditions are not the same
+    /// question, and reading the StrKey's presence as if it were the second one
+    /// is what produced a live-looking link to a page that does not exist.
+    resolves_on_asset_page: bool,
 }
 
 #[derive(Debug, Row, Deserialize)]
@@ -366,6 +414,11 @@ fn balance_change_identity(r: &ResolvedAsset) -> AssetIdentity {
         asset,
         asset_code,
         decimals: r.decimals,
+        // Carried in from the merge: `known` is exactly "the dimension has a
+        // row", which is the question `/assets/{id}` answers with a page or a
+        // 404. Same value as before the resolver moved — it is now read off
+        // `ResolvedAsset` instead of the driver row.
+        resolves_on_asset_page: r.known,
     }
 }
 

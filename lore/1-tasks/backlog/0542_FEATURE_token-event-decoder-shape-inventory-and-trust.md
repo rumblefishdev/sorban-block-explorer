@@ -1,10 +1,23 @@
 ---
 id: '0542'
-title: 'FEATURE: token-event decoder — one shape inventory, one trust policy, re-runnable'
+title: 'FEATURE: one definition of a token movement — shared by every decoder and reader'
 type: FEATURE
 status: backlog
 related_adr: []
-related_tasks: ['0540', '0541', '0383', '0323', '0453', '0503']
+related_tasks:
+  [
+    '0540',
+    '0541',
+    '0383',
+    '0323',
+    '0453',
+    '0503',
+    '0409',
+    '0424',
+    '0376',
+    '0392',
+    '0512',
+  ]
 tags:
   [
     'xdr-parsing',
@@ -79,6 +92,304 @@ value-flow tables on 0540's branch. The same class remains elsewhere:
 Consequence of 0540's fix living in the shared parser: from that deploy on,
 the recipient of an admin-shape mint is also a `transaction_participants`
 row; history stays as it was until a re-parse.
+
+## Measured on production, 2026-09-08 — the `nft.rs` defect, with a witness
+
+The row above was carried from 0540's review as a code reading. It now has a
+concrete case, found because 0540's read path refused to trust it.
+
+**Transaction `6338289864338569526`, ledger 56 162 678, operation position 196,
+collection `CC23DRQPZAUP5MRMPDFGU5R4ISZRSCWCP4TIED2ZTVJLQCPCNDLSALAD`.** Two
+pieces minted. The chain event (`soroban_events`, indices 6 and 7) reads:
+
+```
+[sym "mint", address GDJWENY5…ALAD, address CD4FTCAP…N3TX]
+             ^ admin                ^ recipient (a CONTRACT)
+```
+
+| Table                            | Recipient recorded            | Correct? |
+| -------------------------------- | ----------------------------- | -------- |
+| `asset_transfers` (0540 decoder) | `CD4FTCAP…` (`to_kind = 'C'`) | yes      |
+| `nft_ownership` (`nft.rs`)       | `GDJWENY5…` — the ADMIN       | **no**   |
+
+The mechanism is one comparison. `try_parse_mint` calls
+`extract_args(topics, data, n_addrs = 1)`, whose shape-A arm tests
+`remaining_topics.len() >= n_addrs` and then takes `remaining_topics[..1]`. For
+`[mint, to]` that is the recipient; for `[mint, admin, to]` the length test still
+passes and the FIRST address wins, so the admin is stored as the owner. `>=`
+where the shape needs `==` plus an address-count branch — the same rule 0540
+put into `asset_transfers.rs`.
+
+**Age:** `nft.rs` was written on 2026-04-01 (task 0026) against
+`SEP-0050 pattern: topics = [Symbol("mint"), Address(to)]`, which its own doc
+comment still states. Every admin-shape mint since has been attributed to the
+admin — five months of `nfts.current_owner_id` and `nft_ownership.owner_id`.
+
+**Not a rogue contract.** `[mint, admin, to]` is the `soroban-token-sdk` /
+SEP-41 shape. Both shapes are standard; the decoder knew one of them.
+
+**How it surfaced.** 0540's cell names a moved piece only when the count of ids
+`nft_ownership` returns for `(collection, transaction, new owner)` equals the
+number of pieces the account moved. Here `asset_transfers` says two pieces to
+`CD4FTCAP…` and `nft_ownership` has none for that owner (its two rows sit under
+the admin), so the counts disagree and the cell collapses to `+2 NFT` with no
+ids rather than linking to pieces attributed to the wrong owner. Three
+transactions on production behave this way today; the four larger multi-piece
+mints (10, 8, 5, 5 pieces) agree and are named. So the read path is already a
+live detector for this defect — worth keeping in mind when step 2 lands, since
+those cells start naming pieces the moment `nft.rs` agrees.
+
+## Re-scoped 2026-09-08 — one definition, not an inventory of shapes
+
+The task began as "inventory the shapes the decoder meets and decide a trust
+policy". A systematic sweep for CONTRADICTIONS — places where two parts of the
+system answer the same question differently on real data — showed the shapes
+are the symptom. The disease is that **nothing owns the answer**: the same
+question is decided independently in four to five places, with different rules,
+written months apart.
+
+### "Is this non-fungible?" — four rules
+
+| Where                      | Rule                                                                | Written    |
+| -------------------------- | ------------------------------------------------------------------- | ---------- |
+| `classification.rs:102`    | WASM exposes one of 5 function names                                | 2026-04-21 |
+| `nft.rs:321`               | payload type is not `void`/`map`/`vec`/`error` — **accepts `i128`** | 2026-04-01 |
+| `asset_transfers.rs:90`    | payload is an UNSIGNED scalar — **rejects `i128`**                  | 2026-09-07 |
+| `balance_changes.rs` (API) | `amount IS NULL`                                                    | 2026-09-08 |
+
+Rows two and three return OPPOSITE verdicts on the same event. Measured
+exposure today: **0** movements carrying an amount from an NFT-classified
+contract, across the live and one historical partition — so the contradiction
+is latent, and step 6 below is where it gets settled.
+
+`nft.rs` does not merely disagree; it has its own topic and payload parser
+(`extract_args`, `topic_address_value`) and shares nothing with
+`event_filters::parse_token_event`, which `asset_transfers` and the presence
+tables both use.
+
+### "Which address kind counts?" — four more
+
+| Where                   | Rule                                                    |
+| ----------------------- | ------------------------------------------------------- |
+| `stage.rs:2690`         | `len <= 56 && starts_with('G')` (private helper)        |
+| `stage.rs:819`          | the same rule **re-spelled inline**, next door          |
+| `value_flow.rs:200`     | first character of the StrKey — **every kind accepted** |
+| `api/common/path.rs:79` | exactly 56 chars + base32; `M` rejected                 |
+
+So `asset_transfers` records `L`, `B` and `C` endpoints that the presence
+tables discard — the schema documents 16–22% of endpoints as non-`G`. That is a
+recorded decision, not a bug, but nobody owns it in one place, and the invocation
+path (`stage.rs:1930`) already keeps `C`, which shows the omission is an accident.
+
+### Measured, 2026-09-08 (production)
+
+> **Correction, same day.** An earlier version of this table read
+> `contract_type = 1` as `Fungible`. The enum is `Token = 0, Other = 1,
+Nft = 2, Fungible = 3` (`domain/src/enums/contract_type.rs:23`), so `1` is
+> **`Other`** — "the classifier recognised nothing", not "the classifier
+> disagreed". The corrected reading is weaker as a contradiction and stronger
+> as evidence for [[0512]]: the two sides do not contradict each other, one of
+> them simply never had an opinion. Re-measured with the right values:
+> non-fungible movements split **410 in 12 collections the classifier calls
+> `Nft`** (agreement) against **136 in 3 it calls `Other`**, and asset-row
+> coverage for contracts it calls `Fungible` is **4 423 of 4 423 — complete**.
+
+| #   | Contradiction                                                                           | Exposure                                                                                                                                                          |
+| --- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | decoder says non-fungible, classifier says `Other` — it recognised nothing              | **136 movements, 3 collections**                                                                                                                                  |
+| 2   | `nft.rs` credits the ADMIN, `asset_transfers` credits the recipient                     | witness above; 26 movements collapse in the read                                                                                                                  |
+| 3   | NFT owner is a CONTRACT and the API resolves owners only via `accounts`                 | **339 of 1 089 owners (31%)** — all 339 resolve in `soroban_contracts`, so it is a read-side omission, not missing data (belongs to [[0376]], measured there too) |
+| 4   | a `C` transfer endpoint with no `soroban_contracts` row                                 | 4 of 2 371                                                                                                                                                        |
+| 5   | a token with >1 ownership event in one ledger — order undecidable                       | **88** ([[0424]])                                                                                                                                                 |
+| 6   | `i128` — token id or amount                                                             | 0 today, latent                                                                                                                                                   |
+| 7   | `M…` inside an event TOPIC is split by `value_flow` and dropped by `derive_token_event` | 0 today (no `M…` has ever appeared in a topic); the 56 muxed ids in a live partition all come from the envelope, which is the designed path                       |
+
+Checked and found CONSISTENT, so nobody re-derives them: transfer recipients vs
+`transaction_participants` (0 missing over 294 264 live and 232 523 historical
+edges), `nfts.current_owner_id` vs its own ownership history (0 of 13 955),
+native's surrogate (one convention, 0 empty-string rows), `canonical_id` vs
+`asset_route_token`, and the three `decimals` paths.
+
+Mitigated outside this task, in 0540, because it was already on a live
+surface — but the mitigation is a PLASTER and is named as one here so it gets
+removed rather than inherited. The cell stopped linking an asset whose
+`assets` row is missing (4 of 51 421 fungible assets in a historical
+partition). It did not ask WHY the row is missing.
+
+**Why it is missing, traced 2026-09-08.** An `assets` row for a bespoke token
+is created by `stage.rs:2119-2146` for contracts whose verdict is `Fungible`,
+and that rule is complete: 4 423 of 4 423. The four dead links are contracts
+the classifier calls **`Other`** — yet each one emits `{amount}` transfers, so
+the chain has already demonstrated they are fungible tokens. The registry keys
+on a **guess at the WASM's function names**; the evidence of what the contract
+actually did is never consulted.
+
+**The fundamental fix**, and it belongs to this task's "one definition":
+register an asset from the EVIDENCE — a contract that moved a fungible amount
+is a fungible asset — not from a name match. That rule is self-healing for
+history, because `asset_transfers` carries the evidence for the whole range
+once the backfill lands, and it removes 0540's plaster along with the
+`resolves_on_asset_page` flag that exists only to route around the gap.
+Sequenced after [[0512]], which is the same question asked of the classifier
+itself.
+
+**Re-measured, 2026-09-09 — the "four" were two defects wearing one symptom,
+and the first count of them was wrong.** A full-table anti-join, no partition
+list and no sampling: **73 contracts move value with no `assets` row**. They do
+not mix — 48 emit only movements carrying an amount (118 movements), 25 only
+non-fungible ones (908), none both. Only the 48 reach this section; a
+non-fungible movement links to the NFT pages, which answer for collections
+`assets` has never heard of.
+
+The 48 split by what the classifier said, and the two halves are different
+defects:
+
+| Cause                                                                       | Movements | Contracts | Classifier said |
+| --------------------------------------------------------------------------- | --------- | --------- | --------------- |
+| Fungible token never registered — the registry-by-name gap above            | 91        | 46        | `Other`         |
+| `i128` token id stored as an `amount` — [[0540]]'s correction, step 6 below | 27        | 2         | `Nft`           |
+
+**Every count here is a mid-backfill snapshot and rises as partitions land.**
+The same query read 28 orphans / 563 rows earlier the same day (recorded from
+the 0374 side in [[0512]]) and 73 / 1 026 hours later. Cite the method, never
+the number.
+
+**A first pass at this reported 8 contracts and 45 movements. That was wrong**,
+and the way it was wrong is worth keeping: it enumerated partitions from a
+`system.parts` snapshot and then anti-joined them one by one, so the three
+partitions the backfill filled while the measurement ran were never visited.
+The undercount was entirely in the `Other` half (6 of 46 contracts, 18 of 91
+movements); the `Nft` half was exact, because those two collections are
+confined to partitions the snapshot happened to include. Against a table being
+written, a partition list captured up front is stale before the query ends —
+anti-join the table, not a remembered list of its parts.
+
+Sampled from the `Other` half, not claimed of all 46: two are unarguably
+fungible (a single amount of 10 000 000 000 000, and a 1.3–3.8 bn spread), and
+four emit only the values `0` and `1`, two movements each — which the evidence
+rule cannot classify on its own, and which need step 6's event-spec evidence
+rather than a registry rule.
+
+The live window since L₀ is **0 of 8 671** distinct fungible assets, so nothing
+is on screen today. The two defects must be fixed in this order: resolving the
+`i128` ids first stops step 6's collections from ever reaching the registry as
+fungible candidates.
+
+**The witness this task was named for, found 2026-09-09.** The 27 movements are
+not a decoder failing in isolation — they are two decoders reading the SAME
+BYTES and disagreeing. The event, out of `soroban_events`, decoded:
+
+```
+topics: [{"type":"sym","value":"mint"},{"type":"address","value":"GD75WZVG…"}]
+data:   {"type":"i128","value":"20"}
+```
+
+A CAP-67-shaped `[mint, to]` with a bare `i128` payload. `nft.rs` read that
+`i128` as a token id and wrote `nft_ownership.token_id`; `asset_transfers` read
+the same scalar as a quantity. Joined on `(contract, ledger)`, every pair agrees
+on the number and disagrees on what it means:
+
+| ledger               | `nft_ownership.token_id` | `asset_transfers.amount` |
+| -------------------- | ------------------------ | ------------------------ |
+| 51 827 994           | 1                        | 1                        |
+| 51 827 996           | 2                        | 2                        |
+| 51 859 831           | 4                        | 4                        |
+| … 27 rows, all equal |                          |                          |
+
+One definition would have made this unrepresentable. Two definitions made it
+invisible: each table is internally consistent, and only the join exposes it.
+
+**It also puts a scope limit on [[0512]]'s tier-4 discriminator.** That tier
+rests on "no overlap on the scalar types", measured as `Nft`-verdict `transfer`
+emitting `u32` 8 487 / `map` 71 / `vec` 3 against `Fungible`'s `i128` 797 376.
+These 27 events are **`mint`, not `transfer`** — the only signature these two
+collections ever emit — so they sit outside what that measurement covered, and
+they are `Nft`-verdict carrying a bare `i128`. The overlap the tier rules out
+does exist; it lives on the verb the sample did not include. Re-measure per
+verb before the cascade relies on it.
+
+Bounded, checked the same day: **0 of 136 `Nft`-verdict contracts have an
+`assets` row**, so the anti-join above already sees every collection in this
+state — there is no larger hidden population.
+
+### The canonical source is on-chain, and the parser throws it away (2026-09-09)
+
+Everything above works around one absence: nothing tells us what a contract's
+event _means_, so each consumer guesses from the label. That absence is not
+real. **A contract declares its own events inside its WASM**, and the XDR
+library this repo already depends on has carried the type since before this
+task was filed:
+
+```
+ScSpecEntry::EventV0(ScSpecEventV0 {
+    name,            // the event's name
+    prefix_topics,   // which symbols lead the topics
+    params,          // each: name, type, and LOCATION — topic or data
+    data_format,     // how the payload is shaped
+})
+```
+
+`ScSpecEventParamV0.location` is the field every question in this task keeps
+running into: **is the recipient in the topics or in the data, and which
+position**. It is declared by the contract, stored in code addressed by its own
+hash, so it is immutable for that version and matches exactly the build that
+emitted the event. It cannot be forged by a third party, and — unlike a topic
+symbol — it is not a claim, it is the contract's own published interface.
+
+**`contract.rs` reads the spec section and keeps `FunctionV0` only** (`if let
+ScSpecEntry::FunctionV0(func) = entry`). Every event declaration on the chain
+passes through this repo and is dropped on that line. `wasm_interface_metadata`
+is already populated per wasm hash, so the ingestion half exists.
+
+This reframes the task's steps rather than adding one. The shape inventory
+(step 1) stops being a census of what we have seen and becomes a comparison
+between what contracts DECLARE and what they EMIT — a disagreement is then a
+finding, not a shrug. Step 6's `i128` ambiguity resolves from the declaration
+instead of from heuristics. And the missing-sender family measured above can be
+read the moment its declaration says where the sender sits.
+
+Not every contract publishes one, so the label rule stays as the fallback for
+those that do not — but it stops being the primary source for those that do.
+
+### The trace view colours by label, with no emitter check (2026-09-09)
+
+Same disease on a second surface. `ExecutionTrace.tsx` paints a row from
+`eventCategory(traceEventLabel(event))`, and `traceEventLabel` is the first
+topic symbol with a fall-back to the event type. Every call site passes that
+string and nothing else: **any contract emitting a `transfer` symbol gets the
+"token movement" colour**, whether or not an asset moved. The emitter gate that
+`asset_transfers` applies has no counterpart here.
+
+That is defensible for a view whose job is to render faithfully what was
+announced — but the legend says "token movement", which is a claim about money,
+not about a word. The declaration source above is what would let it colour by
+evidence.
+
+A related hole, measured rather than assumed: the tree's structure is rebuilt
+from `fn_call` / `fn_return` labels, and the reader does not separate a host
+diagnostic from a contract event, so a contract emitting a `fn_call` symbol
+could inject a frame. **Zero occurrences in 309 355 024 contract events in one
+partition** — never attempted, worth knowing before someone relies on the tree
+as proof of anything.
+
+### What this task now owns
+
+1. **One definition of a token movement**, in `domain`, used by `nft.rs`,
+   `asset_transfers.rs` and `derive_token_event`. `nft.rs` stops having its own
+   parser. This subsumes step 2 below rather than sitting beside it.
+2. **One rule for which address kinds count**, in one place, with the current
+   per-table policy expressed against it rather than re-spelled four times.
+3. **The `nft.rs` admin-shape fix** (task owner, 2026-09-08: it belongs here,
+   not as a separate change) — including the re-derivation of the historical
+   `nfts` / `nft_ownership` rows it has been mis-attributing since 2026-04-01.
+4. **[[0409]] is absorbed**: "arm-A NFT pollution" is this same disease in
+   another table — a token event written with an NFT's id parsed as an amount,
+   because the writer did not consult the same definition.
+
+Related, NOT absorbed: [[0512]] (the classifier itself), [[0392]] (the
+completeness umbrella above it), [[0424]] (ownership order), [[0376]] (contract
+owners), [[0486]] (the collection view). Each keeps its own outcome; this task
+supplies the shared vocabulary they all read.
 
 ## Implementation Plan
 

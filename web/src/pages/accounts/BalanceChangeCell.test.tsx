@@ -171,6 +171,20 @@ describe('BalanceChangeCell', () => {
     expect(screen.queryByText('+6,097.065378')).not.toBeInTheDocument();
   });
 
+  it('prints an unlinkable asset as text, never as a link that 404s', () => {
+    // The API empties `asset` when `/assets/{id}` cannot answer — a token with
+    // no `assets` row. Its contract StrKey exists, so a naive cell would build
+    // a live-looking link to a page that returns 404.
+    renderWithProviders(
+      <BalanceChangeCell
+        changes={[change({ asset: '', asset_code: 'SOMETOKEN', amount: '5' })]}
+      />
+    );
+
+    expect(screen.getByText('SOMETOKEN')).toBeInTheDocument();
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+  });
+
   it('names an unregistered token rather than borrowing XLM’s ticker', () => {
     // A bespoke token with no on-chain symbol has no code at all. Falling
     // through to the native label would put someone else's asset on screen.
