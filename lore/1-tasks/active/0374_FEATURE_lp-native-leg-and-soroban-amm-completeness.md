@@ -1798,3 +1798,211 @@ caller. The fix, if it ever earns its keep, is a bloom index on `assets.id` —
 the same `idx_acc_id` treatment `accounts` got at ~23M rows — which is a
 production DDL and therefore an operator action. Not justified at 569k and
 47 ms.
+
+## One fact, several producers — a sweep prompted by a near-miss (2026-09-08)
+
+While building the pool-leg display resolver I looked up the SAC mirror address
+through `soroban_contracts`, and only a cost measurement (476,616 rows / ~120 ms,
+the whole `asset_sac` table) revealed that `/v1/assets` does not look it up at
+all — it DERIVES the address in Rust from `code:issuer`, exactly as ADR 0051
+says, and reads the table only to learn whether a SAC was observed. Two ways to
+produce one fact, one of them mine, caught by accident.
+
+The owner asked for a sweep. Ranked by whether a user can see it and whether it
+dies on its own.
+
+### F1 — "what is this asset called" has THREE frontend implementations, and
+
+three different answers
+
+| function           | surface             | answer when the asset has no code |
+| ------------------ | ------------------- | --------------------------------- |
+| `assetDisplayCode` | assets list         | `null` → renders a dash           |
+| `assetLabel`       | balance-change cell | the string `Unnamed token`        |
+| `assetLegLabel`    | pool leg            | **throws**                        |
+
+One question, three surfaces, three behaviours — one of which takes the page
+down. The ranked-inconsistency item about an unnamed soroban leg was about to
+add a FOURTH (a truncated address) by fixing only the third.
+
+**Fix belongs to the leg-rendering step**, which touches this code anyway: ONE
+function, one ladder — native → `XLM`, code → code, on-chain symbol → symbol,
+otherwise the truncated `C…` address. Measured justification for the last rung:
+a soroban token's symbol is self-declared and not unique (2,276 contracts call
+themselves `SMOL`, 488 `POOL`, 44 `sUSDC`; among our own pool legs three
+different contracts claim `USDC`), so the address is the only identity that
+discriminates — which is also why stellar.expert prints it beside the symbol
+even when the symbol exists.
+
+### F2 — the "native displays as XLM" SQL expression is written FOUR times
+
+`search/queries.rs:717` and `assets/queries.rs:672` are byte-identical `SHOWN`
+constants; `common/pool_asset_codes.rs:40` is a parameterised third; and
+`search/queries.rs:322-323` inlines a fourth for the pool-pair label.
+
+The comment guarding it says **"Change one, change all three"** — and there are
+four. The comment that exists to prevent drift has drifted, which is the whole
+argument in one line.
+
+Two of the four read the legacy pair columns and **die with the legs
+migration**; the surviving pair are identical constants and can become one.
+
+### F3 — "classic precision is 7 decimals" is written FOUR times
+
+Twice in SQL (`common/asset_identity.rs`, `accounts/queries.rs` — both
+`coalesce(m.decimals, 7)`) and twice in Rust (`assets/queries.rs:565`
+`unwrap_or(7)`, `assets/handlers.rs:545`). A SQL-vs-Rust divergence is harder to
+notice than two Rust copies, and no test spans both.
+
+### F4 — the composite link identity `CODE-ISSUER` is built in THREE places
+
+`assets/handlers.rs:59` (`canonical_id`), `accounts/balance_changes.rs:353`, and
+again in the frontend (`web/src/pages/pool-shared/helpers.ts`). The API composes
+it twice independently; the browser composes it a third time.
+
+### F5 — CLOSED, fixed the same day
+
+The SAC mirror address now has one producer: `common::asset_identity::sac_strkey`
+derives it and gates on the observation, and `/v1/assets` was routed through it
+rather than keeping its own call. One round trip removed from the pool path.
+
+### What is being done, and what is only recorded
+
+| finding | action                                                                         | where               |
+| ------- | ------------------------------------------------------------------------------ | ------------------- |
+| F1      | fix — one naming function with one ladder                                      | leg-render step     |
+| F2      | two copies die with the legs migration; fold the other two                     | legs-predicate step |
+| F3      | recorded only — scattered across SQL and Rust, one constant cannot span both   |                     |
+| F4      | recorded only — one API helper is cheap, the frontend copy is its own question |                     |
+| F5      | done                                                                           | —                   |
+
+No task filed. `0535` covers "the app carries two definitions of one" for link
+affordance, not for asset naming, and F1 belongs to this task's own leg-render
+step rather than beside it.
+
+### Second pass on the same sweep — F6, F7, and one observation of a different kind
+
+### F6 — "is this asset native?" is asked FIVE ways, two of them in one file
+
+| test                                           | where                                                   |
+| ---------------------------------------------- | ------------------------------------------------------- |
+| `leg.asset_type === 0`                         | `pool-shared/helpers.ts:33` (`legHref`)                 |
+| `leg.asset_type_name === 'native'`             | `pool-shared/helpers.ts:53` (`assetLegLabel`)           |
+| `isNativeAssetString(value)`                   | `identifiers/native.ts`, for the operation string shape |
+| `sac.asset_code == null && sac.issuer == null` | `contracts/sacAsset.ts` (`isNativeSac`)                 |
+| `asset_type = 0`                               | the SQL side, ~10 sites                                 |
+
+The first two act on the SAME object, two functions apart in the SAME file, and
+test different fields for the same thing.
+
+Each one is locally justified — native genuinely arrives in different wire
+shapes (a row, an operation string, a both-null SAC facet), and
+`identifiers/native.ts` says so explicitly: "an adapter over the same constant
+rather than one function for both shapes". The gap is that nothing enumerates
+the shapes, so a new surface adopts whichever spelling it meets first.
+
+**Why this stops being cosmetic at the legs migration:** the wire `asset_type`
+is the XDR type, and a Soroban token has no honest XDR type at all (measured:
+recoverable for classic from family + code length, undefined for family 3). The
+moment a leg can be a Soroban token, the number test and the name test answer
+differently on the same leg. F1's single naming ladder should carry the single
+native predicate with it.
+
+### F7 — the file that calls itself "the single truncation standard" has two
+
+hand-rolled copies
+
+`libs/ui/src/identifiers/truncate.ts` declares "The single truncation standard:
+first 4 + last 4" and exports `truncateMiddle`. `ExecutionTrace.tsx` builds
+`${x.slice(0, 4)}…${x.slice(-4)}` inline, twice (lines 267 and 289). Identical
+output today; a change to the standard would silently leave those two behind.
+Cheap to fix, no behaviour change, and it is not this task's code — recorded, not
+grabbed.
+
+### Observation, different class — three ways to collapse a ReplacingMergeTree
+
+`FINAL` at ~107 sites, `LIMIT 1 BY` at ~55, `argMax(…, version)` at ~44.
+
+These are NOT interchangeable — they answer different questions (whole-row
+collapse / any version when the projected columns are immutable / the newest
+version), and each site reasons about its choice in a comment. So this is not a
+duplicated fact and does not belong with F1-F7. It is recorded because the
+choice is measurable and the measurements are one-sided: `FINAL` cost 4.7x the
+rows on the asset dimensions and 19x in the case task 0420 recorded. There is no
+one place stating which idiom a new read should reach for first.
+
+### Third pass — pagination, formatting, and list-vs-detail (2026-09-08)
+
+Three areas swept on the owner's ask. Two came back clean; the third produced
+the sharpest finding of the whole sweep.
+
+**Pagination — clean, and worth saying so.** All seven paginating modules
+(accounts, assets, contracts, ledgers, liquidity_pools, nfts, transactions) go
+through the one `common::cursor::encode`/`decode` and the shared
+`keyset_sql` / `keyset_sql_desc`; search does not paginate. Each endpoint
+defines its own cursor PAYLOAD, which is correct — different keysets carry
+different fields — and no endpoint hand-rolls the comparison. Nothing to fix.
+
+**Formatting — nearly clean.** `format/numbers.ts` calls itself the "canonical
+replacement for scattered inline `n.toLocaleString('en-US')`" and the migration
+is 24 call sites done, ONE straggler left (`humanizeOp.ts:444`). Chart-axis
+formatters are purpose-built, not copies. The one placement smell:
+`formatAbsoluteUtc` is shared by three pages but lives inside
+`web/src/pages/transactions/`, so the pool page imports it as
+`../transactions/formatters.js` — the same argument `identifiers/native.ts`
+makes for itself ("a constant defined up in `web/src/pages` can never be
+imported by this package") applies here and was not applied.
+
+### F8 — the list and the detail compute the same three pool facts two ways
+
+| fact                     | detail query                                      | list query                                     |
+| ------------------------ | ------------------------------------------------- | ---------------------------------------------- |
+| `created_at_ledger`      | scalar subquery `min(ledger_sequence)`            | `cr` CTE, `GROUP BY pool_id`                   |
+| `participant_count`      | scalar subquery `count() FROM lp_positions FINAL` | `pc` CTE, `GROUP BY pool_id`                   |
+| latest snapshot reserves | whole row `WHERE sequence = (SELECT max(...))`    | `argMax(reserve_a, …)`, `argMax(reserve_b, …)` |
+
+The third pair is the one to watch: picking the whole row at `max(ledger)` and
+taking a per-column `argMax` are equivalent ONLY while `liquidity_pool_snapshots`
+holds one logical row per (pool, ledger) — the 0356 invariant. They are two
+formulations of one fact, each safe by a DIFFERENT assumption, and neither
+states that it depends on the other's.
+
+### F9 — the freshness window is defined twice, in two units, and they disagree
+
+by ~19 hours today
+
+| side     | definition                                           | in days at the measured cadence |
+| -------- | ---------------------------------------------------- | ------------------------------- |
+| API      | `FRESHNESS_WINDOW_LEDGERS = 7 * 17_280` ledgers      | **7.81**                        |
+| frontend | `SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000` wall clock | **7.00**                        |
+
+Measured on production 2026-09-08: **15,471 ledgers closed in 24 hours = 5.58 s
+per ledger**, not the 5.00 the constant assumes. So 120,960 ledgers is 7.81 days,
+not 7.
+
+**264 pools sit inside that gap right now** (22,262 fresh by both definitions,
+231 stale by both). For those the API still treats the snapshot as fresh — it is
+what the participants read divides `share_percentage` by — while the KPI strip
+captions "no recent snapshot".
+
+The defect is not the approximation itself. The Rust side declares it openly:
+"the window is approximated by a `ledger_sequence` floor relative to chain head.
+Exact wall-clock parity is a documented tolerance." The frontend then says its
+own constant "**matches** the freshness window enforced by" the backend. One
+side calls it an accepted tolerance, the other calls it equality, and nothing
+reconciles them — which is how a tolerance quietly becomes a contradiction
+between two halves of one page.
+
+Cheapest honest fix, when this is worked: the API states freshness on the wire
+(a boolean, or the cutoff it used) instead of the frontend re-deriving it in a
+different unit. Same shape as ranked-inconsistency item 2, where the KPI and the
+section below it disagree because each computes its own answer.
+
+**F9 stays recorded here — searched, no task covers it.** Every open task
+mentioning "stale" or "freshness" was checked by title and content; the closest
+match, `0215` (LP analytics FE impact), is blocked and does not mention the
+window at all. Worth linking rather than duplicating: backlog task `0510` is the
+SAME SHAPE for a different fact — "the auth path is absent from the API schema,
+so the frontend hand-mirrors its type". F9 is that pattern applied to freshness:
+the API does not state it, so the frontend re-derives it in another unit. If
+either is ever generalised, they are one problem.
