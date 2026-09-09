@@ -233,87 +233,48 @@ once the backfill lands, and it removes 0540's plaster along with the
 Sequenced after [[0512]], which is the same question asked of the classifier
 itself.
 
-**Re-measured across the whole backfilled range, 2026-09-09 — and the "four"
-were two different defects wearing one symptom.** Every partition
-`asset_transfers` holds was counted, not one: **8 contracts, 45 movements, 45
-transactions**, against ~1.5 bn fungible movements — 0.0000030%, one in ~33
-million. The figure is a moving target, not a constant: it read 36 an hour
-earlier, because three more partitions landed while the measurement ran. Per
-partition the worst is **6 of 53 668 distinct fungible assets (0.011%)**; the
-live window since L₀ is **0 of 8 671**, so nothing is on screen today.
+**Re-measured, 2026-09-09 — the "four" were two defects wearing one symptom,
+and the first count of them was wrong.** A full-table anti-join, no partition
+list and no sampling: **73 contracts move value with no `assets` row**. They do
+not mix — 48 emit only movements carrying an amount (118 movements), 25 only
+non-fungible ones (908), none both. Only the 48 reach this section; a
+non-fungible movement links to the NFT pages, which answer for collections
+`assets` has never heard of.
 
-The 45 split by cause, and only one of them is this section's:
+The 48 split by what the classifier said, and the two halves are different
+defects:
 
-| Cause                                                                       | Movements | Contracts | Classifier said | In `nft_ownership`    |
-| --------------------------------------------------------------------------- | --------- | --------- | --------------- | --------------------- |
-| `i128` token id stored as an `amount` — [[0540]]'s correction, step 6 below | 27        | 2         | `Nft`           | yes (23 and 4 pieces) |
-| Fungible token never registered — the registry-by-name gap above            | 18        | 6         | `Other`         | no                    |
+| Cause                                                                       | Movements | Contracts | Classifier said |
+| --------------------------------------------------------------------------- | --------- | --------- | --------------- |
+| Fungible token never registered — the registry-by-name gap above            | 91        | 46        | `Other`         |
+| `i128` token id stored as an `amount` — [[0540]]'s correction, step 6 below | 27        | 2         | `Nft`           |
 
-So the "four `Other` contracts" was an undercount AND a conflation. Of the six
-`Other` ones, two are unarguably fungible (single amounts of 10 000 000 000 000
-and a 1.3–3.8 bn spread); the remaining four emit only the values `0` and `1`,
-two movements each, which the evidence rule cannot classify on its own — they
-are the case that needs step 6's event-spec evidence, not just a registry
-rule. The two defects must be fixed in this order: resolving the `i128` ids
-first stops step 6's collections from ever reaching the registry as fungible
-candidates.
+**Every count here is a mid-backfill snapshot and rises as partitions land.**
+The same query read 28 orphans / 563 rows earlier the same day (recorded from
+the 0374 side in [[0512]]) and 73 / 1 026 hours later. Cite the method, never
+the number.
 
-### Measured from the historical pass, 2026-09-09 — a shape no decoder can complete
+**A first pass at this reported 8 contracts and 45 movements. That was wrong**,
+and the way it was wrong is worth keeping: it enumerated partitions from a
+`system.parts` snapshot and then anti-joined them one by one, so the three
+partitions the backfill filled while the measurement ran were never visited.
+The undercount was entirely in the `Other` half (6 of 46 contracts, 18 of 91
+movements); the `Nft` half was exact, because those two collections are
+confined to partitions the snapshot happened to include. Against a table being
+written, a partition list captured up front is stale before the query ends —
+anti-join the table, not a remembered list of its parts.
 
-The 0540 backfill is the first sweep over history with the counting decoder, so
-it is also the first reject measurement taken over **~2.08 M ledgers of
-history** rather than a live window (from the ingest floor 50 457 424 onward,
-three workers). A mid-run snapshot, so the counts grow with the run; the shape
-of the answer does not.
+Sampled from the `Other` half, not claimed of all 46: two are unarguably
+fungible (a single amount of 10 000 000 000 000, and a 1.3–3.8 bn spread), and
+four emit only the values `0` and `1`, two movements each — which the evidence
+rule cannot classify on its own, and which need step 6's event-spec evidence
+rather than a registry rule.
 
-| Cause                  | Count     |
-| ---------------------- | --------- |
-| `unrecognised_topics`  | **1 108** |
-| `emitter_not_sac`      | 0         |
-| `unrecognised_payload` | 0         |
-| `no_operation`         | 0         |
-| `no_emitter`           | 0         |
+The live window since L₀ is **0 of 8 671** distinct fungible assets, so nothing
+is on screen today. The two defects must be fixed in this order: resolving the
+`i128` ids first stops step 6's collections from ever reaching the registry as
+fungible candidates.
 
-532 per million ledgers against the ~300 per million the review measured on a
-recent window — the same order, and the gap is era, not regression. Three
-results matter more than the rate.
-
-**Every reject is one cause and one contract family.** 21 emitters, the largest
-801 of the 1 108. Their event is `topics ["transfer", u32 <token id>]` with
-`data address <recipient>`: the token id in the topic, the recipient in the
-data, **and no sender at all**.
-
-**The sender is not missing from the decode — it is missing from the event.**
-The contract's own interface declares `transfer(from, to, token_id: u32)`
-(read from `wasm_interface_metadata`), so the ledger carries the sender in the
-invocation's arguments while the event omits it. No topic-shape rule can
-complete this edge from the event alone: the `from` would have to come from the
-invocation, a different source than every other row in `asset_transfers`. That
-makes it a question for "one definition of a token movement" — is a movement
-defined by what an event says, or by what the ledger shows the call did? — and
-not a missing row in a shape table.
-
-**Why the classifier answers `Other` here, precisely.** These contracts expose
-none of the five discriminator FUNCTION names. Four of the five nonetheless
-contain the string `token_uri` — as the name of a `mint` **parameter**, not a
-function — so a substring test over the interface reports a false NFT verdict
-where the classifier correctly reports none. The interface is otherwise
-unmistakably non-fungible: `transfer(from, to, token_id)`,
-`mint(owner, token_id, token_uri)`,
-`bulk_mint(owner, vec<tuple<u32, string>>)`, `burn(owner, token_id)`. Same
-disease as the missing-assets-row gap above, in the other direction: the
-registry keys on a guess at function names while the chain has already
-demonstrated what the contract does.
-
-**They are all but absent from the NFT tables.** Zero rows in `nfts` for all
-five sampled; `nfts_pending` holds 4 rows, all from one of them. The
-collections exist on chain and trade, and are invisible in every table that
-would render them.
-
-**`emitter_not_sac = 0` across 2.08 M ledgers of history.** First historical
-evidence for the gate 0540 added: no contract has ever labelled an event with
-an asset whose SAC it is not. The attack the gate exists to stop has not been
-attempted anywhere in the indexed range.
 **The witness this task was named for, found 2026-09-09.** The 27 movements are
 not a decoder failing in isolation — they are two decoders reading the SAME
 BYTES and disagreeing. The event, out of `soroban_events`, decoded:
