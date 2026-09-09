@@ -815,6 +815,32 @@ No column stores `fee_source` anywhere. Attributing the fee to the inner source
 would be wrong on two rows in five, so the column stays transfers-only and the
 `Fee` column beside it carries the rest.
 
+### The read floor, and what removing it is gated on (2026-09-09)
+
+The account page ships with a hard floor: `VALUE_FLOW_FLOOR_LEDGER` in
+`crates/api/src/accounts/balance_changes.rs`, currently the deploy ledger
+64 317 019, pinned by a test and honoured twice in `accounts/queries.rs`.
+Below it the column renders "not indexed" rather than an empty cell, because
+`asset_transfers` holds no rows there and an empty cell reads as "nothing
+moved".
+
+**Lowering it is a rollout step, not a code change.** The floor may drop to
+any ledger the backfill has provably covered, and finally to the ingest floor
+50 457 424 once the whole range is in and gate 7a passes on it. Below the
+ingest floor it stays forever — there is no data to have.
+
+Each drop touches three places in lockstep: the constant, the test that pins
+it, and the frontend gate that decides whether to draw the column at all.
+
+An intermediate drop is worth taking before the full range lands. The
+backfill's three workers advance from the bottom of their own ranges, so the
+newest ledgers — the ones an account page is most likely to be asked about —
+are the last to arrive. A separate worker over the most recent window fills
+that slice out of order in hours rather than days, and the floor can move to
+the start of that window as soon as it does. The overlap this creates with the
+worker that will later cover the same ledgers costs nothing: the write is
+idempotent under the row key, proven on a deliberate re-run.
+
 ### Design decisions
 
 #### From plan
