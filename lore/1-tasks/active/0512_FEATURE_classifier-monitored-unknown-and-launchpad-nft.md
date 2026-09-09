@@ -377,3 +377,22 @@ disappearing. The cost of the residual is a missing name, not a missing row.
 angle, not a new defect. Recorded here so the discriminator's acceptance can be
 checked against traffic (does the orphan count fall?) and not only against the
 queue depth.
+
+**Correction (2026-09-09) — those counts were a mid-backfill snapshot, and the
+section above does not say so.** The method was right (full-table anti-join, no
+sampling, no partition list) but the TABLE was growing underneath it: the
+value-flow backfill was landing partitions while the query ran. Task 0542
+re-measured the same question hours later and read **73 contracts / 1,026
+movements** against the 28 / 563 recorded above, and split them 48 fungible-only
+against 25 non-fungible-only.
+
+0542 states the rule this correction exists to carry: **cite the method, never
+the number** — every count against `asset_transfers` rises until the backfill
+finishes, and a figure without its timestamp reads as a steady state it is not.
+
+What survives unchanged is the shape, which is what this task actually needs:
+orphans are contracts the discriminator has not reached, they do not mix
+fungible with non-fungible movements, and every one of them still resolves to an
+address, so the residual costs a name rather than a row. The live figures belong
+in [[0542]], which owns that measurement; read them there rather than from the
+numbers above.
