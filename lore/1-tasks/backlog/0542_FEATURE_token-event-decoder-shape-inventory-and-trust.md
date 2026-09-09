@@ -312,6 +312,66 @@ Bounded, checked the same day: **0 of 136 `Nft`-verdict contracts have an
 `assets` row**, so the anti-join above already sees every collection in this
 state — there is no larger hidden population.
 
+### The canonical source is on-chain, and the parser throws it away (2026-09-09)
+
+Everything above works around one absence: nothing tells us what a contract's
+event _means_, so each consumer guesses from the label. That absence is not
+real. **A contract declares its own events inside its WASM**, and the XDR
+library this repo already depends on has carried the type since before this
+task was filed:
+
+```
+ScSpecEntry::EventV0(ScSpecEventV0 {
+    name,            // the event's name
+    prefix_topics,   // which symbols lead the topics
+    params,          // each: name, type, and LOCATION — topic or data
+    data_format,     // how the payload is shaped
+})
+```
+
+`ScSpecEventParamV0.location` is the field every question in this task keeps
+running into: **is the recipient in the topics or in the data, and which
+position**. It is declared by the contract, stored in code addressed by its own
+hash, so it is immutable for that version and matches exactly the build that
+emitted the event. It cannot be forged by a third party, and — unlike a topic
+symbol — it is not a claim, it is the contract's own published interface.
+
+**`contract.rs` reads the spec section and keeps `FunctionV0` only** (`if let
+ScSpecEntry::FunctionV0(func) = entry`). Every event declaration on the chain
+passes through this repo and is dropped on that line. `wasm_interface_metadata`
+is already populated per wasm hash, so the ingestion half exists.
+
+This reframes the task's steps rather than adding one. The shape inventory
+(step 1) stops being a census of what we have seen and becomes a comparison
+between what contracts DECLARE and what they EMIT — a disagreement is then a
+finding, not a shrug. Step 6's `i128` ambiguity resolves from the declaration
+instead of from heuristics. And the missing-sender family measured above can be
+read the moment its declaration says where the sender sits.
+
+Not every contract publishes one, so the label rule stays as the fallback for
+those that do not — but it stops being the primary source for those that do.
+
+### The trace view colours by label, with no emitter check (2026-09-09)
+
+Same disease on a second surface. `ExecutionTrace.tsx` paints a row from
+`eventCategory(traceEventLabel(event))`, and `traceEventLabel` is the first
+topic symbol with a fall-back to the event type. Every call site passes that
+string and nothing else: **any contract emitting a `transfer` symbol gets the
+"token movement" colour**, whether or not an asset moved. The emitter gate that
+`asset_transfers` applies has no counterpart here.
+
+That is defensible for a view whose job is to render faithfully what was
+announced — but the legend says "token movement", which is a claim about money,
+not about a word. The declaration source above is what would let it colour by
+evidence.
+
+A related hole, measured rather than assumed: the tree's structure is rebuilt
+from `fn_call` / `fn_return` labels, and the reader does not separate a host
+diagnostic from a contract event, so a contract emitting a `fn_call` symbol
+could inject a frame. **Zero occurrences in 309 355 024 contract events in one
+partition** — never attempted, worth knowing before someone relies on the tree
+as proof of anything.
+
 ### What this task now owns
 
 1. **One definition of a token movement**, in `domain`, used by `nft.rs`,
