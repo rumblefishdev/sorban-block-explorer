@@ -158,31 +158,44 @@ describe('poolLabel', () => {
 });
 
 describe('poolReserves', () => {
-  it('pairs each reserve with the leg that holds it', () => {
+  it('reads the amount off the leg that holds it', () => {
     const legs = [
-      makeLeg({ asset_type_name: 'native', asset_code: null }),
-      makeLeg({ asset_code: 'USDC' }),
+      makeLeg({
+        asset_type_name: 'native',
+        asset_code: null,
+        reserve: '100.0',
+      }),
+      makeLeg({ asset_code: 'USDC', reserve: '25.0' }),
     ];
-    expect(
-      poolReserves({ legs, reserve_a: '100.0', reserve_b: '25.0' })
-    ).toEqual([
+    expect(poolReserves({ legs })).toEqual([
       { leg: legs[0], amount: '100.0' },
       { leg: legs[1], amount: '25.0' },
     ]);
   });
 
-  // The snapshot table is still pair-shaped, so a third leg has no reserve
-  // column. It stays in the list with no amount rather than vanishing — the
-  // pool's composition must still read in full.
-  it('keeps a leg the snapshot cannot describe', () => {
+  // Three amounts for three legs — the shape a `reserve_a` / `reserve_b` pair
+  // could never hold, and the reason the value moved onto the leg.
+  it('carries an amount for every leg, not just two', () => {
     const legs = [
-      makeLeg({ asset_code: 'USDC' }),
-      makeLeg({ asset_code: 'EURC' }),
-      makeLeg({ asset_code: 'DAI' }),
+      makeLeg({ asset_code: 'USDC', reserve: '1' }),
+      makeLeg({ asset_code: 'EURC', reserve: '2' }),
+      makeLeg({ asset_code: 'DAI', reserve: '3' }),
     ];
-    const rows = poolReserves({ legs, reserve_a: '1', reserve_b: '2' });
-    expect(rows).toHaveLength(3);
-    expect(rows[2]).toEqual({ leg: legs[2], amount: null });
+    expect(poolReserves({ legs }).map((r) => r.amount)).toEqual([
+      '1',
+      '2',
+      '3',
+    ]);
+  });
+
+  it('lists a leg whose amount no source knows, rather than dropping it', () => {
+    const legs = [
+      makeLeg({ asset_code: 'USDC', reserve: '1' }),
+      makeLeg({ asset_code: 'EURC', reserve: null }),
+    ];
+    const rows = poolReserves({ legs });
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toEqual({ leg: legs[1], amount: null });
   });
 });
 

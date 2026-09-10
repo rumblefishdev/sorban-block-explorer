@@ -1824,7 +1824,17 @@ export type PaginatedPoolActivityItem = {
  */
 export type PaginatedPoolItem = {
   data: Array<{
-    created_at_ledger: number;
+    /**
+     * Ledger the pool was created in. **Detail endpoint only**, like `volume`
+     * and `fee_revenue`: `null` on the list.
+     *
+     * It is derived rather than stored — `min(ledger_sequence)` over the
+     * pool's snapshots — so the list would have to derive it for every pool
+     * on the page. Pinned to one pool that is a cheap seek; twenty at once,
+     * on the busiest pools, it read 35.1M rows / 1.27 GiB and took 406 ms,
+     * which was the whole cost of the list request. Nothing renders it there.
+     */
+    created_at_ledger?: number | null;
     fee_bps: number;
     /**
      * `fee_bps / 100` as decimal string. Conversion done server-side so
@@ -2104,6 +2114,19 @@ export type PoolAssetLeg = {
   icon_url?: string | null;
   issuer?: string | null;
   /**
+   * What the pool holds of THIS leg, as a decimal string. `None` when no
+   * source knows it — a classic pool with no fresh snapshot, or a soroban
+   * pool that has not changed state yet.
+   *
+   * It lives on the leg because the two kinds record it in places a pair
+   * could not reconcile: a classic pool's snapshot has exactly two columns,
+   * while a soroban pool's `pool_state_changes` carries one array entry per
+   * leg — which is the only shape a three- or four-leg pool fits. Both are
+   * normalised to a decimal string here, so a reader never has to know
+   * which source answered.
+   */
+  reserve?: string | null;
+  /**
    * The SAC mirror of a classic or native leg (ADR 0051) — context, never a
    * route. `None` when the asset has no observed SAC, and for a soroban leg.
    */
@@ -2131,7 +2154,17 @@ export type PoolEvent = 'trade' | 'deposit' | 'withdrawal';
  * `fee_revenue`, `latest_snapshot_*`); frontend renders these as "stale".
  */
 export type PoolItem = {
-  created_at_ledger: number;
+  /**
+   * Ledger the pool was created in. **Detail endpoint only**, like `volume`
+   * and `fee_revenue`: `null` on the list.
+   *
+   * It is derived rather than stored — `min(ledger_sequence)` over the
+   * pool's snapshots — so the list would have to derive it for every pool
+   * on the page. Pinned to one pool that is a cheap seek; twenty at once,
+   * on the busiest pools, it read 35.1M rows / 1.27 GiB and took 406 ms,
+   * which was the whole cost of the list request. Nothing renders it there.
+   */
+  created_at_ledger?: number | null;
   fee_bps: number;
   /**
    * `fee_bps / 100` as decimal string. Conversion done server-side so

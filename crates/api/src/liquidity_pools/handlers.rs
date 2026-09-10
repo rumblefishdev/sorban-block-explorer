@@ -167,6 +167,7 @@ fn map_leg(leg: PoolLegRow, network_id: &[u8; 32]) -> PoolAssetLeg {
         issuer: leg.issuer,
         contract_id: leg.contract_id,
         icon_url: leg.icon_url,
+        reserve: leg.reserve,
     }
 }
 
@@ -839,6 +840,7 @@ mod map_pool_item_tests {
             contract_id: None,
             sac_observed: false,
             icon_url: None,
+            reserve: None,
         }
     }
 
@@ -850,6 +852,7 @@ mod map_pool_item_tests {
             contract_id: None,
             sac_observed: false,
             icon_url: None,
+            reserve: None,
         }
     }
 
@@ -860,7 +863,7 @@ mod map_pool_item_tests {
             legs: vec![native_leg(), usdc_leg()],
             fee_bps: 30,
             fee_percent: "0.30".into(),
-            created_at_ledger: 100,
+            created_at_ledger: Some(100),
             cursor_ledger: 100,
             participant_count: 0,
             latest_snapshot_ledger: None,
@@ -935,6 +938,7 @@ mod map_pool_item_tests {
             contract_id: Some("CAQCFVLOBK5GIULPNZRGSXFPMIDUTBDDKCEHQNCZGYNK5JEN6IY5RZQB".into()),
             sac_observed: false,
             icon_url: None,
+            reserve: None,
         });
         let item = map_pool_item(row, &net());
         assert_eq!(item.legs.len(), 3);

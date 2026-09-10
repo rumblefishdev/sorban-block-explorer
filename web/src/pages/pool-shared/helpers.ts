@@ -79,22 +79,23 @@ export function poolLabel(legs: readonly PoolAssetLeg[]): string {
 }
 
 /**
- * Each leg paired with the reserve it holds.
+ * Each leg with the reserve it holds.
  *
- * The snapshot the amounts come from is still pair-shaped (`reserve_a` /
- * `reserve_b`), so only the first two legs can carry one — a soroban pool's
- * third and fourth reserves are not indexed yet. Such a leg is listed with
- * `undefined` rather than dropped, so the pool's composition still reads in
- * full and the missing amount renders as the same "—" a stale pool shows,
- * instead of the leg silently disappearing.
+ * The amount rides on the LEG now. It used to be paired off `reserve_a` /
+ * `reserve_b`, which meant a three- or four-leg pool could never show more
+ * than two — the API resolves the two different sources (a classic pool's
+ * snapshot, a Soroban pool's state changes) into one field per leg, so nothing
+ * here has to know which answered.
+ *
+ * `null` when no source knows it — a classic pool with no fresh snapshot, or a
+ * Soroban pool that has not changed state. The leg is still listed, so the
+ * pool's composition reads in full and the amount shows the same "—" a stale
+ * pool does, rather than the leg disappearing.
  */
 export function poolReserves(
-  pool: Pick<PoolItem, 'legs' | 'reserve_a' | 'reserve_b'>
+  pool: Pick<PoolItem, 'legs'>
 ): { leg: PoolAssetLeg; amount: string | null }[] {
-  const amounts = [pool.reserve_a, pool.reserve_b];
-  // `null`, not `undefined`: every consumer renders "no amount" the same way,
-  // so a third state would only be visible to a test.
-  return pool.legs.map((leg, i) => ({ leg, amount: amounts[i] ?? null }));
+  return pool.legs.map((leg) => ({ leg, amount: leg.reserve ?? null }));
 }
 
 /**

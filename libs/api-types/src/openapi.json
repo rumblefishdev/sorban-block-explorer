@@ -4281,13 +4281,13 @@
                 "legs",
                 "fee_bps",
                 "fee_percent",
-                "created_at_ledger",
                 "participant_count"
               ],
               "properties": {
                 "created_at_ledger": {
-                  "type": "integer",
-                  "format": "int64"
+                  "type": ["integer", "null"],
+                  "format": "int64",
+                  "description": "Ledger the pool was created in. **Detail endpoint only**, like `volume`\nand `fee_revenue`: `null` on the list.\n\nIt is derived rather than stored — `min(ledger_sequence)` over the\npool's snapshots — so the list would have to derive it for every pool\non the page. Pinned to one pool that is a cheap seek; twenty at once,\non the busiest pools, it read 35.1M rows / 1.27 GiB and took 406 ms,\nwhich was the whole cost of the list request. Nothing renders it there."
                 },
                 "fee_bps": {
                   "type": "integer",
@@ -4545,6 +4545,10 @@
           "issuer": {
             "type": ["string", "null"]
           },
+          "reserve": {
+            "type": ["string", "null"],
+            "description": "What the pool holds of THIS leg, as a decimal string. `None` when no\nsource knows it — a classic pool with no fresh snapshot, or a soroban\npool that has not changed state yet.\n\nIt lives on the leg because the two kinds record it in places a pair\ncould not reconcile: a classic pool's snapshot has exactly two columns,\nwhile a soroban pool's `pool_state_changes` carries one array entry per\nleg — which is the only shape a three- or four-leg pool fits. Both are\nnormalised to a decimal string here, so a reader never has to know\nwhich source answered."
+          },
           "sac_contract_id": {
             "type": ["string", "null"],
             "description": "The SAC mirror of a classic or native leg (ADR 0051) — context, never a\nroute. `None` when the asset has no observed SAC, and for a soroban leg."
@@ -4564,13 +4568,13 @@
           "legs",
           "fee_bps",
           "fee_percent",
-          "created_at_ledger",
           "participant_count"
         ],
         "properties": {
           "created_at_ledger": {
-            "type": "integer",
-            "format": "int64"
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Ledger the pool was created in. **Detail endpoint only**, like `volume`\nand `fee_revenue`: `null` on the list.\n\nIt is derived rather than stored — `min(ledger_sequence)` over the\npool's snapshots — so the list would have to derive it for every pool\non the page. Pinned to one pool that is a cheap seek; twenty at once,\non the busiest pools, it read 35.1M rows / 1.27 GiB and took 406 ms,\nwhich was the whole cost of the list request. Nothing renders it there."
           },
           "fee_bps": {
             "type": "integer",

@@ -172,6 +172,17 @@ pub struct PoolAssetLeg {
     /// in task 0310 after measuring 0 of 411,654 rows populated. `None` for an
     /// asset with no enriched icon — the frontend falls back to the initial.
     pub icon_url: Option<String>,
+    /// What the pool holds of THIS leg, as a decimal string. `None` when no
+    /// source knows it — a classic pool with no fresh snapshot, or a soroban
+    /// pool that has not changed state yet.
+    ///
+    /// It lives on the leg because the two kinds record it in places a pair
+    /// could not reconcile: a classic pool's snapshot has exactly two columns,
+    /// while a soroban pool's `pool_state_changes` carries one array entry per
+    /// leg — which is the only shape a three- or four-leg pool fits. Both are
+    /// normalised to a decimal string here, so a reader never has to know
+    /// which source answered.
+    pub reserve: Option<String>,
 }
 
 /// One pool row returned by the list endpoint. Shape pinned to canonical
@@ -201,7 +212,15 @@ pub struct PoolItem {
     /// `fee_bps / 100` as decimal string. Conversion done server-side so
     /// the frontend can render directly (frontend §6.13/§6.14).
     pub fee_percent: String,
-    pub created_at_ledger: i64,
+    /// Ledger the pool was created in. **Detail endpoint only**, like `volume`
+    /// and `fee_revenue`: `null` on the list.
+    ///
+    /// It is derived rather than stored — `min(ledger_sequence)` over the
+    /// pool's snapshots — so the list would have to derive it for every pool
+    /// on the page. Pinned to one pool that is a cheap seek; twenty at once,
+    /// on the busiest pools, it read 35.1M rows / 1.27 GiB and took 406 ms,
+    /// which was the whole cost of the list request. Nothing renders it there.
+    pub created_at_ledger: Option<i64>,
     /// Count of active liquidity providers (`lp_positions WHERE shares > 0`).
     /// Computed from the live table — not dependent on the snapshot
     /// freshness window, so it is populated even on stale pools (where

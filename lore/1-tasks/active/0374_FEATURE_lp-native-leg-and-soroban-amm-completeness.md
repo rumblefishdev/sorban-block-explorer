@@ -2521,3 +2521,51 @@ ordered by `last_updated_ledger`, so the page held the right rows in the wrong
 order and `finalize_page` cut the cursor from the wrong last row. One page looks
 perfect; it takes two to see it. Now pinned by a ClickHouse-gated smoke that
 fetches a real second page and asserts it repeats nothing.
+
+## `pool_state_changes` connected — reserves live on the leg (2026-09-09)
+
+The table was already carrying `reserves Array(Int128)` per ledger for 734 of
+739 soroban pools, and the read path had never opened it. It does now, and the
+reserve moved from a `reserve_a` / `reserve_b` pair onto the LEG.
+
+That is the only shape that holds both sources. A classic pool's reserves come
+from its snapshot, already scaled by the column's `Decimal128(7)`; a soroban
+pool's come from the state changes as RAW integers, to be scaled by each leg's
+own decimals — which the identity resolver already returns. One `reserve` field
+per leg, both normalised to a decimal string, so no reader has to know which
+source answered. A pair could never have held the third.
+
+It cost no extra scan: `pool_state_changes` was already being aggregated for
+the ordering key, so the reserves ride along as one more column on the same
+`GROUP BY`.
+
+Verified on production: the three-leg pool now shows **259.3614804 /
+1,464.3416903 / 16.1945684**, and 40 of 40 legs on the soroban list page carry
+an amount where every one read `—` before.
+
+**And the caption was lying.** The KPI strip keyed "no recent snapshot" off
+snapshot freshness, so every soroban pool claimed staleness while displaying a
+current reserve — and hid the asset link while doing it. The caption now follows
+the VALUE: present means no stale caption, absent distinguishes "no recent
+snapshot" from "not indexed".
+
+### A regression this found on the way, and its fix
+
+Ordering by activity surfaced the BUSIEST pools, and the list derived
+`created_at_ledger` as `min(ledger_sequence)` over each page pool's entire
+snapshot history — unbounded. The same subquery cost 7.1M rows / 43 ms under the
+old ordering and **35.1M rows / 406 ms** under the new one, which was the whole
+cost of the request.
+
+Nothing renders that field. It is now **detail-only**, like `volume` and
+`fee_revenue` already are in the same DTO — pinned to one pool it is a cheap
+seek. The list went 35.1M / 1.27 GiB / 406 ms → **25.4M / 978 MiB / 330 ms**.
+
+The band also had to follow: it read `min/max(last_updated_ledger)` while the
+page had moved to `activity_ledger`. On a soroban-filtered page those diverge by
+years, and the band stretched to 11.4M ledgers — 66.7M rows and 2.95 GiB against
+a 4 GB profile, to find snapshots soroban pools do not have.
+
+Remaining list cost is ~25M rows, against ~9.7M before this branch. The
+difference is the `pool_state_changes` aggregate plus the busier pools the new
+order surfaces. Worth revisiting, not worth blocking on.

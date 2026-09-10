@@ -18,6 +18,7 @@ import {
 } from '../pool-shared/helpers.js';
 
 const STALE_SUBTITLE = 'no recent snapshot';
+const UNKNOWN_SUBTITLE = 'not indexed';
 
 interface PoolKpiStripProps {
   pool: PoolItem;
@@ -64,16 +65,33 @@ export function PoolKpiStrip({ pool }: PoolKpiStripProps) {
       <KpiCell
         label="Total shares"
         value={formatCompactAmount(pool.total_shares)}
-        caption={stale ? STALE_SUBTITLE : 'shares outstanding'}
+        caption={
+          pool.total_shares != null
+            ? 'shares outstanding'
+            : stale
+            ? STALE_SUBTITLE
+            : UNKNOWN_SUBTITLE
+        }
       />
+      {/* The caption follows the VALUE, not the snapshot. A Soroban pool
+          never has a snapshot, so keying off freshness told every one of them
+          "no recent snapshot" while showing a current reserve — and hid the
+          asset link while doing it. A value we have is never stale-captioned;
+          one we do not have says which kind of absence it is. */}
       {poolReserves(pool).map(({ leg, amount }, i) => {
         const code = assetLegLabel(leg);
+        const caption =
+          amount != null
+            ? assetSubtitle(leg, code)
+            : stale
+            ? STALE_SUBTITLE
+            : UNKNOWN_SUBTITLE;
         return (
           <KpiCell
             key={i}
             label={`${code} reserve`}
             value={formatCompactAmount(amount)}
-            caption={stale ? STALE_SUBTITLE : assetSubtitle(leg, code)}
+            caption={caption}
             valueColor={reserveDotColor(leg)}
           />
         );

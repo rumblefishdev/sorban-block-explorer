@@ -54,7 +54,9 @@ pub struct PoolRow {
     pub legs: Vec<PoolLegRow>,
     pub fee_bps: i32,
     pub fee_percent: String,
-    pub created_at_ledger: i64,
+    /// `None` on the list — detail-only, see
+    /// [`crate::liquidity_pools::dto::PoolItem::created_at_ledger`].
+    pub created_at_ledger: Option<i64>,
     /// Ledger value the list keyset orders + paginates on. CH keys on the
     /// native `last_updated_ledger` ("most recently active"), carried here.
     /// The wire `PoolListCursor.created_at_ledger` slot stays opaque (ADR
@@ -96,6 +98,17 @@ pub struct PoolLegRow {
     /// not exist.
     pub sac_observed: bool,
     pub icon_url: Option<String>,
+    /// What the pool holds of THIS leg, as a decimal string, or `None` when no
+    /// source knows it.
+    ///
+    /// Two sources, because the two kinds record it differently and neither is
+    /// convertible to the other. A classic pool's reserves come from its
+    /// snapshot, already scaled by the column's `Decimal128(7)`. A soroban
+    /// pool has no snapshot at all; its reserves are an ARRAY on
+    /// `pool_state_changes`, raw integers to be scaled by each leg's own
+    /// decimals. Putting the value on the LEG is what lets one field carry
+    /// both — a pair of `reserve_a` / `reserve_b` could not hold a third leg.
+    pub reserve: Option<String>,
 }
 
 /// Turn one pool's stored leg surrogates into the rows the handler finishes.
@@ -104,15 +117,42 @@ pub struct PoolLegRow {
 /// genuinely holds that token, and dropping it would silently shorten the pool.
 /// It renders by whatever identity survives — the contract address — which is
 /// the honest answer rather than a missing leg.
+/// Where a pool's per-leg reserves come from, in the source's own units.
+enum Reserves<'a> {
+    /// A classic pool's snapshot: exactly two, already scaled.
+    Pair(Option<&'a str>, Option<&'a str>),
+    /// A soroban pool's latest state change: one raw integer per leg, in the
+    /// same order, to be scaled by each leg's decimals.
+    Raw(&'a [String]),
+}
+
+impl Reserves<'_> {
+    /// The reserve for leg `i`, scaled, or `None` when unknown.
+    fn at(&self, i: usize, decimals: u32) -> Option<String> {
+        match self {
+            Self::Pair(a, b) => match i {
+                0 => a.map(str::to_string),
+                1 => b.map(str::to_string),
+                // The snapshot is pair-shaped; a third leg has no slot in it.
+                _ => None,
+            },
+            Self::Raw(v) => v.get(i).and_then(|raw| scale_decimal_str(raw, decimals)),
+        }
+    }
+}
+
 fn leg_rows(
     leg_ids: &[i64],
     identities: &HashMap<i64, ResolvedAsset>,
     display: &HashMap<i64, AssetDisplay>,
+    reserves: Reserves<'_>,
 ) -> Vec<PoolLegRow> {
     leg_ids
         .iter()
-        .map(|id| {
+        .enumerate()
+        .map(|(i, id)| {
             let d = display.get(id);
+            let reserve = reserves.at(i, identities.get(id).map_or(7, |r| r.decimals));
             match identities.get(id) {
                 Some(r) if r.known => PoolLegRow {
                     family: r.asset_type,
@@ -126,6 +166,7 @@ fn leg_rows(
                         .flatten(),
                     sac_observed: d.is_some_and(|d| d.sac_observed),
                     icon_url: d.and_then(|d| d.icon_url.clone()),
+                    reserve,
                 },
                 // Unknown to `assets`: no family, no code — only the contract,
                 // which `soroban_contracts` still names.
@@ -135,6 +176,7 @@ fn leg_rows(
                     issuer: None,
                     contract_id: other.and_then(|r| r.contract_strkey.clone()),
                     sac_observed: false,
+                    reserve,
                     icon_url: None,
                 },
             }
@@ -794,6 +836,8 @@ struct PoolDetailChRow {
     reserve_a: Option<String>,
     reserve_b: Option<String>,
     total_shares: Option<String>,
+    /// Latest per-leg reserves from `pool_state_changes`, raw and in leg order.
+    state_reserves: Vec<String>,
     /// Raw instance-state shares, for a pool with no snapshot. Scaled in Rust
     /// (see [`total_shares_of`]), never here — the value is a `u128`.
     instance_shares: Option<String>,
@@ -874,6 +918,10 @@ pub async fn fetch_pool_by_id(
                 toString(s.reserve_a)                AS reserve_a, \
                 toString(s.reserve_b)                AS reserve_b, \
                 toString(s.total_shares)             AS total_shares, \
+                ifNull(( \
+                    SELECT arrayMap(x -> toString(x), argMax(reserves, ledger_sequence)) \
+                    FROM pool_state_changes WHERE pool_id = unhex(?) \
+                ), [])                               AS state_reserves, \
                 inst.shares_raw                      AS instance_shares, \
                 toUInt32(ifNull(inst.shares_decimals, 7)) AS instance_shares_decimals, \
                 nullIf(toUnixTimestamp64Milli(l.closed_at), 0) AS latest_snapshot_at_ms \
@@ -899,8 +947,10 @@ pub async fn fetch_pool_by_id(
              LIMIT 1",
             inst = instance_shares_sql("pool_id = unhex(?)"),
         ))
-        // Six `?`, all the same pool: created_at, participants, the snapshot
-        // seek, the ledger seek, the instance-shares join, then the WHERE.
+        // Seven `?`, all the same pool, in SQL text order: created_at,
+        // participants, the state-change reserves, the snapshot seek, the
+        // ledger seek, the instance-shares join, then the WHERE.
+        .bind(pool_id_hex)
         .bind(pool_id_hex)
         .bind(pool_id_hex)
         .bind(pool_id_hex)
@@ -913,14 +963,22 @@ pub async fn fetch_pool_by_id(
     let Some(r) = row else { return Ok(None) };
     let leg_ids: BTreeSet<i64> = r.legs.iter().copied().collect();
     let (identities, display) = resolve_identities_and_display(client, &leg_ids).await?;
+    // A pool's reserves come from whichever source records them: the snapshot
+    // for a classic pool, the state changes for a soroban one. Never both — a
+    // classic pool has no state-change rows and a soroban pool no snapshot.
+    let reserves = if r.state_reserves.is_empty() {
+        Reserves::Pair(r.reserve_a.as_deref(), r.reserve_b.as_deref())
+    } else {
+        Reserves::Raw(&r.state_reserves)
+    };
 
     Ok(Some(PoolRow {
         pool_id_hex: r.pool_id_hex,
         pool_kind: r.pool_kind,
-        legs: leg_rows(&r.legs, &identities, &display),
+        legs: leg_rows(&r.legs, &identities, &display, reserves),
         fee_bps: r.fee_bps,
         fee_percent: fee_percent_str(r.fee_bps),
-        created_at_ledger: r.created_at_ledger,
+        created_at_ledger: Some(r.created_at_ledger),
         // Detail does not paginate; the field is set for struct completeness.
         cursor_ledger: r.created_at_ledger,
         participant_count: r.participant_count,
@@ -1697,9 +1755,11 @@ struct PoolListChRow {
     /// shared resolver already carries the shapes those joins have to get right.
     legs: Vec<i64>,
     fee_bps: i32,
-    created_at_ledger: i64,
     /// `last_updated_ledger` — the list sort/cursor key (see fn doc).
     cursor_ledger: i64,
+    /// Latest per-leg reserves from `pool_state_changes`, raw and in leg order.
+    /// Empty for a classic pool, which has none there.
+    state_reserves: Vec<String>,
     participant_count: i64,
     latest_snapshot_ledger: Option<i64>,
     reserve_a: Option<String>,
@@ -1886,26 +1946,36 @@ pub async fn fetch_pool_list(
              SELECT lp.pool_id AS pool_id, lp.pool_kind AS pool_kind, \
                     lp.legs AS legs, lp.fee_bps AS fee_bps, \
                     lp.last_updated_ledger AS last_updated_ledger, \
-                    {act} AS activity_ledger \
+                    {act} AS activity_ledger, \
+                    ifNull(sc.res, []) AS state_reserves \
              FROM liquidity_pools lp FINAL \
-             LEFT JOIN (SELECT pool_id, max(ledger_sequence) AS led \
+             LEFT JOIN (SELECT pool_id, max(ledger_sequence) AS led, \
+                               arrayMap(x -> toString(x), \
+                                        argMax(reserves, ledger_sequence)) AS res \
                         FROM pool_state_changes GROUP BY pool_id) sc \
                  ON sc.pool_id = lp.pool_id \
              WHERE 1 = 1{filters} {keyset} \
              ORDER BY activity_ledger {order}, pool_id {order} \
              LIMIT {limit} \
          ), \
+         /* The band MUST follow whatever the page is ordered by. It used to \
+            read `last_updated_ledger`, which was the same thing — until the \
+            page moved to `activity_ledger`. On a soroban-filtered page the \
+            two diverge by years (the column is the registration), and the \
+            band stretched to 11.4M ledgers: 66.7M rows and 2.95 GiB read \
+            against a 4 GB profile, to find the snapshots soroban pools do \
+            not have. Measured 2026-09-09, before this line was fixed. */ \
          band AS ( \
-             SELECT min(last_updated_ledger) - 10000 AS lo, \
-                    max(last_updated_ledger) + 10000 AS hi FROM page \
+             SELECT min(activity_ledger) - 10000 AS lo, \
+                    max(activity_ledger) + 10000 AS hi FROM page \
          ) \
          SELECT \
              lower(hex(lp.pool_id))                          AS pool_id_hex, \
              toInt16(lp.pool_kind)                           AS pool_kind, \
              lp.legs                                         AS legs, \
              lp.fee_bps                                      AS fee_bps, \
-             ifNull(cr.created_at_ledger, lp.last_updated_ledger) AS created_at_ledger, \
              lp.activity_ledger                              AS cursor_ledger, \
+             lp.state_reserves                               AS state_reserves, \
              toInt64(ifNull(pc.participant_count, 0))        AS participant_count, \
              s.latest_ledger_sequence                        AS latest_snapshot_ledger, \
              toString(s.reserve_a)                           AS reserve_a, \
@@ -1926,12 +1996,6 @@ pub async fn fetch_pool_list(
                AND ledger_sequence BETWEEN (SELECT lo FROM band) AND (SELECT hi FROM band) \
              GROUP BY pool_id \
          ) s ON s.pool_id = lp.pool_id \
-         LEFT JOIN ( \
-             SELECT pool_id, toNullable(min(ledger_sequence)) AS created_at_ledger \
-             FROM liquidity_pool_snapshots \
-             WHERE pool_id IN (SELECT pool_id FROM page) \
-             GROUP BY pool_id \
-         ) cr ON cr.pool_id = lp.pool_id \
          LEFT JOIN ( \
              SELECT pool_id, count() AS participant_count FROM lp_positions FINAL \
              WHERE shares > 0 AND pool_id IN (SELECT pool_id FROM page) \
@@ -2039,10 +2103,21 @@ pub async fn fetch_pool_list(
             PoolRow {
                 pool_id_hex: r.pool_id_hex,
                 pool_kind: r.pool_kind,
-                legs: leg_rows(&r.legs, &identities, &display),
+                legs: leg_rows(
+                    &r.legs,
+                    &identities,
+                    &display,
+                    if r.state_reserves.is_empty() {
+                        Reserves::Pair(r.reserve_a.as_deref(), r.reserve_b.as_deref())
+                    } else {
+                        Reserves::Raw(&r.state_reserves)
+                    },
+                ),
                 fee_bps: r.fee_bps,
                 fee_percent: fee_percent_str(r.fee_bps),
-                created_at_ledger: r.created_at_ledger,
+                // Detail-only: deriving it per page cost more than the rest
+                // of the request together, and nothing renders it there.
+                created_at_ledger: None,
                 cursor_ledger: r.cursor_ledger,
                 participant_count: r.participant_count,
                 latest_snapshot_ledger: r.latest_snapshot_ledger,
