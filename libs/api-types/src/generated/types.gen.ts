@@ -1856,12 +1856,21 @@ export type PaginatedPoolItem = {
      */
     legs: Array<PoolAssetLeg>;
     /**
-     * Count of active liquidity providers (`lp_positions WHERE shares > 0`).
-     * Computed from the live table — not dependent on the snapshot
-     * freshness window, so it is populated even on stale pools (where
-     * `tvl`/`volume`/`fee_revenue` are NULL).
+     * Count of active liquidity providers, or `null` when the pool
+     * demonstrably HAS providers we cannot enumerate.
+     *
+     * Shares outstanding mean somebody holds them, so `0` alongside a
+     * positive `total_shares` is not a count — it is ignorance wearing a
+     * number. 14,158 classic pools are in exactly that state (35% of the
+     * live ones, measured 2026-09-09): their holders' trustlines were
+     * created before the ingest floor, so no row was ever produced for them.
+     * Reporting `0` there tells a caller the pool is abandoned when it is
+     * not.
+     *
+     * A genuine `0` — no shares outstanding, nobody in — is still `0`.
+     * Independent of snapshot freshness either way.
      */
-    participant_count: number;
+    participant_count?: number | null;
     /**
      * SEP-23 strkey (`L...`, 56 chars). DB stores `BYTEA(32)` per ADR
      * 0024; the handler encodes to strkey at the response boundary so
@@ -2186,12 +2195,21 @@ export type PoolItem = {
    */
   legs: Array<PoolAssetLeg>;
   /**
-   * Count of active liquidity providers (`lp_positions WHERE shares > 0`).
-   * Computed from the live table — not dependent on the snapshot
-   * freshness window, so it is populated even on stale pools (where
-   * `tvl`/`volume`/`fee_revenue` are NULL).
+   * Count of active liquidity providers, or `null` when the pool
+   * demonstrably HAS providers we cannot enumerate.
+   *
+   * Shares outstanding mean somebody holds them, so `0` alongside a
+   * positive `total_shares` is not a count — it is ignorance wearing a
+   * number. 14,158 classic pools are in exactly that state (35% of the
+   * live ones, measured 2026-09-09): their holders' trustlines were
+   * created before the ingest floor, so no row was ever produced for them.
+   * Reporting `0` there tells a caller the pool is abandoned when it is
+   * not.
+   *
+   * A genuine `0` — no shares outstanding, nobody in — is still `0`.
+   * Independent of snapshot freshness either way.
    */
-  participant_count: number;
+  participant_count?: number | null;
   /**
    * SEP-23 strkey (`L...`, 56 chars). DB stores `BYTEA(32)` per ADR
    * 0024; the handler encodes to strkey at the response boundary so

@@ -188,7 +188,13 @@ fn map_pool_item(row: PoolRow, network_id: &[u8; 32]) -> PoolItem {
         fee_bps: row.fee_bps,
         fee_percent: row.fee_percent,
         created_at_ledger: row.created_at_ledger,
-        participant_count: row.participant_count,
+        // Shares outstanding mean somebody holds them. A zero count beside a
+        // positive share balance is not a measurement — it is the ingest
+        // floor's blind spot wearing a number, on 35% of live classic pools.
+        participant_count: match (row.participant_count, row.total_shares.as_deref()) {
+            (0, Some(shares)) if shares.parse::<f64>().is_ok_and(|v| v > 0.0) => None,
+            (n, _) => Some(n),
+        },
         latest_snapshot_ledger: row.latest_snapshot_ledger,
         reserve_a: row.reserve_a,
         reserve_b: row.reserve_b,

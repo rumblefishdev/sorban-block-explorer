@@ -221,11 +221,20 @@ pub struct PoolItem {
     /// on the busiest pools, it read 35.1M rows / 1.27 GiB and took 406 ms,
     /// which was the whole cost of the list request. Nothing renders it there.
     pub created_at_ledger: Option<i64>,
-    /// Count of active liquidity providers (`lp_positions WHERE shares > 0`).
-    /// Computed from the live table — not dependent on the snapshot
-    /// freshness window, so it is populated even on stale pools (where
-    /// `tvl`/`volume`/`fee_revenue` are NULL).
-    pub participant_count: i64,
+    /// Count of active liquidity providers, or `null` when the pool
+    /// demonstrably HAS providers we cannot enumerate.
+    ///
+    /// Shares outstanding mean somebody holds them, so `0` alongside a
+    /// positive `total_shares` is not a count — it is ignorance wearing a
+    /// number. 14,158 classic pools are in exactly that state (35% of the
+    /// live ones, measured 2026-09-09): their holders' trustlines were
+    /// created before the ingest floor, so no row was ever produced for them.
+    /// Reporting `0` there tells a caller the pool is abandoned when it is
+    /// not.
+    ///
+    /// A genuine `0` — no shares outstanding, nobody in — is still `0`.
+    /// Independent of snapshot freshness either way.
+    pub participant_count: Option<i64>,
     pub latest_snapshot_ledger: Option<i64>,
     pub reserve_a: Option<String>,
     pub reserve_b: Option<String>,

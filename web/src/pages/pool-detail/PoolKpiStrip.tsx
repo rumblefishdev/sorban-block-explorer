@@ -100,10 +100,19 @@ export function PoolKpiStrip({ pool }: PoolKpiStripProps) {
           />
         );
       })}
+      {/* `null` is not zero: the API sends it for a pool that demonstrably
+          HAS providers we cannot enumerate, rather than reporting a count of
+          none for a pool holding real liquidity. */}
       <KpiCell
         label="Participants"
-        value={formatInteger(pool.participant_count)}
-        caption="liquidity providers"
+        value={
+          pool.participant_count != null
+            ? formatInteger(pool.participant_count)
+            : '—'
+        }
+        caption={
+          pool.participant_count != null ? 'liquidity providers' : 'not indexed'
+        }
       />
     </Stack>
   );

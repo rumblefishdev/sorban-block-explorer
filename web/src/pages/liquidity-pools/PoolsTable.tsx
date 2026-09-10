@@ -204,7 +204,11 @@ const columns: ExplorerTableColumn<PoolItem>[] = [
         variant="bodySmMedium"
         sx={(theme) => ({ color: theme.palette.text.primary })}
       >
-        {formatAmount(row.participant_count)}
+        {row.participant_count != null ? (
+          formatAmount(row.participant_count)
+        ) : (
+          <Dash />
+        )}
       </Typography>
     ),
   },

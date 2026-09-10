@@ -4276,13 +4276,7 @@
             "items": {
               "type": "object",
               "description": "One pool row returned by the list endpoint. Shape pinned to canonical\nSQL `18_get_liquidity_pools_list.sql`. Pools without a fresh snapshot\nin the freshness window come back with `null` for every dynamic field\n(`reserve_a`, `reserve_b`, `total_shares`, `tvl`, `volume`,\n`fee_revenue`, `latest_snapshot_*`); frontend renders these as \"stale\".",
-              "required": [
-                "pool_id",
-                "legs",
-                "fee_bps",
-                "fee_percent",
-                "participant_count"
-              ],
+              "required": ["pool_id", "legs", "fee_bps", "fee_percent"],
               "properties": {
                 "created_at_ledger": {
                   "type": ["integer", "null"],
@@ -4317,9 +4311,9 @@
                   "description": "The pool's legs in registration order — two for a classic pool, two to\nfour for a soroban one. Replaces the `asset_a` / `asset_b` pair, which\ncould not express a three-leg pool and forced a soroban row to write\nplaceholder values that read as native XLM downstream."
                 },
                 "participant_count": {
-                  "type": "integer",
+                  "type": ["integer", "null"],
                   "format": "int64",
-                  "description": "Count of active liquidity providers (`lp_positions WHERE shares > 0`).\nComputed from the live table — not dependent on the snapshot\nfreshness window, so it is populated even on stale pools (where\n`tvl`/`volume`/`fee_revenue` are NULL)."
+                  "description": "Count of active liquidity providers, or `null` when the pool\ndemonstrably HAS providers we cannot enumerate.\n\nShares outstanding mean somebody holds them, so `0` alongside a\npositive `total_shares` is not a count — it is ignorance wearing a\nnumber. 14,158 classic pools are in exactly that state (35% of the\nlive ones, measured 2026-09-09): their holders' trustlines were\ncreated before the ingest floor, so no row was ever produced for them.\nReporting `0` there tells a caller the pool is abandoned when it is\nnot.\n\nA genuine `0` — no shares outstanding, nobody in — is still `0`.\nIndependent of snapshot freshness either way."
                 },
                 "pool_id": {
                   "type": "string",
@@ -4563,13 +4557,7 @@
       "PoolItem": {
         "type": "object",
         "description": "One pool row returned by the list endpoint. Shape pinned to canonical\nSQL `18_get_liquidity_pools_list.sql`. Pools without a fresh snapshot\nin the freshness window come back with `null` for every dynamic field\n(`reserve_a`, `reserve_b`, `total_shares`, `tvl`, `volume`,\n`fee_revenue`, `latest_snapshot_*`); frontend renders these as \"stale\".",
-        "required": [
-          "pool_id",
-          "legs",
-          "fee_bps",
-          "fee_percent",
-          "participant_count"
-        ],
+        "required": ["pool_id", "legs", "fee_bps", "fee_percent"],
         "properties": {
           "created_at_ledger": {
             "type": ["integer", "null"],
@@ -4604,9 +4592,9 @@
             "description": "The pool's legs in registration order — two for a classic pool, two to\nfour for a soroban one. Replaces the `asset_a` / `asset_b` pair, which\ncould not express a three-leg pool and forced a soroban row to write\nplaceholder values that read as native XLM downstream."
           },
           "participant_count": {
-            "type": "integer",
+            "type": ["integer", "null"],
             "format": "int64",
-            "description": "Count of active liquidity providers (`lp_positions WHERE shares > 0`).\nComputed from the live table — not dependent on the snapshot\nfreshness window, so it is populated even on stale pools (where\n`tvl`/`volume`/`fee_revenue` are NULL)."
+            "description": "Count of active liquidity providers, or `null` when the pool\ndemonstrably HAS providers we cannot enumerate.\n\nShares outstanding mean somebody holds them, so `0` alongside a\npositive `total_shares` is not a count — it is ignorance wearing a\nnumber. 14,158 classic pools are in exactly that state (35% of the\nlive ones, measured 2026-09-09): their holders' trustlines were\ncreated before the ingest floor, so no row was ever produced for them.\nReporting `0` there tells a caller the pool is abandoned when it is\nnot.\n\nA genuine `0` — no shares outstanding, nobody in — is still `0`.\nIndependent of snapshot freshness either way."
           },
           "pool_id": {
             "type": "string",
