@@ -2278,3 +2278,36 @@ from S3. `docs/deployment.md` now carries the DDL inside the existing 0374
 pause window, with the gate above it: `countIf(length(legs) = 0)` MUST be 0, and
 if it is not, the one-shot table pass runs first (it reads the very columns being
 dropped, so that order is not negotiable).
+
+## Soroban total shares wired up (2026-09-09) — ranking item 1
+
+The audit ranked this 🔴 highest and assumed it needed a write-half change
+("parse TotalShares into the instance arm"). Measured: that half already runs.
+`pool_instance_state` carries `total_shares` on production, and the API had
+never read that table at all — 550 of 736 soroban pools gain a real number
+where the page shows an em-dash today.
+
+Two things the wiring had to get right, neither visible from the field name:
+
+**Scale.** The snapshot column is `Decimal128(7)` and arrives pre-scaled; the
+instance column is a RAW `Int128` straight out of contract storage, to be scaled
+by the SHARE TOKEN's own decimals. Measured across production: every share token
+in the set reports 7 — but the value is read rather than assumed, because a
+silent mismatch renders a number off by orders of magnitude and nothing fails.
+The scaling is string surgery, not arithmetic: an `f64` drops digits above 2^53
+and this number is the denominator every participant's share percentage is
+quoted against.
+
+**Zero is not zero.** The schema records `total_shares = 0` as "key absent" —
+structural for the concentrated and elastic families, permanent for the
+config-factory one. It renders as the same em-dash a stale pool shows. A
+rendered `0` would state that a pool holding real liquidity has no shares.
+
+The fallback rule lives in one function used by both the list and the detail,
+and the joined subquery has one producer, so this does not become the fourth
+copy of a pool fact computed two ways (the F8 shape).
+
+The ClickHouse-gated smokes earned their keep again: the first version projected
+a non-nullable `String` through a LEFT JOIN, and with `join_use_nulls = 0` an
+unmatched row yields `''` rather than NULL, which the driver refuses to decode
+into an `Option`. Four smokes failed instantly; no unit test would have seen it.

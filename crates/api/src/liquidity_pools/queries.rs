@@ -631,6 +631,88 @@ async fn fetch_last_closes(
         .collect())
 }
 
+/// A raw integer amount rendered as a decimal string, scaled by `decimals`.
+///
+/// STRING SURGERY, not arithmetic. The value is a `u128` out of contract
+/// storage; `f64` loses digits above 2^53 and a `Decimal128` division would
+/// have to pick a scale up front. Inserting the point is exact at every
+/// magnitude — and this number is the denominator every participant's share
+/// percentage is quoted against, so "close" is not good enough.
+fn scale_decimal_str(raw: &str, decimals: u32) -> Option<String> {
+    let digits = raw.strip_prefix('+').unwrap_or(raw);
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let d = decimals as usize;
+    if d == 0 {
+        return Some(digits.to_string());
+    }
+    // Left-pad so there is always at least one integer digit.
+    let padded = format!("{digits:0>width$}", width = d + 1);
+    let split = padded.len() - d;
+    let frac = padded[split..].trim_end_matches('0');
+    Some(if frac.is_empty() {
+        padded[..split].to_string()
+    } else {
+        format!("{}.{}", &padded[..split], frac)
+    })
+}
+
+/// The pool's total shares, from whichever source knows them.
+///
+/// A CLASSIC pool's shares come from its snapshot, pre-scaled by the column's
+/// own `Decimal128(7)`. A SOROBAN pool has no snapshot at all — the table is
+/// classic-only — so its shares come from the instance state the indexer reads
+/// off the contract, as a RAW integer that has to be scaled by the share
+/// token's own decimals.
+///
+/// A zero there is NOT zero shares: the schema records it as "key absent",
+/// which is structural for the concentrated and elastic families and permanent
+/// for the config-factory one. It reads as unknown, the same em-dash a stale
+/// pool shows, because a rendered `0` would be a plausible-looking wrong
+/// answer about a pool holding real liquidity.
+fn total_shares_of(
+    snapshot: Option<String>,
+    instance_raw: Option<&str>,
+    instance_decimals: u32,
+) -> Option<String> {
+    if let Some(v) = snapshot {
+        return Some(v);
+    }
+    match instance_raw {
+        Some(raw) if raw != "0" => scale_decimal_str(raw, instance_decimals),
+        _ => None,
+    }
+}
+
+/// The instance-state shares for a set of pools, with the share token's
+/// decimals resolved — ONE producer, joined by both the list and the detail.
+///
+/// Bounded by the caller's `pool_ids` predicate rather than read whole. The two
+/// hops (`share_token_id` → the token contract → its metadata) are seeks on
+/// small dimensions; `LIMIT 1 BY id` and `argMax` stand in for `FINAL`, as
+/// everywhere else in this module.
+fn instance_shares_sql(pool_ids_predicate: &str) -> String {
+    // `toNullable` on both projected columns: with `join_use_nulls = 0` an
+    // unmatched LEFT JOIN row yields the column type's DEFAULT, so a plain
+    // `String` arrives as `''` and the driver refuses to decode it into an
+    // `Option` (the same mismatch class that took account detail down in task
+    // 0324). Nullable lets "this pool has no instance row" say so.
+    format!(
+        "SELECT s.pool_id AS pool_id, \
+                toNullable(toString(s.total_shares)) AS shares_raw, \
+                toNullable(toUInt32(coalesce(m.decimals, 7))) AS shares_decimals \
+         FROM (SELECT pool_id, share_token_id, total_shares \
+               FROM pool_instance_state FINAL \
+               WHERE {pool_ids_predicate}) s \
+         LEFT JOIN (SELECT id, contract_id FROM soroban_contracts LIMIT 1 BY id) c \
+             ON c.id = s.share_token_id \
+         LEFT JOIN (SELECT contract_id, argMax(decimals, version) AS decimals \
+                    FROM soroban_contract_metadata GROUP BY contract_id) m \
+             ON m.contract_id = c.contract_id"
+    )
+}
+
 /// The pool's two legs, or `None` for a pool that does not have exactly two.
 ///
 /// The price join is CLASSIC-shaped: two reserves, two closes, summed. A pool
@@ -712,6 +794,10 @@ struct PoolDetailChRow {
     reserve_a: Option<String>,
     reserve_b: Option<String>,
     total_shares: Option<String>,
+    /// Raw instance-state shares, for a pool with no snapshot. Scaled in Rust
+    /// (see [`total_shares_of`]), never here — the value is a `u128`.
+    instance_shares: Option<String>,
+    instance_shares_decimals: u32,
     latest_snapshot_at_ms: Option<i64>,
 }
 
@@ -771,7 +857,7 @@ pub async fn fetch_pool_by_id(
     // condition is only supported by `join_algorithm = 'hash'`, so the old form
     // 500'd (Code 48) the moment the server profile carried anything else.
     let row = client
-        .query(
+        .query(&format!(
             "SELECT \
                 lower(hex(lp.pool_id))               AS pool_id_hex, \
                 toInt16(lp.pool_kind)                AS pool_kind, \
@@ -788,6 +874,8 @@ pub async fn fetch_pool_by_id(
                 toString(s.reserve_a)                AS reserve_a, \
                 toString(s.reserve_b)                AS reserve_b, \
                 toString(s.total_shares)             AS total_shares, \
+                inst.shares_raw                      AS instance_shares, \
+                toUInt32(ifNull(inst.shares_decimals, 7)) AS instance_shares_decimals, \
                 nullIf(toUnixTimestamp64Milli(l.closed_at), 0) AS latest_snapshot_at_ms \
              FROM liquidity_pools lp FINAL \
              LEFT JOIN ( \
@@ -806,9 +894,14 @@ pub async fn fetch_pool_by_id(
                  WHERE sequence = (SELECT max(ledger_sequence) FROM liquidity_pool_snapshots \
                                     WHERE pool_id = unhex(?)) \
              ) l ON l.sequence = s.ledger_sequence \
+             LEFT JOIN ({inst}) inst ON inst.pool_id = lp.pool_id \
              WHERE lp.pool_id = unhex(?) \
              LIMIT 1",
-        )
+            inst = instance_shares_sql("pool_id = unhex(?)"),
+        ))
+        // Six `?`, all the same pool: created_at, participants, the snapshot
+        // seek, the ledger seek, the instance-shares join, then the WHERE.
+        .bind(pool_id_hex)
         .bind(pool_id_hex)
         .bind(pool_id_hex)
         .bind(pool_id_hex)
@@ -834,7 +927,11 @@ pub async fn fetch_pool_by_id(
         latest_snapshot_ledger: r.latest_snapshot_ledger,
         reserve_a: r.reserve_a,
         reserve_b: r.reserve_b,
-        total_shares: r.total_shares,
+        total_shares: total_shares_of(
+            r.total_shares,
+            r.instance_shares.as_deref(),
+            r.instance_shares_decimals,
+        ),
         // Filled by the handler from `fetch_pool_usd_analytics` (0199
         // compute-at-read); the snapshot columns are not read.
         tvl: None,
@@ -1608,6 +1705,10 @@ struct PoolListChRow {
     reserve_a: Option<String>,
     reserve_b: Option<String>,
     total_shares: Option<String>,
+    /// Raw instance-state shares, for a pool with no snapshot. Scaled in Rust
+    /// (see [`total_shares_of`]), never here — the value is a `u128`.
+    instance_shares: Option<String>,
+    instance_shares_decimals: u32,
     latest_snapshot_at_ms: Option<i64>,
 }
 
@@ -1785,6 +1886,8 @@ pub async fn fetch_pool_list(
              toString(s.reserve_a)                           AS reserve_a, \
              toString(s.reserve_b)                           AS reserve_b, \
              toString(s.total_shares)                        AS total_shares, \
+             inst.shares_raw                                 AS instance_shares, \
+             toUInt32(ifNull(inst.shares_decimals, 7))       AS instance_shares_decimals, \
              nullIf(toUnixTimestamp64Milli(l_snap.closed_at), 0) AS latest_snapshot_at_ms \
          FROM page lp \
          LEFT JOIN ( \
@@ -1809,6 +1912,7 @@ pub async fn fetch_pool_list(
              WHERE shares > 0 AND pool_id IN (SELECT pool_id FROM page) \
              GROUP BY pool_id \
          ) pc ON pc.pool_id = lp.pool_id \
+         LEFT JOIN ({instance_shares}) inst ON inst.pool_id = lp.pool_id \
          /* `GROUP BY sequence` dedups `ledgers` (ReplacingMergeTree, unmerged \
             duplicate rows): without it this LEFT JOIN doubled every page row \
             whose latest snapshot ledger falls in the duplicated range, doubling \
@@ -1832,6 +1936,8 @@ pub async fn fetch_pool_list(
         keyset = keyset,
         order = order,
         limit = params.limit,
+        // Bounded to the page, like every other side read here.
+        instance_shares = instance_shares_sql("pool_id IN (SELECT pool_id FROM page)"),
     );
 
     let mut query = client.query(&sql);
@@ -1913,7 +2019,11 @@ pub async fn fetch_pool_list(
                 latest_snapshot_ledger: r.latest_snapshot_ledger,
                 reserve_a: r.reserve_a,
                 reserve_b: r.reserve_b,
-                total_shares: r.total_shares,
+                total_shares: total_shares_of(
+                    r.total_shares,
+                    r.instance_shares.as_deref(),
+                    r.instance_shares_decimals,
+                ),
                 tvl,
                 volume: None,
                 fee_revenue: None,
@@ -2016,6 +2126,66 @@ mod tests {
                 "leg {code} must resolve to the asset_id production stores",
             );
         }
+    }
+
+    /// Real values off production, scaled by the share token's own 7 decimals.
+    #[test]
+    fn instance_shares_scale_by_the_share_token_decimals() {
+        assert_eq!(
+            scale_decimal_str("9516607233561", 7).unwrap(),
+            "951660.7233561"
+        );
+        assert_eq!(scale_decimal_str("100000", 7).unwrap(), "0.01");
+        assert_eq!(scale_decimal_str("439006922", 7).unwrap(), "43.9006922");
+    }
+
+    /// A `u128` past 2^53, where an `f64` round-trip would start dropping
+    /// digits — the reason this is string surgery and not arithmetic.
+    #[test]
+    fn scaling_is_exact_beyond_the_float_range() {
+        assert_eq!(
+            scale_decimal_str("340282366920938463463374607431768211455", 7).unwrap(),
+            "34028236692093846346337460743176.8211455"
+        );
+    }
+
+    #[test]
+    fn scaling_handles_the_edges() {
+        // Fewer digits than the scale: left-padded, never a bare ".01".
+        assert_eq!(scale_decimal_str("1", 7).unwrap(), "0.0000001");
+        // No fractional part left once trailing zeros go.
+        assert_eq!(scale_decimal_str("10000000", 7).unwrap(), "1");
+        assert_eq!(scale_decimal_str("42", 0).unwrap(), "42");
+        // Not a number: no value rather than a wrong one.
+        assert_eq!(scale_decimal_str("", 7), None);
+        assert_eq!(scale_decimal_str("12x4", 7), None);
+    }
+
+    /// The snapshot wins when it exists — a classic pool's shares are already
+    /// scaled by the column's own `Decimal128(7)` and must not be scaled twice.
+    #[test]
+    fn a_snapshot_value_is_used_verbatim() {
+        assert_eq!(
+            total_shares_of(Some("750.699916".into()), Some("9516607233561"), 7),
+            Some("750.699916".to_string())
+        );
+    }
+
+    /// Zero in the instance state means "key absent", which is structural for
+    /// two soroban families and permanent for a third. Rendering it as `0`
+    /// would state that a pool holding real liquidity has no shares.
+    #[test]
+    fn a_zero_instance_value_is_unknown_not_zero() {
+        assert_eq!(total_shares_of(None, Some("0"), 7), None);
+        assert_eq!(total_shares_of(None, None, 7), None);
+    }
+
+    #[test]
+    fn a_soroban_pool_falls_back_to_its_instance_state() {
+        assert_eq!(
+            total_shares_of(None, Some("252647541418"), 7),
+            Some("25264.7541418".to_string())
+        );
     }
 
     #[test]
