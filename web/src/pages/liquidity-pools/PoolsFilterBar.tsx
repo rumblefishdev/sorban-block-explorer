@@ -1,5 +1,15 @@
-import { Box, MenuItem, Select, type SelectChangeEvent } from '@mui/material';
+import {
+  Box,
+  Divider,
+  MenuItem,
+  Select,
+  type SelectChangeEvent,
+} from '@mui/material';
 import { DebouncedField } from '@rumblefish/soroban-block-explorer-ui';
+
+import { POOL_KIND_FILTERS } from './poolKind.js';
+
+import { FilterChipRow } from '../detail/FilterChipRow.js';
 
 /**
  * The Min-TVL preset row stays hidden: `filter[min_tvl]` is REJECTED by
@@ -22,22 +32,27 @@ export const TVL_PRESETS: ReadonlyArray<{ value: string; label: string }> = [
 interface PoolsFilterBarProps {
   /** Asset-code search value (URL key `asset`, API `filter[asset_code]`). */
   asset: string;
+  /** Active pool kind, or `''` for "All pools" (URL key `kind`). */
+  kind: string;
   /** Active TVL preset (URL key `min_tvl`, API `filter[min_tvl]`). */
   minTvl: string;
   onAssetChange: (value: string) => void;
+  onKindChange: (value: string) => void;
   onMinTvlChange: (value: string) => void;
 }
 
 /**
  * Filter bar for the liquidity-pools list — text input for asset-code
- * search plus a TVL preset dropdown. Geometry and surface tokens match
- * Figma node `266:36052` (search 400px, TVL 280px, alt-gray surface
- * with bottom divider).
+ * search, a pool-kind chip row, plus a TVL preset dropdown. Geometry and
+ * surface tokens match Figma node `266:36052` (search 400px, TVL 280px,
+ * alt-gray surface with bottom divider).
  */
 export function PoolsFilterBar({
   asset,
+  kind,
   minTvl,
   onAssetChange,
+  onKindChange,
   onMinTvlChange,
 }: PoolsFilterBarProps) {
   const handleTvlChange = (event: SelectChangeEvent<string>) => {
@@ -49,7 +64,8 @@ export function PoolsFilterBar({
       sx={(theme) => ({
         display: 'flex',
         flexWrap: 'wrap',
-        gap: 1,
+        alignItems: 'center',
+        gap: 2,
         p: 2,
 
         backgroundColor: theme.palette.surface.grayMainAlt,
@@ -62,6 +78,16 @@ export function PoolsFilterBar({
         ariaLabel="Filter by asset or pair"
         width={400}
         onCommit={onAssetChange}
+      />
+      <Divider
+        orientation="vertical"
+        flexItem
+        sx={{ display: { xs: 'none', sm: 'block' }, my: 0.5 }}
+      />
+      <FilterChipRow
+        options={POOL_KIND_FILTERS}
+        value={kind}
+        onChange={onKindChange}
       />
       {TVL_FILTER_ENABLED && (
         <Select

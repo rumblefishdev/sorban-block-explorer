@@ -9,12 +9,11 @@ type Filters = NonNullable<ListPoolsData['query']>;
  * `GET /liquidity-pools` — cursor-paginated liquidity-pool list.
  *
  * Supported filters per task 0246:
- *   * `filter[asset_code]` — case-insensitive substring of either leg, or a
- *     `A/B` pair query requiring both codes (task 0440). Backs the list's
- *     free-text asset input.
+ *   * `filter[asset_code]` — case-insensitive substring of any leg, or a
+ *     `A/B` pair query requiring both codes on two different legs (task 0440).
+ *     Backs the list's free-text asset input.
+ *   * `filter[pool_kind]` — `classic` | `soroban`. Backs the kind chip row.
  *   * `filter[min_tvl]` — decimal threshold.
- *   * Per-leg `filter[asset_a_code/issuer]` / `filter[asset_b_code/issuer]`
- *     remain available for API consumers needing issuer disambiguation.
  *
  * Each (filter, cursor) combination forms a distinct queryKey, so
  * revisiting a cursor is a cache hit. URL-as-state pagination — caller
