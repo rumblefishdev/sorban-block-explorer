@@ -1,5 +1,5 @@
 -- Endpoint:     GET /liquidity-pools/:id
--- Purpose:      Pool detail: identity (asset pair, fee, last_updated_ledger) +
+-- Purpose:      Pool detail: identity (legs, kind, fee, last_updated_ledger) +
 --               latest on-chain state (reserves, total shares, TVL).
 -- Source:       backend-overview.md §6.3 / frontend-overview.md §6.14
 -- Schema:       ADR 0044 + PR-#175 hybrid-surrogate amendment.
@@ -29,7 +29,18 @@
 --     deposit/withdraw/swap event.
 --   • `created_at_ledger_derived` = first-ever snapshot of this pool.
 --     One pool-pinned `MIN(ledger_sequence)` over snapshots is cheap.
---   • Sentinel `asset_*_issuer_id = 0` for native: LEFT JOIN gated by `!= 0`.
+--   • **Legs, not a pair (task 0374).** `liquidity_pools.legs` is an
+--     `Array(Int64)` of asset surrogates in registration order — two for a
+--     classic pool, two to four for a Soroban one. It replaced
+--     `asset_{a,b}_{type,code,issuer_id}`, which could not express a
+--     three-leg stable pool and forced a Soroban row to write placeholder
+--     values that read downstream as native XLM.
+--     The identities behind those surrogates are NOT joined here: the API
+--     collects the page's distinct leg ids and resolves them in ONE batched
+--     statement (`common::asset_identity`, shared with the account
+--     balance-change rows), which also carries the icon and the observed-SAC
+--     flag. The SAC address itself is DERIVED at the response boundary from
+--     `(code, issuer, network)`, never looked up (ADR 0051).
 --   • **task 0199:** `tvl` / `volume` / `fee_revenue` are NO LONGER read
 --     from the snapshot columns (never populated — pre-0199 design). The
 --     handler runs a second, small query and computes USD in Rust:
@@ -51,12 +62,8 @@
 
 SELECT
     lower(hex(lp.pool_id))                                                          AS pool_id_hex,
-    lp.asset_a_type                                                                 AS asset_a_type,
-    lp.asset_a_code,
-    iss_a.account_id                                                                AS asset_a_issuer,
-    lp.asset_b_type                                                                 AS asset_b_type,
-    lp.asset_b_code,
-    iss_b.account_id                                                                AS asset_b_issuer,
+    toInt16(lp.pool_kind)                                                           AS pool_kind,
+    lp.legs                                                                         AS legs,
     lp.fee_bps,
     toDecimal64(lp.fee_bps, 2) / 100                                                AS fee_percent,
     lp.last_updated_ledger,
@@ -69,8 +76,6 @@ SELECT
     -- USD analytics come from the separate compute-at-read query)
     l_snap.closed_at                                                                AS latest_snapshot_at
 FROM liquidity_pools lp FINAL
-LEFT JOIN accounts iss_a FINAL ON iss_a.id = lp.asset_a_issuer_id AND lp.asset_a_issuer_id != 0
-LEFT JOIN accounts iss_b FINAL ON iss_b.id = lp.asset_b_issuer_id AND lp.asset_b_issuer_id != 0
 LEFT JOIN (
     SELECT
         max(ledger_sequence)                      AS latest_ledger_sequence,

@@ -761,34 +761,49 @@ Expanded behavior:
 
 Paginated table of all liquidity pools.
 
-- Pool table - pool ID (truncated), asset pair (e.g. XLM/USDC), total shares, reserves
-  per asset, fee percentage, participant count (active LP positions; task 0246)
-- Filters - asset (`filter[asset_code]`, case-insensitive **substring** of either
+- Pool table - pool ID (truncated), the pool's **legs** (e.g. `XLM / USDC`, or
+  `USDC / EURC / DAI` for a three-leg stable pool), total shares, reserves per
+  leg, fee percentage, participant count (active LP positions; task 0246)
+- Filters - asset (`filter[asset_code]`, case-insensitive **substring** of any
   leg, so `USD` matches the `USDC` pools; `A/B` is a pair query requiring both
-  codes in either order; native legs match on `XLM` despite storing an empty
-  code; task 0440). The same box also accepts a pool **identifier** in the `L…`
-  SEP-23 form and then selects that one pool — pasting an id used to be matched
-  as an asset-code substring, so the page answered "no pools" about a pool that
-  exists (task 0470). Per-leg `(code, issuer)` exact match is the alternative
-  mode. `filter[min_tvl]` is **rejected with a 400**: pool TVL is computed at
-  read time, so there is nothing to pre-filter on
+  codes on two DIFFERENT legs, in either order; native legs match on `XLM`
+  despite storing an empty code; task 0440). The same box also accepts a pool
+  **identifier** and then selects that one pool — pasting an id used to be
+  matched as an asset-code substring, so the page answered "no pools" about a
+  pool that exists (task 0470). A chip row filters by **pool kind**
+  (`filter[pool_kind]` — All pools / Classic / Soroban), the same control the
+  assets list uses for its type axis. `filter[min_tvl]` is **rejected with a
+  400**: pool TVL is computed at read time, so there is nothing to pre-filter on
 - Cursor-based pagination controls
 
 Expanded behavior:
 
-- Rows should emphasize the pool pair and current scale at a glance.
+- Rows should emphasize the pool's composition and current scale at a glance.
 - Formatting for reserves and TVL-like values should remain consistent across the app.
 - Filters should support both quick pair lookup and broader discovery of larger pools.
 - **Every leg links to its asset** (`legHref`, list + detail): native →
   `/assets/native` (the canonical token since task 0243 — the older "native has
   no on-chain address" carve-out left XLM as the app's only dead leg, fixed in
-  task 0472), SAC mirror → `/assets/{C…}`, classic → `/assets/{CODE-ISSUER}`.
-  Only genuine schema drift (no type, no code/issuer) renders unlinked text.
+  task 0472), classic → `/assets/{CODE-ISSUER}`, Soroban token →
+  `/assets/{C…}`. Only genuine schema drift renders unlinked text. A leg's SAC
+  mirror is **context, never a route** — the assets endpoint pins a contract
+  lookup to the Soroban family, so a SAC address resolves nothing (ADR 0051).
+- **One ladder names every asset in the app** (`assetDisplayCode`, task 0374):
+  native → `XLM`, else the classic code, else the on-chain SEP-41 symbol, else
+  the **truncated contract address**. It carries the app's single "is this
+  native" rule; the pool legs, the asset pages and the account balance-change
+  rows each used to hold a copy of it, with three different answers for
+  "nothing names this" (a dash, a thrown error, and the words "Unnamed token").
+  The address rung matters now that Soroban pools are listed: a token that
+  publishes no symbol is named by the contract that IS its identity, rather
+  than rendering as an empty cell.
 
 ### 6.14 Liquidity Pool (`/liquidity-pools/:id`)
 
-- Pool summary - pool ID (full, copyable), asset pair, fee percentage, total shares,
-  reserves per asset, participant count (task 0246)
+- Pool summary - pool ID (full, copyable), the pool's legs, fee percentage,
+  total shares, reserves per leg, participant count (task 0246). Reserves are
+  still pair-shaped in storage, so a Soroban pool's third and fourth legs list
+  without an amount rather than disappearing from the composition.
 - Charts - TVL over time, volume over time, fee revenue
 - Pool participants - table of liquidity providers and their share
 - Recent transactions - deposits, withdrawals, and trades involving this pool
