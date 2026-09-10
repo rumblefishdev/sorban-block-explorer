@@ -2368,3 +2368,40 @@ Otherwise 739 soroban pools become visible and unreadable on the same day.
 One display nit, pre-existing: a pool holding `0.01` shares renders as `0`
 because `formatCompactAmount` rounds it. Not introduced here and not the
 compact formatter's bug to fix in this task.
+
+## The legs-fill pass was wrong, and is gone (2026-09-09)
+
+Karol: _"czekaj po co ten skrypt pool legs fills, smierdzi mi to"_. Correct on
+both counts.
+
+**The premise was false.** The reasoning was: our leg surrogate is a
+`cityhash_102_128` low half, ClickHouse's builtin hash is a different algorithm,
+**therefore** it must be computed in Rust. The first half is true and the second
+does not follow — because for a classic pool the leg surrogate IS the `assets.id`
+of that asset. Same formula, same inputs: native is `hash64("native")` on both
+sides, credit is `hash64("code:issuer")` on both. The hash was computed once
+already, when the `assets` row was written. The value does not need computing,
+it needs **looking up** — and SQL does that.
+
+Measured on production against pools that already have legs: a plain join
+reproduces **44,106 of 44,108**, and so does the `Map` form the mutation
+actually uses. The two misses are pools whose asset has no `assets` row at all.
+
+**It also duplicated a mechanism already in the tree.** The SAC repair is
+`ALTER TABLE liquidity_pools UPDATE legs = … WHERE pool_kind = 1`. The pass was
+a second operation on the same column of the same table, scoped to
+`pool_kind = 0`, in the same deploy window — using a heavier mechanism
+(whole-table rebuild + `EXCHANGE`) that, unlike the mutation, requires the
+indexer stopped. A heavier tool doing half the job the lighter one was already
+doing.
+
+Deleted: the module, its subcommand and its `backfills.md` section. The runbook
+now carries both repairs — **A** (soroban re-key) and **B** (classic fill) —
+one mechanism, two scopes, one window. B guards itself: a map miss maps to `-1`
+and the `WHERE` skips that row, so a pool whose asset is unknown keeps its empty
+`legs` and stays visible to the gate rather than being written a `0` that would
+read as an answer.
+
+**What I should have asked before writing it:** does anything already touch this
+column, and is the value derivable rather than computable. Both answers were in
+the tree.

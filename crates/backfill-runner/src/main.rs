@@ -13,7 +13,6 @@ mod error;
 mod ingest;
 mod nft_reclassify;
 mod partition;
-mod pool_legs_fill;
 mod repair_tier1;
 mod rpc_snapshot;
 mod run;
@@ -205,19 +204,6 @@ enum Command {
     /// `nft-reclassify` (which promotes `contract_type = 2`), with the indexer
     /// STOPPED (whole-table swap). Idempotent; `--dry-run` reports verdict
     /// transitions + would-be asset inserts without writing. CH-only.
-    /// Task 0374 — fill `liquidity_pools.legs` for classic pools that still
-    /// carry the empty default, from the pair columns.
-    ///
-    /// Run with the indexer STOPPED (atomic table swap), and BEFORE the pair
-    /// columns are dropped — it reads the very columns that migration removes.
-    /// This is what makes the deploy gate
-    /// (`countIf(length(legs) = 0)` = 0) reachable: `legs` is filled at write
-    /// time, so a pool that stopped trading never gets it on its own.
-    PoolLegsFill {
-        /// Report what would be filled; leave the live table untouched.
-        #[arg(long)]
-        dry_run: bool,
-    },
     ContractTypeRebuild {
         #[arg(long)]
         dry_run: bool,
@@ -361,15 +347,6 @@ async fn main() {
                 stats.nfts_rows,
                 stats.nfts_pending_rows,
                 stats.soroban_contracts_rows,
-            );
-        }
-        Command::PoolLegsFill { dry_run } => {
-            let stats = pool_legs_fill::execute(&sink, dry_run)
-                .await
-                .expect("pool_legs_fill failed — idempotent, safe to re-run");
-            println!(
-                "pool_legs_fill completed (dry_run={}): unfilled_before={} filled={} unresolvable={}",
-                stats.dry_run, stats.unfilled_before, stats.filled, stats.unresolvable,
             );
         }
         Command::ContractTypeRebuild { dry_run } => {

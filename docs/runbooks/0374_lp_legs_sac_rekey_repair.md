@@ -1,7 +1,23 @@
-# Repair: re-key soroban pool legs off the SAC surrogate (task 0374)
+# Repair: `liquidity_pools.legs` (task 0374)
 
-One-off data repair for `liquidity_pools.legs` on rows with `pool_kind = 1`.
-Classic rows (`pool_kind = 0`) are correct and are not touched.
+Two one-off repairs of the SAME column, by the same mechanism, on disjoint
+scopes. Run both in one window:
+
+|       | scope           | what is wrong                                                  |
+| ----- | --------------- | -------------------------------------------------------------- |
+| **A** | `pool_kind = 1` | soroban legs keyed on the SAC surrogate, resolving to no asset |
+| **B** | `pool_kind = 0` | classic legs never filled, because nothing rewrote the row     |
+
+Repair B was briefly a Rust pass in `backfill-runner` (whole-table rebuild +
+`EXCHANGE`, indexer stopped). That was wrong twice over: it duplicated this
+runbook's mechanism on the same column, and its premise was false. The premise
+was "our leg surrogate is a hash ClickHouse cannot compute, so it must be Rust"
+— true, and beside the point. For a classic pool the leg surrogate IS the
+`assets.id` of that asset (identical formula, identical inputs), so the value is
+not computed, it is **looked up** — which SQL does perfectly well. Verified on
+production: the expression in B reproduces the stored legs for **44,106 of
+44,108** pools that already have them; the two misses are pools whose asset has
+no `assets` row at all, and B leaves those alone.
 
 ## What is wrong and why this exists
 
@@ -37,7 +53,7 @@ be required only if the mutation ran before the writer was deployed.
 `bf1a46a8` after this repair re-breaks the column. Precondition 2 applies to
 every later run, not just this one.
 
-## The rewrite expression
+## A — the soroban rewrite expression
 
 Used identically by the dry run and the mutation, so what you verify is what
 you run:
@@ -72,6 +88,48 @@ Notes on the shape, each one deliberate:
 - No `OPTIMIZE ... FINAL` afterwards: a mutation rewrites parts in place rather
   than inserting a new version, so there is no version tie to merge away. It
   also updates the RMT's duplicate physical rows, which is what we want.
+
+## B — the classic fill expression
+
+`legs` is filled at WRITE time and `liquidity_pools` is a ReplacingMergeTree
+keyed on `pool_id`, so a pool gets its legs when the indexer next touches it —
+and a pool that stopped trading never does. Measured 2026-09-09: 8,825 classic
+pools still empty, none touched in the previous week, so no ledger-range
+re-index reaches them however long it runs. This is what closes that gap, and
+what makes the pair-column drop gate reachable.
+
+```sql
+arrayMap(x -> if(x = 0, -1, x), [
+  (SELECT map FROM legmap)[concat(toString(if(asset_a_type = 0, 0, 1)), ':',
+                                  if(asset_a_type = 0, '', toString(asset_a_code)), ':',
+                                  toString(if(asset_a_type = 0, 0, asset_a_issuer_id)))],
+  (SELECT map FROM legmap)[concat(toString(if(asset_b_type = 0, 0, 1)), ':',
+                                  if(asset_b_type = 0, '', toString(asset_b_code)), ':',
+                                  toString(if(asset_b_type = 0, 0, asset_b_issuer_id)))]
+])
+```
+
+where `legmap` is
+
+```sql
+SELECT CAST(groupArray((k, id)), 'Map(String, Int64)') AS map FROM (
+  SELECT concat(toString(asset_type), ':', toString(asset_code), ':',
+                toString(issuer_id)) AS k, id
+  FROM assets WHERE asset_type IN (0, 1) LIMIT 1 BY id
+)
+```
+
+Notes, each one deliberate:
+
+- The key is the identity tuple, not the surrogate — that is the whole point:
+  the hash was already computed once, when the `assets` row was written.
+- `asset_type` is the XDR domain in the pair columns (`1` and `2` are both
+  classic credit) and the FAMILY domain in `assets` (`1` = classic credit), so
+  the key folds `1|2 → 1`. Getting this backwards is task 0489's defect, which
+  blanked one leg of every trade on 59% of pools.
+- **A map miss must never be written.** `0` is not a valid leg, and a stored
+  `0` is worse than an empty array: it looks like an answer. The guard below
+  makes such a row keep its empty `legs` and stay visible to the gate.
 
 ## 1. Dry run (read-only, safe to repeat)
 
@@ -136,10 +194,18 @@ Do not merge the two into one "every leg resolves in `assets`" check. It cannot
 pass while that dead pool exists, and the pressure would then be to weaken it
 until it catches nothing.
 
-## 3. The mutation (WRITE — operator only)
+## 3. The mutations (WRITE — operator only)
 
 ```sql
-ALTER TABLE liquidity_pools UPDATE legs = <REWRITE> WHERE pool_kind = 1
+-- A: soroban
+ALTER TABLE liquidity_pools UPDATE legs = <REWRITE A> WHERE pool_kind = 1;
+
+-- B: classic, only where a fill is needed AND both legs resolve. The
+-- `NOT has(..., -1)` guard is why the expression maps a miss to -1: a row
+-- whose asset has no `assets` row is skipped entirely rather than written
+-- with a placeholder.
+ALTER TABLE liquidity_pools UPDATE legs = <REWRITE B>
+WHERE pool_kind = 0 AND length(legs) = 0 AND NOT has(<REWRITE B>, -1);
 ```
 
 Single-server `ReplacingMergeTree`, no replication, so no `ON CLUSTER`.
@@ -176,6 +242,23 @@ WHERE k = 1
 Before: `0` — verified read-only on production. After: `218` when the rewrite
 is applied to today's rows. That number grows as pools register; `0` before is
 the part that must hold.
+
+For **B**, the gate the pair-column drop depends on:
+
+```sql
+SELECT countIf(length(legs) = 0)  AS unmigrated,   -- target 0
+       countIf(has(legs, 0))      AS placeholders  -- MUST be 0, always
+FROM liquidity_pools FINAL
+```
+
+`unmigrated` should fall to the handful of pools whose asset has no `assets`
+row (2 on production, 2026-09-09) — B skips those by design rather than writing
+a placeholder. `placeholders` must be `0`: a stored `0` is not a leg, and it
+would read as an answer instead of as missing data.
+
+Only once `unmigrated` is at that floor may the legacy pair columns be dropped
+(see `docs/deployment.md`) — B reads the very columns that migration removes,
+so it can never be re-run afterwards.
 
 ## Rollback
 
