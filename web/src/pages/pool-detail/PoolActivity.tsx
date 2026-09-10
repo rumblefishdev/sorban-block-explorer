@@ -109,14 +109,18 @@ export interface AmountLegPart {
  */
 export function poolAmountLegs(
   op: Pick<PoolActivityItem, 'amount_a' | 'amount_b'>,
-  pool: Pick<PoolItem, 'asset_a' | 'asset_b'>
+  pool: Pick<PoolItem, 'legs'>
 ): { legs: AmountLegPart[]; swap: boolean } | null {
+  // `lp_operation_amounts` is pair-shaped and holds classic pools only
+  // (measured: zero soroban pools across 53,368 distinct ids), so the two
+  // amounts belong to the first two legs.
   const legs = (
     [
-      [op.amount_a, pool.asset_a],
-      [op.amount_b, pool.asset_b],
+      [op.amount_a, pool.legs[0]],
+      [op.amount_b, pool.legs[1]],
     ] as const
   ).flatMap(([amount, leg]) => {
+    if (leg == null) return [];
     if (amount == null || amount === '') return [];
     const raw = amount.replace(/^-/, '');
     // The sign is carried by the ordering and the separator, not the digits.
@@ -144,7 +148,7 @@ export function poolAmountLegs(
  *  and the shape the unit tests pin. */
 export function formatPoolAmount(
   op: Pick<PoolActivityItem, 'amount_a' | 'amount_b'>,
-  pool: Pick<PoolItem, 'asset_a' | 'asset_b'>
+  pool: Pick<PoolItem, 'legs'>
 ): string | null {
   const parts = poolAmountLegs(op, pool);
   if (parts == null) return null;

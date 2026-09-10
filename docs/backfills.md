@@ -693,7 +693,14 @@ reconciliation is not.
 
 Run only AFTER the 0374 DDL + indexer deploy (see the deploy-order gotcha in
 [deployment.md](./deployment.md) — reversing the order is the 0310 outage
-class). Three catch-ups, then one closure check:
+class). Three catch-ups, then one closure check.
+
+Note the `legs` column is NOT filled by any pass here — both kinds are repaired
+by the mutations in
+[`0374_lp_legs_sac_rekey_repair.md`](./runbooks/0374_lp_legs_sac_rekey_repair.md),
+which is also where the deploy gate for dropping the legacy pair columns lives.
+
+The three catch-ups:
 
 1. **Pool registry** — one-off generator, deliberately not in the tree
    (a one-off is not a maintained surface). Full workflow — restore, harvest,

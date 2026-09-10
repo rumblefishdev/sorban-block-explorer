@@ -230,15 +230,17 @@ Single NFT overview.
 
 Paginated table of all liquidity pools.
 
-- Pool table — pool ID (truncated), asset pair (e.g. XLM/USDC), total shares, reserves
-  per asset, fee percentage
-- Filters — asset pair, minimum TVL
+- Pool table — pool ID (truncated), the pool's legs (e.g. `XLM / USDC`, or three
+  for a Soroban stable pool), total shares, reserves per leg, fee percentage,
+  kind badge
+- Filters — asset code or pair, pool kind (classic / Soroban); minimum TVL is
+  rejected with a 400 (computed at read, so it cannot filter page membership)
 - Cursor-based pagination controls
 
 #### Liquidity Pool (`/liquidity-pools/:strkey`)
 
-- Pool summary — pool ID (full, copyable), asset pair, fee percentage, total shares,
-  reserves per asset
+- Pool summary — pool ID (full, copyable), the pool's legs, fee percentage,
+  total shares, reserves per leg
 - Charts — TVL over time, volume over time, fee revenue
 - Pool participants — table of liquidity providers and their share
 - Recent transactions — deposits, withdrawals, and trades involving this pool
@@ -423,9 +425,9 @@ media URL.
 #### Liquidity Pools
 
 **`GET /liquidity-pools`** — Paginated list of pools. Query params: `limit`, `cursor`,
-`filter[assets]`, `filter[min_tvl]`.
+`filter[asset_code]`, `filter[pool_kind]`.
 
-**`GET /liquidity-pools/:strkey`** — Pool detail: asset pair, fee, reserves, total shares, TVL.
+**`GET /liquidity-pools/:strkey`** — Pool detail: legs, kind, fee, reserves, total shares, TVL.
 
 **`GET /liquidity-pools/:strkey/transactions`** — Deposits, withdrawals, and trades for this
 pool.

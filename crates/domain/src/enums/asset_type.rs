@@ -1,8 +1,12 @@
 //! Stellar XDR `AssetType` (4 variants).
 //!
-//! Maps to `liquidity_pools.asset_a_type` / `asset_b_type` and
-//! `account_balances_*.asset_type` — every column that carries the raw
+//! Maps to `account_balances_*.asset_type` — the columns that carry the raw
 //! XDR asset discriminator. `SMALLINT NOT NULL` + `CHECK (… BETWEEN 0 AND 15)`.
+//!
+//! `liquidity_pools.asset_a_type` / `asset_b_type` were on that list until task
+//! 0374 retired the pair columns. The XDR type still reaches the pool writer —
+//! it is what `ids::pool_leg_asset_id` takes to build a classic leg surrogate —
+//! it is just no longer stored.
 //!
 //! The serde label is the snake_case form that stellar-xdr emits in its
 //! JSON representation — what parser state.rs has always embedded in the

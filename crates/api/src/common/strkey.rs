@@ -65,13 +65,47 @@ pub(crate) fn is_strkey_shape(value: &str, prefix: char) -> bool {
 ///
 /// Returns the lowercase hex the `pool_id` column stores.
 pub(crate) fn pool_id_from_text(raw: &str) -> Option<String> {
-    match stellar_strkey::LiquidityPool::from_string(raw.trim()) {
-        Ok(stellar_strkey::LiquidityPool(bytes)) => Some(hex::encode(bytes)),
+    let raw = raw.trim();
+    // Both forms are accepted because both are real pool ids: a protocol pool
+    // is addressed by its SEP-23 `L…` strkey, a soroban pool by the contract
+    // it IS. They cannot be confused — the prefix byte differs — so trying one
+    // then the other is a total parse, not a guess.
+    if let Ok(stellar_strkey::LiquidityPool(bytes)) =
+        stellar_strkey::LiquidityPool::from_string(raw)
+    {
+        return Some(hex::encode(bytes));
+    }
+    match stellar_strkey::Contract::from_string(raw) {
+        Ok(stellar_strkey::Contract(bytes)) => Some(hex::encode(bytes)),
         Err(_) => None,
     }
 }
 
-pub(crate) fn pool_id_hex_to_strkey(hex_str: &str) -> String {
+/// The wire identifier for a pool ROW, from its raw stored discriminant.
+///
+/// The drift fallback lives HERE and nowhere else. A discriminant outside
+/// [`domain::PoolKind`] is schema drift, and every surface has to answer the
+/// same way about it: `pool_id` is a required field, so there is no "no
+/// identifier" to return, and classic is the form all but ~1.3% of pools take.
+/// The pools handler and the search row used to spell this
+/// `unwrap_or(PoolKind::Classic)` separately, each under a comment claiming the
+/// classic encoding was used "only when the row says classic" — which is
+/// exactly what a fallback is not.
+pub(crate) fn pool_identifier(pool_id_hex: &str, raw_kind: i16) -> String {
+    pool_id_hex_to_strkey(
+        pool_id_hex,
+        domain::PoolKind::try_from(raw_kind).unwrap_or(domain::PoolKind::Classic),
+    )
+}
+
+/// The wire form of a pool's 32 bytes, chosen by its KIND.
+///
+/// The bytes cannot say which encoding is right, and both encodings accept any
+/// 32 bytes — so rendering a soroban pool's contract payload as a SEP-23 `L…`
+/// yields a **well-formed strkey for a pool that does not exist**: no panic, no
+/// error, a wrong id on the page and a link that answers nothing. The kind is
+/// therefore a parameter, not a default.
+pub(crate) fn pool_id_hex_to_strkey(hex_str: &str, kind: domain::PoolKind) -> String {
     assert_eq!(
         hex_str.len(),
         64,
@@ -83,12 +117,15 @@ pub(crate) fn pool_id_hex_to_strkey(hex_str: &str) -> String {
     let payload: [u8; 32] = bytes
         .try_into()
         .expect("32 bytes — guaranteed by 64-char length assert above");
-    // Double `.to_string()` is intentional: the inherent
-    // `LiquidityPool::to_string` returns `heapless::String<56>` (no_std);
-    // the second `.to_string()` (via `Display`) bridges to `std::String`.
-    stellar_strkey::LiquidityPool(payload)
-        .to_string()
-        .to_string()
+    // Double `.to_string()` is intentional: the inherent `to_string` returns
+    // `heapless::String<56>` (no_std); the second (via `Display`) bridges to
+    // `std::String`.
+    match kind {
+        domain::PoolKind::Classic => stellar_strkey::LiquidityPool(payload)
+            .to_string()
+            .to_string(),
+        domain::PoolKind::Soroban => stellar_strkey::Contract(payload).to_string().to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -143,7 +180,7 @@ mod tests {
     #[test]
     fn pool_id_hex_to_strkey_round_trip_zero() {
         let hex = "0".repeat(64);
-        let strkey = pool_id_hex_to_strkey(&hex);
+        let strkey = pool_id_hex_to_strkey(&hex, domain::PoolKind::Classic);
         assert!(strkey.starts_with('L'));
         assert_eq!(strkey.len(), 56);
         let decoded = stellar_strkey::LiquidityPool::from_string(&strkey).unwrap();
@@ -160,7 +197,7 @@ mod tests {
         // Pattern exercises both nibbles of each byte and the full hex alphabet.
         let hex = "0123456789abcdef".repeat(4);
         assert_eq!(hex.len(), 64);
-        let strkey = pool_id_hex_to_strkey(&hex);
+        let strkey = pool_id_hex_to_strkey(&hex, domain::PoolKind::Classic);
         let decoded = stellar_strkey::LiquidityPool::from_string(&strkey).unwrap();
         let mut round = String::with_capacity(64);
         for b in &decoded.0 {
@@ -173,7 +210,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "pool_id hex must be exactly 64 chars")]
     fn pool_id_hex_to_strkey_panics_on_short_input() {
-        let _ = pool_id_hex_to_strkey("abc");
+        let _ = pool_id_hex_to_strkey("abc", domain::PoolKind::Classic);
     }
 
     #[test]
@@ -222,5 +259,34 @@ mod tests {
         // form, and `path::pool_id_strkey` rejects hex on the detail route.
         assert!(pool_id_from_text(&hex).is_none());
         assert!(pool_id_from_text(&hex.to_uppercase()).is_none());
+    }
+
+    /// The same 32 bytes, two encodings, both well-formed — which is exactly
+    /// why the kind is a parameter and not a default. A soroban pool rendered
+    /// as `L…` would be a valid strkey for a pool that does not exist.
+    #[test]
+    fn the_same_bytes_render_differently_per_kind() {
+        let hex = "0123456789abcdef".repeat(4);
+        let classic = pool_id_hex_to_strkey(&hex, domain::PoolKind::Classic);
+        let soroban = pool_id_hex_to_strkey(&hex, domain::PoolKind::Soroban);
+        assert!(classic.starts_with('L'), "{classic}");
+        assert!(soroban.starts_with('C'), "{soroban}");
+        assert_ne!(classic, soroban);
+        // Both round-trip to the same payload — the bytes never changed, only
+        // the claim about what they identify.
+        assert_eq!(
+            stellar_strkey::LiquidityPool::from_string(&classic)
+                .unwrap()
+                .0,
+            stellar_strkey::Contract::from_string(&soroban).unwrap().0,
+        );
+    }
+
+    /// Both forms are accepted on the way in, for the same reason.
+    #[test]
+    fn a_contract_address_is_a_pool_id_too() {
+        let hex = "0123456789abcdef".repeat(4);
+        let soroban = pool_id_hex_to_strkey(&hex, domain::PoolKind::Soroban);
+        assert_eq!(pool_id_from_text(&soroban).as_deref(), Some(hex.as_str()));
     }
 }

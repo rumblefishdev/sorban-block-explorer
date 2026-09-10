@@ -13,26 +13,29 @@ import { POOL_COLUMN_COUNT, PoolsTable } from './liquidity-pools/PoolsTable.js';
 type Filters = NonNullable<ListPoolsData['query']>;
 
 /**
- * Liquidity-pools list page (`/liquidity-pools`) — every liquidity pool
- * with asset-code search and a minimum-TVL preset filter. Cursor
- * paginated. Wires the Figma node `266:35969` layout against the
- * `GET /liquidity-pools` endpoint as extended by task 0246.
+ * Liquidity-pools list page (`/liquidity-pools`) — every liquidity pool,
+ * classic and Soroban alike, with asset-code search, a pool-kind filter and a
+ * minimum-TVL preset filter. Cursor paginated. Wires the Figma node
+ * `266:35969` layout against the `GET /liquidity-pools` endpoint as extended
+ * by task 0246.
  */
 export default function LiquidityPoolsListPage() {
   const { state, cursor, goNext, goPrev, setFilter, clearFilters } =
     useCursorPagination({
-      filterKeys: ['asset', 'min_tvl'],
+      filterKeys: ['asset', 'kind', 'min_tvl'],
     });
   const asset = state.filters.asset ?? '';
+  const kind = state.filters.kind ?? '';
   const minTvl = state.filters.min_tvl ?? '';
-  const hasFilters = asset !== '' || minTvl !== '';
+  const hasFilters = asset !== '' || kind !== '' || minTvl !== '';
 
   const queryFilters = useMemo<Filters>(() => {
     const filters: Filters = { limit: PAGE_SIZE };
     if (asset) filters['filter[asset_code]'] = asset;
+    if (kind) filters['filter[pool_kind]'] = kind;
     if (minTvl) filters['filter[min_tvl]'] = minTvl;
     return filters;
-  }, [asset, minTvl]);
+  }, [asset, kind, minTvl]);
 
   const { data, isLoading, isPlaceholderData, isError, error, refetch } =
     usePoolsList(cursor, queryFilters);
@@ -45,6 +48,10 @@ export default function LiquidityPoolsListPage() {
 
   const handleAssetChange = useCallback(
     (value: string) => setFilter('asset', value || null),
+    [setFilter]
+  );
+  const handleKindChange = useCallback(
+    (value: string) => setFilter('kind', value || null),
     [setFilter]
   );
   const handleMinTvlChange = useCallback(
@@ -62,8 +69,10 @@ export default function LiquidityPoolsListPage() {
         filters={
           <PoolsFilterBar
             asset={asset}
+            kind={kind}
             minTvl={minTvl}
             onAssetChange={handleAssetChange}
+            onKindChange={handleKindChange}
             onMinTvlChange={handleMinTvlChange}
           />
         }

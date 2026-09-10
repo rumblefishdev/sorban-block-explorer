@@ -1,7 +1,7 @@
-import type { PoolAssetLeg } from '@rumblefish/api-types';
+import type { PoolAssetLeg, PoolItem } from '@rumblefish/api-types';
 
 import { assetColor } from '../assets/assetColor.js';
-import { NATIVE_ASSET_CODE } from '../assets/assetType.js';
+import { assetDisplayCode } from '../assets/assetType.js';
 import { routes } from '../../router/routes.js';
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -13,7 +13,7 @@ const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
  * classic and SAC legs resolve to the same asset row.
  *
  * Precedence:
- *   1. `asset_type === 0` (native XLM) → `/assets/native`. The reserved
+ *   1. `asset_type_name === 'native'` (native XLM) → `/assets/native`. The reserved
  *      `native` literal IS the canonical asset token (task 0243) — the older
  *      "native has no on-chain address, so no link" rule predates it and left
  *      XLM as the only unlinkable leg in the app, while account balances,
@@ -30,7 +30,7 @@ const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
  *   4. Anything else (schema drift) → no link.
  */
 export function legHref(leg: PoolAssetLeg): string | undefined {
-  if (leg.asset_type === 0) return routes.asset('native');
+  if (leg.asset_type_name === 'native') return routes.asset('native');
   if (leg.asset_code && leg.issuer) {
     return routes.asset(`${leg.asset_code}-${leg.issuer}`);
   }
@@ -39,24 +39,63 @@ export function legHref(leg: PoolAssetLeg): string | undefined {
 }
 
 /**
- * Returns the display label for one leg of a pool's asset pair.
+ * The display label for one leg — the app-wide {@link assetDisplayCode} ladder,
+ * narrowed to the guarantee a leg carries: SOMETHING always identifies it.
+ * Native is named by its type, a classic leg by its code, a soroban leg by its
+ * symbol or, failing that, by its own contract address.
  *
- * Native (XLM) legs come back with `asset_type_name === 'native'` and
- * `null` `asset_code`. Classic, SAC, and Soroban legs all carry a code.
- *
- * **Hard-fail on schema drift.** If a leg has neither the native flag
- * nor an `asset_code` the backend contract is broken — throw rather
- * than silently render a `?` placeholder, so the bug is caught by the
- * surrounding `SectionErrorBoundary` instead of leaking into the UI.
+ * **Hard-fail on schema drift.** A leg that hits none of those rungs is a
+ * broken backend contract, not a nameless token — throw rather than render a
+ * `?` placeholder, so the surrounding `SectionErrorBoundary` catches it instead
+ * of it leaking into the UI. The throw used to fire for any leg without an
+ * `asset_code`, which a soroban token legitimately has none of; it now fires
+ * only when nothing at all names the leg.
  */
 export function assetLegLabel(leg: PoolAssetLeg): string {
-  if (leg.asset_type_name === 'native') return NATIVE_ASSET_CODE;
-  if (leg.asset_code != null && leg.asset_code !== '') return leg.asset_code;
+  const label = assetDisplayCode(leg);
+  if (label != null) return label;
   throw new Error(
-    `assetLegLabel: non-native leg has no asset_code (asset_type_name=${
+    `assetLegLabel: nothing identifies this leg (asset_type_name=${
       leg.asset_type_name ?? 'null'
     })`
   );
+}
+
+/**
+ * Shown for a pool whose legs are not in the index yet. An empty name would
+ * read as a pool that holds nothing — a plausible-looking wrong answer, which
+ * is worse than saying the data is missing.
+ */
+export const UNINDEXED_POOL_LABEL = 'Composition not indexed';
+
+/**
+ * The pool's name — its legs' labels, in registration order. Two for a classic
+ * pool, up to four for a soroban one, so the separator repeats rather than
+ * joining a fixed left and right.
+ */
+export function poolLabel(legs: readonly PoolAssetLeg[]): string {
+  if (legs.length === 0) return UNINDEXED_POOL_LABEL;
+  return legs.map(assetLegLabel).join(' / ');
+}
+
+/**
+ * Each leg with the reserve it holds.
+ *
+ * The amount rides on the LEG now. It used to be paired off `reserve_a` /
+ * `reserve_b`, which meant a three- or four-leg pool could never show more
+ * than two — the API resolves the two different sources (a classic pool's
+ * snapshot, a Soroban pool's state changes) into one field per leg, so nothing
+ * here has to know which answered.
+ *
+ * `null` when no source knows it — a classic pool with no fresh snapshot, or a
+ * Soroban pool that has not changed state. The leg is still listed, so the
+ * pool's composition reads in full and the amount shows the same "—" a stale
+ * pool does, rather than the leg disappearing.
+ */
+export function poolReserves(
+  pool: Pick<PoolItem, 'legs'>
+): { leg: PoolAssetLeg; amount: string | null }[] {
+  return pool.legs.map((leg) => ({ leg, amount: leg.reserve ?? null }));
 }
 
 /**

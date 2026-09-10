@@ -13,20 +13,22 @@ import {
   assetLegLabel,
   isPoolStale,
   legHref,
+  poolReserves,
   reserveDotColor,
 } from '../pool-shared/helpers.js';
 
 const STALE_SUBTITLE = 'no recent snapshot';
+const UNKNOWN_SUBTITLE = 'not indexed';
 
 interface PoolKpiStripProps {
   pool: PoolItem;
 }
 
 /**
- * Four-cell KPI strip above the Summary card on the LP detail page —
- * Total shares, per-leg reserves, and participant count. Reserves render
- * with compact notation (`1.2M`, `480K`); the subtitle carries the asset
- * code so the value reads cleanly without units stacked on top.
+ * KPI strip above the Summary card on the LP detail page — total shares, one
+ * cell per leg reserve, and participant count. Reserves render with compact
+ * notation (`1.2M`, `480K`); the subtitle carries the asset code so the value
+ * reads cleanly without units stacked on top.
  *
  * Stale pools (no fresh snapshot in 7 days) come back with null reserves
  * and shares — those cells render as "—". `participant_count` stays
@@ -47,37 +49,70 @@ function assetSubtitle(leg: PoolAssetLeg, code: string): ReactNode {
 }
 
 export function PoolKpiStrip({ pool }: PoolKpiStripProps) {
-  const codeA = assetLegLabel(pool.asset_a);
-  const codeB = assetLegLabel(pool.asset_b);
-  const stale = isPoolStale(pool.latest_snapshot_at);
+  // "No recent snapshot" is only true of a pool that HAS snapshots. A Soroban
+  // pool never does — the table is classic-only — so saying it went stale
+  // describes a thing that never existed. Absence there is "not indexed".
+  const stale =
+    pool.latest_snapshot_ledger != null && isPoolStale(pool.latest_snapshot_at);
 
   return (
     <Stack
       direction={{ xs: 'column', sm: 'row' }}
+      // The strip was exactly four cells; it is now two plus one per leg, so a
+      // four-leg pool puts six across. Wrapping keeps every reserve visible
+      // rather than compressing the labels past reading — `rowGap` because
+      // `spacing` only sets the gap along the main axis.
+      flexWrap="wrap"
       spacing={{ xs: 2, sm: 3 }}
-      sx={{ width: '100%' }}
+      sx={{ width: '100%', rowGap: { xs: 2, sm: 3 } }}
     >
       <KpiCell
         label="Total shares"
         value={formatCompactAmount(pool.total_shares)}
-        caption={stale ? STALE_SUBTITLE : 'shares outstanding'}
+        caption={
+          pool.total_shares != null
+            ? 'shares outstanding'
+            : stale
+            ? STALE_SUBTITLE
+            : UNKNOWN_SUBTITLE
+        }
       />
-      <KpiCell
-        label={`${codeA} reserve`}
-        value={formatCompactAmount(pool.reserve_a)}
-        caption={stale ? STALE_SUBTITLE : assetSubtitle(pool.asset_a, codeA)}
-        valueColor={reserveDotColor(pool.asset_a)}
-      />
-      <KpiCell
-        label={`${codeB} reserve`}
-        value={formatCompactAmount(pool.reserve_b)}
-        caption={stale ? STALE_SUBTITLE : assetSubtitle(pool.asset_b, codeB)}
-        valueColor={reserveDotColor(pool.asset_b)}
-      />
+      {/* The caption follows the VALUE, not the snapshot. A Soroban pool
+          never has a snapshot, so keying off freshness told every one of them
+          "no recent snapshot" while showing a current reserve — and hid the
+          asset link while doing it. A value we have is never stale-captioned;
+          one we do not have says which kind of absence it is. */}
+      {poolReserves(pool).map(({ leg, amount }, i) => {
+        const code = assetLegLabel(leg);
+        const caption =
+          amount != null
+            ? assetSubtitle(leg, code)
+            : stale
+            ? STALE_SUBTITLE
+            : UNKNOWN_SUBTITLE;
+        return (
+          <KpiCell
+            key={i}
+            label={`${code} reserve`}
+            value={formatCompactAmount(amount)}
+            caption={caption}
+            valueColor={reserveDotColor(leg)}
+          />
+        );
+      })}
+      {/* `null` is not zero: the API sends it for a pool that demonstrably
+          HAS providers we cannot enumerate, rather than reporting a count of
+          none for a pool holding real liquidity. */}
       <KpiCell
         label="Participants"
-        value={formatInteger(pool.participant_count)}
-        caption="liquidity providers"
+        value={
+          pool.participant_count != null
+            ? formatInteger(pool.participant_count)
+            : '—'
+        }
+        caption={
+          pool.participant_count != null ? 'liquidity providers' : 'not indexed'
+        }
       />
     </Stack>
   );

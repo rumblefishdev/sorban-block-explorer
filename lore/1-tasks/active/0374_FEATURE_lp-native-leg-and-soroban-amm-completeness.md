@@ -1642,3 +1642,1006 @@ position id; `position_update` is the indexing source. The phrase entered on
 2026-08-29 as an unsourced aside in the read-path commit (a Uniswap-v3
 pattern carried over) and was copied into the ADR the same day. ADR fixed;
 the branch comment corrected in place. Indexing stays deferred to 0516.
+
+## CONFIRMED DEFECT (2026-09-08) — soroban pool legs key on the SAC surrogate, and orphan
+
+Found while designing the read half's `legs` migration, by tracing the
+producer after the owner refused a measurement that "smelled wrong" — the
+first reading blamed two disjoint id spaces, which the code refutes.
+
+**There is ONE id space.** `ids::asset_id` returns `contract_id` for a
+soroban token, so a token contract's surrogate _is_ its asset id. The classic
+arm goes through `pool_leg_asset_id`, which branches on the XDR asset type
+and yields the canonical id. The three soroban registry-row builders
+(`pool_registry_row`, `factory_pair_registry_row`, `config_pool_registry_row`)
+instead call `ids::contract_id(token)` **directly — no branch, no lookup**.
+
+That is correct for a genuine soroban token and WRONG for a SAC. ADR 0051
+retired `asset_type = 2`: a SAC is not a distinct asset and has no `assets`
+row of its own, so anything keyed on its surrogate orphans. The balance path
+already re-keys through `fetch_sac_classic_map`; `stage.rs` even carries the
+comment naming the failure ("must key by the classic/native asset it wraps
+**or it would orphan**"). The pool leg writer skips that step.
+
+### Measured on production, 2026-09-08
+
+| pool kind | leg occurrences | native id | classic credit id | soroban token id | **orphan** |
+| --------- | --------------- | --------- | ----------------- | ---------------- | ---------- |
+| classic   | 38,932          | 4,222     | 34,642            | 0                | **0**      |
+| soroban   | 1,175           | 0         | 0                 | 91               | **1,084**  |
+
+The split is clean — zero ambiguous cases: 1,059 of 1,151 leg occurrences
+(measured a few minutes earlier in the same session) carry `is_sac = true`
+AND appear in `asset_sac`; 92 carry neither. All 1,059 resolve to an
+`assets.id` by **pure lookup** — no hashing, so the repair needs no
+re-implementation of `hash64` in SQL (which would be impossible: our
+surrogate is not ClickHouse's `cityHash64`). Both join directions are
+unambiguous (313,037 SAC surrogates → 0 with more than one asset).
+
+Worked example — 211 soroban pools hold a native XLM leg, and not one carries
+XLM's id `-6959166271784855184`. They all carry `-6164601581949826601`, the
+surrogate of XLM's SAC `CAS3J7GY…` (confirmed in `asset_sac` as asset_type 0,
+issuer 0). To the database that is not XLM; it is nothing.
+
+Raw sample, one row per variant (`legs` today → after the fix):
+
+| variant                 | pool           | legs today             | resolves to | legs after             | resolves to |
+| ----------------------- | -------------- | ---------------------- | ----------- | ---------------------- | ----------- |
+| classic / native        | `0E544374BBD5` | `-6959166271784855184` | type 0      | unchanged              | XLM         |
+| classic / credit        | `544317D9B5E7` | `4519192638202107447`  | type 1 USDZ | unchanged              | USDZ        |
+| soroban / SAC of native | `0A0D06326A1B` | `-6164601581949826601` | **ORPHAN**  | `-6959166271784855184` | XLM         |
+| soroban / SAC of credit | `E55B1F69F0B8` | `5690321183329937413`  | **ORPHAN**  | `1076006802138508448`  | EURC        |
+| soroban / real token    | `FDD21419D7EC` | `6077758128363813942`  | type 3      | unchanged              | unchanged   |
+
+Classic rows and genuine-soroban-token rows do not move. Only the SAC legs do.
+
+### Consequences for the read half
+
+- `asset → pools` breaks across kinds: the same asset carries two different
+  ids depending on which kind of pool references it, so "pools holding USDC"
+  cannot be one query.
+- Naming: measured over the BROKEN state, 216 of 1,151 leg occurrences (18.8%)
+  had no name anywhere. Over the FIXED state that collapses to **5** — 1,059
+  become classic assets with real codes, and 87 of the 92 genuine soroban
+  tokens carry an on-chain SEP-41 symbol.
+- The `pool_kind = 0` guard the #438 review added to `asset_codes_predicate`
+  is NOT the fix for this and must not be re-created (task 0530 deletes it).
+
+### Decision (karolkow, 2026-09-08) — repair at the source, option A
+
+Rejected: a read-time bridge through `asset_sac` (rebuilds machinery the write
+side already owns, and becomes permanent). Rejected: promoting a SAC to a
+first-class asset with its own `assets` row (reverses ADR 0051 and fragments
+every balance — the same disease at larger scale).
+
+Deployment order, and the reason for it: **every writer producing old-rule rows
+must finish before the repair script runs**, or it re-introduces wrong rows.
+The registry backfill is such a writer and is running for BOTH pool kinds.
+
+1. Backfill finishes.
+2. Deploy the corrected writer — everything new is right from that moment.
+3. Repair script over `pool_kind = 1` rows only.
+4. Invariant checks below.
+
+Step 3 needs **no indexer pause**: after step 2 the live writer is already
+correct, and a ClickHouse mutation only rewrites parts existing at its start.
+Standing hazard to record: running a backfill with an OLD binary after step 3
+re-breaks the column — step 2 must precede every later run.
+
+### The invariant — two parts, deliberately not one
+
+A single "every leg resolves in `assets`" check cannot pass and would have to
+be weakened into uselessness. Split it:
+
+**Hard, must be zero forever** — catches exactly this defect:
+
+```sql
+-- soroban legs whose value is a known SAC surrogate
+WITH p AS (SELECT pool_id, argMax(pool_kind, last_updated_ledger) k,
+                  argMax(legs, last_updated_ledger) legs
+           FROM liquidity_pools GROUP BY pool_id)
+SELECT count() AS mis_keyed
+FROM (SELECT arrayJoin(legs) AS leg FROM p WHERE k = 1)
+WHERE leg IN (SELECT sac_contract_id FROM asset_sac WHERE sac_contract_id != 0)
+```
+
+Before: **1,084**. After the repair: **0**, unconditionally.
+
+**Soft, counted and alarmed — never silently allowed**: legs with no `assets`
+row that are not a known SAC. Before: 1. After: 1. Growth means a token family
+we do not know about, and we want to hear about it rather than discover it as
+a blank cell.
+
+That one is understood, not a mystery: pool
+`8FE06922A146D7BEBAB9CDD93D0E34224AFE09CFB42465378423F26DA8DE3370`, registered
+at ledger 50,875,676 by deployment `CARVO4GF…` — one of the five dead early
+config-factory deployments that predate the documented factory. Its
+registration event is the family's `["create", "liquidity_pool"]` shape, so the
+legs came from the pool's own CONFIG. The pool holds exactly one
+`pool_state_changes` row (its creation reserves) and emitted 2 events ever; the
+leg's token contract has emitted **zero** events in our entire window. It is
+not below the ingest floor (floor 50,457,424 < 50,875,676) — the token is
+simply inert, so no `soroban_contracts` row was ever created for it. An
+unnamed leg here is an honest statement, not a lost identity.
+
+## Asset-identity resolution consolidated (2026-09-08) — and what it costs
+
+The pool read path needs a leg's display identity from an `assets.id`
+surrogate. Before designing one, a check of what already exists found it: task
+0540 wrote `resolve_asset_identities` for the account value-flow read, with a
+statement whose every shape is a paid-for lesson (LEFT join or NFT transfers
+vanish; the contract leg on the same id list or the `assets` scan runs twice —
+209 ms / 2.5M rows against 44 ms / 268k; `toBool` for the driver's `Bool`;
+`CAST(… AS Array(Int64))` or an all-positive page 500s; `LIMIT 1 BY id` over
+`FINAL`, 4.7x fewer rows). Copying that into the pools module was the wrong
+answer, so the domain map's consolidation trigger — "a third consumer needing
+richer fields" — fires here.
+
+Moved to `crates/api/src/common/asset_identity.rs` with the SQL **byte-identical**
+(verified programmatically, 1,137 characters). The split point moved by one
+step, deliberately: the shared function now returns the RAW identity
+(`ResolvedAsset`), and the account read keeps its own projection onto the three
+fields a balance-change cell renders. Sharing the resolution while copying the
+projection is what makes it reusable — the pool leg's projection is an avatar,
+not a `CODE-ISSUER` link.
+
+**Re-measured on production after the move** (9 mixed asset ids, one page's
+worth): **605,688 rows / 6.83 MiB / 47 ms**. Against 0540's documented 44 ms /
+268k the time is unchanged and the rows are 2.26x — all of it dimension growth,
+accounted for exactly: `assets` 569,042 (a full scan, because `id` is not in
+its `ORDER BY` and it carries no skip index) + `soroban_contract_metadata`
+3,930 + 32,716 granules from the bloom seek on `soroban_contracts`.
+
+**Worth watching, not fixing yet:** the `assets` scan is now 94% of that read
+and grows with the table, and the pools path is about to become its second
+caller. The fix, if it ever earns its keep, is a bloom index on `assets.id` —
+the same `idx_acc_id` treatment `accounts` got at ~23M rows — which is a
+production DDL and therefore an operator action. Not justified at 569k and
+47 ms.
+
+## One fact, several producers — a sweep prompted by a near-miss (2026-09-08)
+
+While building the pool-leg display resolver I looked up the SAC mirror address
+through `soroban_contracts`, and only a cost measurement (476,616 rows / ~120 ms,
+the whole `asset_sac` table) revealed that `/v1/assets` does not look it up at
+all — it DERIVES the address in Rust from `code:issuer`, exactly as ADR 0051
+says, and reads the table only to learn whether a SAC was observed. Two ways to
+produce one fact, one of them mine, caught by accident.
+
+The owner asked for a sweep. Ranked by whether a user can see it and whether it
+dies on its own.
+
+### F1 — "what is this asset called" has THREE frontend implementations, and
+
+three different answers
+
+| function           | surface             | answer when the asset has no code |
+| ------------------ | ------------------- | --------------------------------- |
+| `assetDisplayCode` | assets list         | `null` → renders a dash           |
+| `assetLabel`       | balance-change cell | the string `Unnamed token`        |
+| `assetLegLabel`    | pool leg            | **throws**                        |
+
+One question, three surfaces, three behaviours — one of which takes the page
+down. The ranked-inconsistency item about an unnamed soroban leg was about to
+add a FOURTH (a truncated address) by fixing only the third.
+
+**Fix belongs to the leg-rendering step**, which touches this code anyway: ONE
+function, one ladder — native → `XLM`, code → code, on-chain symbol → symbol,
+otherwise the truncated `C…` address. Measured justification for the last rung:
+a soroban token's symbol is self-declared and not unique (2,276 contracts call
+themselves `SMOL`, 488 `POOL`, 44 `sUSDC`; among our own pool legs three
+different contracts claim `USDC`), so the address is the only identity that
+discriminates — which is also why stellar.expert prints it beside the symbol
+even when the symbol exists.
+
+### F2 — the "native displays as XLM" SQL expression is written FOUR times
+
+`search/queries.rs:717` and `assets/queries.rs:672` are byte-identical `SHOWN`
+constants; `common/pool_asset_codes.rs:40` is a parameterised third; and
+`search/queries.rs:322-323` inlines a fourth for the pool-pair label.
+
+The comment guarding it says **"Change one, change all three"** — and there are
+four. The comment that exists to prevent drift has drifted, which is the whole
+argument in one line.
+
+Two of the four read the legacy pair columns and **die with the legs
+migration**; the surviving pair are identical constants and can become one.
+
+### F3 — "classic precision is 7 decimals" is written FOUR times
+
+Twice in SQL (`common/asset_identity.rs`, `accounts/queries.rs` — both
+`coalesce(m.decimals, 7)`) and twice in Rust (`assets/queries.rs:565`
+`unwrap_or(7)`, `assets/handlers.rs:545`). A SQL-vs-Rust divergence is harder to
+notice than two Rust copies, and no test spans both.
+
+### F4 — the composite link identity `CODE-ISSUER` is built in THREE places
+
+`assets/handlers.rs:59` (`canonical_id`), `accounts/balance_changes.rs:353`, and
+again in the frontend (`web/src/pages/pool-shared/helpers.ts`). The API composes
+it twice independently; the browser composes it a third time.
+
+### F5 — CLOSED, fixed the same day
+
+The SAC mirror address now has one producer: `common::asset_identity::sac_strkey`
+derives it and gates on the observation, and `/v1/assets` was routed through it
+rather than keeping its own call. One round trip removed from the pool path.
+
+### What is being done, and what is only recorded
+
+| finding | action                                                                         | where               |
+| ------- | ------------------------------------------------------------------------------ | ------------------- |
+| F1      | fix — one naming function with one ladder                                      | leg-render step     |
+| F2      | two copies die with the legs migration; fold the other two                     | legs-predicate step |
+| F3      | recorded only — scattered across SQL and Rust, one constant cannot span both   |                     |
+| F4      | recorded only — one API helper is cheap, the frontend copy is its own question |                     |
+| F5      | done                                                                           | —                   |
+
+No task filed. `0535` covers "the app carries two definitions of one" for link
+affordance, not for asset naming, and F1 belongs to this task's own leg-render
+step rather than beside it.
+
+### Second pass on the same sweep — F6, F7, and one observation of a different kind
+
+### F6 — "is this asset native?" is asked FIVE ways, two of them in one file
+
+| test                                           | where                                                   |
+| ---------------------------------------------- | ------------------------------------------------------- |
+| `leg.asset_type === 0`                         | `pool-shared/helpers.ts:33` (`legHref`)                 |
+| `leg.asset_type_name === 'native'`             | `pool-shared/helpers.ts:53` (`assetLegLabel`)           |
+| `isNativeAssetString(value)`                   | `identifiers/native.ts`, for the operation string shape |
+| `sac.asset_code == null && sac.issuer == null` | `contracts/sacAsset.ts` (`isNativeSac`)                 |
+| `asset_type = 0`                               | the SQL side, ~10 sites                                 |
+
+The first two act on the SAME object, two functions apart in the SAME file, and
+test different fields for the same thing.
+
+Each one is locally justified — native genuinely arrives in different wire
+shapes (a row, an operation string, a both-null SAC facet), and
+`identifiers/native.ts` says so explicitly: "an adapter over the same constant
+rather than one function for both shapes". The gap is that nothing enumerates
+the shapes, so a new surface adopts whichever spelling it meets first.
+
+**Why this stops being cosmetic at the legs migration:** the wire `asset_type`
+is the XDR type, and a Soroban token has no honest XDR type at all (measured:
+recoverable for classic from family + code length, undefined for family 3). The
+moment a leg can be a Soroban token, the number test and the name test answer
+differently on the same leg. F1's single naming ladder should carry the single
+native predicate with it.
+
+### F7 — the file that calls itself "the single truncation standard" has two
+
+hand-rolled copies
+
+`libs/ui/src/identifiers/truncate.ts` declares "The single truncation standard:
+first 4 + last 4" and exports `truncateMiddle`. `ExecutionTrace.tsx` builds
+`${x.slice(0, 4)}…${x.slice(-4)}` inline, twice (lines 267 and 289). Identical
+output today; a change to the standard would silently leave those two behind.
+Cheap to fix, no behaviour change, and it is not this task's code — recorded, not
+grabbed.
+
+### Observation, different class — three ways to collapse a ReplacingMergeTree
+
+`FINAL` at ~107 sites, `LIMIT 1 BY` at ~55, `argMax(…, version)` at ~44.
+
+These are NOT interchangeable — they answer different questions (whole-row
+collapse / any version when the projected columns are immutable / the newest
+version), and each site reasons about its choice in a comment. So this is not a
+duplicated fact and does not belong with F1-F7. It is recorded because the
+choice is measurable and the measurements are one-sided: `FINAL` cost 4.7x the
+rows on the asset dimensions and 19x in the case task 0420 recorded. There is no
+one place stating which idiom a new read should reach for first.
+
+### Third pass — pagination, formatting, and list-vs-detail (2026-09-08)
+
+Three areas swept on the owner's ask. Two came back clean; the third produced
+the sharpest finding of the whole sweep.
+
+**Pagination — clean, and worth saying so.** All seven paginating modules
+(accounts, assets, contracts, ledgers, liquidity_pools, nfts, transactions) go
+through the one `common::cursor::encode`/`decode` and the shared
+`keyset_sql` / `keyset_sql_desc`; search does not paginate. Each endpoint
+defines its own cursor PAYLOAD, which is correct — different keysets carry
+different fields — and no endpoint hand-rolls the comparison. Nothing to fix.
+
+**Formatting — nearly clean.** `format/numbers.ts` calls itself the "canonical
+replacement for scattered inline `n.toLocaleString('en-US')`" and the migration
+is 24 call sites done, ONE straggler left (`humanizeOp.ts:444`). Chart-axis
+formatters are purpose-built, not copies. The one placement smell:
+`formatAbsoluteUtc` is shared by three pages but lives inside
+`web/src/pages/transactions/`, so the pool page imports it as
+`../transactions/formatters.js` — the same argument `identifiers/native.ts`
+makes for itself ("a constant defined up in `web/src/pages` can never be
+imported by this package") applies here and was not applied.
+
+### F8 — the list and the detail compute the same three pool facts two ways
+
+| fact                     | detail query                                      | list query                                     |
+| ------------------------ | ------------------------------------------------- | ---------------------------------------------- |
+| `created_at_ledger`      | scalar subquery `min(ledger_sequence)`            | `cr` CTE, `GROUP BY pool_id`                   |
+| `participant_count`      | scalar subquery `count() FROM lp_positions FINAL` | `pc` CTE, `GROUP BY pool_id`                   |
+| latest snapshot reserves | whole row `WHERE sequence = (SELECT max(...))`    | `argMax(reserve_a, …)`, `argMax(reserve_b, …)` |
+
+The third pair is the one to watch: picking the whole row at `max(ledger)` and
+taking a per-column `argMax` are equivalent ONLY while `liquidity_pool_snapshots`
+holds one logical row per (pool, ledger) — the 0356 invariant. They are two
+formulations of one fact, each safe by a DIFFERENT assumption, and neither
+states that it depends on the other's.
+
+### F9 — the freshness window is defined twice, in two units, and they disagree
+
+by ~19 hours today
+
+| side     | definition                                           | in days at the measured cadence |
+| -------- | ---------------------------------------------------- | ------------------------------- |
+| API      | `FRESHNESS_WINDOW_LEDGERS = 7 * 17_280` ledgers      | **7.81**                        |
+| frontend | `SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000` wall clock | **7.00**                        |
+
+Measured on production 2026-09-08: **15,471 ledgers closed in 24 hours = 5.58 s
+per ledger**, not the 5.00 the constant assumes. So 120,960 ledgers is 7.81 days,
+not 7.
+
+**264 pools sit inside that gap right now** (22,262 fresh by both definitions,
+231 stale by both). For those the API still treats the snapshot as fresh — it is
+what the participants read divides `share_percentage` by — while the KPI strip
+captions "no recent snapshot".
+
+The defect is not the approximation itself. The Rust side declares it openly:
+"the window is approximated by a `ledger_sequence` floor relative to chain head.
+Exact wall-clock parity is a documented tolerance." The frontend then says its
+own constant "**matches** the freshness window enforced by" the backend. One
+side calls it an accepted tolerance, the other calls it equality, and nothing
+reconciles them — which is how a tolerance quietly becomes a contradiction
+between two halves of one page.
+
+Cheapest honest fix, when this is worked: the API states freshness on the wire
+(a boolean, or the cutoff it used) instead of the frontend re-deriving it in a
+different unit. Same shape as ranked-inconsistency item 2, where the KPI and the
+section below it disagree because each computes its own answer.
+
+**F9 stays recorded here — searched, no task covers it.** Every open task
+mentioning "stale" or "freshness" was checked by title and content; the closest
+match, `0215` (LP analytics FE impact), is blocked and does not mention the
+window at all. Worth linking rather than duplicating: backlog task `0510` is the
+SAME SHAPE for a different fact — "the auth path is absent from the API schema,
+so the frontend hand-mirrors its type". F9 is that pattern applied to freshness:
+the API does not state it, so the frontend re-derives it in another unit. If
+either is ever generalised, they are one problem.
+
+## Group B shipped — the pools read path moves onto `legs` (2026-09-09)
+
+One change, front to back: the pool endpoints, the search row and the whole
+frontend stop reading `asset_a` / `asset_b` and read the `legs` array instead.
+
+**What the shape change bought, in deletions:** three CTEs and six joins out of
+the list and detail SQL, ~45 lines of positional-filter validation, the fourth
+copy of "an empty code renders as XLM", a local `asset_type_name` match, and the
+API's last import of the write-side surrogate helper outside one test. The read
+path no longer recomputes anything the writer already computed.
+
+**Measured on production while building it:**
+
+|                                     |                                                |
+| ----------------------------------- | ---------------------------------------------- |
+| pair predicate `XLM/USDC`           | 142 pools, 1,218,694 read_rows, 87 ms          |
+| single needle, same shape           | ~84 ms — CH deduplicates the repeated subquery |
+| classic `legs` coverage             | 37.7% → **79.8%** (backfill still running)     |
+| soroban legs needing the SAC re-key | 1,084 → **1,342**                              |
+
+### Decisions that landed inside it
+
+**Positional filters removed, not migrated.** `filter[asset_a_code]` and its
+three siblings named a leg by its position in a pair. A list of two to four legs
+has no equivalent, and no client held a key to this API — the frontend's only
+pool filter is the free-text box. `filter[pool_kind]` replaces them on the axis
+that a pool list can actually distinguish, and rejects an unknown value with 400
+rather than answering with a page that contradicts the request.
+
+**The pair filter became a distinctness condition.** `USDC/USDC` must mean "two
+USDC legs", not "USDC appears somewhere". Over two columns that was free; over a
+list it is Hall's condition for two sets — each needle matches something, and at
+least TWO legs match either. The extra clause costs nothing measurable.
+
+**`reserve_a` / `reserve_b` stay pair-shaped.** The snapshot table is. A three-
+or four-leg pool lists its later legs with no amount rather than dropping them,
+so the composition still reads in full. Moving reserves onto legs is group C.
+
+### F10 — one field carried two meanings
+
+`contract_id` on a pool leg meant "the token's own contract" for a soroban leg
+and "the SAC mirror" for a classic one. Those route differently: the first is a
+live asset page, the second 404s (the assets endpoint pins a contract lookup to
+the soroban family). Split into `contract_id` and `sac_contract_id`, and the SAC
+address is now DERIVED at the response boundary from `(code, issuer, network)`
+rather than looked up — ADR 0051 says a SAC is a facet, not a row.
+
+### F11 — the same fact published twice, as a number and as a name
+
+The leg carried both `asset_type` and `asset_type_name`, where the name is a
+pure function of the number. Only the name is published now. The alphanum4 /
+alphanum12 width the number distinguished is rendered nowhere in the app and is
+recoverable from the code's length; for a soroban token the number had no honest
+value at all, since XDR has no slot for one and its `3` already means
+`pool_share`.
+
+### F12 — one field name, two vocabularies
+
+`asset_type_name` spoke the XDR `AssetType` domain on the pool endpoints
+(`credit_alphanum4`, `pool_share`) and the asset-FAMILY domain on `/v1/assets`
+(`classic_credit`, `soroban`). They coincided on the single word `native`, which
+is exactly why nobody noticed. Both now speak the family vocabulary, produced by
+`domain::AssetFamily::as_str` rather than a local match, so there is no copy to
+drift. This is the rule task 0496 paid for in production: a renderer may only
+use the vocabulary of the enum its value came from.
+
+### F13 — F1 + F6 closed: one ladder names every asset
+
+Three functions named an asset (`assetDisplayCode`, `assetLegLabel`, and a local
+`assetLabel` in the balance-change cell), each with its own "is this native"
+test and three different answers for "nothing names this": `null`, a thrown
+error, and the words "Unnamed token". They are now one ladder in
+`assets/assetType.ts` with two thin adapters.
+
+The ladder gained a rung it needed anyway: **a nameless token is named by its
+contract address**, truncated with the app-wide standard. A soroban token can
+publish no SEP-41 symbol, and `assetLegLabel` used to THROW for any leg without
+a classic code — which would have taken down the whole pools list the moment
+soroban pools appeared in it. The throw survives, but only for a leg that
+nothing identifies at all, which is schema drift rather than a nameless token.
+
+### A pool with no legs says so
+
+While the backfill runs, ~20% of classic pools still carry `legs = []`. That
+rendered as a blank name and an empty reserves cell — a pool that appears to
+hold nothing, which is a plausible-looking wrong answer. It now reads
+"Composition not indexed", and the reserves cell falls back to the same em-dash
+a stale pool shows.
+
+### Verification
+
+318 API tests (0 warnings), including 25 ClickHouse-gated decode smokes against
+a real server; 374 web tests; typecheck and lint clean. `api-types` regenerated.
+New coverage pins the three cases the pair shape could not express: a three-leg
+pool renders all three, a code-less soroban leg renders its truncated address,
+and the kind chip reaches `filter[pool_kind]` with the spelling the API parses.
+
+**Not done in this pass:** a live visual check against production data. The Rust
+and TS suites cover the rendering rules, but nobody has yet SEEN a soroban pool
+in the UI.
+
+### Pre-existing drift found, deliberately not fixed here
+
+The canonical SQL docs `18` / `19` had already drifted from the live queries in
+ways unrelated to this change — they still show `LEFT JOIN ledgers` whole, a
+`FINAL` on the snapshot subquery, an `ON 1=1` join the code comments record as
+having 500'd, and no `participant_count`. Only the leg-shaped parts were
+corrected. The rest belongs to the docs-drift backlog, not to this task.
+
+### UX pass on the visible surfaces (2026-09-09)
+
+Measured the populations first, which reordered the fixes:
+
+|                                   | pools                          |
+| --------------------------------- | ------------------------------ |
+| classic, legs indexed             | 42,422                         |
+| **classic, legs NOT indexed yet** | **10,437** (19.7%)             |
+| soroban (all indexed)             | 717                            |
+| more than two legs                | **11** (nine 3-leg, two 4-leg) |
+
+**Fixed — a pool with no indexed legs (10,437 rows today).** It rendered a
+blank name, no avatar, and an empty reserves cell: a pool that appears to hold
+nothing, which is worse than an error because it looks like an answer. Now:
+"Composition not indexed" in secondary colour (so it reads as an absence, not
+as a pool by that name), a `?` placeholder avatar so the column keeps its left
+anchor, and the reserves cell falls back to the em-dash a stale pool shows.
+
+**Fixed — nothing on a row said which kind a pool was.** 717 Soroban pools are
+now in a list where every other column looks identical, and the new filter can
+select between them. Each row carries a kind badge, reusing the assets list's
+chip and its colours — `soroban` keeps the emerald it already wears there, so
+one word means one colour across the app. `POOL_KIND_FILTERS` and
+`poolKindMeta` live together in `liquidity-pools/poolKind.ts`, shaped after
+`assets/assetType.ts`.
+
+**Fixed — the pool name was hard-clipped, not ellipsised.** The table cell owns
+`overflow: hidden` + `textOverflow: ellipsis`, but the name is a flex child
+inside it and does not inherit one. Two legs never reached the edge; a pool
+named by truncated contract addresses does. `noWrap` on the Typography.
+
+**Fixed — the KPI strip had no cap.** It was exactly four cells and is now two
+plus one per leg, so a four-leg pool puts six across one row. It wraps now,
+rather than compressing labels past reading.
+
+**Deliberately NOT fixed — the list row grows for a 3- or 4-leg pool.**
+`height: rowHeight` is a floor on a `<tr>`, so those rows run ~6-20px taller
+than their neighbours and the zebra rhythm goes slightly ragged. It affects
+**11 rows out of 43,139**. Capping the reserves column at two with a "+N more"
+affordance would cost more code and one more thing to explain than the raggedness
+costs. Revisit if multi-leg pools stop being a rounding error.
+
+### `/simplify` pass on the branch (2026-09-10)
+
+Four review angles (reuse, simplification, efficiency, altitude) over the branch
+diff plus the working tree. Every finding was verified against source before it
+was acted on. **19 fixed, 4 skipped.**
+
+**Two defects I had introduced by inserting code in the wrong place.** A new
+function landed BETWEEN an existing doc comment and the function it documents —
+twice. In `stage.rs` the Soroswap paragraph (its compiled-in 30 bps, its leg
+ordering) became the opening of a generic surrogate helper shared by all three
+protocol families, and the builder those facts describe was left undocumented.
+Same shape in `queries.rs`. Nothing catches this: it compiles, and rustdoc
+renders the lie.
+
+**One comment that promised a guarantee its code did not provide.** The list
+gated TVL on an exactly-two-leg pool with a slice pattern; the detail and chart
+paths read `legs[0]` and `legs[1]` under a comment saying they did NOT price the
+first two legs of a longer pool. Latent only because no soroban pool has
+snapshots yet — the day one does, the list correctly refuses to price a 3-leg
+pool and the detail page quietly understates it. The rule is now a property of
+`PoolPriceContext` (`priced_pair`), which is where it was documented all along.
+
+**One user-visible contradiction, live today.** The activity endpoint answered
+"liquidity pool not found" for any pool with fewer than two indexed legs — 10,437
+pools right now — while the detail page rendered that same pool one call earlier.
+It returns an empty page instead. Existence is what the query answers; leg
+completeness is a different question.
+
+**One test that could no longer fail.** A guard scanned `liquidity_pools/queries.rs`
+for a re-added `asset_a_code != ''`. This branch deleted every statement in that
+file that reads those columns, so the count is now structurally zero while
+reading as coverage. Its subject moved to `common::asset_identity`; the guard
+moved with it, plus two unit tests on the projection.
+
+**Round trips the branch had added.** The pools list went from 3 serialized
+ClickHouse round trips to 5. The issuer seek and the SAC/enrichment reads both
+hang off the identity statement and neither depends on the other, so one of the
+two was pure waiting — they now overlap. Separately, global search's pool arm
+paid a full `accounts` seek whose result it never reads (it NAMES legs; it never
+renders a `CODE-ISSUER` link), and search fans its buckets out concurrently, so
+the slowest bucket sets the response time. Both call sites now ask for what they
+use.
+
+**Duplication folded:** the "native displays as XLM" SQL had three producers
+again (assets list, search, pools filter) — one now; the SAC re-key had two (the
+balance path inline, the pool path copied) — one now, renamed
+`contract_token_asset_id` since both callers use it; the filter-chip row had
+three verbatim copies (assets, contracts, pools) — one `FilterChipRow`; the
+"unreadable pool kind" fallback was guessed identically in two modules — one
+`pool_identifier`. Dead code from my own refactor went with them.
+
+#### Skipped, deliberately
+
+**The Rust `leg_label` is a second naming ladder.** Global search composes a
+pool's label server-side while the frontend has the ladder this task just
+consolidated, and the two already disagree on the bottom rung (`unknown` vs
+"Composition not indexed"). The honest fixes are "search returns legs and the
+frontend names them" or "the API owns the label and every pool endpoint
+publishes it" — both change the wire contract and ripple into the search page.
+Not a cleanup.
+
+**The pools filter matches codes but not symbols.** A soroban leg the list now
+DISPLAYS as `KALE` (from its SEP-41 symbol) cannot be found by typing `KALE`,
+because the needle set reads `assets.asset_code` only. Widening it is a
+behaviour change and deserves its own measurement of what it costs the scan.
+
+**Two unmeasured ClickHouse micro-optimisations** (adding `asset_type` to the
+display bounds; trimming joins the chart path does not read) — plausible, worth
+nothing without a measurement.
+
+## The pair columns are gone from the code (2026-09-09)
+
+Decision (karolkow): delete the legacy pair-column code NOW, deploy after the
+backfill — the same pattern the read half followed. Removed from the row struct,
+the schema, the classic writer, the three registry builders, the column-order
+guard and every fixture; `crates/domain/src/pool.rs` (three Postgres-era structs,
+zero consumers workspace-wide) went with them.
+
+A classic pool's two legs still come from the XDR pair, which is where that shape
+legitimately lives — it is now an input to `ids::pool_leg_asset_id` and nothing
+else. The columns stopped being read by anything.
+
+### Why the DROP is gated, and why waiting does not clear the gate
+
+`legs` is filled at WRITE time only. `liquidity_pools` is a ReplacingMergeTree —
+one row per pool, replaced when the pool is touched — so a pool gets legs when
+the indexer next writes it, and a pool that stopped trading is never written
+again. The deploy moment is visible in the data as a clean cut:
+
+| `last_updated_ledger` band | with legs | without |
+| -------------------------- | --------- | ------- |
+| 63.0–63.8 M                | **0**     | 4 738   |
+| 64.0 M                     | 1 288     | 1 389   |
+| 64.2 M+                    | 23 297    | **0**   |
+
+Zero legged rows below the cut, zero legless above it. That is the signature of
+rewrite-on-touch, not of anything walking the table.
+
+The residue is entirely dormant — measured 2026-09-09, of 10 276 unmigrated
+classic pools:
+
+| last touched    | pools |
+| --------------- | ----- |
+| within a day    | **0** |
+| within a week   | **0** |
+| within a month  | 2 605 |
+| within 3 months | 4 449 |
+| over 3 months   | 3 222 |
+
+A ledger-range re-index cannot reach a pool that did not trade in that range, so
+the residue does not shrink on its own in any useful way.
+
+**The drop is irreversible.** A row with empty `legs` carries its composition
+nowhere else, and the leg surrogate is `cityhash_102_128`'s low half, which
+ClickHouse cannot compute (`cityHash64` is a different algorithm) — so the
+identity is not recoverable from the database at all, only by re-parsing XDR
+from S3. `docs/deployment.md` now carries the DDL inside the existing 0374
+pause window, with the gate above it: `countIf(length(legs) = 0)` MUST be 0, and
+if it is not, the one-shot table pass runs first (it reads the very columns being
+dropped, so that order is not negotiable).
+
+## Soroban total shares wired up (2026-09-09) — ranking item 1
+
+The audit ranked this 🔴 highest and assumed it needed a write-half change
+("parse TotalShares into the instance arm"). Measured: that half already runs.
+`pool_instance_state` carries `total_shares` on production, and the API had
+never read that table at all — 550 of 736 soroban pools gain a real number
+where the page shows an em-dash today.
+
+Two things the wiring had to get right, neither visible from the field name:
+
+**Scale.** The snapshot column is `Decimal128(7)` and arrives pre-scaled; the
+instance column is a RAW `Int128` straight out of contract storage, to be scaled
+by the SHARE TOKEN's own decimals. Measured across production: every share token
+in the set reports 7 — but the value is read rather than assumed, because a
+silent mismatch renders a number off by orders of magnitude and nothing fails.
+The scaling is string surgery, not arithmetic: an `f64` drops digits above 2^53
+and this number is the denominator every participant's share percentage is
+quoted against.
+
+**Zero is not zero.** The schema records `total_shares = 0` as "key absent" —
+structural for the concentrated and elastic families, permanent for the
+config-factory one. It renders as the same em-dash a stale pool shows. A
+rendered `0` would state that a pool holding real liquidity has no shares.
+
+The fallback rule lives in one function used by both the list and the detail,
+and the joined subquery has one producer, so this does not become the fourth
+copy of a pool fact computed two ways (the F8 shape).
+
+The ClickHouse-gated smokes earned their keep again: the first version projected
+a non-nullable `String` through a LEFT JOIN, and with `join_use_nulls = 0` an
+unmatched row yields `''` rather than NULL, which the driver refuses to decode
+into an `Option`. Four smokes failed instantly; no unit test would have seen it.
+
+## Run against production (2026-09-09) — three defects the test suite could not see
+
+Stood the API up against production ClickHouse and drove the SPA. Every one of
+these passed 327 Rust tests, 376 web tests and 24 ClickHouse-gated smokes first.
+
+**1. The pools list 500'd on the default page.** `asset_enrichment.icon_url` is
+`Nullable(String)`, so `argMax` over it is nullable too, and the row struct
+declared a bare `String` — the driver refuses that (the 0324 class). Every other
+reader of this column already declares it optional; this one had diverged. The
+smokes missed it because they decode nothing when no leg matches an enrichment
+row, and the soroban-filtered page missed it because its legs resolve to nothing
+at all. Only a page with real classic assets triggers it.
+
+**2. The detail route 404'd every soroban pool the list linked to.** The path
+validator still demanded an `L…` prefix. The encoder was made kind-aware and the
+free-text parser was taught both forms; this third gate was missed. Now accepts
+`L…` or `C…`, which is what the identifier actually is.
+
+**3. The frontend had its OWN copy of that gate**, and it short-circuited to
+"not found" before the request was ever made — so fixing the API alone changed
+nothing on screen. `isPoolId` stays narrow on purpose (search uses it to tell a
+pool from a contract; widening it would route every contract to the pool page),
+so the rule is a separate `isPoolIdentifier`. Two gates, two languages, one
+rule — the shape this task keeps finding.
+
+### What the screen actually shows
+
+Working: the kind chip row and the per-row kind badge; `C…` pool identifiers;
+**a three-leg pool rendering three avatars and `A / B / C`** — the shape the pair
+could never express; total shares live, both in the KPI strip (`7.1`) and the
+summary (`7.0710678`), which is the item-1 wiring confirmed end to end.
+
+Not working, and NOT a code defect: **every leg renders as a truncated `C…`
+address instead of a code.** Measured over the 303 distinct soroban legs — 40
+resolve to a full identity, 262 resolve only to a contract address, 1 to
+nothing. The pool screenshotted holds native XLM as its first leg and shows
+`CAS3…OWMA`, because that leg is keyed on the XLM SAC contract surrogate rather
+than the native asset id. This is exactly the defect
+`docs/runbooks/0374_lp_legs_sac_rekey_repair.md` exists to repair, and that
+repair has not run.
+
+**Deploy consequence:** the SAC re-key repair must ship WITH this, not after it.
+Otherwise 739 soroban pools become visible and unreadable on the same day.
+
+### Coverage at the time of the run
+
+|                                        |                                                        |
+| -------------------------------------- | ------------------------------------------------------ |
+| `legs`, classic                        | 83.3% (44,051 / 52,876) — rising, 79.8% the day before |
+| `legs`, soroban                        | 100% (739 / 739)                                       |
+| soroban legs resolving to an asset row | **6.6%**                                               |
+| soroban total shares showing a number  | 75% (554 / 739)                                        |
+
+One display nit, pre-existing: a pool holding `0.01` shares renders as `0`
+because `formatCompactAmount` rounds it. Not introduced here and not the
+compact formatter's bug to fix in this task.
+
+## The legs-fill pass was wrong, and is gone (2026-09-09)
+
+Karol: _"czekaj po co ten skrypt pool legs fills, smierdzi mi to"_. Correct on
+both counts.
+
+**The premise was false.** The reasoning was: our leg surrogate is a
+`cityhash_102_128` low half, ClickHouse's builtin hash is a different algorithm,
+**therefore** it must be computed in Rust. The first half is true and the second
+does not follow — because for a classic pool the leg surrogate IS the `assets.id`
+of that asset. Same formula, same inputs: native is `hash64("native")` on both
+sides, credit is `hash64("code:issuer")` on both. The hash was computed once
+already, when the `assets` row was written. The value does not need computing,
+it needs **looking up** — and SQL does that.
+
+Measured on production against pools that already have legs: a plain join
+reproduces **44,106 of 44,108**, and so does the `Map` form the mutation
+actually uses. The two misses are pools whose asset has no `assets` row at all.
+
+**It also duplicated a mechanism already in the tree.** The SAC repair is
+`ALTER TABLE liquidity_pools UPDATE legs = … WHERE pool_kind = 1`. The pass was
+a second operation on the same column of the same table, scoped to
+`pool_kind = 0`, in the same deploy window — using a heavier mechanism
+(whole-table rebuild + `EXCHANGE`) that, unlike the mutation, requires the
+indexer stopped. A heavier tool doing half the job the lighter one was already
+doing.
+
+Deleted: the module, its subcommand and its `backfills.md` section. The runbook
+now carries both repairs — **A** (soroban re-key) and **B** (classic fill) —
+one mechanism, two scopes, one window. B guards itself: a map miss maps to `-1`
+and the `WHERE` skips that row, so a pool whose asset is unknown keeps its empty
+`legs` and stays visible to the gate rather than being written a `0` that would
+read as an answer.
+
+**What I should have asked before writing it:** does anything already touch this
+column, and is the value derivable rather than computable. Both answers were in
+the tree.
+
+## Every gap on a Soroban pool page, measured (2026-09-09)
+
+Karol drove the local build and listed what was missing. Each one traced. The
+headline: **almost none of it is missing data — it is one table the read path
+never opens.**
+
+`pool_state_changes` carries `reserves Array(Int128)` per ledger — a per-leg
+time series in exactly the shape a two-to-four-leg pool needs — for **734 of
+739** soroban pools. `crates/api` does not reference that table anywhere.
+
+| gap on the page                            | data exists?                         | where                                           |
+| ------------------------------------------ | ------------------------------------ | ----------------------------------------------- |
+| per-leg reserves `—`                       | YES, 734/739 (616 non-zero)          | `pool_state_changes.reserves`                   |
+| TVL `—`                                    | derivable                            | those reserves × the price lookup already built |
+| TVL / volume chart "no activity"           | YES                                  | `pool_state_changes` IS the soroban time series |
+| "Recent activity" empty                    | YES, 3.4M rows over 752 pools        | `pool_state_changes`                            |
+| Participants `0`                           | YES, 575 of 705 pools, 4,178 holders | `balances` keyed on `share_token_id`            |
+| legs render as `C…` addresses              | NO — needs the repair                | runbook A                                       |
+| `filter[asset_code]` finds no soroban pool | NO — same cause                      | runbook A                                       |
+
+The reserve arrays line up with the leg counts: 723 of 728 two-leg pools, 9 of
+9 three-leg, 2 of 2 four-leg. The shape was built for this and nothing reads it.
+
+**`lp_positions` is classic-only** — 0 of 739 soroban pools have a row, by
+construction: it tracks trustline LP shares. A soroban pool's providers are
+holders of its share TOKEN, which is why the count has to come from `balances`.
+This is ranking item 2, and the measurement says the cheap exit it describes is
+real.
+
+### The asset filter is not broken, it is blocked
+
+`USDC` + soroban returns **0 today and 161 with the SAC re-key applied**
+(simulated read-only against production). Nothing to fix in the predicate.
+
+### The default order shows the worst of the population
+
+The list is `ORDER BY last_updated_ledger DESC`, and that column means _last
+trade_ for a classic pool but _registration_ for a soroban one (ranking item 4).
+So the soroban list opens on the most recently REGISTERED pools — the ones with
+nothing in them yet:
+
+|                          | pools with shares   |
+| ------------------------ | ------------------- |
+| whole soroban population | 553 / 739 = **75%** |
+| **first page (20)**      | 7 / 20 = **35%**    |
+
+The emptiness Karol saw is real but unrepresentative, and it is the sort key
+doing it. Fixing item 4 (a `last_activity_ledger` with ONE meaning) also fixes
+what the first page shows. Ordering by a value — TVL, or shares — is the other
+option and is worth deciding deliberately rather than inheriting.
+
+### Fixed here
+
+The detail page carried no kind badge while every list row did — the one page
+about a single pool was the only place that would not say which kind it was.
+
+## Why the coverages are low, and the sort key (2026-09-09)
+
+Karol, on being shown sort-key coverage: _"czemu takie małe pokrycia tych
+niektórych??"_ — worth asking, because two of the three are facts about the
+population and one is a known defect.
+
+**Reserves / shares, 76%.** Not a gap. **Every** classic pool has a snapshot;
+23.6% of them (12,485) have a snapshot saying **zero shares** — pools everyone
+withdrew from, last moved 401 days ago on average. Sorting by shares would rank
+live pools above dead ones, which is arguably the point.
+
+**Participants, 50%.** Partly the dead pools, but 14,158 pools (26.8%) have
+shares and NO known holder — impossible on chain, so ours. Already root-caused
+in this task's own K4-6 record: the ingest floor. A pool-share trustline created
+before L50,458,12x never produced a row, because we only ever saw trustlines
+that changed after the floor. Off this branch by decision (2026-08-29).
+
+**TVL, 34%.** A market fact. Only **3,444 of 19,503** distinct classic legs have
+a USD price in the last 48h (17.7%), and only 5,253 assets have a price at all.
+Pool coverage is higher than leg coverage because pools concentrate on the few
+priced assets.
+
+### The sort key: measured, then decided
+
+| candidate             | coverage | usable as a key?       |
+| --------------------- | -------- | ---------------------- |
+| `last_updated_ledger` | 100%     | yes — but two meanings |
+| unified last activity | 99.99%   | **yes**                |
+| shares / reserves     | 76%      | no                     |
+| participants          | 50%      | no                     |
+| TVL                   | 34%      | no                     |
+
+The coverage table is not the binding constraint — **keyset pagination is**.
+The list pages on `(sort key, pool_id)`, so the key must be computable in the
+`WHERE` of the paging CTE. TVL, participants and shares are all computed at
+read, per page (TVL deliberately so, ADR 0053), and none of them can be a
+paging key without being materialised onto the row first. That rules them out
+regardless of coverage.
+
+**Chosen: `greatest(last_updated_ledger, max(pool_state_changes.ledger_sequence))`.**
+No schema change, no writer change, no backfill — measured at 3.5M read_rows /
+60 ms, against the 9.7M / 264 ms the list query already spends. `greatest`
+avoids a `pool_kind` branch: a classic pool has no state-change rows so its
+column wins, and a soroban pool's activity is never earlier than its
+registration.
+
+Result on production: the first soroban page went from **7 of 20** pools
+carrying shares to **13 of 20**, against 75% across the population. It now opens
+on pools holding 120,934 and 121,948 shares instead of ones registered minutes
+ago and empty.
+
+### The bug that only two pages could show
+
+The first version paged correctly and returned garbage: 50 rows fetched, 30
+unique. The paging CTE ordered by the new expression while the OUTER query still
+ordered by `last_updated_ledger`, so the page held the right rows in the wrong
+order and `finalize_page` cut the cursor from the wrong last row. One page looks
+perfect; it takes two to see it. Now pinned by a ClickHouse-gated smoke that
+fetches a real second page and asserts it repeats nothing.
+
+## `pool_state_changes` connected — reserves live on the leg (2026-09-09)
+
+The table was already carrying `reserves Array(Int128)` per ledger for 734 of
+739 soroban pools, and the read path had never opened it. It does now, and the
+reserve moved from a `reserve_a` / `reserve_b` pair onto the LEG.
+
+That is the only shape that holds both sources. A classic pool's reserves come
+from its snapshot, already scaled by the column's `Decimal128(7)`; a soroban
+pool's come from the state changes as RAW integers, to be scaled by each leg's
+own decimals — which the identity resolver already returns. One `reserve` field
+per leg, both normalised to a decimal string, so no reader has to know which
+source answered. A pair could never have held the third.
+
+It cost no extra scan: `pool_state_changes` was already being aggregated for
+the ordering key, so the reserves ride along as one more column on the same
+`GROUP BY`.
+
+Verified on production: the three-leg pool now shows **259.3614804 /
+1,464.3416903 / 16.1945684**, and 40 of 40 legs on the soroban list page carry
+an amount where every one read `—` before.
+
+**And the caption was lying.** The KPI strip keyed "no recent snapshot" off
+snapshot freshness, so every soroban pool claimed staleness while displaying a
+current reserve — and hid the asset link while doing it. The caption now follows
+the VALUE: present means no stale caption, absent distinguishes "no recent
+snapshot" from "not indexed".
+
+### A regression this found on the way, and its fix
+
+Ordering by activity surfaced the BUSIEST pools, and the list derived
+`created_at_ledger` as `min(ledger_sequence)` over each page pool's entire
+snapshot history — unbounded. The same subquery cost 7.1M rows / 43 ms under the
+old ordering and **35.1M rows / 406 ms** under the new one, which was the whole
+cost of the request.
+
+Nothing renders that field. It is now **detail-only**, like `volume` and
+`fee_revenue` already are in the same DTO — pinned to one pool it is a cheap
+seek. The list went 35.1M / 1.27 GiB / 406 ms → **25.4M / 978 MiB / 330 ms**.
+
+The band also had to follow: it read `min/max(last_updated_ledger)` while the
+page had moved to `activity_ledger`. On a soroban-filtered page those diverge by
+years, and the band stretched to 11.4M ledgers — 66.7M rows and 2.95 GiB against
+a 4 GB profile, to find snapshots soroban pools do not have.
+
+Remaining list cost is ~25M rows, against ~9.7M before this branch. The
+difference is the `pool_state_changes` aggregate plus the busier pools the new
+order surfaces. Worth revisiting, not worth blocking on.
+
+## Participants counted for Soroban pools — ranking item 2 (2026-09-09)
+
+A classic pool's providers hold pool-share TRUSTLINES (`lp_positions`); a
+Soroban pool's hold its share TOKEN. The count read only the first, so every
+Soroban pool said `0` while 577 of them had holders — 4,183 in total.
+
+The count now comes from `balance_aggregates.holder_count` joined on
+`share_token_id`, which is a PK seek (`ORDER BY (asset_id)`) and rides the
+instance subquery both queries already run. Verified against a direct count on
+sampled tokens: identical. It is a periodic recompute, so eventually consistent
+— the same terms the assets list already presents it on.
+
+Production: the first Soroban page went from **0 of 20** pools showing
+participants to **15 of 20**, 776 on the page, 337 at most. Classic unchanged.
+
+### The list stays unlistable, and the page now says so
+
+Counting is cheap; LISTING is not. `balances` is ordered `(holder_id,
+asset_id)`, so filtering by asset is a full scan — **measured at 113M rows and
+4.22 GiB for a single share token**, past the read-only profile's 4 GB. Every
+other `balances` read in this API goes by holder for exactly that reason, so
+there was no cheap mechanism to reuse.
+
+Shipping the count alone would have inverted the very contradiction this task
+started from: the strip saying 136 over a section saying "no participants yet".
+The empty state now distinguishes them — "Participants not listed. This pool has
+136 liquidity providers. Listing who they are is not indexed yet for this pool
+type." Both surfaces agree, and neither claims something it does not know.
+
+Making the list possible needs a schema change — a skip index on
+`balances.asset_id`, or an asset→holders view. That is a decision with a write
+side, not a read-half fix.
+
+## The chart reads Soroban state changes — and a silent scale bug it exposed (2026-09-09)
+
+The chart's reserve source is now chosen by kind: `liquidity_pool_snapshots` for
+a classic pool, `pool_state_changes` for a Soroban one. Both yield the same four
+columns, so the bucketing, the ASOF price joins and the TVL arithmetic are
+untouched. Verified on production: a Soroban pool that returned "no activity in
+this period" now returns real buckets — **1,465 samples in one day's bucket**.
+
+`gross_volume_a` is NULL for a Soroban pool, deliberately. Nothing records its
+volume: `pool_state_changes` carries reserves and nothing else, and inferring
+volume from reserve deltas cannot tell a swap from a deposit. The volume and fee
+series stay empty rather than invented.
+
+TVL values are still null, and will be until the SAC re-key: **0 Soroban pools
+have every leg priced today, 510 of 746 would after the repair** (simulated
+read-only). The plumbing is verified; the numbers wait on the mutation.
+
+### The scale bug — the reason to measure output, not just wire it
+
+The per-leg reserves shipped in the previous commit looked right and were not.
+`ResolvedAsset.decimals` is `coalesce(m.decimals, 7)`, so a leg with no metadata
+reports 7 indistinguishably from a leg that really is 7. Soroban leg decimals
+are NOT uniform — measured across the 304 distinct legs: 7 (294), **18 (3)**,
+8 (2), 6 (4), 9 (1). A leg with 18 scaled as 7 is wrong by 10^11.
+
+It showed up as a reserve of **128,249,398,883,656,900** on the live list —
+found only by sweeping the API output for implausible magnitudes, not by any
+test. The exact "plausible but wrong" failure this project keeps naming.
+
+`ResolvedAsset` now carries `decimals_known` alongside `decimals`: true for a
+classic or native asset, whose 7 is protocol, and for a Soroban token whose
+contract publishes decimals — false otherwise. A raw reserve with no established
+scale renders as nothing, in the leg AND in the chart.
+
+The honest cost: **94 of 1,505 legs on the list carry a reserve today**, down
+from 1,497 of which most were wrong. Of the 264 unscaled legs, **the SAC re-key
+resolves 263** — a re-keyed leg is a classic asset and its 7 is protocol.
+
+The guard needed a guard of its own: `a.asset_type IN (0, 1)` reads TRUE for an
+unmatched LEFT JOIN, because the column default is 0 and 0 is `native`. The same
+trap ate one of my measurement queries an hour earlier. It is `a.id != 0 AND
+a.asset_type IN (0, 1)` now — the existing `known` column tests exactly that.

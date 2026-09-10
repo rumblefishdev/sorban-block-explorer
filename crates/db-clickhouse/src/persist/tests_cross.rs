@@ -219,12 +219,6 @@ fn column_order_liquidity_pools() {
         "liquidity_pools",
         &[
             "pool_id",
-            "asset_a_type",
-            "asset_a_code",
-            "asset_a_issuer_id",
-            "asset_b_type",
-            "asset_b_code",
-            "asset_b_issuer_id",
             "fee_bps",
             "last_updated_ledger",
             "pool_kind",
@@ -2886,18 +2880,19 @@ fn same_ledger_state_pairs_collapse_to_the_last_for_every_state_writer() {
         1,
         "one pool row per ledger, not one per touch"
     );
-    // Legs-migration step 2: a CLASSIC row fills `legs` too — ASSET
-    // surrogates (the lp_operation_amounts join key), derived from the same
-    // pair the legacy columns carry, so the pair can eventually retire.
+    // A CLASSIC row carries its composition ONLY in `legs` (task 0374 retired
+    // the pair columns). The expectation is spelled out from the fixture —
+    // native, then USDC issued by `GISS` — rather than recomputed from the
+    // row, which would assert the formula against itself.
     let pr = &staged.pool_rows[0];
     assert_eq!(pr.pool_kind, 0);
     assert_eq!(
         pr.legs,
         vec![
-            ids::pool_leg_asset_id(pr.asset_a_type, &pr.asset_a_code, pr.asset_a_issuer_id),
-            ids::pool_leg_asset_id(pr.asset_b_type, &pr.asset_b_code, pr.asset_b_issuer_id),
+            ids::pool_leg_asset_id(0, "", 0),
+            ids::pool_leg_asset_id(1, "USDC", ids::account_id("GISS")),
         ],
-        "classic legs are the pair's asset surrogates, in order"
+        "classic legs are the XDR pair's asset surrogates, in order"
     );
 }
 
@@ -3084,9 +3079,11 @@ fn prepare_registers_a_pool_from_a_real_add_pool_event() {
             .to_string(),
         pool
     );
-    // Classic columns stay at their defaults on a soroban row.
-    assert_eq!(row.asset_a_type, 0);
-    assert!(row.asset_a_code.is_empty());
+    // A soroban row is identified by its legs and its kind — there is no
+    // pair shape left for it to fill with placeholders that read as native
+    // XLM downstream (task 0374).
+    assert_eq!(row.pool_kind, 1);
+    assert!(!row.legs.is_empty(), "a registry row must carry its legs");
 }
 
 #[test]

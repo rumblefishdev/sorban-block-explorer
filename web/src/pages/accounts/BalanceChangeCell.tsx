@@ -9,7 +9,7 @@ import type { ReactNode } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 
 import { routes } from '../../router/routes.js';
-import { isNativeAssetString, NATIVE_ASSET_CODE } from '../assets/assetType.js';
+import { assetDisplayCode, isNativeAssetString } from '../assets/assetType.js';
 
 /** The dimmed weight this cell uses for everything that is not a movement. */
 function Muted({
@@ -251,11 +251,20 @@ function AssetLink({
 }
 
 /**
- * Display code. Native is the one asset with no `asset_code` and a fixed name;
- * a bespoke token with no on-chain symbol has none either and must NOT inherit
- * XLM's — it falls back to the unnamed marker rather than to a wrong ticker.
+ * Display code — the app-wide {@link assetDisplayCode} ladder, adapted to the
+ * shape an operation carries: the asset arrives as a STRING (`'native'` |
+ * `'CODE:ISSUER'`) rather than as an asset row, so the native rung has to be
+ * fed from `isNativeAssetString` instead of a family name.
+ *
+ * A bespoke token with no on-chain symbol must NOT inherit XLM's name — with
+ * no contract address on this row either, the ladder bottoms out and the
+ * unnamed marker is the honest answer, not a wrong ticker.
  */
 function assetLabel(change: AccountBalanceChange): string {
-  if (isNativeAssetString(change.asset)) return NATIVE_ASSET_CODE;
-  return change.asset_code ?? 'Unnamed token';
+  return (
+    assetDisplayCode({
+      asset_type_name: isNativeAssetString(change.asset) ? 'native' : null,
+      asset_code: change.asset_code,
+    }) ?? 'Unnamed token'
+  );
 }

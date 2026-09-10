@@ -69,16 +69,14 @@ fn canonical_id(row: &AssetRow) -> String {
 /// (ADR 0051 — never stored) from `code:issuer` when the asset carries an
 /// observed SAC facet (`sac_contract_surrogate != 0`).
 fn map_item(row: AssetRow, network_id: &[u8; 32]) -> AssetItem {
-    let (sac_contract_id, sac_deployed) = if row.sac_contract_surrogate != 0 {
-        let code = row.asset_code.as_deref().unwrap_or("");
-        let issuer = row.issuer.as_deref().unwrap_or("");
-        (
-            xdr_parser::derive_sac_strkey(code, issuer, network_id),
-            Some(row.sac_deployed),
-        )
-    } else {
-        (None, None)
-    };
+    let observed = row.sac_contract_surrogate != 0;
+    let sac_contract_id = crate::common::asset_identity::sac_strkey(
+        observed,
+        row.asset_code.as_deref().unwrap_or(""),
+        row.issuer.as_deref().unwrap_or(""),
+        network_id,
+    );
+    let sac_deployed = observed.then_some(row.sac_deployed);
     AssetItem {
         id: canonical_id(&row),
         asset_type_name: row.asset_type_name,

@@ -62,9 +62,10 @@ use std::collections::{BTreeSet, HashMap};
 use clickhouse::Row;
 use serde::Deserialize;
 
+use crate::common::asset_identity::{ResolvedAsset, leg_label, resolve_asset_identities_unlinked};
 use crate::common::ch::millis_to_utc;
 use crate::common::pool_asset_codes::{asset_codes_predicate, normalize_asset_codes};
-use crate::common::strkey::pool_id_hex_to_strkey;
+use crate::common::strkey::pool_identifier;
 
 use super::classifier::Classified;
 use super::dto::{EntityType, SearchHit};
@@ -303,27 +304,17 @@ async fn search_transactions(
 #[derive(Debug, Row, Deserialize)]
 struct PoolRow {
     pool_hex: String,
-    label: String,
+    pool_kind: i16,
+    legs: Vec<i64>,
 }
 
-/// The pool's display name, identical in both arms — a hit found by id and the
-/// same pool found by code must not be labelled differently.
+/// The pool's display name is composed in RUST, from the same resolved leg
+/// identities the pools list renders — not from a SQL expression over the pair
+/// columns, which was a fourth copy of the "native renders as XLM" rule and
+/// could only ever name a classic pool (a soroban row's pair columns are
+/// placeholders that read as XLM/XLM).
 ///
-/// Native is detected by `asset_type = 0`, the SAME signal
-/// `common::pool_asset_codes` matches on. This used to key off the empty stored
-/// code instead, which gave the label and the predicate two different notions
-/// of "is this XLM" over one row. Two native conventions have already produced
-/// real bugs here — an empty code slips through filters that a type check
-/// catches — so the second one is gone rather than commented.
-///
-/// Byte-identical output, verified before the change: over all 75 218 rows,
-/// zero disagree on either leg. Nothing on the wire moves.
-const POOL_LABEL_SQL: &str = "concat( \
-     if(asset_a_type = 0, 'XLM', toString(asset_a_code)), ' / ', \
-     if(asset_b_type = 0, 'XLM', toString(asset_b_code)) \
- ) AS label";
-
-/// Two shapes, one entity.
+/// # Two shapes, one entity
 ///
 /// A hash-shaped query is a point seek on the primary key and stays exactly as
 /// it was. Anything else is treated as an asset code and matched with the SAME
@@ -384,14 +375,12 @@ async fn search_pools_by_asset_code(
         return Ok(Vec::new());
     };
     let sql = format!(
-        "SELECT pool_hex, {POOL_LABEL_SQL} \
+        "SELECT pool_hex, pool_kind, legs \
          FROM ( \
             SELECT \
                 lower(hex(pool_id)) AS pool_hex, \
-                argMax(asset_a_type, last_updated_ledger) AS asset_a_type, \
-                argMax(asset_a_code, last_updated_ledger) AS asset_a_code, \
-                argMax(asset_b_type, last_updated_ledger) AS asset_b_type, \
-                argMax(asset_b_code, last_updated_ledger) AS asset_b_code, \
+                toInt16(argMax(pool_kind, last_updated_ledger)) AS pool_kind, \
+                argMax(legs, last_updated_ledger) AS legs, \
                 max(last_updated_ledger) AS newest \
             FROM liquidity_pools \
             GROUP BY pool_id \
@@ -407,7 +396,12 @@ async fn search_pools_by_asset_code(
     }
     let rows = query.bind(per_group_limit).fetch_all::<PoolRow>().await?;
 
-    Ok(rows.into_iter().map(|p| pool_hit(&p)).collect())
+    let leg_ids: BTreeSet<i64> = rows.iter().flat_map(|p| p.legs.iter().copied()).collect();
+    let identities = resolve_asset_identities_unlinked(client, &leg_ids).await?;
+    Ok(rows
+        .into_iter()
+        .map(|p| pool_hit(&p, &identities))
+        .collect())
 }
 
 /// Fires only for a hash-shaped query. `pool_id` is the full ORDER BY key, so
@@ -422,13 +416,14 @@ async fn search_pool_by_id(
     let hash_hex = hex::encode(bytes);
 
     let row = client
-        .query(&format!(
-            "SELECT lower(hex(pool_id)) AS pool_hex, {POOL_LABEL_SQL} \
+        .query(
+            "SELECT lower(hex(pool_id)) AS pool_hex, \
+                    toInt16(pool_kind) AS pool_kind, legs \
              FROM liquidity_pools \
              WHERE pool_id = unhex(?) \
              ORDER BY last_updated_ledger DESC \
-             LIMIT 1"
-        ))
+             LIMIT 1",
+        )
         .bind(&hash_hex)
         .fetch_optional::<PoolRow>()
         .await?;
@@ -436,21 +431,29 @@ async fn search_pool_by_id(
         return Ok(Vec::new());
     };
 
-    Ok(vec![pool_hit(&p)])
+    let leg_ids: BTreeSet<i64> = p.legs.iter().copied().collect();
+    let identities = resolve_asset_identities_unlinked(client, &leg_ids).await?;
+    Ok(vec![pool_hit(&p, &identities)])
 }
 
 /// Shared by both pool arms so an id hit and a code hit cannot describe the
 /// same pool differently.
-fn pool_hit(p: &PoolRow) -> (String, SearchHit) {
+fn pool_hit(p: &PoolRow, identities: &HashMap<i64, ResolvedAsset>) -> (String, SearchHit) {
     (
         "pool".to_string(),
         SearchHit {
             entity_type: EntityType::Pool,
-            // Wire identifier is the canonical `L…` strkey (ADR 0008 / task
-            // 0264); the column projects raw hex — convert at the boundary,
-            // same as the PG row-mapper.
-            identifier: pool_id_hex_to_strkey(&p.pool_hex),
-            label: p.label.clone(),
+            // The column projects raw hex; the wire form is chosen by the
+            // pool's KIND at the boundary, because the same 32 bytes are an
+            // `L…` strkey for a classic pool and a `C…` address for a soroban
+            // one — and the wrong encoding is well-formed, not an error.
+            identifier: pool_identifier(&p.pool_hex, p.pool_kind),
+            label: p
+                .legs
+                .iter()
+                .map(|id| leg_label(identities.get(id)))
+                .collect::<Vec<_>>()
+                .join(" / "),
             route_token: None,
             successful: None,
             last_activity_at: None,
@@ -714,7 +717,9 @@ struct IssuerRow {
 /// `accounts` join — the Code 241 trap). `route_token` is then composed in Rust.
 /// The displayed code of an asset row — native's `XLM` standing in for its
 /// empty stored code. See the note in the function body before changing it.
-const SHOWN: &str = "lower(if(a.asset_type = 0, 'XLM', toString(a.asset_code)))";
+fn shown() -> String {
+    crate::common::asset_identity::shown_code_sql("a.")
+}
 
 async fn search_assets(
     client: &clickhouse::Client,
@@ -756,7 +761,7 @@ async fn search_assets(
     // whichever rows the scan reached first — `q=USDC` answered with ten `IUSDC`
     // rows and no USDC at all, and two identical calls could disagree.
     //
-    // `SHOWN` is the code a row DISPLAYS as, and both the match and the tier
+    // `shown` is the code a row DISPLAYS as, and both the match and the tier
     // compare it — never the stored value. Native XLM stores an EMPTY code and
     // renders as `XLM`, so comparing what is stored returned thousands of
     // impostor codes and missed the one asset everybody meant. That is also why
@@ -810,13 +815,14 @@ async fn search_assets(
         let sql = format!(
             "{ASSET_HEAD} \
              LEFT JOIN balance_aggregates bagg ON bagg.asset_id = a.id \
-             WHERE position({SHOWN}, lower(?)) > 0 \
-             ORDER BY multiIf({SHOWN} = lower(?), 0, \
-                              startsWith({SHOWN}, lower(?)), 1, \
+             WHERE position({shown}, lower(?)) > 0 \
+             ORDER BY multiIf({shown} = lower(?), 0, \
+                              startsWith({shown}, lower(?)), 1, \
                               2) ASC, \
                  bagg.holder_count DESC NULLS LAST, \
                  a.asset_type ASC, a.asset_code ASC, a.issuer_id ASC \
-             LIMIT {per_group_limit}"
+             LIMIT {per_group_limit}",
+            shown = shown(),
         );
         // One bind for the match, two for the tier — left to right, same needle.
         client

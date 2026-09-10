@@ -1101,39 +1101,16 @@
           {
             "name": "filter[asset_code]",
             "in": "query",
-            "description": "Free-text asset filter — case-insensitive substring of either\n`asset_a_code` or `asset_b_code` (input is trimmed before the\nquery). The needle is matched literally: `%`, `_` and regex\nmetacharacters have no special meaning.\n\nA `/` makes it a **pair** query: `USDC/XLM` requires both codes to be\npresent, one on each leg, and the typed order does not matter. Only the\nfirst `/` splits, so `USDC/XLM/BTC` searches for the literal second code\n`XLM/BTC` and therefore matches nothing — a pool has two legs.\n\nNative legs match on `XLM` even though they store an empty code, so\n`XLM` returns the pools that actually hold native XLM. Note that it\n*also* returns credit assets minted under the code `XLM` — asset codes\nare not unique on Stellar, and this filter matches codes, not asset\nidentity. Callers needing one specific issuer's asset should use the\nper-leg `filter[asset_a_code]` + `filter[asset_a_issuer]` pair.\n\nA pool IDENTIFIER is also accepted here — the `L…` SEP-23 StrKey,\nthe one canonical form (task 0264) — and selects that single pool\ninstead of matching asset codes (task 0470). Previously an identifier\nwas matched as a substring of an asset code, found nothing, and the\nlist answered \"no pools\" about a pool that exists.",
+            "description": "Free-text asset filter — case-insensitive substring of any leg's\ndisplayed code (input is trimmed before the query). The needle is\nmatched literally: `%`, `_` and regex metacharacters have no special\nmeaning.\n\nA `/` makes it a **pair** query: `USDC/XLM` requires both codes to be\npresent on TWO DIFFERENT legs, and the typed order does not matter.\nOnly the first `/` splits, so `USDC/XLM/BTC` searches for the literal\nsecond code `XLM/BTC` and therefore matches nothing.\n\nNative legs match on `XLM` even though they store an empty code, so\n`XLM` returns the pools that actually hold native XLM. Note that it\n*also* returns credit assets minted under the code `XLM` — asset codes\nare not unique on Stellar, and this filter matches codes, not asset\nidentity.\n\nA pool IDENTIFIER is also accepted here — the `L…` SEP-23 StrKey,\nthe one canonical form (task 0264) — and selects that single pool\ninstead of matching asset codes (task 0470). Previously an identifier\nwas matched as a substring of an asset code, found nothing, and the\nlist answered \"no pools\" about a pool that exists.",
             "required": false,
             "schema": {
               "type": ["string", "null"]
             }
           },
           {
-            "name": "filter[asset_a_code]",
+            "name": "filter[pool_kind]",
             "in": "query",
-            "required": false,
-            "schema": {
-              "type": ["string", "null"]
-            }
-          },
-          {
-            "name": "filter[asset_a_issuer]",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": ["string", "null"]
-            }
-          },
-          {
-            "name": "filter[asset_b_code]",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": ["string", "null"]
-            }
-          },
-          {
-            "name": "filter[asset_b_issuer]",
-            "in": "query",
+            "description": "`classic` | `soroban` — which protocol built the pool.\n\nReplaces the four per-leg POSITIONAL filters\n(`filter[asset_a_code]` + issuer, and the same for `b`). Those named a\nleg by its position in a pair, which a list of two-to-four legs has no\nequivalent for; `filter[asset_code]` answers the same question without\npinning a position. No client used them — the frontend's only pool\nfilter is the free-text code box.\n\nAn unknown value is rejected with 400 rather than ignored: a silently\ndropped filter returns a page that contradicts what was asked for.",
             "required": false,
             "schema": {
               "type": ["string", "null"]
@@ -4299,25 +4276,12 @@
             "items": {
               "type": "object",
               "description": "One pool row returned by the list endpoint. Shape pinned to canonical\nSQL `18_get_liquidity_pools_list.sql`. Pools without a fresh snapshot\nin the freshness window come back with `null` for every dynamic field\n(`reserve_a`, `reserve_b`, `total_shares`, `tvl`, `volume`,\n`fee_revenue`, `latest_snapshot_*`); frontend renders these as \"stale\".",
-              "required": [
-                "pool_id",
-                "asset_a",
-                "asset_b",
-                "fee_bps",
-                "fee_percent",
-                "created_at_ledger",
-                "participant_count"
-              ],
+              "required": ["pool_id", "legs", "fee_bps", "fee_percent"],
               "properties": {
-                "asset_a": {
-                  "$ref": "#/components/schemas/PoolAssetLeg"
-                },
-                "asset_b": {
-                  "$ref": "#/components/schemas/PoolAssetLeg"
-                },
                 "created_at_ledger": {
-                  "type": "integer",
-                  "format": "int64"
+                  "type": ["integer", "null"],
+                  "format": "int64",
+                  "description": "Ledger the pool was created in. **Detail endpoint only**, like `volume`\nand `fee_revenue`: `null` on the list.\n\nIt is derived rather than stored — `min(ledger_sequence)` over the\npool's snapshots — so the list would have to derive it for every pool\non the page. Pinned to one pool that is a cheap seek; twenty at once,\non the busiest pools, it read 35.1M rows / 1.27 GiB and took 406 ms,\nwhich was the whole cost of the list request. Nothing renders it there."
                 },
                 "fee_bps": {
                   "type": "integer",
@@ -4339,14 +4303,25 @@
                   "type": ["integer", "null"],
                   "format": "int64"
                 },
+                "legs": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PoolAssetLeg"
+                  },
+                  "description": "The pool's legs in registration order — two for a classic pool, two to\nfour for a soroban one. Replaces the `asset_a` / `asset_b` pair, which\ncould not express a three-leg pool and forced a soroban row to write\nplaceholder values that read as native XLM downstream."
+                },
                 "participant_count": {
-                  "type": "integer",
+                  "type": ["integer", "null"],
                   "format": "int64",
-                  "description": "Count of active liquidity providers (`lp_positions WHERE shares > 0`).\nComputed from the live table — not dependent on the snapshot\nfreshness window, so it is populated even on stale pools (where\n`tvl`/`volume`/`fee_revenue` are NULL)."
+                  "description": "Count of active liquidity providers, or `null` when the pool\ndemonstrably HAS providers we cannot enumerate.\n\nShares outstanding mean somebody holds them, so `0` alongside a\npositive `total_shares` is not a count — it is ignorance wearing a\nnumber. 14,158 classic pools are in exactly that state (35% of the\nlive ones, measured 2026-09-09): their holders' trustlines were\ncreated before the ingest floor, so no row was ever produced for them.\nReporting `0` there tells a caller the pool is abandoned when it is\nnot.\n\nA genuine `0` — no shares outstanding, nobody in — is still `0`.\nIndependent of snapshot freshness either way."
                 },
                 "pool_id": {
                   "type": "string",
                   "description": "SEP-23 strkey (`L...`, 56 chars). DB stores `BYTEA(32)` per ADR\n0024; the handler encodes to strkey at the response boundary so\nthe wire shape matches the Stellar ecosystem canonical form\n(CAP-38 / SEP-23)."
+                },
+                "pool_kind": {
+                  "type": ["string", "null"],
+                  "description": "`classic` | `soroban` ([`domain::PoolKind`]). Load-bearing, not\ndecoration: the same 32 bytes render as a SEP-23 `L…` strkey for a\nclassic pool and a `C…` contract address for a soroban one, and\nrendering one as the other yields a well-formed WRONG key rather than\nan error. `None` only on schema drift."
                 },
                 "reserve_a": {
                   "type": ["string", "null"]
@@ -4544,31 +4519,33 @@
       },
       "PoolAssetLeg": {
         "type": "object",
-        "description": "One leg of an LP's asset pair. Surfaces both the decoded\n`asset_type_name` (SQL `asset_type_name()`) and the raw `asset_type`\nSMALLINT — same contract as `assets/dto::AssetItem`.\n\nLinkable identifiers (task 0263 / F-K-9). All link targets are the\n**asset detail page** (`/assets/...`) — `parse_asset_id` is polymorphic\nand accepts both C-strkey (SAC) and `code-issuer` composite, so all\nnon-native legs resolve to the same asset row.\n\n  * `asset_type == 0` — native XLM; routes to `/assets/native`, the\n    reserved token for the classic XLM singleton (it has no `code-issuer`\n    identity to compose).\n  * `contract_id` — C-strkey of the SAC mirror for a classic credit OR\n    native leg (populated when the leg's `(asset_code, issuer)`\n    classic_credit / native `assets` row carries a deployed SAC facet —\n    `sac_contract_id` resolving a `soroban_contracts.contract_id`,\n    ADR 0051). `None` for legs without a deployed SAC mirror.\n\n    Native legs were excluded from this until task 0470. The exclusion was\n    deliberate (`a19ac8f6`) and its reason was Postgres parity — PG returned\n    NULL there. Postgres is retired, and the same native `assets` row\n    already publishes that SAC as `sac_contract_id` on `/v1/assets/native`\n    and in the assets list, which the frontend renders. Withholding it here\n    alone made one asset describe itself two ways depending on the endpoint.\n    Pool legs only carry XDR `AssetType` (native /\n    credit_alphanum4 / credit_alphanum12) per `0006_liquidity_pools.sql`,\n    so SAC / Soroban legs are not directly representable here;\n    `contract_id` surfaces the SAC mirror look-up so the FE can\n    route to the asset detail page via `/assets/${contract_id}`.\n  * `issuer` + `asset_code` (classic credit, no SAC mirror) — FE\n    routes to `/assets/${asset_code}-${issuer}` (composite form\n    accepted by `parse_asset_id`).",
-        "required": ["asset_type"],
+        "description": "One leg of a pool.\n\nAn element of [`PoolItem::legs`], never half of a pair: a classic pool has\nexactly two legs, a soroban pool has two to four (three- and four-leg stable\npools exist on mainnet).\n\n# Which vocabulary the kind speaks\n\n`asset_type_name` speaks the asset **FAMILY** domain — `native` |\n`classic_credit` | `soroban` — the same three labels `/v1/assets` emits and\nthe frontend already maps. It used to speak the XDR `AssetType` domain here\n(`credit_alphanum4` / `credit_alphanum12` / `pool_share`) while the sibling\nendpoint spoke the family one: one field name, two vocabularies, coinciding\non the single word `native`. The rule it now follows is the one task 0496\npaid for in production — a renderer may only use the vocabulary of the enum\nits value came from — and the value is produced by\n[`domain::AssetFamily::as_str`] rather than by a local match, so there is no\ncopy to drift.\n\nThe raw discriminant is deliberately NOT published beside the label. It was,\nand it carried nothing the label does not (the label is a pure function of\nit) while inviting exactly the mismatch above. The alphanum4/alphanum12\nwidth it distinguished is rendered nowhere in the app, and is recoverable\nfrom the code's length if it is ever wanted. It also has no honest value for\na soroban token: XDR has no slot for one, and its `3` already means\n`pool_share`.\n\n# Linkable identifiers\n\nEvery link target is the asset detail page. The precedence is not a\npreference — each rung is the only form that resolves for its kind:\n\n  * native → `/assets/native`, the reserved token for the XLM singleton,\n    which has no `code-issuer` identity to compose.\n  * `asset_code` + `issuer` → `/assets/{code}-{issuer}`.\n  * `contract_id` → `/assets/{contract_id}`, for a soroban token, whose\n    contract IS its asset identity.\n\n`sac_contract_id` is **not** a link target. It is the C-strkey of the SAC\nmirror a classic or native leg has (ADR 0051), published because the same\nasset already publishes it on `/v1/assets` and withholding it here made one\nasset describe itself two ways depending on the endpoint (task 0470).\nRouting to it answers 404 — the asset endpoint pins a contract lookup to the\nsoroban family, so a SAC address resolves nothing (measured 2026-08-13,\nafter an earlier contract-first order sent ~93k classic legs to a dead\npage). That is why it is a separate field from `contract_id` instead of one\nfield carrying two meanings.",
         "properties": {
           "asset_code": {
             "type": ["string", "null"]
           },
-          "asset_type": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Raw SMALLINT, XDR `AssetType`: 0=native, 1=credit_alphanum4,\n2=credit_alphanum12. Not the `assets.asset_type` family domain."
-          },
           "asset_type_name": {
             "type": ["string", "null"],
-            "description": "Label in the **XDR `AssetType`** vocabulary — this is a pool LEG, and\nleg types come from `liquidity_pools.asset_a_type`/`asset_b_type`,\nwhich store the protocol discriminant: `native` |\n`credit_alphanum4` | `credit_alphanum12`. `null` only on schema drift.\n(Task 0496 mirror: this doc used to carry the `AssetFamily` legend,\ndeclaring 2 \"retired\" — while 54 456 production legs carry\n2 = `credit_alphanum12`.)"
+            "description": "`native` | `classic_credit` | `soroban`. `None` only on schema drift —\na stored discriminant outside the family domain."
           },
           "contract_id": {
             "type": ["string", "null"],
-            "description": "C-strkey of the deployed SAC mirror for the leg's `(asset_code, issuer)`\nclassic_credit / native asset (ADR 0051 — resolved via the row's\n`sac_contract_id` facet). `None` only when no SAC is deployed for that\nasset. Native XLM has one, and reports it here (task 0470) exactly as\n`/v1/assets/native` already did."
+            "description": "The token's own contract, set ONLY for a `soroban` leg. `None` for\nnative and classic credit, whose mirror (if any) is `sac_contract_id`."
           },
           "icon_url": {
             "type": ["string", "null"],
-            "description": "Asset icon URL, resolved from `asset_enrichment` (ADR 0050) so pool\navatars render the same icon as the assets list. Until task 0310 this\nread the dead `assets.icon_url` column, which was never populated —\nevery leg icon came back `None`. Still `None` for assets without an\nenriched icon — the FE falls back to the asset-code initial."
+            "description": "Asset icon URL from `asset_enrichment` (ADR 0050), so pool avatars match\nthe assets list. NOT from `assets`, whose `icon_url` column was dropped\nin task 0310 after measuring 0 of 411,654 rows populated. `None` for an\nasset with no enriched icon — the frontend falls back to the initial."
           },
           "issuer": {
             "type": ["string", "null"]
+          },
+          "reserve": {
+            "type": ["string", "null"],
+            "description": "What the pool holds of THIS leg, as a decimal string. `None` when no\nsource knows it — a classic pool with no fresh snapshot, or a soroban\npool that has not changed state yet.\n\nIt lives on the leg because the two kinds record it in places a pair\ncould not reconcile: a classic pool's snapshot has exactly two columns,\nwhile a soroban pool's `pool_state_changes` carries one array entry per\nleg — which is the only shape a three- or four-leg pool fits. Both are\nnormalised to a decimal string here, so a reader never has to know\nwhich source answered."
+          },
+          "sac_contract_id": {
+            "type": ["string", "null"],
+            "description": "The SAC mirror of a classic or native leg (ADR 0051) — context, never a\nroute. `None` when the asset has no observed SAC, and for a soroban leg."
           }
         }
       },
@@ -4580,25 +4557,12 @@
       "PoolItem": {
         "type": "object",
         "description": "One pool row returned by the list endpoint. Shape pinned to canonical\nSQL `18_get_liquidity_pools_list.sql`. Pools without a fresh snapshot\nin the freshness window come back with `null` for every dynamic field\n(`reserve_a`, `reserve_b`, `total_shares`, `tvl`, `volume`,\n`fee_revenue`, `latest_snapshot_*`); frontend renders these as \"stale\".",
-        "required": [
-          "pool_id",
-          "asset_a",
-          "asset_b",
-          "fee_bps",
-          "fee_percent",
-          "created_at_ledger",
-          "participant_count"
-        ],
+        "required": ["pool_id", "legs", "fee_bps", "fee_percent"],
         "properties": {
-          "asset_a": {
-            "$ref": "#/components/schemas/PoolAssetLeg"
-          },
-          "asset_b": {
-            "$ref": "#/components/schemas/PoolAssetLeg"
-          },
           "created_at_ledger": {
-            "type": "integer",
-            "format": "int64"
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Ledger the pool was created in. **Detail endpoint only**, like `volume`\nand `fee_revenue`: `null` on the list.\n\nIt is derived rather than stored — `min(ledger_sequence)` over the\npool's snapshots — so the list would have to derive it for every pool\non the page. Pinned to one pool that is a cheap seek; twenty at once,\non the busiest pools, it read 35.1M rows / 1.27 GiB and took 406 ms,\nwhich was the whole cost of the list request. Nothing renders it there."
           },
           "fee_bps": {
             "type": "integer",
@@ -4620,14 +4584,25 @@
             "type": ["integer", "null"],
             "format": "int64"
           },
+          "legs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PoolAssetLeg"
+            },
+            "description": "The pool's legs in registration order — two for a classic pool, two to\nfour for a soroban one. Replaces the `asset_a` / `asset_b` pair, which\ncould not express a three-leg pool and forced a soroban row to write\nplaceholder values that read as native XLM downstream."
+          },
           "participant_count": {
-            "type": "integer",
+            "type": ["integer", "null"],
             "format": "int64",
-            "description": "Count of active liquidity providers (`lp_positions WHERE shares > 0`).\nComputed from the live table — not dependent on the snapshot\nfreshness window, so it is populated even on stale pools (where\n`tvl`/`volume`/`fee_revenue` are NULL)."
+            "description": "Count of active liquidity providers, or `null` when the pool\ndemonstrably HAS providers we cannot enumerate.\n\nShares outstanding mean somebody holds them, so `0` alongside a\npositive `total_shares` is not a count — it is ignorance wearing a\nnumber. 14,158 classic pools are in exactly that state (35% of the\nlive ones, measured 2026-09-09): their holders' trustlines were\ncreated before the ingest floor, so no row was ever produced for them.\nReporting `0` there tells a caller the pool is abandoned when it is\nnot.\n\nA genuine `0` — no shares outstanding, nobody in — is still `0`.\nIndependent of snapshot freshness either way."
           },
           "pool_id": {
             "type": "string",
             "description": "SEP-23 strkey (`L...`, 56 chars). DB stores `BYTEA(32)` per ADR\n0024; the handler encodes to strkey at the response boundary so\nthe wire shape matches the Stellar ecosystem canonical form\n(CAP-38 / SEP-23)."
+          },
+          "pool_kind": {
+            "type": ["string", "null"],
+            "description": "`classic` | `soroban` ([`domain::PoolKind`]). Load-bearing, not\ndecoration: the same 32 bytes render as a SEP-23 `L…` strkey for a\nclassic pool and a `C…` contract address for a soroban one, and\nrendering one as the other yields a well-formed WRONG key rather than\nan error. `None` only on schema drift."
           },
           "reserve_a": {
             "type": ["string", "null"]

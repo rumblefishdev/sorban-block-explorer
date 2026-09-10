@@ -6,6 +6,7 @@ import {
   isContractId,
   isLedgerSequence,
   isPoolId,
+  isPoolIdentifier,
   isTransactionHash,
 } from './validators.js';
 
@@ -49,6 +50,27 @@ describe('isContractId', () => {
     expect(isContractId(VALID_ACCOUNT)).toBe(false);
     expect(isContractId(VALID_POOL)).toBe(false);
     expect(isContractId('')).toBe(false);
+  });
+});
+
+describe('isPoolIdentifier', () => {
+  // A Soroban pool IS a contract, so the pool page must accept that form.
+  // A stricter rule here rendered "not found" for every Soroban pool the
+  // list linked to, without ever reaching the network (task 0374).
+  it('accepts both forms a pool can be addressed by', () => {
+    expect(isPoolIdentifier(VALID_POOL)).toBe(true);
+    expect(isPoolIdentifier(VALID_CONTRACT)).toBe(true);
+  });
+
+  it('still rejects what is neither', () => {
+    expect(isPoolIdentifier(VALID_ACCOUNT)).toBe(false);
+    expect(isPoolIdentifier('')).toBe(false);
+  });
+
+  // `isPoolId` stays narrow on purpose: search uses it to tell a pool from a
+  // contract, and widening it would route every contract to the pool page.
+  it('does not widen isPoolId itself', () => {
+    expect(isPoolId(VALID_CONTRACT)).toBe(false);
   });
 });
 

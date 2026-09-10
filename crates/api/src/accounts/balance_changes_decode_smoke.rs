@@ -19,9 +19,8 @@
 //! Read-only: every statement is a SELECT, and the ones that hit real tables
 //! are written so an EMPTY table still exercises the decode.
 
-use super::{
-    AssetIdentityChRow, DeltaChRow, TxKey, fetch_balance_changes, resolve_asset_identities,
-};
+use super::{DeltaChRow, TxKey, fetch_balance_changes};
+use crate::common::asset_identity::{AssetIdentityChRow, resolve_asset_identities};
 use std::collections::BTreeSet;
 
 fn client() -> Option<clickhouse::Client> {
@@ -209,9 +208,11 @@ async fn asset_identity_row_decodes_bool_and_lowcardinality_nullables() {
                     toInt16(1) AS asset_type, \
                     nullIf(CAST('USDC' AS LowCardinality(String)), '') AS asset_code, \
                     toInt64(42) AS issuer_id, \
+                    toInt64(0)  AS contract_id, \
                     nullIf('', '') AS contract_strkey, \
                     nullIf('', '') AS symbol, \
-                    coalesce(CAST(NULL AS Nullable(UInt32)), 7) AS decimals",
+                    coalesce(CAST(NULL AS Nullable(UInt32)), 7) AS decimals, \
+                    toBool(true) AS decimals_known",
         )
         .fetch_all::<AssetIdentityChRow>()
         .await
@@ -222,4 +223,6 @@ async fn asset_identity_row_decodes_bool_and_lowcardinality_nullables() {
     assert_eq!(rows[0].asset_code.as_deref(), Some("USDC"));
     assert_eq!(rows[0].contract_strkey, None);
     assert_eq!(rows[0].decimals, 7);
+    // The flag rides the same row; a classic asset's 7 is protocol, not a guess.
+    assert!(rows[0].decimals_known);
 }

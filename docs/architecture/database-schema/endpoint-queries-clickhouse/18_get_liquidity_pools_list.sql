@@ -1,8 +1,8 @@
 -- Endpoint:     GET /liquidity-pools
 -- Purpose:      Paginated list of liquidity pools with their latest
 --               on-chain state + a compute-at-read USD TVL. Optional
---               filter: asset pair. (Minimum-TVL filtering is NOT
---               supported — see Notes.)
+--               filters: asset code / pair, and pool kind. (Minimum-TVL
+--               filtering is NOT supported — see Notes.)
 -- Source:       backend-overview.md §6.3 / frontend-overview.md §6.13
 -- Schema:       ADR 0044 + PR-#175 hybrid-surrogate amendment.
 -- Data sources: DB-only.
@@ -10,11 +10,15 @@
 --   $1  :limit                          Int     page size
 --   $2  :cursor_last_updated_ledger     Int64   NULL on first page
 --   $3  :cursor_pool_id                 String  NULL on first page (hex, optional)
---   $4  :asset_a_code                   String  NULL = no filter (empty for native)
---   $5  :asset_a_issuer_strkey          String  NULL = no filter (resolved to issuer_id)
---   $6  :asset_b_code                   String  NULL = no filter
---   $7  :asset_b_issuer_strkey          String  NULL = no filter
+--   $4  :asset_code                     String  NULL = no filter; substring of
+--                                               a leg's DISPLAYED code, or
+--                                               `A/B` for a pair
+--   $5  :pool_kind                      Int16   NULL = no filter; 0 classic,
+--                                               1 soroban
 --   (the former $8 :min_tvl is retired — the API rejects it with 400)
+--   (the former per-leg $4..$7 positional filters are retired — task 0374:
+--    they named a leg by its position in a pair, which a list of two to four
+--    legs has no equivalent for, and no client used them)
 -- Indexes:      liquidity_pools ORDER BY (pool_id) — full scan + sort here;
 --                 the table is small relative to fact tables.
 --               accounts ORDER BY (account_id) — issuer joins by id.
@@ -55,22 +59,52 @@
 --     filter page membership without TVL for ALL pools per request; that
 --     needs the prices-side identity-keyed materialized series. Until then
 --     the API says so explicitly rather than answering "no pools".
---   • Cursor ordering switched from `created_at_ledger DESC` to
---     `last_updated_ledger DESC`. UI label changes from "newest pools
---     first" to "most recently active first" — different semantic but
---     a more useful default for users browsing active LPs.
+--   • Cursor ordering is `activity_ledger DESC`, where `activity_ledger` is
+--     `greatest(last_updated_ledger, max(pool_state_changes.ledger_sequence))`
+--     — "most recently active first", for BOTH kinds.
+--     `last_updated_ledger` alone does not mean that: it is the RMT version,
+--     bumped on every change to a CLASSIC pool's entry, but written once at
+--     registration for a soroban pool, whose activity lives in
+--     `pool_state_changes`. Measured 2026-09-09: for 662 of 734 soroban pools
+--     the real activity is newer than the column, by 211 days on average.
+--     Ordering on the raw column opened the list on just-registered pools —
+--     the emptiest end (35% of the first page carried shares, against 75% of
+--     the population). `greatest` needs no `pool_kind` branch: a classic pool
+--     has no state-change rows so the column wins, and a soroban pool's
+--     activity is never earlier than its registration.
+--     The outer ORDER BY MUST repeat the paging CTE's expression, or the page
+--     holds the right rows in the wrong order and consecutive pages overlap.
 --   • argMax over GROUP BY rather than correlated scalar — CH 26.x
 --     rejects correlated subqueries with ORDER BY/LIMIT in JOIN.
---   • Sentinel `issuer_id=0` for native: LEFT JOIN gated by `!= 0`.
+--   • **Pair filtering is a distinctness condition, not two column tests.**
+--     `USDC/XLM` must match two DIFFERENT legs. Over a pair that was one
+--     column each; over a list it is Hall's condition for two sets —
+--     something matches the first needle, something matches the second, and
+--     at least TWO legs match either. Without the last clause a single USDC
+--     leg would satisfy `USDC/USDC` on its own.
+--     The needle set is `SELECT id FROM assets WHERE position(lower(if(
+--     asset_type = 0, 'XLM', toString(asset_code))), lower(?)) > 0` — the
+--     `type = 0` arm is load-bearing, since native carries an empty code on
+--     the ledger. CH deduplicates the repeated subquery: measured
+--     1,218,694 read_rows / 87 ms for the pair form, essentially the same as
+--     a single needle.
+--   • **Legs, not a pair (task 0374).** `liquidity_pools.legs` is an
+--     `Array(Int64)` of asset surrogates in registration order — two for a
+--     classic pool, two to four for a Soroban one. It replaced
+--     `asset_{a,b}_{type,code,issuer_id}`, which could not express a
+--     three-leg stable pool and forced a Soroban row to write placeholder
+--     values that read downstream as native XLM.
+--     The identities behind those surrogates are NOT joined here: the API
+--     collects the page's distinct leg ids and resolves them in ONE batched
+--     statement (`common::asset_identity`, shared with the account
+--     balance-change rows), which also carries the icon and the observed-SAC
+--     flag. The SAC address itself is DERIVED at the response boundary from
+--     `(code, issuer, network)`, never looked up (ADR 0051).
 
 SELECT
     lower(hex(lp.pool_id))                                                          AS pool_id_hex,
-    lp.asset_a_type                                                                 AS asset_a_type,
-    lp.asset_a_code,
-    iss_a.account_id                                                                AS asset_a_issuer,
-    lp.asset_b_type                                                                 AS asset_b_type,
-    lp.asset_b_code,
-    iss_b.account_id                                                                AS asset_b_issuer,
+    toInt16(lp.pool_kind)                                                           AS pool_kind,
+    lp.legs                                                                         AS legs,
     lp.fee_bps,
     toDecimal64(lp.fee_bps, 2) / 100                                                AS fee_percent,
     lp.last_updated_ledger                                                          AS last_updated_ledger,
@@ -84,8 +118,6 @@ SELECT
     -- `fee_revenue` stay null on the list — detail-only.
     l_snap.closed_at                                                                AS latest_snapshot_at
 FROM liquidity_pools lp FINAL
-LEFT JOIN accounts iss_a FINAL ON iss_a.id = lp.asset_a_issuer_id AND lp.asset_a_issuer_id != 0
-LEFT JOIN accounts iss_b FINAL ON iss_b.id = lp.asset_b_issuer_id AND lp.asset_b_issuer_id != 0
 LEFT JOIN (
     SELECT
         pool_id,
@@ -98,11 +130,14 @@ LEFT JOIN (
 ) s ON s.pool_id = lp.pool_id
 LEFT JOIN ledgers l_snap ON l_snap.sequence = s.latest_ledger_sequence
 WHERE
-    ($2 IS NULL OR (lp.last_updated_ledger, lower(hex(lp.pool_id))) < ($2, $3))
-    AND ($4 IS NULL OR lp.asset_a_code = $4)
-    AND ($5 IS NULL OR lp.asset_a_issuer_id = (SELECT id FROM accounts FINAL WHERE account_id = $5 LIMIT 1))
-    AND ($6 IS NULL OR lp.asset_b_code = $6)
-    AND ($7 IS NULL OR lp.asset_b_issuer_id = (SELECT id FROM accounts FINAL WHERE account_id = $7 LIMIT 1))
+    ($2 IS NULL OR (activity_ledger, lower(hex(lp.pool_id))) < ($2, $3))
+    -- One needle: any leg matches. A pair ($4 = 'A/B') adds the distinctness
+    -- clause — see Notes.
+    AND ($4 IS NULL OR arrayExists(x -> x IN (
+            SELECT id FROM assets
+            WHERE position(lower(if(asset_type = 0, 'XLM', toString(asset_code))), lower($4)) > 0
+        ), lp.legs))
+    AND ($5 IS NULL OR lp.pool_kind = $5)
     -- No min-TVL predicate: `filter[min_tvl]` is rejected with 400 (see Notes).
-ORDER BY lp.last_updated_ledger DESC, lp.pool_id DESC
+ORDER BY activity_ledger DESC, lp.pool_id DESC
 LIMIT $1;

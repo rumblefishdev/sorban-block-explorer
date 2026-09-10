@@ -28,6 +28,24 @@ export function isPoolId(value: string): boolean {
 }
 
 /**
+ * Either form a POOL can be addressed by.
+ *
+ * A classic pool is a ledger entry with a CAP-38 / SEP-23 `L…` strkey; a
+ * Soroban pool IS a contract, so it is addressed by its `C…` address. The two
+ * are distinct types elsewhere — search must not send every contract to the
+ * pool page — which is why this is its own rule rather than a widened
+ * {@link isPoolId}.
+ *
+ * Mirrors the API, whose pool routes accept both (task 0374). They must agree:
+ * a stricter check here turns a live pool into a "not found" that never even
+ * reaches the network, which is exactly what it did for every Soroban pool the
+ * list itself linked to.
+ */
+export function isPoolIdentifier(value: string): boolean {
+  return isPoolId(value) || isContractId(value);
+}
+
+/**
  * Canonical asset-id token (polymorphic). Accepts the three forms the
  * `/assets/:id` route serves: the reserved `native` keyword, a contract
  * StrKey (a SAC / Soroban asset), or classic `CODE-ISSUER` (a 1-12 char code

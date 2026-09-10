@@ -108,12 +108,15 @@ pub fn strkey(value: &str, prefix: char, param: &str) -> Result<(), Response> {
 /// Validate a `pool_id`-shaped path parameter (SEP-23 strkey `L...`) and
 /// return the 64-char lowercase-hex internal form for DB lookup.
 ///
-/// LP `pool_id` is `BYTEA(32)` in the DB per ADR 0024; the canonical
-/// user-facing form (per CAP-38 / SEP-23) is a 56-char strkey starting
-/// with `L`. Stellar Lab, stellar.expert, and Horizon all display the
-/// strkey form. Hex form is no longer accepted on input — clients must
-/// supply the strkey returned by `/v1/liquidity-pools` or shown in
-/// external explorers.
+/// A pool is addressed by whichever form its KIND uses: a classic pool by its
+/// CAP-38 / SEP-23 `L…` strkey, a Soroban pool by the `C…` contract address it
+/// IS. Both decode to the same 32 bytes and their version bytes differ, so
+/// trying one then the other is a total parse, not a guess — the same rule
+/// `common::strkey::pool_id_from_text` follows for the free-text filter.
+///
+/// This used to accept `L…` only, which 404'd every Soroban pool the list
+/// itself linked to (task 0374). Hex form is not accepted: clients supply the
+/// identifier `/v1/liquidity-pools` returned.
 ///
 /// On success returns the 64-char lowercase-hex payload (32 bytes
 /// formatted as hex) for downstream DB lookup. The strkey decode
@@ -123,21 +126,27 @@ pub fn strkey(value: &str, prefix: char, param: &str) -> Result<(), Response> {
 /// `strkey` helper for accounts/contracts: pool decode is CRC-strict
 /// because the internal DB form is the hash, not the strkey itself).
 pub fn pool_id_strkey(value: &str, param: &str) -> Result<String, Response> {
-    match stellar_strkey::LiquidityPool::from_string(value) {
-        Ok(stellar_strkey::LiquidityPool(bytes)) => Ok(hex::encode(bytes)),
-        Err(_) => Err(errors::bad_request_with_details(
-            errors::INVALID_POOL_ID,
-            format!(
-                "{param} must be a 56-character Stellar StrKey starting with 'L' (SEP-23 canonical form)"
-            ),
-            serde_json::json!({
-                "param": param,
-                "received": value,
-                "expected_prefix": "L",
-                "hint": "use the strkey (L...) returned by /v1/liquidity-pools or shown in stellar.expert; hex form is no longer accepted",
-            }),
-        )),
+    if let Ok(stellar_strkey::LiquidityPool(bytes)) =
+        stellar_strkey::LiquidityPool::from_string(value)
+    {
+        return Ok(hex::encode(bytes));
     }
+    if let Ok(stellar_strkey::Contract(bytes)) = stellar_strkey::Contract::from_string(value) {
+        return Ok(hex::encode(bytes));
+    }
+    Err(errors::bad_request_with_details(
+        errors::INVALID_POOL_ID,
+        format!(
+            "{param} must be a 56-character Stellar StrKey: `L…` for a classic pool, \
+             `C…` for a Soroban one"
+        ),
+        serde_json::json!({
+            "param": param,
+            "received": value,
+            "expected_prefix": "L or C",
+            "hint": "use the identifier returned by /v1/liquidity-pools; hex form is not accepted",
+        }),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -311,6 +320,22 @@ mod tests {
         );
     }
 
+    /// A Soroban pool IS a contract, so its identifier is the `C…` address.
+    /// This route accepted `L…` only, which 404'd every Soroban pool the list
+    /// itself linked to — found by running the UI against production data.
+    #[test]
+    fn pool_id_accepts_the_contract_form_a_soroban_pool_uses() {
+        let c = "CB5D4HH5S6HZKJKANFAE5QZSJQLEQ65J26TFH42D2ZTS33XZVC7DBDBN";
+        let hex = pool_id_strkey(c, "pool_id").expect("a soroban pool id must parse");
+        assert_eq!(hex.len(), 64);
+        // Same 32 bytes either way — only the version byte differs.
+        let l = crate::common::strkey::pool_id_hex_to_strkey(&hex, domain::PoolKind::Classic);
+        assert_eq!(
+            pool_id_strkey(&l, "pool_id").expect("the classic form still parses"),
+            hex
+        );
+    }
+
     #[tokio::test]
     async fn pool_id_strkey_hex_rejected_with_strkey_hint() {
         // Hex form was the legacy wire shape; rejected post-0264 with an
@@ -321,7 +346,7 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(json["code"], "invalid_pool_id");
         assert_eq!(json["details"]["param"], "pool_id");
-        assert_eq!(json["details"]["expected_prefix"], "L");
+        assert_eq!(json["details"]["expected_prefix"], "L or C");
     }
 
     #[tokio::test]

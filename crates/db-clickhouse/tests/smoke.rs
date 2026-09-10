@@ -16,6 +16,10 @@
 use db_clickhouse::{Config, apply_init_sql, client};
 
 const SMOKE_LEDGER: i64 = 99_999_001; // out-of-band sentinel to avoid colliding with real data
+// A pool is its LEGS (task 0374 retired the pair columns). Out-of-band asset
+// surrogates, for the same reason the ledger is.
+const SMOKE_LEG_A: i64 = -99_999_001;
+const SMOKE_LEG_B: i64 = -99_999_002;
 
 /// Skip the test cleanly when no ClickHouse is reachable.
 fn ch_url() -> Option<String> {
@@ -330,10 +334,11 @@ async fn smoke_inserts_and_reads_each_table() {
     // ----- liquidity_pools (state) — version=last_updated_ledger (task 0208) -----
     client
         .query(
-            "INSERT INTO liquidity_pools (pool_id, asset_a_type, asset_a_code, asset_a_issuer_id, asset_b_type, asset_b_code, asset_b_issuer_id, fee_bps, last_updated_ledger) \
-             VALUES (unhex('00000000000000000000000000000000000000000000000000000000000000bb'), 0, '', 0, 1, 'USDC', ?, 30, ?)",
+            "INSERT INTO liquidity_pools (pool_id, legs, fee_bps, last_updated_ledger) \
+             VALUES (unhex('00000000000000000000000000000000000000000000000000000000000000bb'), [?, ?], 30, ?)",
         )
-        .bind(SMOKE_LEDGER)
+        .bind(SMOKE_LEG_A)
+        .bind(SMOKE_LEG_B)
         .bind(SMOKE_LEDGER)
         .execute()
         .await

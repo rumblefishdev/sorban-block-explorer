@@ -260,6 +260,7 @@ Frontend **content** is separate: `deploy-production-web`
   1. **DDL next** (prod is mid-migration: the `liquidity_pools` soroban
      columns are already ALTERed in — verified live 2026-09-02, five
      columns present with correct defaults; the rest is not):
+
      ```sql
      -- new tables: run the definitions VERBATIM from
      -- crates/db-clickhouse/schema/init.sql (the source of truth — do not
@@ -273,7 +274,36 @@ Frontend **content** is separate: `deploy-production-web`
        DROP COLUMN tvl, DROP COLUMN volume, DROP COLUMN fee_revenue;
      -- DEFAULT 0, no hard ordering constraint — batch it here anyway
      ALTER TABLE liquidity_pools DROP COLUMN share_token_id;
+     -- load-bearing drops: the retired pair columns (task 0374). NOT
+     -- unconditional — read the gate below FIRST.
+     ALTER TABLE liquidity_pools
+       DROP COLUMN asset_a_type, DROP COLUMN asset_a_code, DROP COLUMN asset_a_issuer_id,
+       DROP COLUMN asset_b_type, DROP COLUMN asset_b_code, DROP COLUMN asset_b_issuer_id;
      ```
+
+     **GATE — run this BEFORE the pair-column drop, every time:**
+
+     ```sql
+     SELECT countIf(length(legs) = 0) AS unmigrated FROM liquidity_pools FINAL;
+     ```
+
+     It MUST return 0. If it does not, **stop and do not drop**: a row with
+     empty `legs` carries its composition nowhere else, and the leg surrogate
+     is `cityhash_102_128`'s low half, which ClickHouse cannot compute (its
+     `cityHash64` is a different algorithm). Dropping under a non-zero count
+     destroys those pools' identity permanently — recoverable only by
+     re-parsing XDR from S3.
+
+     A non-zero count is the EXPECTED state until every pool row has been
+     rewritten. `legs` is filled at WRITE time only, so a pool gets it when the
+     indexer next touches it; a pool that stopped trading is never touched.
+     Measured 2026-09-09: 10,276 classic pools unmigrated, **none of them
+     touched in the previous week** — a ledger-range re-index cannot reach
+     them by design. Clearing that residue needs a one-shot pass over the
+     TABLE (read the pair columns, emit rows with `legs` filled, versioned on
+     each row's own `last_updated_ledger`); it must run before this drop, and
+     it reads the very columns being dropped, so the order is not negotiable.
+
   2. **Then the indexer** (Galexie recipe below).
   3. **Then the catch-up backfills and the window-closure check** — see
      "Soroban-AMM pool passes" in [backfills.md](./backfills.md).

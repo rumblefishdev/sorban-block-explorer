@@ -72,14 +72,21 @@ ORDER BY t.application_order LIMIT 1;
 -- ── pool bucket (hash_bytes mode) ───────────────────────────────────────────
 -- pool_id is the full ORDER BY key → point seek. Codes are version-stable, so
 -- `ORDER BY last_updated_ledger DESC LIMIT 1` collapses versions (no FINAL).
+-- The label is NOT composed here (task 0374). It used to be a fourth copy of
+-- "an empty code renders as XLM", drifting against the three other places that
+-- said it; the row now returns the raw legs and the API names them with the
+-- same resolver the pool endpoints use.
 SELECT
-    lower(hex(pool_id)) AS pool_hex,
-    concat(if(asset_a_code = '', 'XLM', toString(asset_a_code)), ' / ',
-           if(asset_b_code = '', 'XLM', toString(asset_b_code))) AS label
+    lower(hex(pool_id))   AS pool_hex,
+    toInt16(pool_kind)    AS pool_kind,
+    legs                  AS legs
 FROM liquidity_pools
 WHERE pool_id = unhex(:q_hex)
 ORDER BY last_updated_ledger DESC LIMIT 1;
--- → identifier = L-StrKey (pool_id_hex_to_strkey at the row boundary).
+-- → identifier = pool_id_hex_to_strkey(pool_hex, pool_kind): an `L…` SEP-23
+--   strkey for a classic pool, a `C…` contract address for a Soroban one. The
+--   same 32 bytes render as a well-formed WRONG key in the other form, so the
+--   kind has to travel with them.
 
 -- ── account bucket (strkey_prefix mode) ─────────────────────────────────────
 -- account_id IS the ORDER BY key → `startsWith() ORDER BY account_id LIMIT` is

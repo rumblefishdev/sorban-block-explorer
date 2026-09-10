@@ -25,6 +25,7 @@ export {
   isContractId,
   isLedgerSequence,
   isPoolId,
+  isPoolIdentifier,
   isTransactionHash,
 } from './validators.js';
 export { NATIVE_ASSET_CODE, isNativeAssetString } from './native.js';
