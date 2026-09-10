@@ -19,14 +19,12 @@ vi.mock('../../api/index.js', async (importOriginal) => ({
   usePoolActivity: hookMock.usePoolActivity,
 }));
 
-/** An XLM / USDC pool, in canonical leg order. */
+/** An XLM / USDC pool, in registration order. */
 const pool = {
-  asset_a: { asset_type_name: 'native', asset_type: 0, asset_code: null },
-  asset_b: {
-    asset_type_name: 'credit_alphanum4',
-    asset_type: 1,
-    asset_code: 'USDC',
-  },
+  legs: [
+    { asset_type_name: 'native', asset_code: null },
+    { asset_type_name: 'classic_credit', asset_code: 'USDC' },
+  ],
 } as Parameters<typeof formatPoolAmount>[1];
 
 describe('formatPoolAmount', () => {
@@ -106,16 +104,14 @@ describe('activityRowKey', () => {
 });
 
 describe('PoolActivity table', () => {
-  // `asset_type` matters: `legHref` keys native routing off `asset_type === 0`,
-  // so a fixture without it renders a plain unlinked code and the link test
-  // passes vacuously against nothing.
+  // `asset_type_name` matters: `legHref` keys native routing off it, so a
+  // fixture without it renders a plain unlinked code and the link test passes
+  // vacuously against nothing.
   const poolItem = {
-    asset_a: { asset_type_name: 'native', asset_type: 0, asset_code: null },
-    asset_b: {
-      asset_type_name: 'credit_alphanum4',
-      asset_type: 1,
-      asset_code: 'USDC',
-    },
+    legs: [
+      { asset_type_name: 'native', asset_code: null },
+      { asset_type_name: 'classic_credit', asset_code: 'USDC' },
+    ],
   } as PoolItem;
 
   const makeRow = (over: Partial<PoolActivityItem> = {}) =>

@@ -13,6 +13,7 @@ import {
   assetLegLabel,
   isPoolStale,
   legHref,
+  poolReserves,
   reserveDotColor,
 } from '../pool-shared/helpers.js';
 
@@ -23,10 +24,10 @@ interface PoolKpiStripProps {
 }
 
 /**
- * Four-cell KPI strip above the Summary card on the LP detail page —
- * Total shares, per-leg reserves, and participant count. Reserves render
- * with compact notation (`1.2M`, `480K`); the subtitle carries the asset
- * code so the value reads cleanly without units stacked on top.
+ * KPI strip above the Summary card on the LP detail page — total shares, one
+ * cell per leg reserve, and participant count. Reserves render with compact
+ * notation (`1.2M`, `480K`); the subtitle carries the asset code so the value
+ * reads cleanly without units stacked on top.
  *
  * Stale pools (no fresh snapshot in 7 days) come back with null reserves
  * and shares — those cells render as "—". `participant_count` stays
@@ -47,33 +48,36 @@ function assetSubtitle(leg: PoolAssetLeg, code: string): ReactNode {
 }
 
 export function PoolKpiStrip({ pool }: PoolKpiStripProps) {
-  const codeA = assetLegLabel(pool.asset_a);
-  const codeB = assetLegLabel(pool.asset_b);
   const stale = isPoolStale(pool.latest_snapshot_at);
 
   return (
     <Stack
       direction={{ xs: 'column', sm: 'row' }}
+      // The strip was exactly four cells; it is now two plus one per leg, so a
+      // four-leg pool puts six across. Wrapping keeps every reserve visible
+      // rather than compressing the labels past reading — `rowGap` because
+      // `spacing` only sets the gap along the main axis.
+      flexWrap="wrap"
       spacing={{ xs: 2, sm: 3 }}
-      sx={{ width: '100%' }}
+      sx={{ width: '100%', rowGap: { xs: 2, sm: 3 } }}
     >
       <KpiCell
         label="Total shares"
         value={formatCompactAmount(pool.total_shares)}
         caption={stale ? STALE_SUBTITLE : 'shares outstanding'}
       />
-      <KpiCell
-        label={`${codeA} reserve`}
-        value={formatCompactAmount(pool.reserve_a)}
-        caption={stale ? STALE_SUBTITLE : assetSubtitle(pool.asset_a, codeA)}
-        valueColor={reserveDotColor(pool.asset_a)}
-      />
-      <KpiCell
-        label={`${codeB} reserve`}
-        value={formatCompactAmount(pool.reserve_b)}
-        caption={stale ? STALE_SUBTITLE : assetSubtitle(pool.asset_b, codeB)}
-        valueColor={reserveDotColor(pool.asset_b)}
-      />
+      {poolReserves(pool).map(({ leg, amount }, i) => {
+        const code = assetLegLabel(leg);
+        return (
+          <KpiCell
+            key={i}
+            label={`${code} reserve`}
+            value={formatCompactAmount(amount)}
+            caption={stale ? STALE_SUBTITLE : assetSubtitle(leg, code)}
+            valueColor={reserveDotColor(leg)}
+          />
+        );
+      })}
       <KpiCell
         label="Participants"
         value={formatInteger(pool.participant_count)}
