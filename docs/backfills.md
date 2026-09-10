@@ -417,6 +417,21 @@ buckets against this:
 | open             | live                      | differ, ours newer        | `divergent ours newer`        | nothing — the live parser saw more                          |
 | open             | live                      | differ, SAME ledger       | **`divergent SAME ledger`**   | nothing — defect signal                                     |
 
+**Signers are gated the same way, on version rather than on a verdict.**
+`account_entry_state` has no decision table — the snapshot either describes a
+newer `AccountEntry` than the one we hold for that account, or it does not.
+A row is emitted only when the snapshot's ledger is strictly above ours;
+equal means the same entry, and greater-on-our-side means the live writer is
+ahead. The summary reports both halves, and they sum to the snapshot's
+live-account count.
+
+Read the unchanged half as the real number: on a first seed it is ~0 and the
+written half is every live account, on any later pass it is ~10.9M and the
+written half is the week's churn. **A later pass that writes millions again is
+the signal** — it means the live signers writer stopped stamping. (Before task
+0521 this pass emitted the full set unconditionally, so the line was a constant
+and could not carry that.)
+
 **Version discipline:** a live fact versions on the entry's own
 `lastModifiedLedgerSeq`; an absence fact (closure, ghost) on the run's
 checkpoint ledger, meaning "true at or before". Never a synthetic stamp. The

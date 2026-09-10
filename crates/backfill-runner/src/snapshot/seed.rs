@@ -9,7 +9,7 @@
 //! | closure (ours 0, gone) | ~22.2M classic + 2.3M native | checkpoint | checkpoint |
 //! | ghost (ours >0, gone) | ~1.04M native + ~2k classic | checkpoint | checkpoint |
 //! | self-heal (snapshot newer) | ~25k | the entry's own ledger | 0 |
-//! | `account_entry_state` full seed | every live account | the entry's own ledger | — |
+//! | `account_entry_state` | live accounts newer than what we hold (0521) | the entry's own ledger | — |
 //! | `assets` / `accounts` dimension stubs | the referenced ids we lack | entry ledger | — |
 //!
 //! ## The versioning contract (the load-bearing part)
@@ -60,7 +60,7 @@
 //! which survives. Stubs are additionally emitted only for ids absent from
 //! the known-id set read from ClickHouse, so they never contend with an existing row.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::error::BackfillError;
@@ -91,6 +91,11 @@ const INSERT_CHUNK: usize = 500_000;
 struct Corrections {
     balances: Vec<BalanceRow>,
     entry_states: Vec<AccountEntryStateRow>,
+    /// Live accounts pass 4 skipped because we already hold their state at that
+    /// ledger or later. Reported beside `entry_states`, and the two sum to the
+    /// snapshot's live-account count — the invariant the summary's arithmetic
+    /// is checked against.
+    entry_states_unchanged: u64,
     asset_stubs: Vec<AssetRow>,
     account_stubs: Vec<AccountRow>,
     /// One line per row this run zeroes while it still held a positive amount
@@ -265,6 +270,72 @@ async fn fetch_id_set(sink: &Sink, table: &str) -> Result<HashSet<i64>, Backfill
         }
     }
     Ok(out)
+}
+
+/// The version we already hold per account in `account_entry_state` — the
+/// input pass 4 compares against, so it emits what CHANGED rather than the
+/// whole live-account set.
+///
+/// `max`, not `argMax` over a tuple: only the version is compared here. The
+/// content diff at an EQUAL version is a real defect class (a writer that put
+/// wrong signers at the right ledger) and it is 0503's, not this pass's — it
+/// costs three arrays per account over the wire, and it is an audit rather
+/// than a gate on a load path.
+///
+/// Sliced on `account_id` for [`fetch_id_set`]'s reason: `max_execution_time`
+/// counts the time spent SENDING rows and the ceiling is load-dependent. The
+/// slices are far from equal — measured 85,229 accounts in the first of 64
+/// against 10,896,350 total — but even the fat ones sit well under the ~760k
+/// groups the balances read already carries per slice.
+///
+/// Costs ~260 MB of the run's ~4.5 GB peak RSS (10.9M entries at 16 B plus
+/// hashing overhead), which is why it is a version map and not the rows.
+///
+/// **No floor, deliberately** — and this is the one input here that should not
+/// have one. Every other read in this tool carries a minimum because a short
+/// read manufactures rows for entities that already exist. This one fails the
+/// opposite way: fewer known versions means MORE rows emitted, and they are
+/// byte-identical at the same RMT version, so the data is unaffected and only
+/// the "unchanged" count reads low. A floor would additionally refuse the
+/// legitimate empty case — the first seed, or a fresh local database.
+async fn fetch_entry_state_versions(sink: &Sink) -> Result<HashMap<i64, i64>, BackfillError> {
+    #[derive(clickhouse::Row, serde::Deserialize)]
+    struct VersionRow {
+        account_id: i64,
+        led: i64,
+    }
+    let mut out = HashMap::new();
+    for (from, to) in key_slices() {
+        // `GROUP BY account_id` collapses the unmerged ReplacingMergeTree
+        // parts production carries — a plain SELECT returns the same account
+        // several times at different versions.
+        let sql = format!(
+            "SELECT account_id, max(last_updated_ledger) AS led \
+             FROM account_entry_state \
+             WHERE account_id BETWEEN {from} AND {to} \
+             GROUP BY account_id"
+        );
+        let mut cursor = sink.client().query(&sql).fetch::<VersionRow>()?;
+        while let Some(r) = cursor.next().await? {
+            out.insert(r.account_id, r.led);
+        }
+    }
+    Ok(out)
+}
+
+/// Does the snapshot's `AccountEntry` at `snapshot_ledger` say anything we do
+/// not already hold?
+///
+/// `ours >= snapshot_ledger` skips both ways it can happen. EQUAL means the two
+/// describe the same `AccountEntry`, so the write is a no-op. GREATER means the
+/// live writer is ahead of the checkpoint — the same reasoning the balances
+/// path applies with its `>= checkpoint` guard, and the reason a seed row could
+/// never win there either.
+fn entry_state_is_new(ours: Option<i64>, snapshot_ledger: i64) -> bool {
+    match ours {
+        Some(held) => held < snapshot_ledger,
+        None => true,
+    }
 }
 
 /// Emit the correction one verdict implies. The verdict comes from the REPORT,
@@ -444,9 +515,23 @@ async fn build_corrections(
         });
     }
 
-    // Pass 4: entry state — one row per live account (signers, thresholds,
-    // flags), the FULL set, versioned on
-    // the entry's own ledger so the (future) live writer wins on any change.
+    // Pass 4: entry state — signers, thresholds and flags for every live
+    // account whose snapshot ledger is ABOVE what we already hold, versioned on
+    // the entry's own ledger so the live writer wins on any later change.
+    //
+    // It emitted the full live-account set unconditionally until 0521. That was
+    // right when it was written — the live signers writer did not exist yet, so
+    // the whole set genuinely WAS the correction — and wrong from the moment
+    // that writer deployed (2026-08-24). Measured on the second production pass
+    // (S1, checkpoint 64,132,415): every other number collapsed to the churn it
+    // should be (`balances` corrections 44,834,785 -> 1, `missing` and the stubs
+    // to 0) while this one re-emitted 10,872,072 rows. The data was never at
+    // risk — the rows are byte-identical at the same version and RMT collapses
+    // them — but a number that cannot move tells its reader nothing, and it
+    // occupies the slot where a live-writer regression would show up.
+    println!("\n  reading the entry-state versions we already hold…");
+    let held = fetch_entry_state_versions(sink).await?;
+    println!("  hold {} accounts", held.len());
     for (id, e) in &state.accounts {
         if !e.live {
             continue;
@@ -454,6 +539,10 @@ async fn build_corrections(
         let Some(d) = state.account_details.get(id) else {
             continue;
         };
+        if !entry_state_is_new(held.get(id).copied(), i64::from(e.ledger)) {
+            out.entry_states_unchanged += 1;
+            continue;
+        }
         out.entry_states.push(AccountEntryStateRow {
             account_id: *id,
             signer_keys: d.signers.iter().map(|(k, _, _)| k.clone()).collect(),
@@ -729,7 +818,7 @@ pub async fn seed_command(
          snapshot pool shares        {:>12}  (our side: lp_positions)\n\
          \n  CORRECTIONS{}\n    \
          balances rows         {:>12}\n    \
-         account_entry_state   {:>12}\n    \
+         account_entry_state   {:>12}  ({} unchanged, already held at that ledger or later)\n    \
          asset stubs           {:>12}\n    \
          account stubs         {:>12}\n\
          \n  UNRESOLVED REFERENCES (must be 0 for the first two)\n    \
@@ -755,6 +844,7 @@ pub async fn seed_command(
         },
         corr.balances.len(),
         corr.entry_states.len(),
+        corr.entry_states_unchanged,
         corr.asset_stubs.len(),
         corr.account_stubs.len(),
         corr.dangling.assets,
@@ -788,4 +878,26 @@ pub async fn seed_command(
     }
     println!("  total {:.1}s", started.elapsed().as_secs_f64());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The gate pass 4 gained in 0521. Its whole job is to be false on a second
+    /// pass, so the case that matters most is the middle one: a row we hold at
+    /// EXACTLY the snapshot's ledger is the same `AccountEntry`, and re-writing
+    /// it is the 10.9M-row no-op this gate exists to stop.
+    #[test]
+    fn entry_state_gate_emits_only_what_is_newer_than_what_we_hold() {
+        // Never seen — the first seed, and every account created since.
+        assert!(entry_state_is_new(None, 64_131_263));
+        // We are behind: the account changed after our last row.
+        assert!(entry_state_is_new(Some(64_000_000), 64_131_263));
+        // Same ledger, same entry — a write that changes nothing.
+        assert!(!entry_state_is_new(Some(64_131_263), 64_131_263));
+        // The live writer is ahead of the checkpoint; a seed row would lose the
+        // ReplacingMergeTree comparison anyway.
+        assert!(!entry_state_is_new(Some(64_140_000), 64_131_263));
+    }
 }
