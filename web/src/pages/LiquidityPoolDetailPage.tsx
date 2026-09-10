@@ -93,7 +93,10 @@ export default function LiquidityPoolDetailPage() {
             <PoolCharts poolId={poolId} />
           </SectionErrorBoundary>
           <SectionErrorBoundary sectionName="pool-participants">
-            <PoolParticipants poolId={poolId} />
+            <PoolParticipants
+              poolId={poolId}
+              knownParticipants={detail.data?.participant_count}
+            />
           </SectionErrorBoundary>
           <SectionErrorBoundary sectionName="pool-transactions">
             <PoolActivity poolId={poolId} pool={detail.data} />

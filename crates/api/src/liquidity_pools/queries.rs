@@ -727,14 +727,15 @@ fn total_shares_of(
     }
 }
 
-/// The instance-state shares for a set of pools, with the share token's
-/// decimals resolved — ONE producer, joined by both the list and the detail.
+/// What a soroban pool's INSTANCE knows about it: its shares, the scale to
+/// read them at, and how many accounts hold its share token — ONE producer,
+/// joined by both the list and the detail.
 ///
 /// Bounded by the caller's `pool_ids` predicate rather than read whole. The two
 /// hops (`share_token_id` → the token contract → its metadata) are seeks on
 /// small dimensions; `LIMIT 1 BY id` and `argMax` stand in for `FINAL`, as
 /// everywhere else in this module.
-fn instance_shares_sql(pool_ids_predicate: &str) -> String {
+fn pool_instance_sql(pool_ids_predicate: &str) -> String {
     // `toNullable` on both projected columns: with `join_use_nulls = 0` an
     // unmatched LEFT JOIN row yields the column type's DEFAULT, so a plain
     // `String` arrives as `''` and the driver refuses to decode it into an
@@ -743,7 +744,8 @@ fn instance_shares_sql(pool_ids_predicate: &str) -> String {
     format!(
         "SELECT s.pool_id AS pool_id, \
                 toNullable(toString(s.total_shares)) AS shares_raw, \
-                toNullable(toUInt32(coalesce(m.decimals, 7))) AS shares_decimals \
+                toNullable(toUInt32(coalesce(m.decimals, 7))) AS shares_decimals, \
+                toNullable(toInt64(ifNull(ba.holder_count, 0))) AS holders \
          FROM (SELECT pool_id, share_token_id, total_shares \
                FROM pool_instance_state FINAL \
                WHERE {pool_ids_predicate}) s \
@@ -751,7 +753,17 @@ fn instance_shares_sql(pool_ids_predicate: &str) -> String {
              ON c.id = s.share_token_id \
          LEFT JOIN (SELECT contract_id, argMax(decimals, version) AS decimals \
                     FROM soroban_contract_metadata GROUP BY contract_id) m \
-             ON m.contract_id = c.contract_id"
+             ON m.contract_id = c.contract_id \
+         /* Holders come from `balance_aggregates`, keyed on `asset_id` — a PK \
+            seek. Counting them straight off `balances` is not an option: that \
+            table is ordered `(holder_id, asset_id)`, so an asset filter is a \
+            full scan, measured at 113M rows and 4.22 GiB for ONE token, past \
+            the read-only profile's 4 GB. Every other `balances` read in this \
+            API goes by holder for the same reason. The aggregate is a periodic \
+            recompute, so this count is eventually consistent — the assets list \
+            already presents it on those terms. */ \
+         LEFT JOIN (SELECT asset_id, holder_count FROM balance_aggregates) ba \
+             ON ba.asset_id = s.share_token_id"
     )
 }
 
@@ -911,9 +923,15 @@ pub async fn fetch_pool_by_id(
                     (SELECT min(ledger_sequence) FROM liquidity_pool_snapshots \
                       WHERE pool_id = unhex(?)), \
                     lp.last_updated_ledger)          AS created_at_ledger, \
-                toInt64(ifNull( \
-                    (SELECT count() FROM lp_positions FINAL \
-                      WHERE pool_id = unhex(?) AND shares > 0), 0)) AS participant_count, \
+                /* A classic pool's providers hold pool-share TRUSTLINES \
+                   (`lp_positions`); a soroban pool's hold its share TOKEN, so \
+                   they are counted from the instance side. A pool is one kind \
+                   or the other, so the two never both answer. */ \
+                greatest( \
+                    toInt64(ifNull( \
+                        (SELECT count() FROM lp_positions FINAL \
+                          WHERE pool_id = unhex(?) AND shares > 0), 0)), \
+                    toInt64(ifNull(inst.holders, 0))) AS participant_count, \
                 s.ledger_sequence                    AS latest_snapshot_ledger, \
                 toString(s.reserve_a)                AS reserve_a, \
                 toString(s.reserve_b)                AS reserve_b, \
@@ -945,7 +963,7 @@ pub async fn fetch_pool_by_id(
              LEFT JOIN ({inst}) inst ON inst.pool_id = lp.pool_id \
              WHERE lp.pool_id = unhex(?) \
              LIMIT 1",
-            inst = instance_shares_sql("pool_id = unhex(?)"),
+            inst = pool_instance_sql("pool_id = unhex(?)"),
         ))
         // Seven `?`, all the same pool, in SQL text order: created_at,
         // participants, the state-change reserves, the snapshot seek, the
@@ -1976,7 +1994,8 @@ pub async fn fetch_pool_list(
              lp.fee_bps                                      AS fee_bps, \
              lp.activity_ledger                              AS cursor_ledger, \
              lp.state_reserves                               AS state_reserves, \
-             toInt64(ifNull(pc.participant_count, 0))        AS participant_count, \
+             greatest(toInt64(ifNull(pc.participant_count, 0)), \
+                      toInt64(ifNull(inst.holders, 0)))      AS participant_count, \
              s.latest_ledger_sequence                        AS latest_snapshot_ledger, \
              toString(s.reserve_a)                           AS reserve_a, \
              toString(s.reserve_b)                           AS reserve_b, \
@@ -2030,7 +2049,7 @@ pub async fn fetch_pool_list(
         order = order,
         limit = params.limit,
         // Bounded to the page, like every other side read here.
-        instance_shares = instance_shares_sql("pool_id IN (SELECT pool_id FROM page)"),
+        instance_shares = pool_instance_sql("pool_id IN (SELECT pool_id FROM page)"),
     );
 
     let mut query = client.query(&sql);

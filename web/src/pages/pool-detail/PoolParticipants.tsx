@@ -73,6 +73,9 @@ const columns: ExplorerTableColumn<ParticipantItem>[] = [
 ];
 
 interface PoolParticipantsProps {
+  /** How many providers the pool is KNOWN to have, from the detail response.
+   *  Lets the empty state tell "none" apart from "not listable". */
+  knownParticipants?: number;
   poolId: string;
 }
 
@@ -81,7 +84,10 @@ interface PoolParticipantsProps {
  * of liquidity providers ordered by shares DESC. Fetched independently
  * of the rest of the page so failures stay scoped.
  */
-export function PoolParticipants({ poolId }: PoolParticipantsProps) {
+export function PoolParticipants({
+  poolId,
+  knownParticipants,
+}: PoolParticipantsProps) {
   // Namespaced cursor: LP detail mounts PoolParticipants + PoolActivity
   // simultaneously, so each section needs its own URL key. `resetKey`
   // drops the cursor when the user navigates to a different pool.
@@ -113,11 +119,27 @@ export function PoolParticipants({ poolId }: PoolParticipantsProps) {
   } else if (isError) {
     body = <QueryErrorState error={error} onRetry={() => void refetch()} />;
   } else if (rows.length === 0) {
+    // The KPI above counts providers from a per-asset aggregate, which this
+    // list cannot page through: a Soroban pool's providers hold its share
+    // TOKEN, and `balances` is ordered by holder, so listing the holders of
+    // one asset is a full scan (measured: 113M rows, 4.22 GiB for a single
+    // token — past the read-only profile). Saying "no participants" while the
+    // strip says 337 would be the same contradiction from the other side, so
+    // the section says which of the two it is.
+    const countedButNotListed = (knownParticipants ?? 0) > 0;
     body = (
       <EmptyState
         icon={<GroupIcon />}
-        title="No participants yet"
-        description="This pool currently has no active liquidity providers."
+        title={
+          countedButNotListed
+            ? 'Participants not listed'
+            : 'No participants yet'
+        }
+        description={
+          countedButNotListed
+            ? `This pool has ${knownParticipants} liquidity providers. Listing who they are is not indexed yet for this pool type.`
+            : 'This pool currently has no active liquidity providers.'
+        }
       />
     );
   } else {

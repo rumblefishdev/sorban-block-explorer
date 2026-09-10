@@ -2569,3 +2569,36 @@ a 4 GB profile, to find snapshots soroban pools do not have.
 Remaining list cost is ~25M rows, against ~9.7M before this branch. The
 difference is the `pool_state_changes` aggregate plus the busier pools the new
 order surfaces. Worth revisiting, not worth blocking on.
+
+## Participants counted for Soroban pools — ranking item 2 (2026-09-09)
+
+A classic pool's providers hold pool-share TRUSTLINES (`lp_positions`); a
+Soroban pool's hold its share TOKEN. The count read only the first, so every
+Soroban pool said `0` while 577 of them had holders — 4,183 in total.
+
+The count now comes from `balance_aggregates.holder_count` joined on
+`share_token_id`, which is a PK seek (`ORDER BY (asset_id)`) and rides the
+instance subquery both queries already run. Verified against a direct count on
+sampled tokens: identical. It is a periodic recompute, so eventually consistent
+— the same terms the assets list already presents it on.
+
+Production: the first Soroban page went from **0 of 20** pools showing
+participants to **15 of 20**, 776 on the page, 337 at most. Classic unchanged.
+
+### The list stays unlistable, and the page now says so
+
+Counting is cheap; LISTING is not. `balances` is ordered `(holder_id,
+asset_id)`, so filtering by asset is a full scan — **measured at 113M rows and
+4.22 GiB for a single share token**, past the read-only profile's 4 GB. Every
+other `balances` read in this API goes by holder for exactly that reason, so
+there was no cheap mechanism to reuse.
+
+Shipping the count alone would have inverted the very contradiction this task
+started from: the strip saying 136 over a section saying "no participants yet".
+The empty state now distinguishes them — "Participants not listed. This pool has
+136 liquidity providers. Listing who they are is not indexed yet for this pool
+type." Both surfaces agree, and neither claims something it does not know.
+
+Making the list possible needs a schema change — a skip index on
+`balances.asset_id`, or an asset→holders view. That is a decision with a write
+side, not a read-half fix.
