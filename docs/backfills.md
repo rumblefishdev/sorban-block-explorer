@@ -633,7 +633,36 @@ reconciliation is not.
 
 Run only AFTER the 0374 DDL + indexer deploy (see the deploy-order gotcha in
 [deployment.md](./deployment.md) — reversing the order is the 0310 outage
-class). Three catch-ups, then one closure check:
+class). Three catch-ups, then one closure check.
+
+### 0. `pool-legs-fill` — BEFORE the pair-column drop, not after
+
+The one pass whose order is inverted, because it reads columns the migration
+removes:
+
+```bash
+backfill-runner pool-legs-fill --dry-run   # reports, touches nothing
+backfill-runner pool-legs-fill             # indexer STOPPED (atomic swap)
+```
+
+`liquidity_pools.legs` is filled at WRITE time, and the table is a
+ReplacingMergeTree keyed on `pool_id` — so a pool gets its legs when the
+indexer next touches it, and **a pool that stopped trading never does**.
+Measured 2026-09-09: 10,276 classic pools still empty and not one touched in
+the previous week, so no ledger-range re-index reaches them however long it
+runs. This pass is what makes the deploy gate
+(`SELECT countIf(length(legs) = 0) FROM liquidity_pools FINAL` = 0) reachable.
+
+It computes the surrogates in Rust because ClickHouse cannot: our leg id is a
+`cityhash_102_128` low half and the builtin `cityHash64` is a different
+algorithm. Verified end to end against a copied fixture — 115 of 115 pools
+reproduced the writer's own values byte for byte, with every other column
+untouched. Idempotent; a second run finds nothing.
+
+Once the pair columns are dropped, delete the module: it cannot compile
+without them, which is the intended tripwire.
+
+The three catch-ups below:
 
 1. **Pool registry** — one-off generator, deliberately not in the tree
    (a one-off is not a maintained surface). Full workflow — restore, harvest,
