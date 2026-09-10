@@ -853,6 +853,48 @@ the start of that window as soon as it does. The overlap this creates with the
 worker that will later cover the same ledgers costs nothing: the write is
 idempotent under the row key, proven on a deliberate re-run.
 
+### The recent window, filled out of order and shipped (2026-09-09)
+
+The three workers walking up from the ingest floor reach the newest ledgers
+last, and those are the ones an account page is most often asked about. A
+fourth worker took `64 128 000 .. 64 317 019` — the archive partition boundary
+below the fourteen-day mark, so the alignment the loop performs anyway bought
+extra history for nothing — while the other three carried on untouched. Their
+ranges overlap it, so one of them will re-do the slice later at a cost of about
+4% of its remaining work; the re-run is lossless under the row key, which had
+already been proven deliberately.
+
+**Coverage proven, not assumed.** Over the window: **zero** ledgers carrying a
+token event without its edges, and **84 859 840 token events against
+84 859 392 distinct edges**. The difference of **448** matched the worker's own
+reject counters to the unit — every one of them `unrecognised_topics`. That is
+the completion gate's own arithmetic, closed exactly on a real 85 M-event
+window before it runs on the full range: events minus counted rejects equals
+edges, with nothing unexplained in between.
+
+Also verified before the floor moved, so the upper edge could not hide a hole:
+the `ledgers` table is continuous above the deploy ledger with none missing, and
+no ledger above it carries a token event without its edges. The worker's range
+meets the live block at exactly one overlapping ledger.
+
+**Shipped by a manual deploy, not a tag** (task owner). `make -C infra
+deploy-production-compute` then `deploy-production-web`, run from the `develop`
+worktree — the main checkout sat on an unrelated feature branch and would have
+shipped the wrong code. Two consequences worth recording. The deploy carried
+the **whole read path for the first time**, not just the floor: the
+balance-change API and its cell had never been on production, and the assets
+list's holder ordering rode along. And production now runs code ahead of
+`master`, which the next release has to reconcile or its diff will appear to
+ship what is already live.
+
+Verified after: the API function and the SPA bundle both updated within a
+minute of each other, the account-page chunk contains the column, zero Lambda
+errors across the deploy window, ingest lag in seconds, and the column's own
+arithmetic reproduced against production for a bridged-in asset later deposited
+into an automated market maker — two bridge mints as positive rows, two
+two-sided deposits as negative pairs, and one swap that nets both ways in a
+single transaction.
+
 ### Design decisions
 
 #### From plan
