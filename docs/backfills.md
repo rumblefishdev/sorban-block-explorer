@@ -66,6 +66,61 @@ partition at a time. Parallelism is external: run K processes with disjoint
 
 > **Disjointness is necessary but NOT sufficient.** See rule 3.
 
+#### Split the range by WEIGHT, not by ledger count
+
+The run lasts as long as its slowest worker, and ledgers are not equal: the
+range's own event density varies by well over 20% between epochs. Splitting
+into K equal ledger counts therefore hands one worker materially more work
+than the others and everybody waits for it.
+
+Measured on the 0540 range (50 457 424 .. 64 317 019, 10.35 bn events),
+K = 3, weighting each worker by the events it must decode:
+
+| Split              | w0    | w1    | w2        | Heaviest / lightest |
+| ------------------ | ----- | ----- | --------- | ------------------- |
+| Equal ledger count | 32.4% | 29.9% | **37.7%** | 1.26x               |
+| Equal weight       | 33.4% | 33.5% | 33.1%     | **1.01x**           |
+
+Equal weight finishes in **88.9%** of the wall clock — on a multi-day pass,
+most of a day. The imbalance was visible live as a rate difference the workers
+could not explain themselves: 50 400 ledgers/h against 39 100 ledgers/h, purely
+because one range's ledgers carried more events.
+
+Nothing in the runner needs to change — the ranges are written by hand, so this
+is only different numbers. `soroban_events` row counts per partition come from
+part metadata, so the query scans no data:
+
+```bash
+# K equal-weight ranges (change both 3s to K). Whole CH partitions,
+# boundaries snapped to the 64 000-ledger archive partition.
+chq "WITH p AS (SELECT toInt32(partition) AS pid, sum(rows) AS w
+                FROM system.parts WHERE active AND table='soroban_events'
+                GROUP BY partition),
+          c AS (SELECT pid, w, sum(w) OVER (ORDER BY pid) AS cum,
+                       sum(w) OVER () AS tot FROM p)
+     SELECT least(3 - 1, intDiv(3 * (cum - w), tot))       AS worker,
+            intDiv(min(pid) * 500000, 64000) * 64000       AS from_ledger,
+            intDiv(max(pid) * 500000 + 500000, 64000) * 64000 AS to_ledger,
+            round(100 * sum(w) / any(tot), 1)              AS pct_of_work
+     FROM c GROUP BY worker ORDER BY worker FORMAT TSV"
+```
+
+Clamp the first and last boundary to the real range — the query works in whole
+partitions. Two approximations, both deliberate: event count stands in for
+archive bytes (they correlate, and the download overlaps the previous
+partition's insert anyway), and partition granularity is 500 000 ledgers. Rough
+is the point; the residual imbalance above is 2.2 points.
+
+Two related wins, both bigger than the split itself:
+
+- **A worker that finishes leaves its capacity idle.** When one exits, start a
+  helper on the upper half of the slowest worker's remainder. Overlap is
+  lossless (rule 1), and this is what actually recovered a day on the 0540 run.
+- **Put the newest ledgers first** if anything reads the table before the pass
+  completes. An out-of-order worker on the most recent window makes the live
+  end usable days early; the worker whose range it duplicates re-does the slice
+  later at no cost beyond time.
+
 ### 3. The MIN-semantics trap — 12 Tier-1 columns corrupt silently
 
 RMT keeps the **highest-version whole row**, so it **cannot express MIN
@@ -109,9 +164,14 @@ backfill-runner run --start <A> --end <B> --only lp_operation_amounts
 ```
 
 Task 0540 generalised the flag to a list — `--only asset_transfers,transaction_memos,soroban_event_ops`
-writes its three tables in one pass; only tables that are additive (deterministic
-from the XDR, no Tier-1 column, `DROP TABLE` rollback) are accepted, and the
-list is closed in code (`TargetedTables::TARGETABLE`).
+writes its three tables in one pass; task 0518 added the three pool tables, so a
+full-range targeted re-parse can carry the pool families' whole history in the
+same descent. Only tables that are additive (deterministic from the XDR, **no
+Tier-1 column**) are accepted, and the list is closed in code
+(`TargetedTables::TARGETABLE`).
+
+Rollback is a `DROP TABLE` for every one of them except `liquidity_pools`, which
+also holds the classic pools and so has to be restored by table copy instead.
 
 It parses exactly as a normal run does and persists only the named tables,
 so **no Tier-1 column is touched and no `repair-tier1`
@@ -344,14 +404,14 @@ new binary.
 
 **Flags — with the traps:**
 
-| Flag                | Reality                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--start` / `--end` | u32, inclusive. This is also how you parallelise (disjoint ranges).                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `--reindex`         | Bypasses the resume-skip so an already-ingested range is re-parsed. Without it, re-parsing history is a silent **0-row no-op** — `run` skips whatever is already in `ledgers`.                                                                                                                                                                                                                                                                                                                                                              |
-| `--only <t,…>`      | Persists **only** the named additive tables — `lp_operation_amounts` (task 0279, formerly `--lp-amounts-only`), `asset_transfers`, `transaction_memos`, `soroban_event_ops` (task 0540/0541); anything else is refused at parse time. Implies `--reindex`. Writes no `ledgers` marker, so resume is manual — narrow `--start`; re-running a range is a no-op **for one decoder version only** (after a decoder change the old and new rows share a key — run the 0503 tie query below before trusting a re-run). See the rule-3 note below. |
-| `--keep-partitions` | **Debug only.** "Do not pass this for a real backfill — disk grows linearly."                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `--target`          | **Does not exist.** Survives only in stale doc comments; PG was retired (0244), CH is the sole target.                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `--workers`         | **Does not exist.** Run K processes instead.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Flag                | Reality                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--start` / `--end` | u32, inclusive. This is also how you parallelise (disjoint ranges).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `--reindex`         | Bypasses the resume-skip so an already-ingested range is re-parsed. Without it, re-parsing history is a silent **0-row no-op** — `run` skips whatever is already in `ledgers`.                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `--only <t,…>`      | Persists **only** the named additive tables — `lp_operation_amounts` (task 0279, formerly `--lp-amounts-only`), `asset_transfers`, `transaction_memos`, `soroban_event_ops` (task 0540/0541), `liquidity_pools`, `pool_state_changes`, `pool_instance_state` (task 0518); anything else is refused at parse time. Implies `--reindex`. Writes no `ledgers` marker, so resume is manual — narrow `--start`; re-running a range is a no-op **for one decoder version only** (after a decoder change the old and new rows share a key — run the 0503 tie query below before trusting a re-run). See the rule-3 note below. |
+| `--keep-partitions` | **Debug only.** "Do not pass this for a real backfill — disk grows linearly."                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `--target`          | **Does not exist.** Survives only in stale doc comments; PG was retired (0244), CH is the sole target.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `--workers`         | **Does not exist.** Run K processes instead.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
 **Config** (flag-or-env): `CLICKHOUSE_URL`, `CLICKHOUSE_USER`,
 `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DATABASE`; `CLICKHOUSE_CERT` / `_KEY` / `_CA`
@@ -781,7 +841,7 @@ LEDGERS — but only a targeted, harvested list, fetched over public HTTPS
 `crates/db-clickhouse/tests/pair_factory_stage_real_e2e.rs` docs), never a
 full re-parse.
 
-1. **Pool registry + declarations** — exactly the **14 registration
+1. **Pool registry + declarations** — exactly the **20 registration
    ledgers** (the full population, listed in
    `crates/db-clickhouse/tests/config_pool_stage_real_e2e.rs`; harvest
    query in `crates/xdr-parser/tests/config_pool_real_corpus.rs`). One-off
@@ -789,7 +849,7 @@ full re-parse.
    (never the row builder directly — the two-stage registration gate,
    membership list + conflict, must hold for the backfill exactly as it
    does live): registry rows AND the `pool_instance_state` declarations
-   (share token) come from the same 14 files.
+   (share token) come from the same 20 files.
    **Closure check:** live `query_pools()` on the factory must be a
    **SUBSET of ours — never set-equality**: the factory's vector is
    mutable, and one real pool (`CAZ6W4WH…`, 25,873 events traded to
@@ -810,10 +870,19 @@ full re-parse.
    (chq exits 0 on server errors).
 2. **Reserve history** — one-off Rust pass over the **harvested activity
    ledgers**: `SELECT DISTINCT ledger_sequence FROM soroban_events WHERE
-contract_id IN (the 14 pool surrogates)` — 195,637 ledgers / 2.04M
-   events measured 2026-09-03 (≈40 GB of per-ledger `.xdr.zst` over
-   HTTPS). Fetch each, run `extract_config_pools`, emit
-   `pool_state_changes` rows (`plane_id` = the pool's own surrogate).
+contract_id IN (the pool surrogates)`. Derive that IN-list from the
+   registry pass 1 just wrote — never from a constant in this document:
+   the population grew from 14 to 20 once, and a stale list silently
+   gives the missing pools an incomplete reserve history that the pass-1
+   closure check cannot see (it counts registrations, not activity
+   ledgers). Size, re-measured 2026-09-07 over the exact 20 (the 19 the
+   sibling registry lists plus the newest, `CCPPPTDW…`): **195,871
+   ledgers / 2,045,022 events** (≈40 GB of per-ledger `.xdr.zst` over
+   HTTPS). The six dead-early pools add only 234 ledgers over the first
+   2026-09-03 measurement (+0.12%) — the correctness gap was real, the
+   download size is unchanged.
+   Fetch each, run `extract_config_pools`, emit `pool_state_changes` rows
+   (`plane_id` = the pool's own surrogate).
    Idempotent under the RMT key. Reserve co-occurrence (both keys per tx)
    is measured, era-proof — a half-pair in the output is a bug, not data.
    **Check:** per-pool spot comparison against raw creation values plus

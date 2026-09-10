@@ -1,4 +1,28 @@
--- ⚠️ SUPERSEDED by task 0331 (unified balances). `total_supply` / `holder_count` now
+-- ⚠️ SUPERSEDED TWICE. Read this header, not the SQL below.
+--
+-- Task 0547 (2026-09-08) changed the browse ORDER and therefore the CURSOR.
+-- The list no longer walks the identity 4-tuple; it orders by ACTIVE HOLDERS,
+-- highest first, with `assets.id` as the tiebreak that makes the order total:
+--
+--     LEFT JOIN balance_aggregates ba ON ba.asset_id = a.id
+--     ORDER BY coalesce(ba.holder_count, -1) DESC, a.id DESC
+--
+--   * LEFT, so an asset with no aggregate row still appears (4 222 of them on
+--     production) — ordered last, since a missing row is not "zero holders".
+--   * `coalesce(..., -1)` keeps the keyset a plain integer tuple compare and
+--     puts un-aggregated assets below a measured zero.
+--   * The cursor is `(holder_rank, id)`. Inputs $2..$5 below are GONE; a
+--     cursor minted under the old order fails to deserialize and is rejected
+--     `invalid_cursor` (ADR 0008 fail-clean) rather than mis-paginating.
+--
+-- Cost, measured on production before the change: 61 ms / 1.02 M rows read per
+-- page (ordering on a joined column reads all of `assets`), against a
+-- near-free key-prefix walk before. It buys a list that opens on XLM, USDC and
+-- AQUA instead of alphabetically inside each type. If the read quota ever
+-- binds, the cheaper shape is a driver over `balance_aggregates` itself
+-- (measured 11 ms), not a return to the alphabet.
+--
+-- ⚠️ ALSO SUPERSEDED by task 0331 (unified balances). `total_supply` / `holder_count` now
 -- come from `balance_aggregates` (refreshable MV over the unified `balances` table,
 -- keyed by the RE-ADDED `assets.id` surrogate — PR #175 dropped it, 0331 restored it),
 -- NOT `asset_aggregates`. Post-ADR-0051 a SAC is a FACET folded into its classic row,

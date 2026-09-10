@@ -16,8 +16,9 @@ use crate::state::AppState;
 use crate::transactions::dto::TxListCursor;
 
 use super::dto::{
-    AccountBalance, AccountDetailResponse, AccountListItem, AccountSigner, AccountSigning,
-    AccountTransactionItem, AccountTxListParams, AccountsListCursor, AccountsListParams,
+    AccountBalance, AccountBalanceChange, AccountDetailResponse, AccountListItem, AccountSigner,
+    AccountSigning, AccountTransactionItem, AccountTxListParams, AccountsListCursor,
+    AccountsListParams,
 };
 use super::queries::{
     self, AccountBalanceRow, AccountEntryStateRow, AccountHeaderRow, AccountListRow, AccountTxRow,
@@ -335,6 +336,19 @@ pub async fn list_account_transactions(
             has_soroban: r.has_soroban,
             operation_types: r.operation_types,
             created_at: r.created_at,
+            balance_changes: r.balance_changes.map(|changes| {
+                changes
+                    .into_iter()
+                    .map(|c| AccountBalanceChange {
+                        asset: c.asset,
+                        asset_code: c.asset_code,
+                        decimals: c.decimals,
+                        amount: c.amount,
+                        nft_delta: c.nft_delta,
+                        token_id: c.token_id,
+                    })
+                    .collect()
+            }),
         })
         .collect();
 

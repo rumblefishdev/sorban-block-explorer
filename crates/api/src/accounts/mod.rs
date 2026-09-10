@@ -9,6 +9,7 @@
 //!   - `docs/architecture/database-schema/endpoint-queries-clickhouse/06_get_accounts_by_id.sql`
 //!   - `docs/architecture/database-schema/endpoint-queries-clickhouse/07_get_accounts_transactions.sql`
 
+mod balance_changes;
 pub mod dto;
 mod handlers;
 mod queries;

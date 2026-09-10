@@ -286,6 +286,18 @@ Note the `i128` nuance that reverted "Patch C" historically: the SEP-39 contract
 top-level tag is `vec`, not `i128`. The old counter-example does not contradict
 tier 4.
 
+**Scope limit found 2026-09-09 ([[0542]]): tier 4's sample is `transfer` only,
+and the overlap lives on `mint`.** Two `Nft`-verdict collections emit a bare
+`i128` — `[mint, to]` topics, `data = i128`, 27 events, the only signature
+either contract ever emits. Not inside a `vec`, so the historical
+counter-example above does not cover it either. `nft.rs` reads that scalar as a
+token id and `asset_transfers` reads it as a quantity, and joined on
+`(contract, ledger)` all 27 pairs carry the same number under two meanings — so
+this is a live disagreement, not a hypothetical. Tier 4 stays sound as stated,
+but its evidence must be re-measured **per verb** before the cascade rests on
+it; `mint` is where a bare `i128` is ambiguous, because SEP-50 specifies no
+`mint` at all.
+
 ### Classification
 
 Structural conformance to SEP-50's 11 mandatory functions, computed from the
@@ -323,3 +335,64 @@ permanence flag, with fail-closed reads. Its deterministic/non-deterministic
 split explains 0392's F1 exactly — the quarantine holds _deterministic_ failures
 being handled by a _non-deterministic_ wait-and-retry, which is why a reconcile
 moves zero rows.
+
+## Same residual, measured from the VALUE-FLOW side (2026-09-08, from 0374)
+
+The entry-state numbers above were measured from the quarantine queue. This is
+the same residual seen from the other end — `asset_transfers`, the 0540 value
+index — and it is worth recording because it says how much the residual
+actually MOVES, which the queue cannot.
+
+Full-table, no sampling: **1,352,496,561 rows, 143,782 distinct `asset_id`**.
+Of those distinct ids, **28 have no `assets` row at all**, together accounting
+for **563 rows** — 0.019% of the assets and 0.00004% of the traffic.
+
+`assets` only gets a row for a contract classified `Fungible`, so an orphan
+here is exactly a contract this task's discriminator has not reached. The
+split:
+
+| the 28 orphans                        | count | rows | reading                           |
+| ------------------------------------- | ----- | ---- | --------------------------------- |
+| classified `Nft`, in the NFT registry | ~13   | ~394 | correct by design, nothing to fix |
+| classified `Other`                    | ~15   | ~162 | this task's residual              |
+| unknown to `soroban_contracts` too    | **0** | 0    | every one resolves to an address  |
+
+By movement shape rather than by verdict: **15 emit ONLY non-fungible
+movements, 13 emit ONLY movements carrying an amount, 0 are mixed.** Two of
+those numbers are the interesting ones:
+
+- **3 contracts emit non-fungible movements and are NOT in the NFT registry.**
+  They behave like NFTs and were classified `Other` — the launchpad-template
+  class this task exists to catch, seen from the traffic side. The two busiest
+  carry 88 and 44 transfer rows.
+- **13 contracts emit movements WITH an amount and have no `assets` row.** They
+  behave like fungible tokens and were also classified `Other`.
+
+Nothing here is invisible: all 28 resolve to a `C…` address through
+`soroban_contracts`, and the value read LEFT-joins `assets` on purpose, so
+their movements render with an address instead of a code rather than
+disappearing. The cost of the residual is a missing name, not a missing row.
+
+**No task filed for this** — it is this task's subject measured from a second
+angle, not a new defect. Recorded here so the discriminator's acceptance can be
+checked against traffic (does the orphan count fall?) and not only against the
+queue depth.
+
+**Correction (2026-09-09) — those counts were a mid-backfill snapshot, and the
+section above does not say so.** The method was right (full-table anti-join, no
+sampling, no partition list) but the TABLE was growing underneath it: the
+value-flow backfill was landing partitions while the query ran. Task 0542
+re-measured the same question hours later and read **73 contracts / 1,026
+movements** against the 28 / 563 recorded above, and split them 48 fungible-only
+against 25 non-fungible-only.
+
+0542 states the rule this correction exists to carry: **cite the method, never
+the number** — every count against `asset_transfers` rises until the backfill
+finishes, and a figure without its timestamp reads as a steady state it is not.
+
+What survives unchanged is the shape, which is what this task actually needs:
+orphans are contracts the discriminator has not reached, they do not mix
+fungible with non-fungible movements, and every one of them still resolves to an
+address, so the residual costs a name rather than a row. The live figures belong
+in [[0542]], which owns that measurement; read them there rather than from the
+numbers above.

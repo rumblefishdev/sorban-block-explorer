@@ -299,3 +299,192 @@ async fn write_only_persists_the_value_flow_tables_and_nothing_else() {
         .expect("read back nf");
     assert_eq!(nf, None);
 }
+
+/// Task 0518 — the three pool tables joined the targetable list so the 0540
+/// full-range re-parse carries the pool families' whole history in the SAME
+/// descent instead of owing a second one (and, for the config family, a
+/// separate ~40 GB targeted fetch).
+///
+/// Two things are asserted, because two things can silently go wrong:
+///
+/// 1. all three land, and nothing outside the list does — the same promise the
+///    tests above pin for the value-flow tables;
+/// 2. a registry row that TIES on `last_updated_ledger` with one already in
+///    the table replaces it. That is the whole basis for pointing a re-parse
+///    at `liquidity_pools`: the backfill re-emits a pool at the same
+///    last-change ledger the original ingest used, so every row it writes is a
+///    version tie, and a tie that resolved the other way would leave the 86% of
+///    classic pools with empty `legs` exactly as they are while reporting
+///    success. Merge order (last insert wins) is what makes it work, which is
+///    also why the run owes an `OPTIMIZE ... FINAL` before anything reads with
+///    `argMax` — until the merge, both rows are live and `argMax` may pick
+///    either.
+#[tokio::test]
+async fn targeted_write_persists_pool_tables_and_a_tied_registry_row_replaces() {
+    use db_clickhouse::persist::rows::{
+        LiquidityPoolRow, PoolInstanceStateRow, PoolStateChangeRow,
+    };
+
+    const LEDGER: i64 = 99_999_303;
+    const POOL: [u8; 32] = [0x51; 32];
+
+    let Some(url) = std::env::var("CLICKHOUSE_URL").ok() else {
+        eprintln!("CLICKHOUSE_URL not set — skipping");
+        return;
+    };
+    let cfg = Config {
+        url,
+        ..Config::from_env()
+    };
+    let ch = client(&cfg);
+    apply_init_sql(&ch).await.expect("apply init.sql");
+
+    for (table, col, val) in [
+        ("pool_state_changes", "ledger_sequence", LEDGER),
+        ("ledgers", "sequence", LEDGER),
+    ] {
+        ch.query(&format!("ALTER TABLE {table} DELETE WHERE {col} = ?"))
+            .bind(val)
+            .with_setting("mutations_sync", "1")
+            .execute()
+            .await
+            .expect("cleanup");
+    }
+    let pool_hex = POOL.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    for table in ["pool_instance_state", "liquidity_pools"] {
+        ch.query(&format!(
+            "ALTER TABLE {table} DELETE WHERE pool_id = unhex(?)"
+        ))
+        .bind(&pool_hex)
+        .with_setting("mutations_sync", "1")
+        .execute()
+        .await
+        .expect("cleanup");
+    }
+
+    let staged = StagedLedger {
+        ledger_sequence: LEDGER,
+        ledger_rows: vec![LedgerRow {
+            sequence: LEDGER,
+            hash: [0x51; 32],
+            closed_at: 1_760_000_000_000,
+            protocol_version: 23,
+            transaction_count: 1,
+            base_fee: 100,
+        }],
+        pool_state_change_rows: vec![PoolStateChangeRow {
+            pool_id: POOL,
+            ledger_sequence: LEDGER,
+            reserves: vec![1_000, 2_000],
+            plane_id: 4_242,
+        }],
+        pool_instance_state_rows: vec![PoolInstanceStateRow {
+            pool_id: POOL,
+            plane_id: 4_242,
+            share_token_id: 777,
+            total_shares: 3_000,
+            derived_at_ledger: LEDGER,
+        }],
+        pool_rows: vec![LiquidityPoolRow {
+            pool_id: POOL,
+            asset_a_type: 0,
+            asset_a_code: String::new(),
+            asset_a_issuer_id: 0,
+            asset_b_type: 0,
+            asset_b_code: String::new(),
+            asset_b_issuer_id: 0,
+            fee_bps: 30,
+            last_updated_ledger: LEDGER,
+            pool_kind: 1,
+            legs: vec![1, 2],
+            deployment_id: 9_999,
+            pool_type_raw: "xyk".into(),
+        }],
+        ..Default::default()
+    };
+
+    // The row the original ingest already wrote for this pool: SAME pool, SAME
+    // `last_updated_ledger`, empty `legs` — the shape 45,603 of 52,798 classic
+    // pools are in on production today.
+    let mut pre_existing = staged.pool_rows[0].clone();
+    pre_existing.legs = Vec::new();
+    let mut seed = PartitionWriter::open(ch.clone());
+    seed.write_only(
+        &StagedLedger {
+            ledger_sequence: LEDGER,
+            pool_rows: vec![pre_existing],
+            ..Default::default()
+        },
+        &TargetedTables::parse("liquidity_pools").expect("targetable"),
+    )
+    .await
+    .expect("seed the pre-existing row");
+    seed.commit().await.expect("seed commit");
+
+    let only = TargetedTables::parse("pool_state_changes,pool_instance_state,liquidity_pools")
+        .expect("all three pool tables are targetable");
+    let mut writer = PartitionWriter::open(ch.clone());
+    writer.write_only(&staged, &only).await.expect("write_only");
+    writer.commit().await.expect("commit");
+    ch.query("OPTIMIZE TABLE liquidity_pools FINAL")
+        .execute()
+        .await
+        .expect("collapse the version tie");
+
+    let by_ledger = |sql: &'static str| {
+        let ch = ch.clone();
+        async move {
+            ch.query(sql)
+                .bind(LEDGER)
+                .fetch_one::<u64>()
+                .await
+                .expect(sql)
+        }
+    };
+    let by_pool = |sql: &'static str| {
+        let ch = ch.clone();
+        let hex = pool_hex.clone();
+        async move { ch.query(sql).bind(hex).fetch_one::<u64>().await.expect(sql) }
+    };
+
+    assert_eq!(
+        by_ledger("SELECT count() FROM pool_state_changes WHERE ledger_sequence = ?").await,
+        1
+    );
+    assert_eq!(
+        by_pool("SELECT count() FROM pool_instance_state WHERE pool_id = unhex(?)").await,
+        1
+    );
+    assert_eq!(
+        by_pool("SELECT count() FROM liquidity_pools WHERE pool_id = unhex(?)").await,
+        1,
+        "the tie must collapse to ONE row, not accumulate"
+    );
+    let legs: Vec<i64> = ch
+        .query("SELECT legs FROM liquidity_pools WHERE pool_id = unhex(?)")
+        .bind(&pool_hex)
+        .fetch_one()
+        .await
+        .expect("read back legs");
+    assert_eq!(
+        legs,
+        vec![1, 2],
+        "on a version tie the re-parse row (inserted last) must win — otherwise \
+         the classic `legs` migration silently does nothing"
+    );
+    assert_eq!(
+        by_ledger("SELECT count() FROM ledgers WHERE sequence = ?").await,
+        0,
+        "the targeted write must not plant a ledgers commit marker"
+    );
+
+    // The reserve pair survives the round trip — a half-pair here would be the
+    // config family's "both-or-neither" invariant broken at the sink.
+    let (reserves, plane): (Vec<i128>, i64) = ch
+        .query("SELECT reserves, plane_id FROM pool_state_changes WHERE ledger_sequence = ?")
+        .bind(LEDGER)
+        .fetch_one()
+        .await
+        .expect("read back reserves");
+    assert_eq!((reserves, plane), (vec![1_000, 2_000], 4_242));
+}

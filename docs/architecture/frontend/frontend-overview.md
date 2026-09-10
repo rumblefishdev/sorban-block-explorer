@@ -337,6 +337,10 @@ field. The per-(transaction, asset) aggregate had no direction and no account, s
 on an account page an inbound and an outbound transfer rendered identically; it is
 replaced by a lossless per-transfer design.
 
+Its replacement is the account page's `Balance change` column (§6.7) and it stays
+there: this global list has no account in context, and a balance change with nobody
+to ask the question is precisely what made the old column mislead.
+
 Expanded behavior:
 
 - The table should support rapid scanning of recent network activity.
@@ -490,7 +494,8 @@ Account detail view for a Stellar account.
 - Account summary - account ID (full, copyable), sequence number, first seen ledger, last seen ledger
 - **Assets** - native XLM plus every trustline, INCLUDING the ones standing at zero
 - **Signers** - the signer set and the three thresholds
-- Recent transactions - paginated table of transactions involving this account
+- Recent transactions - paginated table of transactions involving this account,
+  carrying the **`Balance change`** column
 
 Expanded behavior:
 
@@ -520,6 +525,54 @@ returns to the page you were on. It is clamped, never trusted. The pager appears
 above one page — 99% of accounts hold 18 assets or fewer and should see no machinery.
 Each row carries the type chip AND, separately, a `SAC` tag when the asset has a deployed
 Stellar Asset Contract — two orthogonal axes, the same pairing `/assets` renders.
+
+**Balance change (task 0540).** Per transaction, what it did to THIS account's
+balances — the signed net of the asset that moved FIRST, plus `+N` for the rest,
+expanding on hover. It is account-relative by construction (the same transaction
+opened from another account shows different numbers), which is why it appears
+here and on no other transaction table.
+
+The `balance_changes` field takes three values and the cell must keep them apart:
+
+| Field     | Means                                    | Renders        |
+| --------- | ---------------------------------------- | -------------- |
+| `null`    | below the index floor — **not measured** | `Not indexed`  |
+| `[]`      | measured; this account's balances held   | `0`            |
+| non-empty | measured; these assets moved             | signed amounts |
+
+`null` is never drawn as `0`. The per-transfer index starts at ledger 64 317 019
+(it drops to the ingest floor once the historical backfill lands), and below it
+`asset_transfers` is empty — which looks exactly like a transaction that moved
+nothing. Drawing that as a zero would put a figure on screen that nobody measured.
+
+An `amount` of `null` inside an entry is also not zero: it is a NON-FUNGIBLE
+movement, where no amount exists by nature. The cell renders the signed count of
+pieces and, when the API could name the single piece that moved, its id
+(`+1 NFT #44`) — resolved from `nft_ownership`, which is where a token id lives;
+the edge table deliberately does not carry one.
+
+**Where the asset code links, most specific first:** the PIECE
+(`/nfts/:contract/:tokenId`) when exactly one moved; the COLLECTION
+(`/nfts?contract=…`) for any other non-fungible movement — several pieces at
+once, or a collection whose ownership rows are not indexed; the ASSET page for
+anything fungible. Never `/assets/C…` for a non-fungible movement: a collection
+has no `assets` row, which is why the read joins that table `LEFT`, so that URL
+`404`s for precisely the collections this column names. Assets whose net change is exactly zero are dropped server-side — under
+this heading, an asset that did not change is not a balance change, and that is
+what keeps a six-hop arbitrage readable: it nets to zero in eight assets and
+profits in one, and the profit is the whole content of the row.
+
+There is no summed "Value" column and cannot be one: no price data exists
+anywhere in ClickHouse, and bespoke tokens would never have any, so a single
+figure would be partial by construction.
+
+**Assets are in chain order, not ranked.** The API returns them in the order
+their movements occurred inside the transaction (`min(op_index,
+event_pos_in_op)`), and the cell renders that order as given. An earlier version
+ranked by amount scaled by each asset's own `decimals`; it was dropped because
+that comparison has no meaning — different decimals, different prices, and no
+prices held anywhere to reconcile them. Chain order is a fact the ledger
+supplies; a magnitude ranking would be a claim we cannot support.
 
 **Signers (issue #377, task 0463).** The account's own key is composed in as the FIRST
 row with a badge: the ledger keeps it out of `signers` and expresses its weight as
@@ -555,6 +608,13 @@ List of all known assets (native XLM, classic credit assets, SACs, and Soroban-n
 
 - Asset table - asset code, issuer / contract ID, type badge (+ a separate "SAC"
   tag when the asset carries a deployed SAC), total supply, holder count
+- **Ordered by holder count, highest first** (task 0547). No column here is
+  sortable, so this is the only order a reader ever sees — which is why it is
+  the most-held assets rather than the storage key. The list used to walk the
+  `assets` primary key, making it alphabetical inside each type: never a
+  decision, just what fell out of picking a cheap keyset when the read went
+  two-phase (task 0364). An asset we hold no aggregate for sorts last, below a
+  measured zero, because "no data" and "no holders" are different statements.
 - **What names an asset** (`assetDisplayCode`, task 0472). Only classic credit
   assets carry an `asset_code`; native XLM and Soroban tokens return `null` and
   need the rest of the row to name them. One shared rule serves the list cell,

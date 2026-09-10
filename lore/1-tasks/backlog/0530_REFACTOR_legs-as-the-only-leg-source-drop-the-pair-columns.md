@@ -27,6 +27,18 @@ history:
       owner. Filed now because the review of PR #438 had to add a
       `pool_kind = 0` guard that exists ONLY because the pair columns survive,
       and that guard is meant to die here.
+  - date: '2026-09-07'
+    status: backlog
+    who: karolkow
+    note: >
+      Step 2 stops being work of its own: task 0518 added the pool tables to
+      the targeted re-parse, so the 0540 full-range backfill emits a
+      `liquidity_pools` row per changed ledger with `legs` filled, for all
+      52 800 classic pools. Step 1 is answered by construction (the Rust job
+      computes the surrogate natively, so the hash64-vs-cityHash64 question
+      never has to be settled). The step-2 acceptance check was written and
+      run early against the 7 509 classic pools the live writer had already
+      migrated: 7 509 of 7 509 consistent, 0 mismatches.
 ---
 
 # REFACTOR: `legs` as the only leg source, and the pair columns dropped
@@ -86,6 +98,63 @@ Each step has its own verifier; they are ordered and cannot be reshuffled.
    (`pool_leg_asset_id`, the `lp_operation_amounts` join key), NOT the
    token-contract surrogates kind 1 uses — the id space is per-kind and
    `pool_kind` says which.
+
+### Steps 1 and 2 ride the 0540 backfill (2026-09-07)
+
+Neither step needs its own pass any more. Task 0518 put `liquidity_pools`
+into the targeted re-parse's table list, so the full-range 0540 backfill
+(`50 457 424 .. 64 317 019`) emits a registry row per changed ledger with
+`legs` computed by the same staging code the live writer uses. Coverage is
+total: **no classic pool has its last change below the ingest floor**
+(measured — the oldest is 50 458 737), so every one of the 52 800 is reached.
+
+Step 1 is moot: the migration goes the Rust route by construction, so whether
+our surrogate equals ClickHouse's `cityHash64` never has to be decided.
+
+Two things the run owes, both recorded in the 0518 commit: a cadenced
+`OPTIMIZE TABLE liquidity_pools FINAL` (a re-emitted row ties on version with
+the original ingest's, and until the merge a read picks between them
+arbitrarily), and the acceptance check below.
+
+**The step-2 acceptance check, and the trap inside it.** The criterion is
+`legs` spot-verified against the pair columns while both still exist — after
+step 4 the comparison is impossible. Run against the 7 509 classic pools the
+live writer had already migrated: **7 509 of 7 509 consistent, 0 mismatches**.
+
+The trap: a naive comparison reports a **52% failure rate that is not real**.
+`legs` resolve through `assets`, which stores no `asset_type = 2` at all — it
+collapses alphanum4 and alphanum12 into type 1 — while the legacy pair column
+keeps the raw XDR distinction. Code and issuer agree exactly; only the type
+digit differs. The check must therefore normalise both sides to
+"native vs credit" before comparing, or it fails on every pool whose asset
+code is longer than four characters.
+
+```sql
+WITH pools AS (
+  SELECT pool_id, argMax(legs, last_updated_ledger) AS legs,
+         argMax(asset_a_type, last_updated_ledger) AS a_type,
+         argMax(asset_a_code, last_updated_ledger) AS a_code,
+         argMax(asset_a_issuer_id, last_updated_ledger) AS a_iss,
+         argMax(asset_b_type, last_updated_ledger) AS b_type,
+         argMax(asset_b_code, last_updated_ledger) AS b_code,
+         argMax(asset_b_issuer_id, last_updated_ledger) AS b_iss,
+         argMax(pool_kind, last_updated_ledger) AS kind
+  FROM liquidity_pools GROUP BY pool_id),
+ad AS (SELECT id, any(asset_type) AS t, any(asset_code) AS c,
+              any(issuer_id) AS i FROM assets GROUP BY id)
+SELECT count() AS checked,
+       countIf(NOT ((if(x.t=0,0,1) = if(p.a_type=0,0,1)) AND x.c=p.a_code AND x.i=p.a_iss
+               AND  (if(y.t=0,0,1) = if(p.b_type=0,0,1)) AND y.c=p.b_code AND y.i=p.b_iss)
+              ) AS mismatched
+FROM pools p LEFT JOIN ad x ON x.id = p.legs[1]
+             LEFT JOIN ad y ON y.id = p.legs[2]
+WHERE p.kind = 0 AND length(p.legs) = 2
+```
+
+After the backfill, `checked` must be ~52 800 and `mismatched` must be 0.
+An `id` maps to exactly one identity triple (measured: 0 of 452 592 ids carry
+more than one), so the join is unambiguous.
+
 3. **Migrate the ~612 pair-shaped call sites** (API queries, classifier,
    frontend) to `legs`. The largest piece, and the one that lands
    incrementally behind a read-time coalesce bridge. `asset_codes_predicate`

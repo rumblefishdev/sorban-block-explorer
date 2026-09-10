@@ -26,6 +26,19 @@ history:
       Activated. First-protocol scope confirmed reachable from data already in
       `soroban_events`; the backfill is an in-DB INSERT ... SELECT, not an
       S3 re-parse.
+  - date: '2026-09-07'
+    status: active
+    who: karolkow
+    note: >
+      Pool write path DEPLOYED to production — release PR 452 merged
+      (`098bef9d`), tag `production-2026.09.07-1`, one combined window with
+      task 0540. `pool_state_changes` and `pool_instance_state` created and
+      verified byte-identical to init.sql; both take live rows. No indexer
+      pause was needed: the three `liquidity_pool_snapshots` columns the new
+      writer drops were given DEFAULT NULL first (metadata-only), which makes
+      old and new writers simultaneously valid, so the DROPs move to after the
+      backfills and a rollback stays free. Backfills, closure layers and the
+      read half remain.
 ---
 
 # LP completeness

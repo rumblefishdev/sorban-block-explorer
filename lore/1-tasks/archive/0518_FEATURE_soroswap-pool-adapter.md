@@ -43,6 +43,16 @@ history:
       ACs stay deferred to the end of the roadmap by owner decision
       (tracked in 0374/0516); deploy + runbook backfills ride the
       deferred deploy window.
+  - date: '2026-09-07'
+    status: done
+    who: karolkow
+    note: >
+      Shipped: both adapters' write path is on production via release PR 452
+      (`098bef9d`), tag `production-2026.09.07-1`, in one combined deploy
+      window with task 0540. `pool_state_changes` took live rows within
+      minutes. The runbook backfills (registry + history per family) and the
+      closure layers are the operator's remaining half and are tracked in
+      0374; the read half stays last by owner decision.
 ---
 
 # Soroswap pool adapter

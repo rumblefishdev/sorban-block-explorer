@@ -751,7 +751,19 @@ Design notes (every figure measured — lore task 0540 and its research note):
   id is a one-way hash, a comparison key only, until a side table is built
   (follow-up, from `soroban_events`, no S3 pass needed).
 - **Reads must be `FINAL` or `GROUP BY`** — this table sums, and an unmerged
-  RMT duplicate doubles a balance change on screen.
+  RMT duplicate doubles a balance change on screen. The account page's read
+  (`api::accounts::balance_changes`) groups on the full sort key, then sums
+  `to − from` per (transaction, asset) for the account in context; `to − from`
+  rather than a first-match branch, so a transfer to self cancels to zero
+  instead of reading as income. Measured on production, 25-transaction page:
+  **20 ms / 13 824 rows** for the transfer read, **44 ms / 268 k rows** for the
+  asset-identity read beside it (`assets.id` carries no skip index, so that leg
+  is a scan; joining `soroban_contracts` through `assets.contract_id` instead of
+  through the shared surrogate made it run twice — 209 ms / 2.5 M rows). `assets.id`
+  carries no skip index of its own; adding the bloom that `accounts` and
+  `soroban_contracts` already have would make that leg a seek too, but it needs
+  a production `ALTER` and the read is correct without it, so it is recorded as
+  an optional follow-up rather than folded into this change.
 - **Storage**: ~5.47 bn rows at 7.6–8.9 B/row (ZSTD(3) everywhere; the schema
   otherwise inherits LZ4 by default). `index_granularity = 512` so the
   account-page read touches ~14 k rows, not ~147 k (outages 0243/0386 were this

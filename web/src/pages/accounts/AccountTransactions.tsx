@@ -15,6 +15,7 @@ import { useCallback, type ReactNode } from 'react';
 
 import { useAccountTransactions, usePagedRows } from '../../api/index.js';
 import { SectionCard } from '../detail/SectionCard.js';
+import { BalanceChangeCell } from './BalanceChangeCell.js';
 import {
   hashColumn,
   ledgerColumn,
@@ -33,6 +34,15 @@ const columns: ExplorerTableColumn<AccountTransactionItem>[] = [
     cell: (row) => <OperationCell types={row.operation_types} />,
   },
   statusColumn<AccountTransactionItem>(),
+  {
+    // Account-relative, so it exists on THIS table only — a balance change
+    // means nothing without an account in context (task 0540 / T07).
+    id: 'balance_change',
+    header: 'Balance change',
+    align: 'right',
+    width: 200,
+    cell: (row) => <BalanceChangeCell changes={row.balance_changes} />,
+  },
   {
     id: 'fee',
     header: 'Fee',

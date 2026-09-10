@@ -143,16 +143,50 @@ history:
     Canonical asset ids shorten like every other identifier — at 60 chars
     they had pushed every classic transfer into a bare `(4 fields)`.
 
+18. **"Escrowed … for A and B" reads as a destination.** The claimants are
+    who MAY claim later, under a predicate; the operation moves the asset out
+    of the payer into a NEW ledger entry with its own `B…` address, and
+    nobody on the claimant list receives anything at creation time. The
+    sentence item 16 shipped is accurate and still misread, because the actual
+    recipient is named nowhere on the card — it appears only inside the event
+    line, as a `B…` the reader has no reason to recognise. Reviewed against a
+    real transaction (2026-09-09): the payer is ALSO one of the two claimants,
+    every operation creates its own distinct `B…`, and the other claimant has
+    not one row against it anywhere in the transaction. Fix is wording plus
+    naming the escrow itself, not new data.
+19. **The amount and the asset are printed twice per operation** — once in the
+    event line, once in Operation details — with nothing saying they are one
+    fact from two sources. A reader cannot tell whether they are looking at
+    two numbers or one repeated, which is the same failure mode item 17 fixed
+    for the event line itself.
+20. **A canonical asset id is not an identifier anywhere on the card.** Bare
+    strkeys became copyable links in items 11 and 14, but `CODE:ISSUER` matches
+    no strkey pattern, so it stays plain text in the event line AND inside the
+    details JSON — not copyable, not linkable, while every address beside it
+    is both. Item 11 already recorded the cause ("the sentences print a code,
+    not a canonical id") and deferred the resolution to [[0456]]; this item is
+    the presentation half, and it is now visible in two places rather than one.
+21. **An operation card gives no sense of scale.** A transaction of 85
+    identical claimable-balance operations renders one card with one amount,
+    while the account page's `Balance change` column sums the whole
+    transaction. Both are correct and they disagree on screen with nothing
+    reconciling them. The picker shows the count; the card does not say which
+    of how many it is.
+
 ## Status (2026-07-31)
 
 Shipped: **2, 5, 8, 9, 10, 11, 13, 14, 16, 17**. Open: **1** (contract
 display names), **3** (fee split, waits on 0457), **4** (pre-P23 note),
 **6** (toggle preference — product call), **7** (XdrRow unification —
 waits for a third consumer), **12** (route-strip "actual" labels),
-**15** (root-call full inline args). The task stays active until each of
-those is shipped or withdrawn with a reason.
+**15** (root-call full inline args), and — added 2026-09-09 from a
+fresh-eyes review of a claimable-balance transaction — **18** (escrow wording
+and naming the escrow), **19** (amount and asset printed twice), **20**
+(canonical asset id is not an identifier), **21** (no sense of scale on a
+multi-operation transaction). The task stays active until each of those is
+shipped or withdrawn with a reason.
 
 ## Acceptance criteria
 
 - [ ] Each item shipped or explicitly withdrawn with a recorded reason
-      (10 of 17 shipped as of 2026-07-31)
+      (10 of 21 shipped; items 18-21 added 2026-09-09)

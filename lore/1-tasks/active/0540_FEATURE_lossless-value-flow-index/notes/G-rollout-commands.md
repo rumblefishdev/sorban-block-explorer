@@ -8,6 +8,16 @@ tags: ['rollout', 'backfill', 'clickhouse', 'hetzner']
 links:
   - ../../../../docs/runbooks/backfill_derived_table_reparse_hetzner.md
 history:
+  - date: 2026-09-07
+    status: developing
+    who: karolkow
+    note: >
+      Step 4 executed, and not as written: the deployed API reads
+      `net_settled` in the transaction-list aggregate, so the drop-then-deploy
+      order would have 500'd every transaction list. Replaced by
+      defaults-then-deploy with the drops deferred past the backfills — no
+      pause, no downtime, rollback stays free. L₀ = 64 317 019 recorded and
+      the backfill bounds filled in.
   - date: 2026-09-06
     status: developing
     who: karolkow
@@ -157,7 +167,48 @@ SQL
 docker exec app-clickhouse-1 clickhouse-client -q "DESCRIBE asset_transfers" | head -20
 ```
 
-## Step 4 — the deploy window: pause → ALTER → deploy → recycle
+## Step 4 — the deploy window — DONE 2026-09-07, and NOT as written below
+
+**Executed as: defaults → deploy → drops deferred. No pause, no downtime.**
+Tag `production-2026.09.07-1` on `098bef9d`. Keep the original text below as
+the reasoning that led here, but do not follow its order again: it drops
+`net_settled` before the deploy, and the deployed API reads that column in the
+transaction-list aggregate, so that order answers 500 on every transaction list
+for the length of the deploy.
+
+What actually ran, from the laptop client, before the deploy and with the
+indexer untouched:
+
+```sql
+ALTER TABLE operation_asset_appearances MODIFY COLUMN net_settled Nullable(Int128) DEFAULT NULL;
+ALTER TABLE liquidity_pool_snapshots    MODIFY COLUMN tvl         Nullable(Decimal(38, 7)) DEFAULT NULL;
+ALTER TABLE liquidity_pool_snapshots    MODIFY COLUMN volume      Nullable(Decimal(38, 7)) DEFAULT NULL;
+ALTER TABLE liquidity_pool_snapshots    MODIFY COLUMN fee_revenue Nullable(Decimal(38, 7)) DEFAULT NULL;
+```
+
+The driver rejects a table column missing from the row struct **only when it
+has no default** (`clickhouse-0.15.0`, `row_metadata.rs`,
+`InsertMetadata::to_row`) — the INSERT names its columns explicitly, so a
+defaulted extra column is never mentioned. A default-only `MODIFY COLUMN` is
+metadata; verified afterwards that no mutation was created. Old and new writers
+were therefore both valid against one schema, which removes the pause, the
+recycle and the ordering constraint together. The DROPs are deferred until
+after the backfills so a rollback to the previous binary stays free.
+
+Confirm the defaults took, and that nothing is rewriting data:
+
+```sql
+SELECT table, name, default_kind FROM system.columns
+WHERE database = 'default'
+  AND ((table = 'operation_asset_appearances' AND name = 'net_settled')
+    OR (table = 'liquidity_pool_snapshots' AND name IN ('tvl','volume','fee_revenue')));
+SELECT max(create_time) FROM system.mutations;
+```
+
+**L₀ = 64 317 019** (measured after the deploy). Backfill range:
+`50 457 424 .. 64 317 019`.
+
+### Original plan, superseded — kept for its reasoning
 
 The `clickhouse` 0.15 driver validates the row struct against `DESCRIBE` **in
 both directions** and warm Lambda containers cache that `DESCRIBE`. So: old
@@ -295,7 +346,7 @@ docker exec app-clickhouse-1 clickhouse-client -q \
 # re-run the same slice → k must stay identical (RMT idempotent); c may shrink toward k on merge.
 ```
 
-Fan-out. `END` is `L₀` from step 4. **Scratch on `/srv/bf-scratch`, three
+Fan-out. `END` is `L₀` from step 4 — **64 317 019**. **Scratch on `/srv/bf-scratch`, three
 workers** — the 89 GB image holds ~2 partitions per worker and no more (0488
 step 1; the runbook's "start at 6" predates the isolation). Logs go to `/`
 but are bounded: no `-v`.
@@ -304,7 +355,7 @@ but are bounded: no `-v`.
 # BOX
 set -a; source ~/meta.env; set +a
 rm -rf ~/bf-540; mkdir -p ~/bf-540
-S=50457424; E=<L0>; N=3
+S=50457424; E=64317019; N=3   # E = L0, measured after the 2026-09-07 deploy
 STEP=$(( (E-S)/N ))
 for i in $(seq 0 $((N-1))); do
   Si=$(( S + i*STEP )); Ei=$(( i==N-1 ? E : S + (i+1)*STEP ))
