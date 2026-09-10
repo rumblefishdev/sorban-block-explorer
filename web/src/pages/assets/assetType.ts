@@ -1,5 +1,9 @@
 import type { ChipProps } from '@rumblefish/soroban-block-explorer-ui';
-import { NATIVE_ASSET_CODE } from '@rumblefish/soroban-block-explorer-ui';
+import {
+  DEFAULT_TRUNCATION,
+  NATIVE_ASSET_CODE,
+  truncateMiddle,
+} from '@rumblefish/soroban-block-explorer-ui';
 
 export interface AssetTypeMeta {
   /** Human-readable badge label. */
@@ -37,22 +41,43 @@ export {
 } from '@rumblefish/soroban-block-explorer-ui';
 
 /**
- * The label an asset is shown under — title, breadcrumb, table cell, avatar
- * letter. Native XLM carries `asset_code = null` (it has no code on the
- * ledger), so it needs the same rule the pool legs already use
- * (`assetLegLabel`): the type, not the code, names it. Soroban tokens have no
- * classic code either and fall back to the on-chain SEP-41 symbol (task 0304).
+ * The one ladder that names an asset — title, breadcrumb, table cell, avatar
+ * letter, pool leg, balance-change row. Each rung is the only thing that names
+ * an asset of that kind, so the order is a fact about the ledger, not a
+ * preference:
  *
- * Returns `null` when nothing names the asset, so each caller picks its own
- * empty rendering (a dash in a table, a generic title on a page).
+ *   1. **native** → `XLM`. Native carries no `asset_code` on the ledger, so the
+ *      TYPE names it. This is the single native rule in the naming path: the
+ *      pool legs, the asset pages and the balance-change rows each used to
+ *      carry their own copy of it.
+ *   2. **`asset_code`** → the classic code.
+ *   3. **`symbol`** → the on-chain SEP-41 symbol, for a soroban token with no
+ *      classic code (task 0304).
+ *   4. **`contract_id`** → the truncated contract address. A soroban token can
+ *      publish no symbol at all, and its contract IS its identity — showing
+ *      `CAQC…RZQB` names it honestly, where a dash claims the row is empty.
+ *      Truncated with the app-wide standard so it reads like every other
+ *      address reference.
+ *
+ * Returns `null` only when NOTHING identifies the asset — schema drift, not a
+ * nameless token. Callers pick their own empty rendering for it.
+ *
+ * An empty-string code counts as absent: the ledger writes native's code that
+ * way, and no other asset has one.
  */
 export function assetDisplayCode(asset: {
   asset_type_name?: string | null;
   asset_code?: string | null;
   symbol?: string | null;
+  contract_id?: string | null;
 }): string | null {
   if (asset.asset_type_name === 'native') return NATIVE_ASSET_CODE;
-  return asset.asset_code ?? asset.symbol ?? null;
+  if (asset.asset_code) return asset.asset_code;
+  if (asset.symbol) return asset.symbol;
+  if (asset.contract_id) {
+    return truncateMiddle(asset.contract_id, DEFAULT_TRUNCATION);
+  }
+  return null;
 }
 
 /**
