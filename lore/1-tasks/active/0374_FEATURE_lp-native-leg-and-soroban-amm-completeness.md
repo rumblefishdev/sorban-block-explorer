@@ -2311,3 +2311,60 @@ The ClickHouse-gated smokes earned their keep again: the first version projected
 a non-nullable `String` through a LEFT JOIN, and with `join_use_nulls = 0` an
 unmatched row yields `''` rather than NULL, which the driver refuses to decode
 into an `Option`. Four smokes failed instantly; no unit test would have seen it.
+
+## Run against production (2026-09-09) — three defects the test suite could not see
+
+Stood the API up against production ClickHouse and drove the SPA. Every one of
+these passed 327 Rust tests, 376 web tests and 24 ClickHouse-gated smokes first.
+
+**1. The pools list 500'd on the default page.** `asset_enrichment.icon_url` is
+`Nullable(String)`, so `argMax` over it is nullable too, and the row struct
+declared a bare `String` — the driver refuses that (the 0324 class). Every other
+reader of this column already declares it optional; this one had diverged. The
+smokes missed it because they decode nothing when no leg matches an enrichment
+row, and the soroban-filtered page missed it because its legs resolve to nothing
+at all. Only a page with real classic assets triggers it.
+
+**2. The detail route 404'd every soroban pool the list linked to.** The path
+validator still demanded an `L…` prefix. The encoder was made kind-aware and the
+free-text parser was taught both forms; this third gate was missed. Now accepts
+`L…` or `C…`, which is what the identifier actually is.
+
+**3. The frontend had its OWN copy of that gate**, and it short-circuited to
+"not found" before the request was ever made — so fixing the API alone changed
+nothing on screen. `isPoolId` stays narrow on purpose (search uses it to tell a
+pool from a contract; widening it would route every contract to the pool page),
+so the rule is a separate `isPoolIdentifier`. Two gates, two languages, one
+rule — the shape this task keeps finding.
+
+### What the screen actually shows
+
+Working: the kind chip row and the per-row kind badge; `C…` pool identifiers;
+**a three-leg pool rendering three avatars and `A / B / C`** — the shape the pair
+could never express; total shares live, both in the KPI strip (`7.1`) and the
+summary (`7.0710678`), which is the item-1 wiring confirmed end to end.
+
+Not working, and NOT a code defect: **every leg renders as a truncated `C…`
+address instead of a code.** Measured over the 303 distinct soroban legs — 40
+resolve to a full identity, 262 resolve only to a contract address, 1 to
+nothing. The pool screenshotted holds native XLM as its first leg and shows
+`CAS3…OWMA`, because that leg is keyed on the XLM SAC contract surrogate rather
+than the native asset id. This is exactly the defect
+`docs/runbooks/0374_lp_legs_sac_rekey_repair.md` exists to repair, and that
+repair has not run.
+
+**Deploy consequence:** the SAC re-key repair must ship WITH this, not after it.
+Otherwise 739 soroban pools become visible and unreadable on the same day.
+
+### Coverage at the time of the run
+
+|                                        |                                                        |
+| -------------------------------------- | ------------------------------------------------------ |
+| `legs`, classic                        | 83.3% (44,051 / 52,876) — rising, 79.8% the day before |
+| `legs`, soroban                        | 100% (739 / 739)                                       |
+| soroban legs resolving to an asset row | **6.6%**                                               |
+| soroban total shares showing a number  | 75% (554 / 739)                                        |
+
+One display nit, pre-existing: a pool holding `0.01` shares renders as `0`
+because `formatCompactAmount` rounds it. Not introduced here and not the
+compact formatter's bug to fix in this task.

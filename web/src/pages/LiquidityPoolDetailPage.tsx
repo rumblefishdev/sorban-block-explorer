@@ -1,7 +1,7 @@
 import { Stack } from '@mui/material';
 import {
   DetailErrorState,
-  isPoolId,
+  isPoolIdentifier,
   NotFoundState,
   SectionErrorBoundary,
 } from '@rumblefish/soroban-block-explorer-ui';
@@ -41,11 +41,11 @@ export default function LiquidityPoolDetailPage() {
   // never actually observed at runtime.
   const { id = '' } = useParams<{ id: string }>();
   const poolId = id;
-  // Pool ids must be a CAP-38 `L...` strkey (56 chars, base32). Validate
-  // up-front so a malformed id renders the entity-specific NotFoundState
-  // instead of firing a doomed request. `usePoolDetail` is hardcoded to
-  // skip the network when the id is empty.
-  const validPoolId = isPoolId(poolId);
+  // A pool is addressed by whichever form its kind uses — `L…` for a classic
+  // pool, `C…` for a Soroban one, which IS a contract. Validate up-front so a
+  // malformed id renders the entity-specific NotFoundState instead of firing a
+  // doomed request; `usePoolDetail` skips the network when the id is empty.
+  const validPoolId = isPoolIdentifier(poolId);
   const detail = usePoolDetail(validPoolId ? poolId : '');
   if (!validPoolId) {
     return <NotFoundState entity="liquidity-pool" identifier={poolId} />;

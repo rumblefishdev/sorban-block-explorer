@@ -282,7 +282,12 @@ struct IconChRow {
     asset_code: String,
     issuer_id: i64,
     contract_id: i64,
-    icon_url: String,
+    /// `Nullable(String)` on the table, so `argMax` over it is nullable too —
+    /// decoding it as a bare `String` is refused by the driver, and only on a
+    /// page that actually MATCHES an enrichment row (an empty result decodes
+    /// nothing and passes). Every other reader of this column already declares
+    /// it optional; this one had diverged.
+    icon_url: Option<String>,
 }
 
 /// The two DISPLAY facts a pool leg renders and a balance-change cell does
@@ -372,12 +377,12 @@ pub(crate) async fn resolve_display_for(
         .collect();
     let icons: HashMap<IdentityKey, String> = icon_rows
         .into_iter()
-        .filter(|r| !r.icon_url.is_empty())
-        .map(|r| {
-            (
+        .filter_map(|r| {
+            let url = r.icon_url.filter(|u| !u.is_empty())?;
+            Some((
                 (r.asset_type, r.asset_code, r.issuer_id, r.contract_id),
-                r.icon_url,
-            )
+                url,
+            ))
         })
         .collect();
 
