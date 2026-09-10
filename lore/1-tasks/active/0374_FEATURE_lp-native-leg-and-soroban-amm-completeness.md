@@ -2405,3 +2405,59 @@ read as an answer.
 **What I should have asked before writing it:** does anything already touch this
 column, and is the value derivable rather than computable. Both answers were in
 the tree.
+
+## Every gap on a Soroban pool page, measured (2026-09-09)
+
+Karol drove the local build and listed what was missing. Each one traced. The
+headline: **almost none of it is missing data — it is one table the read path
+never opens.**
+
+`pool_state_changes` carries `reserves Array(Int128)` per ledger — a per-leg
+time series in exactly the shape a two-to-four-leg pool needs — for **734 of
+739** soroban pools. `crates/api` does not reference that table anywhere.
+
+| gap on the page                            | data exists?                         | where                                           |
+| ------------------------------------------ | ------------------------------------ | ----------------------------------------------- |
+| per-leg reserves `—`                       | YES, 734/739 (616 non-zero)          | `pool_state_changes.reserves`                   |
+| TVL `—`                                    | derivable                            | those reserves × the price lookup already built |
+| TVL / volume chart "no activity"           | YES                                  | `pool_state_changes` IS the soroban time series |
+| "Recent activity" empty                    | YES, 3.4M rows over 752 pools        | `pool_state_changes`                            |
+| Participants `0`                           | YES, 575 of 705 pools, 4,178 holders | `balances` keyed on `share_token_id`            |
+| legs render as `C…` addresses              | NO — needs the repair                | runbook A                                       |
+| `filter[asset_code]` finds no soroban pool | NO — same cause                      | runbook A                                       |
+
+The reserve arrays line up with the leg counts: 723 of 728 two-leg pools, 9 of
+9 three-leg, 2 of 2 four-leg. The shape was built for this and nothing reads it.
+
+**`lp_positions` is classic-only** — 0 of 739 soroban pools have a row, by
+construction: it tracks trustline LP shares. A soroban pool's providers are
+holders of its share TOKEN, which is why the count has to come from `balances`.
+This is ranking item 2, and the measurement says the cheap exit it describes is
+real.
+
+### The asset filter is not broken, it is blocked
+
+`USDC` + soroban returns **0 today and 161 with the SAC re-key applied**
+(simulated read-only against production). Nothing to fix in the predicate.
+
+### The default order shows the worst of the population
+
+The list is `ORDER BY last_updated_ledger DESC`, and that column means _last
+trade_ for a classic pool but _registration_ for a soroban one (ranking item 4).
+So the soroban list opens on the most recently REGISTERED pools — the ones with
+nothing in them yet:
+
+|                          | pools with shares   |
+| ------------------------ | ------------------- |
+| whole soroban population | 553 / 739 = **75%** |
+| **first page (20)**      | 7 / 20 = **35%**    |
+
+The emptiness Karol saw is real but unrepresentative, and it is the sort key
+doing it. Fixing item 4 (a `last_activity_ledger` with ONE meaning) also fixes
+what the first page shows. Ordering by a value — TVL, or shares — is the other
+option and is worth deciding deliberately rather than inheriting.
+
+### Fixed here
+
+The detail page carried no kind badge while every list row did — the one page
+about a single pool was the only place that would not say which kind it was.

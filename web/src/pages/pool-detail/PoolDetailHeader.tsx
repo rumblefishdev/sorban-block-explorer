@@ -1,12 +1,13 @@
 import { Box, Stack, Typography } from '@mui/material';
 import type { PoolItem } from '@rumblefish/api-types';
-import { IdentifierDisplay } from '@rumblefish/soroban-block-explorer-ui';
+import { Chip, IdentifierDisplay } from '@rumblefish/soroban-block-explorer-ui';
 
 import { routes } from '../../router/routes.js';
 import { PageBreadcrumb } from '../detail/PageBreadcrumb.js';
 import { PoolLegIcons } from '../pool-shared/PoolLegIcons.js';
 
 import { poolLabel } from '../pool-shared/helpers.js';
+import { poolKindMeta } from '../liquidity-pools/poolKind.js';
 
 interface PoolDetailHeaderProps {
   poolId: string;
@@ -33,7 +34,19 @@ export function PoolDetailHeader({ poolId, pool }: PoolDetailHeaderProps) {
           <Typography variant="heading5SemiBold" component="h1">
             {name}
           </Typography>
-          <IdentifierDisplay value={poolId} type="pool" linked={false} />
+          {/* The list badges every row with its kind; the detail page has to
+              say it too, or the one page about a single pool is the only place
+              that does not. Nothing else here distinguishes the two. */}
+          <Stack direction="row" spacing={1} alignItems="center">
+            <IdentifierDisplay value={poolId} type="pool" linked={false} />
+            {pool && (
+              <Chip
+                size="sm"
+                color={poolKindMeta(pool.pool_kind).color}
+                label={poolKindMeta(pool.pool_kind).label}
+              />
+            )}
+          </Stack>
         </Stack>
       </Stack>
     </Box>
