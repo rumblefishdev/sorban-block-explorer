@@ -59,10 +59,21 @@
 --     filter page membership without TVL for ALL pools per request; that
 --     needs the prices-side identity-keyed materialized series. Until then
 --     the API says so explicitly rather than answering "no pools".
---   • Cursor ordering switched from `created_at_ledger DESC` to
---     `last_updated_ledger DESC`. UI label changes from "newest pools
---     first" to "most recently active first" — different semantic but
---     a more useful default for users browsing active LPs.
+--   • Cursor ordering is `activity_ledger DESC`, where `activity_ledger` is
+--     `greatest(last_updated_ledger, max(pool_state_changes.ledger_sequence))`
+--     — "most recently active first", for BOTH kinds.
+--     `last_updated_ledger` alone does not mean that: it is the RMT version,
+--     bumped on every change to a CLASSIC pool's entry, but written once at
+--     registration for a soroban pool, whose activity lives in
+--     `pool_state_changes`. Measured 2026-09-09: for 662 of 734 soroban pools
+--     the real activity is newer than the column, by 211 days on average.
+--     Ordering on the raw column opened the list on just-registered pools —
+--     the emptiest end (35% of the first page carried shares, against 75% of
+--     the population). `greatest` needs no `pool_kind` branch: a classic pool
+--     has no state-change rows so the column wins, and a soroban pool's
+--     activity is never earlier than its registration.
+--     The outer ORDER BY MUST repeat the paging CTE's expression, or the page
+--     holds the right rows in the wrong order and consecutive pages overlap.
 --   • argMax over GROUP BY rather than correlated scalar — CH 26.x
 --     rejects correlated subqueries with ORDER BY/LIMIT in JOIN.
 --   • **Pair filtering is a distinctness condition, not two column tests.**
@@ -119,7 +130,7 @@ LEFT JOIN (
 ) s ON s.pool_id = lp.pool_id
 LEFT JOIN ledgers l_snap ON l_snap.sequence = s.latest_ledger_sequence
 WHERE
-    ($2 IS NULL OR (lp.last_updated_ledger, lower(hex(lp.pool_id))) < ($2, $3))
+    ($2 IS NULL OR (activity_ledger, lower(hex(lp.pool_id))) < ($2, $3))
     -- One needle: any leg matches. A pair ($4 = 'A/B') adds the distinctness
     -- clause — see Notes.
     AND ($4 IS NULL OR arrayExists(x -> x IN (
@@ -128,5 +139,5 @@ WHERE
         ), lp.legs))
     AND ($5 IS NULL OR lp.pool_kind = $5)
     -- No min-TVL predicate: `filter[min_tvl]` is rejected with 400 (see Notes).
-ORDER BY lp.last_updated_ledger DESC, lp.pool_id DESC
+ORDER BY activity_ledger DESC, lp.pool_id DESC
 LIMIT $1;

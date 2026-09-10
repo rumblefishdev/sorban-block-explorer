@@ -2461,3 +2461,63 @@ option and is worth deciding deliberately rather than inheriting.
 
 The detail page carried no kind badge while every list row did — the one page
 about a single pool was the only place that would not say which kind it was.
+
+## Why the coverages are low, and the sort key (2026-09-09)
+
+Karol, on being shown sort-key coverage: _"czemu takie małe pokrycia tych
+niektórych??"_ — worth asking, because two of the three are facts about the
+population and one is a known defect.
+
+**Reserves / shares, 76%.** Not a gap. **Every** classic pool has a snapshot;
+23.6% of them (12,485) have a snapshot saying **zero shares** — pools everyone
+withdrew from, last moved 401 days ago on average. Sorting by shares would rank
+live pools above dead ones, which is arguably the point.
+
+**Participants, 50%.** Partly the dead pools, but 14,158 pools (26.8%) have
+shares and NO known holder — impossible on chain, so ours. Already root-caused
+in this task's own K4-6 record: the ingest floor. A pool-share trustline created
+before L50,458,12x never produced a row, because we only ever saw trustlines
+that changed after the floor. Off this branch by decision (2026-08-29).
+
+**TVL, 34%.** A market fact. Only **3,444 of 19,503** distinct classic legs have
+a USD price in the last 48h (17.7%), and only 5,253 assets have a price at all.
+Pool coverage is higher than leg coverage because pools concentrate on the few
+priced assets.
+
+### The sort key: measured, then decided
+
+| candidate             | coverage | usable as a key?       |
+| --------------------- | -------- | ---------------------- |
+| `last_updated_ledger` | 100%     | yes — but two meanings |
+| unified last activity | 99.99%   | **yes**                |
+| shares / reserves     | 76%      | no                     |
+| participants          | 50%      | no                     |
+| TVL                   | 34%      | no                     |
+
+The coverage table is not the binding constraint — **keyset pagination is**.
+The list pages on `(sort key, pool_id)`, so the key must be computable in the
+`WHERE` of the paging CTE. TVL, participants and shares are all computed at
+read, per page (TVL deliberately so, ADR 0053), and none of them can be a
+paging key without being materialised onto the row first. That rules them out
+regardless of coverage.
+
+**Chosen: `greatest(last_updated_ledger, max(pool_state_changes.ledger_sequence))`.**
+No schema change, no writer change, no backfill — measured at 3.5M read_rows /
+60 ms, against the 9.7M / 264 ms the list query already spends. `greatest`
+avoids a `pool_kind` branch: a classic pool has no state-change rows so its
+column wins, and a soroban pool's activity is never earlier than its
+registration.
+
+Result on production: the first soroban page went from **7 of 20** pools
+carrying shares to **13 of 20**, against 75% across the population. It now opens
+on pools holding 120,934 and 121,948 shares instead of ones registered minutes
+ago and empty.
+
+### The bug that only two pages could show
+
+The first version paged correctly and returned garbage: 50 rows fetched, 30
+unique. The paging CTE ordered by the new expression while the OUTER query still
+ordered by `last_updated_ledger`, so the page held the right rows in the wrong
+order and `finalize_page` cut the cursor from the wrong last row. One page looks
+perfect; it takes two to see it. Now pinned by a ClickHouse-gated smoke that
+fetches a real second page and asserts it repeats nothing.

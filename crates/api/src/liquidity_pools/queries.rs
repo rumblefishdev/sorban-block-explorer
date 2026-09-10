@@ -1744,6 +1744,26 @@ struct PoolListChRow {
 /// and the `ledgers` closed_at join; both are bounded and the list is
 /// user-initiated (not polled). The `operations_appearances` projection that
 /// blocks the transactions endpoint does NOT block the list.
+/// The ordering value the list pages on: the pool's LAST ACTIVITY.
+///
+/// `last_updated_ledger` is the RMT version, and it means two different things.
+/// A classic pool's row is rewritten on every deposit, withdrawal and trade, so
+/// there it IS the last activity. A soroban pool's row is written once, at
+/// registration, and never again — its activity lives in `pool_state_changes`.
+/// Measured on production 2026-09-09: for 662 of 734 soroban pools the real
+/// activity is NEWER than this column, by 211 days on average and 788 at worst.
+///
+/// Ordering on the raw column therefore opened the list on the pools that had
+/// just been REGISTERED — the emptiest end of the population. Measured on the
+/// first page of the soroban list: 35% carried any shares, against 75% across
+/// the whole population.
+///
+/// `greatest` rather than a per-kind branch: a classic pool has no state-change
+/// rows, so the join misses and the column wins; a soroban pool's column is its
+/// registration, which its activity is never earlier than. One expression, one
+/// meaning, no `pool_kind` test.
+const ACTIVITY_LEDGER: &str = "greatest(lp.last_updated_ledger, ifNull(sc.led, 0))";
+
 pub async fn fetch_pool_list(
     client: &clickhouse::Client,
     params: &ResolvedPoolListParams,
@@ -1758,9 +1778,10 @@ pub async fn fetch_pool_list(
     // A tampered/non-hex cursor degrades to "no keyset" (first page).
     let keyset = match params.cursor.as_ref() {
         Some(c) if is_hex_pool_id(&c.pool_id_hex) => format!(
-            "AND ((lp.last_updated_ledger {op} {cl}) \
-                  OR (lp.last_updated_ledger = {cl} \
+            "AND (({act} {op} {cl}) \
+                  OR ({act} = {cl} \
                       AND lower(hex(lp.pool_id)) {op} '{ph}'))",
+            act = ACTIVITY_LEDGER,
             op = op,
             cl = c.created_at_ledger,
             ph = c.pool_id_hex,
@@ -1864,10 +1885,14 @@ pub async fn fetch_pool_list(
          page AS ( \
              SELECT lp.pool_id AS pool_id, lp.pool_kind AS pool_kind, \
                     lp.legs AS legs, lp.fee_bps AS fee_bps, \
-                    lp.last_updated_ledger AS last_updated_ledger \
+                    lp.last_updated_ledger AS last_updated_ledger, \
+                    {act} AS activity_ledger \
              FROM liquidity_pools lp FINAL \
+             LEFT JOIN (SELECT pool_id, max(ledger_sequence) AS led \
+                        FROM pool_state_changes GROUP BY pool_id) sc \
+                 ON sc.pool_id = lp.pool_id \
              WHERE 1 = 1{filters} {keyset} \
-             ORDER BY last_updated_ledger {order}, pool_id {order} \
+             ORDER BY activity_ledger {order}, pool_id {order} \
              LIMIT {limit} \
          ), \
          band AS ( \
@@ -1880,7 +1905,7 @@ pub async fn fetch_pool_list(
              lp.legs                                         AS legs, \
              lp.fee_bps                                      AS fee_bps, \
              ifNull(cr.created_at_ledger, lp.last_updated_ledger) AS created_at_ledger, \
-             lp.last_updated_ledger                          AS cursor_ledger, \
+             lp.activity_ledger                              AS cursor_ledger, \
              toInt64(ifNull(pc.participant_count, 0))        AS participant_count, \
              s.latest_ledger_sequence                        AS latest_snapshot_ledger, \
              toString(s.reserve_a)                           AS reserve_a, \
@@ -1931,7 +1956,11 @@ pub async fn fetch_pool_list(
              WHERE sequence IN (SELECT last_updated_ledger FROM page) \
              GROUP BY sequence \
          ) l_snap ON l_snap.sequence = s.latest_ledger_sequence \
-         ORDER BY lp.last_updated_ledger {order}, lp.pool_id {order}",
+         /* The outer ORDER BY must repeat the CTE's, or the page holds the \
+            right rows in the wrong order and `finalize_page` cuts the cursor \
+            from the wrong last row — pages then overlap. */ \
+         ORDER BY lp.activity_ledger {order}, lp.pool_id {order}",
+        act = ACTIVITY_LEDGER,
         filters = filters,
         keyset = keyset,
         order = order,
@@ -2495,6 +2524,66 @@ mod decode_smoke {
     /// behaviour: `USD` returning nothing while the list is full of `USDC`
     /// pools. Asserting the returned legs actually contain the needle also
     /// catches the opposite failure — a predicate that stopped filtering.
+    /// Paging must not repeat a row, which it does the moment the outer
+    /// `ORDER BY` and the paging CTE's disagree: the page then holds the right
+    /// rows in the wrong order and the cursor is cut from the wrong last row.
+    ///
+    /// Invisible to every unit test — the SQL is inline, and one page alone
+    /// looks perfectly correct. It took two real pages to see it.
+    #[tokio::test]
+    async fn a_second_page_repeats_nothing_from_the_first() {
+        let Some(ch) = client() else {
+            eprintln!("CH_URL unset — skipping LP paging smoke");
+            return;
+        };
+        let base = |cursor| ResolvedPoolListParams {
+            limit: 10,
+            cursor,
+            pool_kind: None,
+            pool_id_hex: None,
+            asset_codes: vec![],
+        };
+
+        let first = fetch_pool_list(&ch, &base(None), Direction::Next)
+            .await
+            .expect("first page decodes");
+        if first.len() < 10 {
+            eprintln!("fewer than two pages of pools here — skipping");
+            return;
+        }
+        let last = first.last().expect("non-empty");
+        let second = fetch_pool_list(
+            &ch,
+            &base(Some(PoolListCursor {
+                created_at_ledger: last.cursor_ledger,
+                pool_id_hex: last.pool_id_hex.clone(),
+            })),
+            Direction::Next,
+        )
+        .await
+        .expect("second page decodes");
+
+        let seen: std::collections::HashSet<&str> =
+            first.iter().map(|p| p.pool_id_hex.as_str()).collect();
+        let repeated: Vec<&str> = second
+            .iter()
+            .map(|p| p.pool_id_hex.as_str())
+            .filter(|h| seen.contains(h))
+            .collect();
+        assert!(
+            repeated.is_empty(),
+            "page 2 repeats {} row(s) from page 1 — the paging key and the \
+             outer ORDER BY have diverged: {repeated:?}",
+            repeated.len()
+        );
+
+        // And the pages must descend: the ordering value never rises.
+        assert!(
+            second.first().map(|p| p.cursor_ledger) <= Some(last.cursor_ledger),
+            "page 2 starts above where page 1 ended"
+        );
+    }
+
     #[tokio::test]
     async fn asset_code_filter_matches_substring() {
         let Some(ch) = client() else {
