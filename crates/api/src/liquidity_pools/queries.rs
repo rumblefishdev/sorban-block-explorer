@@ -764,14 +764,37 @@ fn total_shares_of(
     snapshot: Option<String>,
     instance_raw: Option<&str>,
     instance_decimals: u32,
+    zero_is_real: bool,
 ) -> Option<String> {
     if let Some(v) = snapshot {
         return Some(v);
     }
     match instance_raw {
+        Some("0") if zero_is_real => Some("0".to_string()),
         Some(raw) if raw != "0" => scale_decimal_str(raw, instance_decimals),
         _ => None,
     }
+}
+
+/// Whether a `total_shares` of 0 on this pool is a MEASUREMENT or an absence.
+///
+/// The writer records three different meanings for that one value, and reading
+/// them as one hides a real number:
+///
+///   * **pair-factory** — "`total_shares = 0` before the first mint is a TRUE
+///     zero (nothing outstanding), not a fallback". Its rows always carry the
+///     key, so 0 means 0.
+///   * **router** — the instance write stores 0 when the `TotalShares` key was
+///     ABSENT, which is structural for concentrated and elastic pools.
+///   * **config-factory** — structurally 0 forever, and the writer states
+///     outright that the read half must "never render this 0 as a measured
+///     value".
+///
+/// The pair-factory is the family that emits no type at all (the vendor has one
+/// fixed mode), so an empty `pool_type_raw` on a soroban row identifies it —
+/// 215 of 215 on production, 2026-09-09.
+fn zero_shares_is_measured(pool_kind: i16, pool_type_raw: &str) -> bool {
+    pool_kind == domain::PoolKind::Soroban as i16 && pool_type_raw.is_empty()
 }
 
 /// What a soroban pool's INSTANCE knows about it: its shares, the scale to
@@ -930,6 +953,9 @@ fn fee_revenue_usd(volume_usd: f64, fee_bps: i32) -> f64 {
 #[derive(Debug, Row, Deserialize)]
 struct PoolDetailChRow {
     pool_id_hex: String,
+    /// Verbatim family marker — empty on the pair-factory (and on every
+    /// classic row). Read only by [`zero_shares_is_measured`].
+    pool_type_raw: String,
     pool_kind: i16,
     legs: Vec<i64>,
     fee_bps: i32,
@@ -1007,6 +1033,7 @@ pub async fn fetch_pool_by_id(
         .query(&format!(
             "SELECT \
                 lower(hex(lp.pool_id))               AS pool_id_hex, \
+                toString(lp.pool_type_raw)           AS pool_type_raw, \
                 toInt16(lp.pool_kind)                AS pool_kind, \
                 lp.legs                              AS legs, \
                 lp.fee_bps                           AS fee_bps, \
@@ -1098,6 +1125,7 @@ pub async fn fetch_pool_by_id(
             r.total_shares,
             r.instance_shares.as_deref(),
             r.instance_shares_decimals,
+            zero_shares_is_measured(r.pool_kind, &r.pool_type_raw),
         ),
         // Filled by the handler from `fetch_pool_usd_analytics` (0199
         // compute-at-read); the snapshot columns are not read.
@@ -1858,6 +1886,9 @@ pub async fn fetch_pool_chart(
 #[derive(Debug, Row, Deserialize)]
 struct PoolListChRow {
     pool_id_hex: String,
+    /// Verbatim family marker — empty on the pair-factory (and on every
+    /// classic row). Read only by [`zero_shares_is_measured`].
+    pool_type_raw: String,
     pool_kind: i16,
     /// Leg ASSET surrogates in registration order. Resolved to identities in
     /// Rust rather than joined here: the dimensions key on `assets.id`, and the
@@ -2053,6 +2084,7 @@ pub async fn fetch_pool_list(
         "WITH \
          page AS ( \
              SELECT lp.pool_id AS pool_id, lp.pool_kind AS pool_kind, \
+                    lp.pool_type_raw AS pool_type_raw, \
                     lp.legs AS legs, lp.fee_bps AS fee_bps, \
                     lp.last_updated_ledger AS last_updated_ledger, \
                     {act} AS activity_ledger, \
@@ -2080,6 +2112,7 @@ pub async fn fetch_pool_list(
          ) \
          SELECT \
              lower(hex(lp.pool_id))                          AS pool_id_hex, \
+             toString(lp.pool_type_raw)                      AS pool_type_raw, \
              toInt16(lp.pool_kind)                           AS pool_kind, \
              lp.legs                                         AS legs, \
              lp.fee_bps                                      AS fee_bps, \
@@ -2237,6 +2270,7 @@ pub async fn fetch_pool_list(
                     r.total_shares,
                     r.instance_shares.as_deref(),
                     r.instance_shares_decimals,
+                    zero_shares_is_measured(r.pool_kind, &r.pool_type_raw),
                 ),
                 tvl,
                 volume: None,
@@ -2380,7 +2414,7 @@ mod tests {
     #[test]
     fn a_snapshot_value_is_used_verbatim() {
         assert_eq!(
-            total_shares_of(Some("750.699916".into()), Some("9516607233561"), 7),
+            total_shares_of(Some("750.699916".into()), Some("9516607233561"), 7, false),
             Some("750.699916".to_string())
         );
     }
@@ -2390,16 +2424,38 @@ mod tests {
     /// would state that a pool holding real liquidity has no shares.
     #[test]
     fn a_zero_instance_value_is_unknown_not_zero() {
-        assert_eq!(total_shares_of(None, Some("0"), 7), None);
-        assert_eq!(total_shares_of(None, None, 7), None);
+        assert_eq!(total_shares_of(None, Some("0"), 7, false), None);
+        assert_eq!(total_shares_of(None, None, 7, false), None);
     }
 
     #[test]
     fn a_soroban_pool_falls_back_to_its_instance_state() {
         assert_eq!(
-            total_shares_of(None, Some("252647541418"), 7),
+            total_shares_of(None, Some("252647541418"), 7, false),
             Some("25264.7541418".to_string())
         );
+    }
+
+    /// The writer records three meanings for a zero `total_shares`, and
+    /// collapsing them hides a real number. Only the pair-factory's is a
+    /// measurement.
+    #[test]
+    fn only_the_pair_factory_zero_is_a_measurement() {
+        let soroban = domain::PoolKind::Soroban as i16;
+        let classic = domain::PoolKind::Classic as i16;
+        // Pair-factory: emits no type, and its 0 means nothing outstanding.
+        assert!(zero_shares_is_measured(soroban, ""));
+        assert_eq!(
+            total_shares_of(None, Some("0"), 7, true),
+            Some("0".to_string())
+        );
+        // Router / config families: 0 is an absent key, never a count.
+        for family in ["constant", "stable", "concentrated", "elastic", "0"] {
+            assert!(!zero_shares_is_measured(soroban, family), "{family}");
+        }
+        assert_eq!(total_shares_of(None, Some("0"), 7, false), None);
+        // A classic row also carries an empty marker and must not be caught.
+        assert!(!zero_shares_is_measured(classic, ""));
     }
 
     #[test]
