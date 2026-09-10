@@ -668,8 +668,10 @@ const SEEK_OVERFETCH: i64 = 8;
 /// (0 or 4). The trailing `LIMIT` is inlined. Only `sac_only` / search pull side
 /// tables into the seek; the default page is a pure `assets` PK walk.
 /// The displayed code of an asset row — native's `XLM` standing in for its
-/// empty stored code. Mirrored in `search::queries` and `pool_asset_codes`.
-const SHOWN: &str = "lower(if(a.asset_type = 0, 'XLM', toString(a.asset_code)))";
+/// empty stored code. One producer, in `common::asset_identity`.
+fn shown() -> String {
+    crate::common::asset_identity::shown_code_sql("a.")
+}
 
 fn build_list_seek_sql(params: &ResolvedListParams, direction: Direction) -> String {
     // Ordered by holders, not by the identity 4-tuple (task 0547). The old key
@@ -739,9 +741,10 @@ fn build_list_seek_sql(params: &ResolvedListParams, direction: Direction) -> Str
               LEFT JOIN (SELECT contract_id, name, symbol FROM soroban_contract_metadata FINAL) m \
                   ON m.contract_id = sc.contract_id",
             format!(
-                " AND (position({SHOWN}, lower(?)) > 0 \
+                " AND (position({shown}, lower(?)) > 0 \
                    OR positionCaseInsensitive(coalesce(m.name, ''), ?) > 0 \
-                   OR positionCaseInsensitive(coalesce(m.symbol, ''), ?) > 0)"
+                   OR positionCaseInsensitive(coalesce(m.symbol, ''), ?) > 0)",
+                shown = shown(),
             ),
         )
     } else {
@@ -1301,7 +1304,7 @@ mod tests {
         };
         let sql = build_list_seek_sql(&params, Direction::Next);
         assert!(
-            sql.contains(SHOWN),
+            sql.contains(&shown()),
             "the needle must be matched against the DISPLAYED code, so native \
              XLM is reachable; got: {sql}"
         );

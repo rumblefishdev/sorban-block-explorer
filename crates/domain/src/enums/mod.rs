@@ -21,6 +21,7 @@ mod contract_event_type;
 mod contract_type;
 mod nft_event_type;
 mod operation_type;
+mod pool_kind;
 
 pub use asset_family::AssetFamily;
 pub use asset_type::AssetType;
@@ -28,6 +29,7 @@ pub use contract_event_type::ContractEventType;
 pub use contract_type::ContractType;
 pub use nft_event_type::NftEventType;
 pub use operation_type::OperationType;
+pub use pool_kind::PoolKind;
 
 /// Error returned when a SMALLINT value read from the database (or a
 /// string parsed from an API request) does not correspond to any known

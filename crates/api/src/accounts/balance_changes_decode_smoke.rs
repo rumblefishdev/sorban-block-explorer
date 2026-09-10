@@ -208,6 +208,7 @@ async fn asset_identity_row_decodes_bool_and_lowcardinality_nullables() {
                     toInt16(1) AS asset_type, \
                     nullIf(CAST('USDC' AS LowCardinality(String)), '') AS asset_code, \
                     toInt64(42) AS issuer_id, \
+                    toInt64(0)  AS contract_id, \
                     nullIf('', '') AS contract_strkey, \
                     nullIf('', '') AS symbol, \
                     coalesce(CAST(NULL AS Nullable(UInt32)), 7) AS decimals",
