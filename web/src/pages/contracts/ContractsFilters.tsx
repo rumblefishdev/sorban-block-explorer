@@ -1,8 +1,10 @@
 import SearchIcon from '@mui/icons-material/SearchOutlined';
-import { Box, Divider, InputAdornment, Stack, TextField } from '@mui/material';
-import { Chip, useDebouncedDraft } from '@rumblefish/soroban-block-explorer-ui';
+import { Box, Divider, InputAdornment, TextField } from '@mui/material';
+import { useDebouncedDraft } from '@rumblefish/soroban-block-explorer-ui';
 
 import { CONTRACT_TYPE_FILTERS } from './contractType.js';
+
+import { FilterChipRow } from '../detail/FilterChipRow.js';
 
 interface ContractsFiltersProps {
   /** Search value (`filter[q]`) — contract id or name. */
@@ -64,22 +66,11 @@ export function ContractsFilters({
         flexItem
         sx={{ display: { xs: 'none', sm: 'block' }, my: 0.5 }}
       />
-      <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-        {CONTRACT_TYPE_FILTERS.map((option) => {
-          const active = option.value === type;
-          return (
-            <Chip
-              key={option.value}
-              label={option.label}
-              size="lg"
-              color={active ? 'accent' : 'neutral'}
-              clickable
-              onClick={() => onTypeChange(option.value)}
-              aria-pressed={active}
-            />
-          );
-        })}
-      </Stack>
+      <FilterChipRow
+        options={CONTRACT_TYPE_FILTERS}
+        value={type}
+        onChange={onTypeChange}
+      />
     </Box>
   );
 }

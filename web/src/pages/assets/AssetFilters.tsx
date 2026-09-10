@@ -1,7 +1,9 @@
-import { Box, Divider, Stack } from '@mui/material';
+import { Box, Divider } from '@mui/material';
 import { Chip, DebouncedField } from '@rumblefish/soroban-block-explorer-ui';
 
 import { ASSET_TYPE_FILTERS } from './assetType.js';
+
+import { FilterChipRow } from '../detail/FilterChipRow.js';
 
 interface AssetFiltersProps {
   /** Asset-code search value (`filter[code]`). */
@@ -54,22 +56,11 @@ export function AssetFilters({
         flexItem
         sx={{ display: { xs: 'none', sm: 'block' }, my: 0.5 }}
       />
-      <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-        {ASSET_TYPE_FILTERS.map((option) => {
-          const active = option.value === type;
-          return (
-            <Chip
-              key={option.value}
-              label={option.label}
-              size="lg"
-              color={active ? 'accent' : 'neutral'}
-              clickable
-              onClick={() => onTypeChange(option.value)}
-              aria-pressed={active}
-            />
-          );
-        })}
-      </Stack>
+      <FilterChipRow
+        options={ASSET_TYPE_FILTERS}
+        value={type}
+        onChange={onTypeChange}
+      />
       <Divider
         orientation="vertical"
         flexItem
