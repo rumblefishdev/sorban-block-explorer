@@ -313,8 +313,8 @@ struct PoolRow {
 /// columns, which was a fourth copy of the "native renders as XLM" rule and
 /// could only ever name a classic pool (a soroban row's pair columns are
 /// placeholders that read as XLM/XLM).
-
-/// Two shapes, one entity.
+///
+/// # Two shapes, one entity
 ///
 /// A hash-shaped query is a point seek on the primary key and stays exactly as
 /// it was. Anything else is treated as an asset code and matched with the SAME
@@ -416,14 +416,14 @@ async fn search_pool_by_id(
     let hash_hex = hex::encode(bytes);
 
     let row = client
-        .query(&format!(
+        .query(
             "SELECT lower(hex(pool_id)) AS pool_hex, \
                     toInt16(pool_kind) AS pool_kind, legs \
              FROM liquidity_pools \
              WHERE pool_id = unhex(?) \
              ORDER BY last_updated_ledger DESC \
-             LIMIT 1"
-        ))
+             LIMIT 1",
+        )
         .bind(&hash_hex)
         .fetch_optional::<PoolRow>()
         .await?;
