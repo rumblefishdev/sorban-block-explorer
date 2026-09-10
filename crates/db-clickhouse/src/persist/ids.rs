@@ -174,10 +174,14 @@ pub fn credit_asset_id(asset_code: &str, issuer: &str) -> i64 {
     asset_id(1, asset_code, account_id(issuer), 0)
 }
 
-/// The surrogate for one leg of a liquidity pool, from the `liquidity_pools`
-/// columns (`asset_a_type` / `asset_a_code` / `asset_a_issuer_id`).
+/// The surrogate for one leg of a liquidity pool, from the XDR asset the
+/// ledger entry carries (type / code / issuer).
 ///
-/// **`asset_type` there is NOT the project enum [`asset_id`] takes.** It is the
+/// It used to take those three off the `liquidity_pools` pair columns; task
+/// 0374 retired them, and the writer now feeds the XDR values straight in. The
+/// warning below is unchanged and is the reason this function exists at all.
+///
+/// **`asset_type` here is NOT the project enum [`asset_id`] takes.** It is the
 /// raw XDR asset type, where `1` is `credit_alphanum4` and `2` is
 /// `credit_alphanum12` — both ordinary classic credit assets. In the project
 /// enum `2` means the retired SAC facet, so feeding a pool leg straight into

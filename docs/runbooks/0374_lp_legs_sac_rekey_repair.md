@@ -15,7 +15,7 @@ Measured on production 2026-09-08: **1,084 of 1,175 soroban leg occurrences
 resolved to no asset at all**, while 38,932 of 38,932 classic legs resolved
 cleanly. 218 pools hold a native XLM leg and not one carried XLM's id.
 
-The writer is fixed (`pool_leg_token_id` in `persist/stage.rs`, commit
+The writer is fixed (`contract_token_asset_id` in `persist/stage.rs`, commit
 `bf1a46a8`). This runbook repairs the rows written before that fix.
 
 ## Preconditions — the order is the whole safety argument

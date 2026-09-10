@@ -275,29 +275,28 @@ pub struct NftEnrichmentRow {
 #[derive(Debug, Clone, Row, Serialize)]
 pub struct LiquidityPoolRow {
     pub pool_id: [u8; 32],
-    pub asset_a_type: i16,
-    pub asset_a_code: String,
-    pub asset_a_issuer_id: i64,
-    pub asset_b_type: i16,
-    pub asset_b_code: String,
-    pub asset_b_issuer_id: i64,
     pub fee_bps: i32,
     pub last_updated_ledger: i64,
     /// 0 = classic (pool_id: CAP-38 hash), 1 = soroban contract (pool_id:
     /// the 32-byte payload of the C… address). Registry columns below are
     /// meaningful only for kind 1; classic writers set the defaults.
     pub pool_kind: u8,
-    /// One surrogate per leg, in a PER-KIND id space (`pool_kind` says
-    /// which): kind 1 = token-CONTRACT surrogates (`ids::contract_id`) in
-    /// emission order, matching the pool's own `get_tokens()` so reserve
-    /// vectors align index-for-index; kind 0 = ASSET surrogates
-    /// (`ids::pool_leg_asset_id` — the `lp_operation_amounts` join key),
-    /// legs-migration step 2 towards retiring the pair columns.
+    /// One `assets.id` surrogate per leg, in registration order — ONE id
+    /// space for both kinds, so a reader never has to know which writer filled
+    /// the row. Soroban legs keep the pool's own `get_tokens()` order, so
+    /// reserve vectors align index-for-index.
     ///
-    /// NOT `assets.id` in general (an earlier comment claimed that): the two
-    /// coincide only for bespoke type-3 tokens. 96% of legs are SACs, whose
-    /// classic asset has a DIFFERENT id — a leg resolves to its display
-    /// identity via `asset_sac` (`resolve_leg_assets`, task 0374 step 13).
+    /// **A SAC leg is keyed on its CLASSIC asset, not on its contract**
+    /// (`contract_token_asset_id`, task 0374). ADR 0051 retired `asset_type = 2`, so
+    /// a SAC has no `assets` row of its own and a leg keyed on the contract
+    /// surrogate points at nothing: that mis-keying orphaned 1,084 of 1,175
+    /// soroban legs on production before it was fixed, and
+    /// `docs/runbooks/0374_lp_legs_sac_rekey_repair.md` exists to repair the
+    /// rows written under it.
+    ///
+    /// A fourth AMM family MUST key its legs through `contract_token_asset_id` for
+    /// the same reason — writing `ids::contract_id` directly re-creates the
+    /// orphan.
     pub legs: Vec<i64>,
     /// Surrogate of the registering router contract. Venue labels resolve
     /// from this id at read time — no label is stored on the pool.

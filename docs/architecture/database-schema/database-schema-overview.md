@@ -303,9 +303,10 @@ All closed-domain enum columns are `SMALLINT` backed by a Rust `#[repr(i16)]` en
 `crates/domain/src/enums/`, with a `CHECK` range constraint and a `<name>_name(ty)` SQL
 helper function for psql/BI debugging. Columns: `operations_appearances.type`,
 `assets.asset_type`, `account_balances_current.asset_type`,
-`nft_ownership.event_type`,
-`liquidity_pools.asset_a_type`, `liquidity_pools.asset_b_type`,
-`soroban_contracts.contract_type`. Parser code binds integers directly; API serializers
+`nft_ownership.event_type`, `liquidity_pools.pool_kind`,
+`soroban_contracts.contract_type`. (`liquidity_pools.asset_a_type` /
+`asset_b_type` were on this list until task 0374 retired the pair columns —
+a pool's composition is `legs`, an array of `assets.id` surrogates.) Parser code binds integers directly; API serializers
 render the canonical string.
 
 ## 4. Table Design

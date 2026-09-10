@@ -387,12 +387,6 @@ async fn targeted_write_persists_pool_tables_and_a_tied_registry_row_replaces() 
         }],
         pool_rows: vec![LiquidityPoolRow {
             pool_id: POOL,
-            asset_a_type: 0,
-            asset_a_code: String::new(),
-            asset_a_issuer_id: 0,
-            asset_b_type: 0,
-            asset_b_code: String::new(),
-            asset_b_issuer_id: 0,
             fee_bps: 30,
             last_updated_ledger: LEDGER,
             pool_kind: 1,

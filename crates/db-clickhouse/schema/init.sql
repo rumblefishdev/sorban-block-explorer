@@ -629,24 +629,33 @@ ORDER BY (contract_id, token_id);
 -- forever in soroban_events — extract on demand, never copy (depth-first,
 -- 2026-08-28).
 --
--- The pair-shaped asset_a_*/asset_b_* columns are LEGACY once `legs` is
--- backfilled for classic rows: 3- and 4-leg stable pools exist on mainnet and
--- do not fit a pair. They stay until the ~612 pair-shaped call sites migrate
--- to `legs` (tracked in 0374; do not add new readers).
+-- The pair-shaped asset_a_*/asset_b_* columns are GONE (task 0374). A pool is
+-- its `legs`: 3- and 4-leg stable pools exist on mainnet and never fitted a
+-- pair, and a soroban row had to write placeholder pair values that read as
+-- native XLM downstream. Every reader migrated to `legs` first; the writer
+-- still derives a CLASSIC pool's two legs from the XDR pair, which is where
+-- that shape legitimately lives.
+--
+-- **Dropping them on an existing deployment is irreversible and gated.** A row
+-- whose `legs` is still empty carries its composition NOWHERE else, and our
+-- leg surrogate is `cityhash_102_128`'s low half, which ClickHouse cannot
+-- compute (its `cityHash64` is a different algorithm) — so the identity cannot
+-- be recovered from the database at all, only by re-parsing XDR from S3.
+-- Before the ALTER, `SELECT countIf(length(legs) = 0) FROM liquidity_pools
+-- FINAL` MUST be 0. See docs/deployment.md.
 CREATE TABLE IF NOT EXISTS liquidity_pools (
     pool_id              FixedString(32),        -- classic: SHA-256 of the asset pair (CAP-38); soroban: 32-byte payload of the C... contract address. pool_kind says which — without it a contract id renders as a well-formed WRONG L... strkey
-    asset_a_type         Int16,                  -- LEGACY pair shape; XDR AssetType domain (NOT assets.asset_type's AssetFamily domain — task 0496)
-    asset_a_code         LowCardinality(String), -- LEGACY pair shape
-    asset_a_issuer_id    Int64,                  -- 0 for native; LEGACY pair shape
-    asset_b_type         Int16,                  -- LEGACY pair shape
-    asset_b_code         LowCardinality(String), -- LEGACY pair shape
-    asset_b_issuer_id    Int64,                  -- LEGACY pair shape
     fee_bps              Int32,                  -- both worlds; soroban PER FAMILY: router = add_pool init_args[0] (u32, the one arg every measured shape shares); pair-factory = the vendor's compiled-in 30; config-factory = the pool's own CONFIG total_fee_bps (creation-time snapshot, mutable on chain)
     last_updated_ledger  Int64,
     pool_kind            UInt8                  DEFAULT 0,  -- 0=classic, 1=soroban contract
     legs                 Array(Int64)           DEFAULT [], -- ONE id space for both kinds: ASSET surrogates (assets.id). kind 0 = pool_leg_asset_id (the lp_operation_amounts join key); kind 1 = the leg token in emission order (= get_tokens()), re-keyed at WRITE time — a bespoke type-3 token's contract surrogate IS its assets.id, a SAC leg keys onto the classic/native asset it wraps (ADR 0051 retired asset_type=2, so a SAC has no assets row and a leg keyed on its surrogate ORPHANS: 1,084 of 1,175 did, task 0374). Read-side resolution via asset_sac was the earlier plan and is withdrawn — the write side owns it, exactly as build_balance_rows does. 3- and 4-leg pools exist, so never a pair
     deployment_id        Int64                  DEFAULT 0,  -- soroban_contracts.id surrogate of the registering router; 0 = classic. Two live router deployments share Aquarius's code and only one is Aquarius (task 0374 T1) — labels resolve from this id at read time, so a new pool is labelled the moment it registers, with no editorial UPDATE to re-run
     pool_type_raw        LowCardinality(String) DEFAULT ''  -- verbatim PER FAMILY, un-normalised on purpose (folding vocabularies is read-time interpretation): router = add_pool sym (constant|stable|concentrated|...); pair-factory = '' (the vendor emits no type); config-factory = the PairType u32 discriminant as text ("0" = XYK)
+    -- Prod (still carrying the retired pair columns) drops them with:
+    --   ALTER TABLE liquidity_pools
+    --     DROP COLUMN asset_a_type, DROP COLUMN asset_a_code, DROP COLUMN asset_a_issuer_id,
+    --     DROP COLUMN asset_b_type, DROP COLUMN asset_b_code, DROP COLUMN asset_b_issuer_id
+    -- — only once no pool has an empty `legs` (see the header note).
     -- share_token_id was removed from the write path before any deploy: the relation lives ONLY in pool_instance_state (a registry column would clobber the full row on RMT merge, and a permanent 0 misleads). Prod (which received the column via the registry backfill ALTER) drops it with: ALTER TABLE liquidity_pools DROP COLUMN share_token_id
 )
 ENGINE = ReplacingMergeTree(last_updated_ledger)

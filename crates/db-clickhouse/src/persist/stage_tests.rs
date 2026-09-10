@@ -26,7 +26,7 @@ fn sac_map() -> HashMap<i64, i64> {
 /// Asserts the invariant all three families share: a SAC leg carries the
 /// WRAPPED asset's id, a Soroban-native leg keeps its own contract surrogate,
 /// and the deployment is never re-keyed (a factory is not an asset).
-fn assert_legs_rekeyed(row: &LiquidityPoolRow, deployer: &str) {
+fn assert_legs_rekeyed(row: &LiquidityPoolRow) {
     assert_eq!(
         row.legs[0],
         ids::NATIVE_ASSET_ID,
@@ -45,7 +45,7 @@ fn assert_legs_rekeyed(row: &LiquidityPoolRow, deployer: &str) {
     );
     assert_eq!(
         row.deployment_id,
-        ids::contract_id(deployer),
+        ids::contract_id(DEPLOYER),
         "the registering factory/router is not an asset and is never re-keyed",
     );
 }
@@ -64,7 +64,7 @@ fn router_registration_rekeys_a_sac_leg() {
     let row = pool_registry_row(&event, DEPLOYER, 50_875_676, &sac_map())
         .expect("a well-formed add_pool registration builds a row");
 
-    assert_legs_rekeyed(&row, DEPLOYER);
+    assert_legs_rekeyed(&row);
 }
 
 /// Pair-factory family (Soroswap). Same defect, separate builder — the three
@@ -84,7 +84,7 @@ fn pair_factory_registration_rekeys_a_sac_leg() {
     let row = factory_pair_registry_row(&reg, 50_875_676, &sac_map())
         .expect("a well-formed new_pair registration builds a row");
 
-    assert_legs_rekeyed(&row, DEPLOYER);
+    assert_legs_rekeyed(&row);
 }
 
 /// Config-factory family (Phoenix), whose legs come from the pool's own CONFIG
@@ -107,7 +107,7 @@ fn config_factory_registration_rekeys_a_sac_leg() {
     let row = config_pool_registry_row(&reg, &config, 50_875_676, &sac_map())
         .expect("a well-formed CONFIG builds a row");
 
-    assert_legs_rekeyed(&row, DEPLOYER);
+    assert_legs_rekeyed(&row);
 }
 
 /// An EMPTY map is the legacy-caller case, and it must not invent a mapping:
@@ -116,11 +116,11 @@ fn config_factory_registration_rekeys_a_sac_leg() {
 #[test]
 fn an_empty_sac_map_leaves_every_leg_alone() {
     assert_eq!(
-        pool_leg_token_id(XLM_SAC, &HashMap::new()),
+        contract_token_asset_id(XLM_SAC, &HashMap::new()),
         ids::contract_id(XLM_SAC),
     );
     assert_eq!(
-        pool_leg_token_id(SOROBAN_TOKEN, &HashMap::new()),
+        contract_token_asset_id(SOROBAN_TOKEN, &HashMap::new()),
         ids::contract_id(SOROBAN_TOKEN),
     );
 }
