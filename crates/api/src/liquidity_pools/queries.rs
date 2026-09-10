@@ -144,10 +144,15 @@ impl Reserves<'_> {
                 // The snapshot is pair-shaped; a third leg has no slot in it.
                 _ => None,
             },
-            Self::Raw(v) => v
-                .get(i)
-                .zip(scale)
-                .and_then(|(raw, d)| scale_decimal_str(raw, d)),
+            Self::Raw(v) => match v.get(i)?.as_str() {
+                // Zero is zero at EVERY scale, so a leg the pool holds none of
+                // is knowable even when its decimals are not. 251 of 1,501
+                // soroban leg reserves are exactly this (measured 2026-09-09),
+                // and rendering them as "—" claimed ignorance about the one
+                // value no scale is needed to state.
+                "0" => Some("0".to_string()),
+                raw => scale_decimal_str(raw, scale?),
+            },
         }
     }
 }

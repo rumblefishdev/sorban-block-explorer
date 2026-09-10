@@ -49,7 +49,11 @@ function assetSubtitle(leg: PoolAssetLeg, code: string): ReactNode {
 }
 
 export function PoolKpiStrip({ pool }: PoolKpiStripProps) {
-  const stale = isPoolStale(pool.latest_snapshot_at);
+  // "No recent snapshot" is only true of a pool that HAS snapshots. A Soroban
+  // pool never does — the table is classic-only — so saying it went stale
+  // describes a thing that never existed. Absence there is "not indexed".
+  const stale =
+    pool.latest_snapshot_ledger != null && isPoolStale(pool.latest_snapshot_at);
 
   return (
     <Stack
