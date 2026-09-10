@@ -49,6 +49,7 @@ pub(crate) struct AssetIdentityChRow {
     pub(crate) contract_strkey: Option<String>,
     pub(crate) symbol: Option<String>,
     pub(crate) decimals: u32,
+    pub(crate) decimals_known: bool,
 }
 
 /// One asset's identity as the dimension knows it, with the issuer StrKey
@@ -69,7 +70,19 @@ pub(crate) struct ResolvedAsset {
     pub(crate) issuer: Option<String>,
     pub(crate) contract_strkey: Option<String>,
     pub(crate) symbol: Option<String>,
+    /// The scale to read a raw amount of this asset at. **Check
+    /// [`Self::decimals_known`] before scaling with it** — `7` is also what
+    /// this carries when nothing said otherwise.
     pub(crate) decimals: u32,
+    /// Whether [`Self::decimals`] is a FACT rather than a fallback.
+    ///
+    /// True for a classic or native asset, where 7 is fixed by the protocol,
+    /// and for a Soroban token whose contract publishes its decimals. False
+    /// for a Soroban token no metadata was found for — measured on production
+    /// 2026-09-09, 264 of 304 soroban pool legs, whose real scales run to 18.
+    /// Scaling a raw amount by a guessed 7 there is wrong by up to 10^11 and
+    /// still looks like a number, which is worse than showing nothing.
+    pub(crate) decimals_known: bool,
 }
 
 /// Resolve a bounded set of `asset_transfers.asset_id` surrogates to a link
@@ -190,6 +203,7 @@ fn assemble(
                     contract_strkey: r.contract_strkey,
                     symbol: r.symbol,
                     decimals: r.decimals,
+                    decimals_known: r.decimals_known,
                 },
             )
         })
@@ -210,7 +224,12 @@ async fn fetch_identity_rows(
                 a.contract_id                 AS contract_id, \
                 nullIf(sc.contract_id, '')    AS contract_strkey, \
                 nullIf(m.symbol, '')          AS symbol, \
-                coalesce(m.decimals, 7)       AS decimals \
+                coalesce(m.decimals, 7)       AS decimals, \
+                /* `a.id != 0` FIRST: an unmatched LEFT JOIN yields the column \
+                   default, and `asset_type` 0 is `native` — without the guard \
+                   every unknown asset would claim the protocol's 7. */ \
+                toBool((a.id != 0 AND a.asset_type IN (0, 1)) \
+                       OR m.decimals IS NOT NULL) AS decimals_known \
          FROM (SELECT arrayJoin(CAST([{in_list}] AS Array(Int64))) AS id) ids \
          LEFT JOIN (SELECT id, asset_type, asset_code, issuer_id, contract_id \
                     FROM assets \

@@ -211,7 +211,8 @@ async fn asset_identity_row_decodes_bool_and_lowcardinality_nullables() {
                     toInt64(0)  AS contract_id, \
                     nullIf('', '') AS contract_strkey, \
                     nullIf('', '') AS symbol, \
-                    coalesce(CAST(NULL AS Nullable(UInt32)), 7) AS decimals",
+                    coalesce(CAST(NULL AS Nullable(UInt32)), 7) AS decimals, \
+                    toBool(true) AS decimals_known",
         )
         .fetch_all::<AssetIdentityChRow>()
         .await
@@ -222,4 +223,6 @@ async fn asset_identity_row_decodes_bool_and_lowcardinality_nullables() {
     assert_eq!(rows[0].asset_code.as_deref(), Some("USDC"));
     assert_eq!(rows[0].contract_strkey, None);
     assert_eq!(rows[0].decimals, 7);
+    // The flag rides the same row; a classic asset's 7 is protocol, not a guess.
+    assert!(rows[0].decimals_known);
 }

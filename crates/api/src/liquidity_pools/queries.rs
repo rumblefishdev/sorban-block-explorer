@@ -127,16 +127,27 @@ enum Reserves<'a> {
 }
 
 impl Reserves<'_> {
-    /// The reserve for leg `i`, scaled, or `None` when unknown.
-    fn at(&self, i: usize, decimals: u32) -> Option<String> {
+    /// The reserve for leg `i`, scaled, or `None` when it is not knowable.
+    ///
+    /// `scale` is `None` when nothing established the leg's decimals. A raw
+    /// amount then has NO renderable value: the guess would be 7, real Soroban
+    /// legs run to 18, and the result would be wrong by up to 10^11 while
+    /// still reading as a number. Measured on production 2026-09-09, that is
+    /// 264 of 304 soroban legs — and the SAC re-key repair resolves 263 of
+    /// them, because a re-keyed leg is a classic asset whose 7 is protocol.
+    fn at(&self, i: usize, scale: Option<u32>) -> Option<String> {
         match self {
+            // Snapshot values arrive in units already — no scale to know.
             Self::Pair(a, b) => match i {
                 0 => a.map(str::to_string),
                 1 => b.map(str::to_string),
                 // The snapshot is pair-shaped; a third leg has no slot in it.
                 _ => None,
             },
-            Self::Raw(v) => v.get(i).and_then(|raw| scale_decimal_str(raw, decimals)),
+            Self::Raw(v) => v
+                .get(i)
+                .zip(scale)
+                .and_then(|(raw, d)| scale_decimal_str(raw, d)),
         }
     }
 }
@@ -152,7 +163,11 @@ fn leg_rows(
         .enumerate()
         .map(|(i, id)| {
             let d = display.get(id);
-            let reserve = reserves.at(i, identities.get(id).map_or(7, |r| r.decimals));
+            let scale = identities
+                .get(id)
+                .filter(|r| r.decimals_known)
+                .map(|r| r.decimals);
+            let reserve = reserves.at(i, scale);
             match identities.get(id) {
                 Some(r) if r.known => PoolLegRow {
                     family: r.asset_type,
@@ -417,6 +432,14 @@ pub struct PoolPriceContext {
     /// pair even though the two-leg case is the common one.
     pub legs: Vec<PriceLeg>,
     pub fee_bps: i32,
+    /// The pool's KIND, and with it where its reserves are recorded: a classic
+    /// pool's snapshots carry them already scaled, a soroban pool's state
+    /// changes carry raw integers.
+    pub kind: i16,
+    /// Decimals per leg, in pool order — the scale a soroban pool's RAW
+    /// reserves have to be read at, or `None` where nothing established it.
+    /// A classic pool's reserves are pre-scaled and this goes unused.
+    pub leg_decimals: Vec<Option<u32>>,
 }
 
 /// SELECT column order MUST match this struct (clickhouse positional decode).
@@ -424,6 +447,7 @@ pub struct PoolPriceContext {
 struct PriceContextChRow {
     legs: Vec<i64>,
     fee_bps: i32,
+    pool_kind: i16,
 }
 
 /// Resolve the pool's leg identities + `fee_bps`. `None` = pool unknown
@@ -439,7 +463,8 @@ pub async fn fetch_pool_price_context(
 ) -> Result<Option<PoolPriceContext>, clickhouse::error::Error> {
     let row = client
         .query(
-            "SELECT legs, fee_bps FROM liquidity_pools FINAL \
+            "SELECT legs, fee_bps, toInt16(pool_kind) AS pool_kind \
+             FROM liquidity_pools FINAL \
              WHERE pool_id = unhex(?) LIMIT 1",
         )
         .bind(pool_id_hex)
@@ -457,6 +482,23 @@ pub async fn fetch_pool_price_context(
             .map(|id| price_leg_of(*id, &identities))
             .collect(),
         fee_bps: r.fee_bps,
+        kind: r.pool_kind,
+        // 7 for an asset the dimension does not know — the same default the
+        // identity statement itself applies, and the value every share token
+        // measured on production reports.
+        // `None` where nothing established the scale — the chart then prices
+        // nothing for that pool rather than plotting a number off by orders of
+        // magnitude. Same rule as the per-leg reserve.
+        leg_decimals: r
+            .legs
+            .iter()
+            .map(|id| {
+                identities
+                    .get(id)
+                    .filter(|a| a.decimals_known)
+                    .map(|a| a.decimals)
+            })
+            .collect(),
     }))
 }
 
@@ -764,6 +806,50 @@ fn pool_instance_sql(pool_ids_predicate: &str) -> String {
             already presents it on those terms. */ \
          LEFT JOIN (SELECT asset_id, holder_count FROM balance_aggregates) ba \
              ON ba.asset_id = s.share_token_id"
+    )
+}
+
+/// The chart's per-ledger reserve source, chosen by the pool's KIND.
+///
+/// Both yield the same four columns, so everything downstream — the bucketing,
+/// the ASOF price joins, the TVL arithmetic — is identical for both kinds.
+///
+/// A classic pool's snapshots store reserves as `Decimal128(7)`, already in
+/// units. A soroban pool has no snapshots at all; its reserves are an array on
+/// `pool_state_changes`, RAW integers to be divided by each leg's own decimals
+/// — which is why the scale is baked in here rather than assumed to be 7.
+///
+/// `gross_volume_a` is NULL for a soroban pool because nothing records it:
+/// `pool_state_changes` carries reserves and nothing else. Inferring volume
+/// from reserve deltas would not distinguish a swap from a deposit, so the
+/// volume and fee series stay empty rather than invented.
+fn chart_reserve_source(ctx: &PoolPriceContext) -> String {
+    if ctx.kind != domain::PoolKind::Soroban as i16 {
+        return "SELECT ledger_sequence, reserve_a, reserve_b, gross_volume_a \
+                FROM liquidity_pool_snapshots"
+            .to_string();
+    }
+    // Both legs must have an established scale. Without one the reserve is
+    // not renderable at any magnitude, so the series yields nothing rather
+    // than a plausible wrong curve.
+    let (Some(Some(da)), Some(Some(db))) = (ctx.leg_decimals.first(), ctx.leg_decimals.get(1))
+    else {
+        return "SELECT ledger_sequence, \
+                       CAST(NULL, 'Nullable(Decimal128(7))') AS reserve_a, \
+                       CAST(NULL, 'Nullable(Decimal128(7))') AS reserve_b, \
+                       CAST(NULL, 'Nullable(Decimal128(7))') AS gross_volume_a \
+                FROM pool_state_changes"
+            .to_string();
+    };
+    let scale = |d: u32| 10f64.powi(d as i32);
+    format!(
+        "SELECT ledger_sequence, \
+                toDecimal128(reserves[1], 0) / {a} AS reserve_a, \
+                toDecimal128(reserves[2], 0) / {b} AS reserve_b, \
+                CAST(NULL, 'Nullable(Decimal128(7))') AS gross_volume_a \
+         FROM pool_state_changes",
+        a = scale(*da),
+        b = scale(*db),
     )
 }
 
@@ -1686,8 +1772,7 @@ pub async fn fetch_pool_chart(
                 toFloat64(lps.gross_volume_a) * pa_usd           AS vol_row, \
                 isNotNull(lps.gross_volume_a) AND isNull(pa_usd) AS unpriced_swap \
              FROM ( \
-                 SELECT ledger_sequence, reserve_a, reserve_b, gross_volume_a \
-                 FROM liquidity_pool_snapshots \
+                 {reserve_source} \
                  WHERE pool_id = unhex(?) \
                    AND ledger_sequence >= (SELECT min(sequence) FROM ledgers WHERE closed_at >= fromUnixTimestamp64Milli(?)) \
                    AND ledger_sequence <= (SELECT max(sequence) FROM ledgers WHERE closed_at >= fromUnixTimestamp64Milli(?) AND closed_at < fromUnixTimestamp64Milli(?)) \
@@ -1724,6 +1809,7 @@ pub async fn fetch_pool_chart(
         price_bucket_fn = price_bucket_fn,
         series_view = series_view,
         carry = MAX_PRICE_CARRY_SECONDS,
+        reserve_source = chart_reserve_source(ctx),
     );
 
     let (chart_leg_a, chart_leg_b) = match priced_pair(ctx) {

@@ -372,13 +372,22 @@ pub async fn get_pool(State(state): State<AppState>, Path(pool_id): Path<String>
             .map(|l| queries::price_leg(l.family, l.asset_code.as_deref(), l.issuer.as_deref()))
             .collect(),
         fee_bps: row.fee_bps,
+        kind: row.pool_kind,
+        // Only the CHART reads raw reserves and needs a scale for them. The
+        // spot path below is handed values already in units.
+        leg_decimals: Vec::new(),
     };
+    // The reserves come off the LEGS, which is where both kinds' sources are
+    // reconciled and scaled. Reading `reserve_a`/`reserve_b` priced classic
+    // pools only — a soroban pool has no snapshot, so its spot TVL was always
+    // null however well its legs priced.
+    let leg_reserve = |i: usize| row.legs.get(i).and_then(|l| l.reserve.as_deref());
     match queries::fetch_pool_usd_analytics(
         &state.ch(),
         &pool_id_hex,
         &ctx,
-        row.reserve_a.as_deref(),
-        row.reserve_b.as_deref(),
+        leg_reserve(0),
+        leg_reserve(1),
     )
     .await
     {

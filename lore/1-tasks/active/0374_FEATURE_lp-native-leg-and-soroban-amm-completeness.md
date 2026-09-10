@@ -2602,3 +2602,46 @@ type." Both surfaces agree, and neither claims something it does not know.
 Making the list possible needs a schema change — a skip index on
 `balances.asset_id`, or an asset→holders view. That is a decision with a write
 side, not a read-half fix.
+
+## The chart reads Soroban state changes — and a silent scale bug it exposed (2026-09-09)
+
+The chart's reserve source is now chosen by kind: `liquidity_pool_snapshots` for
+a classic pool, `pool_state_changes` for a Soroban one. Both yield the same four
+columns, so the bucketing, the ASOF price joins and the TVL arithmetic are
+untouched. Verified on production: a Soroban pool that returned "no activity in
+this period" now returns real buckets — **1,465 samples in one day's bucket**.
+
+`gross_volume_a` is NULL for a Soroban pool, deliberately. Nothing records its
+volume: `pool_state_changes` carries reserves and nothing else, and inferring
+volume from reserve deltas cannot tell a swap from a deposit. The volume and fee
+series stay empty rather than invented.
+
+TVL values are still null, and will be until the SAC re-key: **0 Soroban pools
+have every leg priced today, 510 of 746 would after the repair** (simulated
+read-only). The plumbing is verified; the numbers wait on the mutation.
+
+### The scale bug — the reason to measure output, not just wire it
+
+The per-leg reserves shipped in the previous commit looked right and were not.
+`ResolvedAsset.decimals` is `coalesce(m.decimals, 7)`, so a leg with no metadata
+reports 7 indistinguishably from a leg that really is 7. Soroban leg decimals
+are NOT uniform — measured across the 304 distinct legs: 7 (294), **18 (3)**,
+8 (2), 6 (4), 9 (1). A leg with 18 scaled as 7 is wrong by 10^11.
+
+It showed up as a reserve of **128,249,398,883,656,900** on the live list —
+found only by sweeping the API output for implausible magnitudes, not by any
+test. The exact "plausible but wrong" failure this project keeps naming.
+
+`ResolvedAsset` now carries `decimals_known` alongside `decimals`: true for a
+classic or native asset, whose 7 is protocol, and for a Soroban token whose
+contract publishes decimals — false otherwise. A raw reserve with no established
+scale renders as nothing, in the leg AND in the chart.
+
+The honest cost: **94 of 1,505 legs on the list carry a reserve today**, down
+from 1,497 of which most were wrong. Of the 264 unscaled legs, **the SAC re-key
+resolves 263** — a re-keyed leg is a classic asset and its 7 is protocol.
+
+The guard needed a guard of its own: `a.asset_type IN (0, 1)` reads TRUE for an
+unmatched LEFT JOIN, because the column default is 0 and 0 is `native`. The same
+trap ate one of my measurement queries an hour earlier. It is `a.id != 0 AND
+a.asset_type IN (0, 1)` now — the existing `known` column tests exactly that.
